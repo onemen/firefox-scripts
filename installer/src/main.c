@@ -16,6 +16,9 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/random.h>
 #endif
 
@@ -221,16 +224,6 @@ static void focus_browser_window(unsigned long pid) {
     SetForegroundWindow(found);
     BringWindowToTop(found);
 }
-#else
-static int find_last_used_browser_index(const RunningBrowser *browsers, int count) {
-    (void)browsers;
-    (void)count;
-    return -1;  // no z-order heuristic off-Windows; caller uses the first entry
-}
-
-static void focus_browser_window(unsigned long pid) {
-    (void)pid;  // launching via open_url_in_profile/xdg-open handles focus
-}
 #endif
 
 static DWORD WINAPI ctrl_c_watchdog(LPVOID unused) {
@@ -253,6 +246,16 @@ static DWORD WINAPI ctrl_c_watchdog(LPVOID unused) {
         }
     }
     return 0;
+}
+#else
+static int find_last_used_browser_index(const RunningBrowser *browsers, int count) {
+    (void)browsers;
+    (void)count;
+    return -1;  // no z-order heuristic off-Windows; caller uses the first entry
+}
+
+static void focus_browser_window(unsigned long pid) {
+    (void)pid;  // launching via open_url_in_profile/xdg-open handles focus
 }
 #endif
 
