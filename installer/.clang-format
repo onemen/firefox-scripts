@@ -1,0 +1,34 @@
+# clang-format style for the installer C sources (installer/src).
+#
+# Mirrors the codebase's existing conventions as closely as clang-format can:
+# 4-space indent, K&R braces, pointers glued to the name (`int *x`), single-line
+# if/loop/switch-case statements kept on one line, 2 spaces before trailing
+# comments, no forced column wrapping (ColumnLimit 0 — the code knowingly uses
+# long lines for snprintf chains and macros).
+#
+# Deliberate deviations the formatter enforces (one-time churn on adoption):
+#   - preprocessor directives are NOT indented (IndentPPDirectives: None)
+#   - multi-statement one-line blocks `if (x) { a; b; }` are split (this clang
+#     version only keeps <2 statements on one line under ColumnLimit: 0)
+#   - macros are re-laid-out (clang-format always breaks do{...}while macros)
+#   - trailing `/* */` comments drop to one space (SpacesBeforeTrailingComments
+#     only applies to `//` comments here)
+#
+# Clang-format cannot express the hand-written 2-space preprocessor-directive
+# indent or the aligned `#define NAME   value` columns; both were dropped in
+# favor of the formatter's canonical output.
+#
+# Run via `pnpm format:c` / `pnpm lint:c` (see tools/format-c.mjs).
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+ColumnLimit: 0
+PointerAlignment: Right
+SortIncludes: false
+AllowShortLoopsOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: Always
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+IndentCaseLabels: true
+SpacesBeforeTrailingComments: 2
+Cpp11BracedListStyle: false

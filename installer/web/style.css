@@ -1,0 +1,1076 @@
+/* ==========================================================================
+   Firefox Scripts Installer - Design System & Styles (v005 + multi-profile)
+   ========================================================================== */
+
+:root {
+  --font-stack:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',
+    'Helvetica Neue', sans-serif;
+
+  --bg-body: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-subtle: #f1f5f9;
+  --bg-inset: #e2e8f0;
+
+  --border-color: #e2e8f0;
+  --border-color-hover: #cbd5e1;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --accent-primary: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-light: #eff6ff;
+  --accent-border: #bfdbfe;
+
+  --success-main: #16a34a;
+  --success-bg: #f0fdf4;
+  --success-border: #bbf7d0;
+
+  --warning-main: #d97706;
+  --warning-bg: #fffbeb;
+  --warning-border: #fef08a;
+
+  --error-main: #dc2626;
+  --error-bg: #fef2f2;
+  --error-border: #fecaca;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-body: #0b0f17;
+    --bg-card: #151c28;
+    --bg-subtle: #1e293b;
+    --bg-inset: #0f172a;
+
+    --border-color: #1e293b;
+    --border-color-hover: #334155;
+
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+
+    --accent-primary: #3b82f6;
+    --accent-hover: #60a5fa;
+    --accent-light: rgba(59, 130, 246, 0.12);
+    --accent-border: rgba(59, 130, 246, 0.3);
+
+    --success-main: #22c55e;
+    --success-bg: rgba(34, 197, 94, 0.1);
+    --success-border: rgba(34, 197, 94, 0.25);
+
+    --warning-main: #f59e0b;
+    --warning-bg: rgba(245, 158, 11, 0.1);
+    --warning-border: rgba(245, 158, 11, 0.25);
+
+    --error-main: #ef4444;
+    --error-bg: rgba(239, 68, 68, 0.1);
+    --error-border: rgba(239, 68, 68, 0.25);
+
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-stack);
+  background-color: var(--bg-body);
+  color: var(--text-primary);
+  line-height: 1.5;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  padding: 24px;
+  display: flex;
+  justify-content: center;
+}
+
+.app-container {
+  width: 100%;
+  max-width: 820px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ==========================================================================
+   Self-Update Banner
+   ========================================================================== */
+.update-banner {
+  background: var(--accent-light);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.update-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 13.5px;
+}
+
+.btn-update {
+  background-color: var(--accent-primary);
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 13px;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-update:hover {
+  background-color: var(--accent-hover);
+}
+
+.btn-update:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Manual Download Bar
+   ========================================================================== */
+.manual-download-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--bg-card);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 12px 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.manual-download-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.manual-download-links {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.download-link {
+  color: var(--accent-primary);
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.download-link:hover {
+  color: var(--accent-primary);
+  text-decoration: underline;
+}
+
+/* Last-update annotation on the manual-download links (smaller font). */
+.download-link-date {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: 5px;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Test/Dev Build Banner
+   Shown only on --local or --mode=dev builds.  The installer fetches
+   /api/build-info and the updater reads its generated config; both reveal
+   this banner so a test run is never mistaken for a production install.
+   ========================================================================== */
+.build-banner {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-left: 4px solid var(--warning-main);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+}
+
+.build-banner h1 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--warning-main);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.build-banner p {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.build-banner[hidden] {
+  display: none;
+}
+
+/* ==========================================================================
+   Header
+   ========================================================================== */
+.header {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.header-text h1 {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-text p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Exit Button
+   ========================================================================== */
+.btn-exit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: var(--font-stack);
+  flex-shrink: 0;
+}
+
+.btn-exit:hover {
+  background: var(--error-bg);
+  color: var(--error-main);
+  border-color: var(--error-border);
+}
+
+.btn-rescan {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--accent-primary);
+  border: 1px solid var(--accent-border);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: var(--font-stack);
+  flex-shrink: 0;
+}
+
+.btn-rescan:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-primary);
+}
+
+.btn-rescan:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Browser Cards
+   ========================================================================== */
+.browser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.browser-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.2s ease;
+}
+
+.browser-card:hover {
+  border-color: var(--border-color-hover);
+}
+
+.browser-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  /* The header holds title + status badge + help text + Install + Restart;
+     on narrow cards those must wrap to a second line instead of pushing the
+     buttons past the card's right edge. */
+  flex-wrap: wrap;
+}
+
+.browser-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* Let the title group absorb the free space and shrink (ellipsis) so the
+     badge/help/buttons never overflow the card. */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.browser-icon-wrapper {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.browser-icon-wrapper .browser-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.browser-name-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.browser-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.browser-version {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.btn-action {
+  background: var(--accent-primary);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-action:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+/* ==========================================================================
+   Component Rows Inside Card
+   ========================================================================== */
+.browser-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ==========================================================================
+   Collapsible up-to-date cards
+   ========================================================================== */
+/* The card body collapses via a grid-template-rows animation (0fr <-> 1fr),
+   which smoothly animates the card's height; the inner wrapper clips the
+   rows while they shrink. margin-top collapses to 0 as well so the closed
+   card keeps its original header-only height (no leftover gap). */
+.browser-card-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-top: 16px;
+  transition:
+    grid-template-rows 0.25s ease,
+    margin-top 0.25s ease;
+}
+
+.browser-card.card-collapsed .browser-card-body {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+}
+
+.browser-card-body-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.browser-card.card-collapsed .btn-action {
+  display: none;
+}
+
+/* The header status summarizes a collapsed card; when expanded the per-row
+   badges already show the details, so hide the summary. */
+.browser-card:not(.card-collapsed) .card-status-badge {
+  display: none;
+}
+
+.card-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.card-chevron:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.card-chevron svg {
+  transition: transform 0.15s ease;
+}
+
+.browser-card:not(.card-collapsed) .card-chevron svg {
+  transform: rotate(90deg);
+}
+
+.row-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--bg-subtle);
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.path-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.path-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-open-folder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.btn-open-folder:hover {
+  background: var(--bg-card);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.path-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.path-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Keep the END of long paths visible (the distinguishing part): with
+     direction:rtl the ellipsis moves to the start of the text. */
+  direction: rtl;
+  text-align: left;
+}
+
+.component-status-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  min-width: 224px;
+  justify-content: flex-start;
+}
+
+/* ==========================================================================
+   Profile Rows (multi-profile)
+   ========================================================================== */
+.profile-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-left: 0;
+}
+
+.profile-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  background: var(--bg-subtle);
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.profile-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.profile-row-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.profile-row-name {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.profile-row-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  line-height: 1.45;
+}
+
+.profile-row-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 224px;
+  justify-content: flex-start;
+}
+
+/* ==========================================================================
+   Badges
+   ========================================================================== */
+.badge-uptodate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success-main);
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--error-main);
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--warning-main);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-checking {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chk-component {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.badge-need-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  background: var(--warning-bg);
+  color: var(--warning-main);
+  border: 1px solid var(--warning-border);
+}
+
+.badge-hash-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  background: var(--warning-bg);
+  color: var(--warning-main);
+  border: 1px solid var(--warning-border);
+  margin-left: 6px;
+  cursor: help;
+}
+
+/* ==========================================================================
+   Network Error Banner (install packages could not be fetched by the tab)
+   ========================================================================== */
+.network-error-banner {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.network-error-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--warning-main);
+  font-size: 13.5px;
+}
+
+.network-error-content strong {
+  display: block;
+  font-size: 14px;
+}
+
+.network-error-content p {
+  margin: 2px 0 0;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   Success Banner (all active browsers/profiles up to date)
+   ========================================================================== */
+.success-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  font-size: 13.5px;
+  font-weight: 600;
+  background: var(--success-bg);
+  color: var(--success-main);
+  border: 1px solid var(--success-border);
+}
+
+/* ==========================================================================
+   Per-card Restart Button (header, next to Install)
+   ========================================================================== */
+.btn-restart {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 600;
+  background: var(--bg-subtle);
+  color: var(--accent-primary);
+  border: 1px solid var(--accent-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  font-family: var(--font-stack);
+  flex-shrink: 0;
+}
+
+.btn-restart:hover:not(:disabled) {
+  background: var(--accent-primary);
+  color: #ffffff;
+}
+
+.btn-restart:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-restart[hidden] {
+  display: none;
+}
+
+/* ==========================================================================
+   Help Text (header helper)
+   ========================================================================== */
+.help-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Empty State
+   ========================================================================== */
+.empty-state {
+  background: var(--bg-card);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.empty-state h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.empty-state p {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* ==========================================================================
+   Scanning Indicator
+   ========================================================================== */
+.scanning-indicator {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+  animation: scanning-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes scanning-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ==========================================================================
+   Reveal Animation (validated content fades/steps in — no state flash)
+   The browser-list content is only painted once validation completes; the
+   .revealed class (added by revealCardsAndScroll) triggers a staggered
+   entrance for the cards instead of an abrupt swap.
+   ========================================================================== */
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.browser-list.revealed .browser-card,
+.browser-list.revealed .empty-state,
+.browser-list.revealed .success-banner {
+  animation: card-in 0.4s ease both;
+}
+
+.browser-list.revealed .browser-card:nth-child(2) {
+  animation-delay: 0.06s;
+}
+
+.browser-list.revealed .browser-card:nth-child(3) {
+  animation-delay: 0.12s;
+}
+
+.browser-list.revealed .browser-card:nth-child(4) {
+  animation-delay: 0.18s;
+}
+
+.browser-list.revealed .browser-card:nth-child(5) {
+  animation-delay: 0.24s;
+}
+
+.browser-list.revealed .browser-card:nth-child(n + 6) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-list.revealed .browser-card,
+  .browser-list.revealed .empty-state,
+  .browser-list.revealed .success-banner {
+    animation: none;
+  }
+
+  .browser-card-body {
+    transition: none;
+  }
+}
+
+/* ==========================================================================
+   Per-card Progress Bar
+   ========================================================================== */
+.card-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 0 4px 0;
+}
+
+.card-progress-bar-container {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.card-progress-bar-fill {
+  height: 100%;
+  background: var(--accent-primary);
+  width: 0%;
+  transition: width 0.3s ease;
+  border-radius: var(--radius-full);
+}
+
+.card-progress-status {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.card-progress-error {
+  color: var(--error-main);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 0;
+  display: none;
+}
+
+/* ==========================================================================
+   Closed Message (exit / restart complete)
+   ========================================================================== */
+.closed-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  text-align: center;
+}
+
+.closed-message h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.closed-message p {
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+@media (max-width: 640px) {
+  body {
+    padding: 12px;
+  }
+
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .row-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .component-status-cell {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .profile-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .profile-row-badges {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .update-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* Connection indicator: centered above the browser cards */
+.conn-indicator {
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #888;
+  padding: 6px 8px 2px;
+}
+.conn-indicator:not([data-ok]) {
+  color: #b91c1c;
+}
