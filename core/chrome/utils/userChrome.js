@@ -46,9 +46,15 @@ const _uc = {
 
   getScriptData: function (aFile) {
     const aContent = this.readFile(aFile);
+    /* Fixed literal header pattern (non-greedy, no user data), not
+     * attacker-controlled. eslint-disable: this repo's security linter
+     * flags the nested-quantifier shape, but the pattern is a fixed
+     * literal over script headers. */
+    /* eslint-disable security/detect-unsafe-regex */
     const header = (aContent.match(
       /^\/\/ ==UserScript==\s*\n(?:.*\n)*?\/\/ ==\/UserScript==\s*\n/m
     ) || [''])[0];
+    /* eslint-enable security/detect-unsafe-regex */
     const rex = {
       include: [],
       exclude: [],
@@ -75,7 +81,11 @@ const _uc = {
       description: (header.match(/\/\/ @description\s+(.+)\s*$/im) || def)[1],
       version: (header.match(/\/\/ @version\s+(.+)\s*$/im) || def)[1],
       author: (header.match(/\/\/ @author\s+(.+)\s*$/im) || def)[1],
+      /* Built from the script's own @include/@exclude metadata the user
+       * wrote. eslint-disable: not attacker-controlled input. */
+      /* eslint-disable security/detect-non-literal-regexp */
       regex: new RegExp('^' + exclude + '(' + (rex.include.join('|') || '.*') + ')$', 'i'),
+      /* eslint-enable security/detect-non-literal-regexp */
       id: (header.match(/\/\/ @id\s+(.+)\s*$/im) || [
         '',
         filename.split('.uc.js')[0] + '@' + (author || 'userChromeJS'),
@@ -315,4 +325,27 @@ if (!Services.appinfo.inSafeMode) {
     if (!('UC' in win)) UserChrome_js.load(win);
   }
   Services.obs.addObserver(UserChrome_js, 'chrome-document-global-created', false);
+}
+
+// Initialize firefox-scripts updater (idempotent — also initialized from
+// BootstrapLoader.js; harmless if both run).
+try {
+  // NOTE: doc.documentURI is 'chrome://browser/content/browser.xhtml' (the
+  // concatenated protocol+pathname form has a single slash and would never
+  // match this literal).
+  Services.obs.addObserver(doc => {
+    if (doc.documentURI === 'chrome://browser/content/browser.xhtml') {
+      const win = doc.defaultView;
+      try {
+        const {initScriptsUpdater} = ChromeUtils.importESModule(
+          'chrome://firefox-scripts/content/scriptsUpdater.sys.mjs'
+        );
+        initScriptsUpdater(win);
+      } catch {
+        // scriptsUpdater not available
+      }
+    }
+  }, 'chrome-document-loaded');
+} catch {
+  // Updater init failed
 }

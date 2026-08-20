@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Firefox Scripts - Update</title>
+    <link rel="icon" type="image/svg+xml" href="logos/favicon.svg" />
+    <!-- updater.css is generated at publish time (tools/publish/syncGeneratedFiles.mjs
+         buildRemoteUiCss) from installer/web/style.css + tools/publish/updater.css,
+         and ships in updater-ui.zip next to this page. -->
+    <link rel="stylesheet" href="updater.css" />
+  </head>
+  <body>
+    <!--
+      Firefox Scripts — updater tab UI, shipped inside updater-ui.zip and
+      installed into the profile's chrome/utils/updater/ui/ directory, served
+      as chrome://firefox-scripts/content/ui/updater.html.
+
+      This document is chrome-privileged: it loads the privileged engine
+      (updater.js, same package) and calls it directly — there is no remote
+      page, no iframe and no postMessage bridge.  UI-only changes rebuild
+      updater-ui.zip and propagate through the same hash-based update path as
+      the other packages (see scriptsUpdater.sys.mjs ensureUpdaterUi).
+
+      Layout mirrors the installer web UI card (single CSS source:
+      installer/web/style.css + tools/publish/updater.css).
+    -->
+
+    <div class="app-container">
+      <!-- Test/Dev build banner — revealed by updater-ui.js from the engine's
+           buildInfo (generated config) only on --local or --mode=dev builds. -->
+      <div id="build-banner" class="build-banner" hidden="hidden">
+        <h1>⚠ Test build</h1>
+        <p id="build-banner-detail"></p>
+      </div>
+
+      <!-- Header — same layout/classes as the installer web UI -->
+      <header class="header">
+        <div class="header-text">
+          <h1>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--accent-primary)"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
+            </svg>
+            Firefox Scripts Updater
+          </h1>
+          <p>Update legacy extension support scripts</p>
+        </div>
+        <button id="btn-close" class="btn-exit" title="Close the updater tab">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+          >
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          Close
+        </button>
+      </header>
+
+      <!-- Manual Download Bar — same position as the installer. The last-update
+           dates are appended to each link once the shell reports them. -->
+      <div id="manual-download-bar" class="manual-download-bar">
+        <div class="manual-download-content">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--text-secondary)"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          <span>Prefer to install manually? Download the latest scripts:</span>
+        </div>
+        <div class="manual-download-links">
+          <a id="link-download-fx" class="download-link" href="#"
+            >configuration files<span id="fx-download-date" class="download-link-date"></span
+          ></a>
+          <a id="link-download-utils" class="download-link" href="#"
+            >utils<span id="utils-download-date" class="download-link-date"></span
+          ></a>
+        </div>
+      </div>
+
+      <!-- Packages info box — after the manual-download bar, before the card -->
+      <div class="packages-info">
+        <div class="package-info">
+          <span class="package-info-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--accent-primary)"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </span>
+          <div class="package-info-text">
+            <div class="package-info-title">Configuration files</div>
+            <div class="package-info-desc">
+              config.js, config-prefs.js — copied to the browser directory
+            </div>
+          </div>
+        </div>
+        <div class="package-info">
+          <span class="package-info-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--accent-primary)"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M16.5 9.4 7.55 4.24" />
+              <path
+                d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+              />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+          </span>
+          <div class="package-info-text">
+            <div class="package-info-title">Utils</div>
+            <div class="package-info-desc">
+              Utils scripts — copied to your profile Chrome/utils directory
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- All packages up to date -->
+      <div id="success-banner" class="success-banner" hidden="true">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--success-main)"
+          stroke-width="2.2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+          <polyline points="22 4 12 14.01 9 11.01" />
+        </svg>
+        <span>All packages are up to date.</span>
+      </div>
+
+      <main>
+        <div class="browser-list">
+          <section class="browser-card" id="main-card">
+            <div class="browser-card-header">
+              <div class="browser-title-group">
+                <div class="browser-icon-wrapper">
+                  <img id="card-logo" class="browser-logo" src="logos/firefox.png" alt="" />
+                </div>
+                <div class="browser-name-line">
+                  <span class="browser-title" id="card-title">Firefox</span>
+                  <span class="browser-version" id="card-version"></span>
+                </div>
+              </div>
+
+              <button id="btn-install" class="btn-action" title="Select from available updates">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Update
+              </button>
+
+              <button id="btn-restart" class="btn-restart" disabled="disabled">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                >
+                  <path d="M1 4v6h6" />
+                  <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                </svg>
+                Restart
+              </button>
+            </div>
+
+            <div class="card-progress" id="card-progress" hidden="true">
+              <div class="card-progress-bar-container">
+                <div class="card-progress-bar-fill" id="card-progress-fill" style="width: 0%"></div>
+              </div>
+              <div class="card-progress-status">
+                <span class="card-progress-step" id="card-progress-step">Preparing...</span>
+                <span class="card-progress-percent" id="card-progress-percent">0%</span>
+              </div>
+              <div class="card-progress-error" id="card-progress-error"></div>
+            </div>
+
+            <div class="browser-rows">
+              <!-- Row 1: application binary (shared) + config.js status -->
+              <div class="row-item">
+                <div class="path-block">
+                  <div class="path-title-row">
+                    <span class="path-title">APPLICATION BINARY</span>
+                    <button
+                      type="button"
+                      class="btn-open-folder"
+                      id="btn-open-folder-binary"
+                      title="Open application folder"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path
+                          d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <span class="path-value" id="binary-path"></span>
+                </div>
+                <div class="component-status-cell" id="config-status">
+                  <span id="config-badge-update" class="badge-update" hidden="true">
+                    <input
+                      type="checkbox"
+                      class="chk-component"
+                      id="chk-config"
+                      data-kind="config"
+                    />
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#eab308"
+                      stroke-width="3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="6" />
+                    </svg>
+                    config.js: Update Available
+                  </span>
+                  <span id="config-badge-ok" class="badge-uptodate" hidden="true">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    config.js: Up To Date
+                  </span>
+                  <label class="skip-checkbox" id="skip-config" hidden="true">
+                    <input type="checkbox" id="skip-config-input" data-skip="config" />
+                    <span>Don't show again for this update</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Row 2: profile folder + utils status -->
+              <div class="profile-row">
+                <div class="profile-row-top">
+                  <div class="profile-row-name-line">
+                    <span class="profile-row-name">PROFILE FOLDER</span>
+                    <button
+                      type="button"
+                      class="btn-open-folder"
+                      id="btn-open-folder-profile"
+                      title="Open profile folder"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path
+                          d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="profile-row-badges" id="utils-status">
+                    <span id="utils-badge-update" class="badge-update" hidden="true">
+                      <input
+                        type="checkbox"
+                        class="chk-component"
+                        id="chk-utils"
+                        data-kind="utils"
+                      />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="#eab308"
+                        stroke-width="3"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="6" />
+                      </svg>
+                      utils: Update Available
+                    </span>
+                    <span id="utils-badge-ok" class="badge-uptodate" hidden="true">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="3"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      utils: Up To Date
+                    </span>
+                    <label class="skip-checkbox" id="skip-utils" hidden="true">
+                      <input type="checkbox" id="skip-utils-input" data-skip="utils" />
+                      <span>Don't show again for this update</span>
+                    </label>
+                  </div>
+                </div>
+                <span class="profile-row-value" id="profile-path"></span>
+              </div>
+            </div>
+
+            <div class="updater-actions">
+              <button id="btn-remind-tomorrow" class="btn-remind" hidden="true">
+                Remind me Tomorrow
+              </button>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <!-- Privileged engine — exposes window.UpdaterEngine (see updater.js). -->
+    <script src="updater.js"></script>
+    <!-- This package's client: renders engine state and wires buttons. -->
+    <script src="updater-ui.js"></script>
+  </body>
+</html>

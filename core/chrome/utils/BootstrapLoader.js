@@ -13,6 +13,30 @@ ChromeUtils.defineESModuleGetters(this, {
   NetUtil: 'resource://gre/modules/NetUtil.sys.mjs',
 });
 
+// Initialize scripts updater on window startup if available
+// (importESModule + call — the module is idempotent, so userChrome.js may
+// also init it without double-checking).
+try {
+  // NOTE: doc.location.protocol is 'chrome:' and pathname is
+  // '/browser/content/browser.xhtml' — concatenated this gives a SINGLE slash
+  // (chrome:/browser/...), matching the about:addons check below.
+  Services.obs.addObserver(doc => {
+    if (doc.documentURI === 'chrome://browser/content/browser.xhtml') {
+      const win = doc.defaultView;
+      try {
+        const {initScriptsUpdater} = ChromeUtils.importESModule(
+          'chrome://firefox-scripts/content/scriptsUpdater.sys.mjs'
+        );
+        initScriptsUpdater(win);
+      } catch (e2) {
+        console.warn('Firefox Scripts updater not available', e2);
+      }
+    }
+  }, 'chrome-document-loaded');
+} catch (e) {
+  console.warn('Firefox Scripts updater init failed', e);
+}
+
 Services.obs.addObserver(doc => {
   if (
     doc.location.protocol + doc.location.pathname === 'about:addons' ||
@@ -27,9 +51,9 @@ Services.obs.addObserver(doc => {
         this.addon.__AddonInternal__.optionsType == 1 /*AddonManager.OPTIONS_TYPE_DIALOG*/ &&
         !!this.addon.optionsURL
       ) {
-        var windows = Services.wm.getEnumerator(null);
+        const windows = Services.wm.getEnumerator(null);
         while (windows.hasMoreElements()) {
-          var win2 = windows.getNext();
+          const win2 = windows.getNext();
           if (win2.closed) {
             continue;
           }
@@ -38,7 +62,7 @@ Services.obs.addObserver(doc => {
             return;
           }
         }
-        var features = 'chrome,titlebar,toolbar,centerscreen';
+        const features = 'chrome,titlebar,toolbar,centerscreen';
         win.docShell.rootTreeItem.domWindow.openDialog(
           this.addon.optionsURL,
           this.addon.id,
@@ -68,7 +92,7 @@ const {XPIExports} = ChromeUtils.importESModule('resource://gre/modules/addons/X
 
 XPIDatabase.isDisabledLegacy = () => false;
 
-var orig_verifyBundleSignedState = XPIExports.verifyBundleSignedState;
+const orig_verifyBundleSignedState = XPIExports.verifyBundleSignedState;
 XPIExports.verifyBundleSignedState = async (aBundle, aAddon) => {
   if ((!aAddon.isWebExtension && aAddon.type === 'extension') || aAddon.id.includes('_N_SIGN_'))
     return {signedState: undefined, signedTypes: []};
@@ -92,7 +116,7 @@ ChromeUtils.defineLazyGetter(this, 'logger', () => {
 });
 
 /** Valid IDs fit this pattern. */
-var gIDTest =
+const gIDTest =
   // eslint-disable-next-line no-useless-escape
   /^(\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}|[a-z0-9-\._]*\@[a-z0-9-\._]+)$/i;
 
@@ -171,7 +195,7 @@ function buildJarURI(aJarfile, aPath) {
   return Services.io.newURI(uri);
 }
 
-var BootstrapLoader = {
+const BootstrapLoader = {
   name: 'bootstrap',
   manifestFile: 'install.rdf',
   async loadManifest(pkg) {

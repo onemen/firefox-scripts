@@ -1,0 +1,195 @@
+/* ==========================================================================
+   Firefox Scripts Updater — updater-only styles.
+   Appended to installer/web/style.css (the shared design system) by
+   tools/publish/syncGeneratedFiles.mjs buildRemoteUiCss(); the publisher
+   inlines the combined stylesheet into the published updater.html (built from
+   the updater-template.html template), so the remote updater UI and the
+   installer web UI always render from one CSS source.
+   ========================================================================== */
+
+/* Chrome pages apply their own display rules to elements, which would
+   override the UA default for [hidden]; the design system's flex layouts
+   make this mandatory for the updater tab. */
+[hidden] {
+  display: none !important;
+}
+
+/* "Don't show again for this update" — labeled checkbox in each card row. */
+.skip-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  /* Align the leading checkbox with the badge's checkbox: the badge is a pill
+     with 12px horizontal padding + a 1px border, so its checkbox sits 13px in
+     from the status cell's left edge. */
+  padding-left: 13px;
+}
+
+.skip-checkbox input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.skip-checkbox:hover {
+  color: var(--text-primary);
+}
+
+.skip-checkbox input:disabled + span {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Updater card status cells: the selection checkbox sits inside the badge
+   (installer-style) and the "Don't show again for this update" checkbox on
+   its own row below it, aligned to the right edge of the row box. */
+#config-status,
+#utils-status {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  /* Same fixed width as the installer status cells so the component and
+     skip checkboxes line up across both rows. */
+  min-width: 250px;
+}
+
+/* The status column stacks the badge over the "Don't show again" checkbox, so
+   it is taller than the "PROFILE FOLDER" label row next to it.  Top-align the
+   label (instead of the shared center alignment) and nudge it down so the
+   11px label lines up with the badge's checkbox. */
+.profile-row-top {
+  align-items: flex-start;
+}
+
+.profile-row-name-line {
+  padding-top: 6px;
+}
+
+/* The updater card has no .browser-card-body wrapper (unlike the installer),
+   so .browser-rows sits directly under the card header: give it the same
+   12px separation the rows get from each other, keeping header → card →
+   action spacing uniform. */
+.browser-rows {
+  margin-top: 12px;
+}
+
+/* "Remind me Tomorrow" — neutral secondary action, under the cards. */
+.btn-remind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  font-family: var(--font-stack);
+  flex-shrink: 0;
+}
+
+.btn-remind:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  border-color: var(--border-color-hover);
+}
+
+.btn-remind:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-remind[hidden] {
+  display: none;
+}
+
+/* Global action row — the per-package "Don't show again" checkboxes live
+   inside the APPLICATION BINARY / PROFILE FOLDER rows, so this row holds
+   only the global Remind me Tomorrow action.  The extra top margin separates
+   the action from the card content above it. */
+.updater-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 2px 0;
+  /* Matches the .browser-rows gap (header → card → action all 12px). */
+  margin-top: 12px;
+}
+
+/* ==========================================================================
+   Packages info box — sits after the manual-download bar and before the card:
+   what each package is and where its files go (same wording as the installer).
+   ========================================================================== */
+.packages-info {
+  display: flex;
+  gap: 16px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+}
+
+.package-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.package-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.package-info-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.package-info-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.package-info-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Last-update annotation on the manual-download links (smaller font).
+   Defined in the shared design system (installer/web/style.css) so both the
+   installer UI and the updater tab render it from one source. */
+
+/* Updater card reveal: the card is hidden until the shell's first state
+   arrives, then it slides in as a single unit (the card-in animation lives in
+   the shared design system).  This avoids a header-then-rows flash while the
+   shell's fetch/inject round-trip is in flight. */
+.browser-list:not(.revealed) .browser-card {
+  opacity: 0;
+  visibility: hidden;
+}

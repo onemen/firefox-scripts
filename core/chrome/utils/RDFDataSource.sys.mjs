@@ -111,8 +111,10 @@ class RDFSubject extends RDFNode {
     this._elements.push(element);
 
     // There might be an inferred rdf:type assertion in the element name
+    let assertion;
+    let object;
     if (element.namespaceURI != NS_RDF || element.localName != 'Description') {
-      var assertion = new RDFAssertion(
+      assertion = new RDFAssertion(
         this,
         RDF_R('type'),
         this._ds.getResource(element.namespaceURI + element.localName)
@@ -131,7 +133,7 @@ class RDFSubject extends RDFNode {
         ['nodeID', 'about', 'resource', 'ID', 'parseType'].includes(attr.localName)
       )
         continue;
-      var object = null;
+      object = null;
       if (attr.namespaceURI == NS_RDF) {
         if (attr.localName == 'type') object = this._ds.getResource(attr.nodeValue);
       }
@@ -141,13 +143,13 @@ class RDFSubject extends RDFNode {
       this._addAssertion(assertion);
     }
 
-    var child = element.firstChild;
+    let child = element.firstChild;
     element.listCounter = 1;
     while (child) {
       if (isElement(child)) {
         // eslint-disable-next-line no-useless-assignment
         object = null;
-        var predicate = child.namespaceURI + child.localName;
+        let predicate = child.namespaceURI + child.localName;
         if (child.namespaceURI == NS_RDF) {
           if (child.localName == 'li') {
             predicate = RDF_R(`_${element.listCounter}`);
@@ -171,17 +173,17 @@ class RDFSubject extends RDFNode {
           if (attr.namespaceURI == NS_NC && attr.localName == 'parseType') continue;
         }
 
-        var resource = getRDFAttribute(child, 'resource');
-        var nodeID = getRDFAttribute(child, 'nodeID');
+        const resource = getRDFAttribute(child, 'resource');
+        const nodeID = getRDFAttribute(child, 'nodeID');
 
         if (resource !== undefined) {
-          var base = Services.io.newURI(element.baseURI);
+          const base = Services.io.newURI(element.baseURI);
           object = this._ds.getResource(base.resolve(resource));
         } else if (nodeID !== undefined) {
           object = this._ds.getBlankNode(nodeID);
         } else {
-          var childElement = null;
-          var subchild = child.firstChild;
+          let childElement = null;
+          let subchild = child.firstChild;
           while (subchild) {
             if (isText(subchild) && /\S/.test(subchild.nodeValue)) {
               //
@@ -210,11 +212,11 @@ class RDFSubject extends RDFNode {
    * assertion parsed or created programmatically.
    */
   _addAssertion(assertion) {
-    var predicate = assertion.getPredicate();
+    const predicate = assertion.getPredicate();
     if (predicate in this._assertions) this._assertions[predicate].push(assertion);
     else this._assertions[predicate] = [assertion];
 
-    var object = assertion.getObject();
+    const object = assertion.getObject();
     if (object instanceof RDFSubject) {
       // Create reverse assertion
       if (predicate in object._backwards) object._backwards[predicate].push(assertion);
@@ -261,7 +263,7 @@ export class RDFBlankNode extends RDFSubject {
   _applyToElement(element) {
     if (!this._nodeID) return;
     if (USE_RDFNS_ATTR) {
-      var prefix = this._ds._resolvePrefix(element, RDF_R('nodeID'));
+      const prefix = this._ds._resolvePrefix(element, RDF_R('nodeID'));
       element.setAttributeNS(prefix.namespaceURI, prefix.qname, this._nodeID);
     } else {
       element.setAttribute('nodeID', this._nodeID);
@@ -302,7 +304,7 @@ export class RDFBlankNode extends RDFSubject {
     } else {
       // Add the empty blank node, this is generally right since further
       // assertions will be added to fill this out
-      var newelement = this._ds._addElement(element, RDF_R('Description'));
+      const newelement = this._ds._addElement(element, RDF_R('Description'));
       newelement.listCounter = 1;
       this._elements.push(newelement);
     }
@@ -348,7 +350,7 @@ export class RDFDataSource {
    * been seen before a new one is created.
    */
   _getSubjectForElement(element) {
-    var about = getRDFAttribute(element, 'about');
+    const about = getRDFAttribute(element, 'about');
 
     if (about !== undefined) {
       const base = Services.io.newURI(element.baseURI);
@@ -359,10 +361,10 @@ export class RDFDataSource {
 
   /** Parses the document for subjects at the top level. */
   _parseDocument() {
-    var domnode = this._document.documentElement.firstChild;
+    let domnode = this._document.documentElement.firstChild;
     while (domnode) {
       if (isElement(domnode)) {
-        var subject = this._getSubjectForElement(domnode);
+        const subject = this._getSubjectForElement(domnode);
         subject._parseElement(domnode);
       }
       domnode = domnode.nextSibling;
@@ -375,7 +377,7 @@ export class RDFDataSource {
    * or created.
    */
   getBlankNode(nodeID) {
-    var rdfnode = new RDFBlankNode(this, nodeID);
+    const rdfnode = new RDFBlankNode(this, nodeID);
     this._allBlankNodes.push(rdfnode);
     return rdfnode;
   }
@@ -387,7 +389,7 @@ export class RDFDataSource {
   getResource(uri) {
     if (uri in this._resources) return this._resources[uri];
 
-    var resource = new RDFResource(this, uri);
+    const resource = new RDFResource(this, uri);
     this._resources[uri] = resource;
     return resource;
   }

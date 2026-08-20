@@ -1,2 +1,5 @@
 content userchromejs ./
 resource userchromejs ../
+
+# Firefox Scripts chrome content (updater tab, styles, module)
+content firefox-scripts updater/
