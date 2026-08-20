@@ -1,0 +1,8 @@
+# Keep the SHA-pinned GitHub Actions in .github/workflows/ci.yml current.
+# Dependabot updates the pinned commit SHA whenever the tracked tag moves.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
