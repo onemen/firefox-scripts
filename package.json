@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "Scripts for installing legacy extension on Firefox",
   "scripts": {
-    "lint": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache",
-    "format": "prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
-    "format:fix": "prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --write"
+    "lint": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache && node tools/format-c.mjs --check && make -C installer analyze",
+    "lint:c": "node tools/format-c.mjs --check",
+    "format": "node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
+    "format:fix": "node tools/format-c.mjs --write && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --write",
+    "upload": "node --env-file-if-exists=.env tools/publish/upload.mjs",
+    "upload:local": "node tools/publish/upload.mjs --local"
   },
   "keywords": [],
   "author": "ONEMEN <tabmix.onemen@gmail.com> (https://github.com/onemen)",
@@ -13,13 +16,20 @@
   "type": "module",
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@eslint/markdown": "8.0.3",
     "@microsoft/eslint-plugin-sdl": "1.1.0",
+    "@octokit/rest": "22.0.1",
     "@stylistic/eslint-plugin": "5.10.0",
-    "eslint": "10.7.0",
+    "archiver": "8.0.0",
+    "clang-format": "1.8.0",
+    "eslint": "10.8.1",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-mozilla": "4.4.0",
-    "globals": "17.7.0",
-    "prettier": "3.9.5",
-    "prettier-plugin-jsdoc": "1.8.1"
+    "eslint-plugin-security": "4.0.1",
+    "globals": "17.9.0",
+    "minimatch": "10.2.6",
+    "prettier": "3.9.6",
+    "prettier-plugin-jsdoc": "1.8.1",
+    "puppeteer-core": "25.5.0"
   }
 }

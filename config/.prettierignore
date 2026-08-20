@@ -5,4 +5,9 @@ logs
 *.css
 *.xhtml
 **/*local*/**
-pnpm-lock.yaml 
+**/*local*.*
+**/fx-folder/**
+**/.clang-format
+pnpm-lock.yaml
+# build outputs (installer Makefile + publish scripts dump into dist/)
+dist

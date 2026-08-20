@@ -1,0 +1,169 @@
+# Firefox Scripts — Future Work & Testing Automation
+
+Status: **Roadmap** — items below are the remaining hardening tasks for the installer and the
+in-browser auto-updater. The updater is implemented (see `docs/auto-updater.md` for the design); the
+hash-based status logic is in `docs/status-logic.md`.
+
+## 1. Updater end-to-end test list
+
+The updater UI is now a shipped package (`updater-ui.zip` → `chrome/utils/updater/ui`), updated by
+`scriptsUpdater.sys.mjs` (`ensureUpdaterUi`) before the tab opens. This list is tool-agnostic —
+whether it is automated with Puppeteer, Playwright, the Firefox CDP or a scripted profile is a
+separate decision.
+
+### 1.1 Detection & notification
+
+- **Hash parity:** the JS hash (`computeFilesHash`) equals the C installer's `--test-hash` output
+  and the publish scripts' hash for the same directory (see `installer/test/test_hash.mjs`).
+- **Clean install → detection:** a fresh profile reports **Not Installed**; after installing
+  utils/fx-folder/updater-ui → **Up To Date**; after touching one file → **Update Available**.
+- **Daily gate:** the tab opens at most once per day (`lastUpdateTabShown`); it does NOT open when
+  everything is current, and does NOT open when only `updater-ui` changed (self-update is silent).
+- **Decision pref:** `lastScriptsCheckDate` is set only on install / skip / "Remind me Tomorrow" /
+  restart — closing the tab without acting records nothing.
+- **Skip prefs:** `skippedHash.fx-folder` / `skippedHash.utils` suppress the pending update for that
+  exact hash and are cleared when the remote hash changes or local files match.
+- **Session restore:** a tab restored from a session (manual restart with the tab left open) re-runs
+  the real hash check and renders the truth, never a stale "All packages are up to date.".
+- **Single instance:** the scheduler and the engine both guard against a second updater tab.
+
+### 1.2 updater-ui self-update
+
+- **Missing UI + utils/config update:** `ensureUpdaterUi` downloads, hash-verifies and extracts
+  `updater-ui.zip` into `chrome/utils/updater/ui`, then opens the tab.
+- **Stale UI:** an installed `updater-ui` whose hash no longer matches the manifest is re-downloaded
+  before the tab opens.
+- **Missing remote package:** when `updater-ui.zip` cannot be fetched (404 / offline), the check
+  exits silently — no tab, no error UI — and the daily check retries later.
+- **Hash mismatch:** a downloaded `updater-ui.zip` that fails verification is discarded; the old UI
+  (if any) is kept.
+- **Old manifest:** a manifest without an `updater-ui` entry keeps the installed UI as-is.
+
+### 1.3 Install flows (from the tab)
+
+- **Utils install:** download → extract → verify → copy into `ProfD/chrome/utils`; restart loads the
+  new files.
+- **Config install, portable install** (user-owned `GreD`): direct `IOUtils` copy, no elevation.
+- **Config install, admin install** (Windows Program Files): elevated-copy helper, exactly one UAC
+  prompt, files land in `GreD`.
+- **Elevation cancelled:** helper exit `2` → "elevation cancelled", nothing written.
+- **Zip hash mismatch:** a zip whose extracted hash differs from the manifest is rejected before any
+  copy.
+- **Failure paths:** manifest unreachable, zip download failure, helper download failure — each
+  produces a visible in-tab message, not a silent hang.
+- **Manual download:** the "configuration files" / "utils" links fetch the zip and serve it via a
+  blob URL without navigating the tab.
+
+### 1.4 Installer (updater-ui rides along with utils)
+
+- **utils selected:** the installer fetches + POSTs `updater-ui.zip` alongside `utils.zip` and
+  extracts it into `chrome/utils/updater/ui` — with no updater-ui checkbox or status text in the UI.
+- **updater-ui fetch failed:** the installer still installs utils/config (updater-ui is optional;
+  the updater self-heals later).
+- **utils up to date / not selected:** updater-ui is not installed (it is not a separate selectable
+  component).
+
+### 1.5 Firefox 155 chrome-frame regression (the reason for this architecture)
+
+Firefox 155 hardened frame-principal inheritance in system-principal chrome documents, which broke
+the previous hosted-iframe updater UI. The following probes all failed in 155 (see
+`docs/generated-files-decision.md`); re-run them against new Firefox versions to confirm the
+shipped-package approach is still the right call:
+
+1. `iframe` + `srcdoc` (attribute before/after append, and the `.srcdoc` property) → stays
+   `about:blank`.
+2. `iframe` + `document.write` → `SecurityError: The operation is insecure`.
+3. `iframe` + `data:` / `blob:` URL → stays `about:blank`.
+4. `iframe` + `sandbox="allow-scripts"` with srcdoc/data: → stays `about:blank`.
+5. XUL `<browser type="content">` / `<iframe type="content">` via `document.createXULElement` →
+   stays `about:blank`.
+6. No `load` event, no `securitypolicyviolation` event; `contentDocument` readable but empty.
+
+## 2. Admin-rights (UAC) flow
+
+The config-install path (`config.js` / `config-prefs.js` → browser install dir) is the riskiest
+part: on Windows it requires elevation into `C:\Program Files\...`. Today it is only exercised
+manually.
+
+### 2.1 Manual matrix (current)
+
+| Scenario                      | Browser dir                        | Expectation                                                                     |
+| ----------------------------- | ---------------------------------- | ------------------------------------------------------------------------------- |
+| Portable / user-owned install | e.g. `D:\firefox`                  | Direct `IOUtils.copy` — no helper, no UAC.                                      |
+| Standard Windows install      | `C:\Program Files\Mozilla Firefox` | Direct copy fails → elevated-copy helper → exactly one UAC prompt → files land. |
+| Elevation cancelled           | —                                  | Helper exits `2` → tab shows "elevation cancelled", nothing written.            |
+| Linux (deb/rpm)               | `/usr/lib/firefox`                 | `pkexec` prompt once (fallback `sudo`).                                         |
+| Linux snap                    | `/etc/firefox` (per docs)          | **open**: GreD differs from the documented target — verify actual path.         |
+| macOS                         | `Firefox.app/Contents/Resources`   | `osascript` prompt once.                                                        |
+
+### 2.2 Automated (planned, tool undecided)
+
+The matrix above should run against real published `latest` zips on Windows / Ubuntu / macOS ×
+(Firefox stable, Firefox ESR, Waterfox) × (protected dir, portable dir). Windows elevation cannot be
+automated on hosted runners (the UAC prompt is an OS-level UI) — it needs a self-hosted runner, a
+VM, or a non-elevated user running against an admin-owned install dir. The automation tool
+(Puppeteer / Playwright / Firefox CDP) is deliberately not decided here.
+
+- **Helper binary trust:** publish a `helper_<platform>.sha256` asset alongside the helper binaries
+  and assert the downloaded binary matches it before execution.
+- **Trigger:** on push to `main` when `core/**`, `config/installer.conf`, `installer/src/**`,
+  `tools/publish/**` change, plus nightly.
+
+## 3. Publish pipeline tasks
+
+- [x] Compile + upload the installer and helper binaries. `tools/publish/upload.mjs` (`pnpm upload`)
+      compiles on source change and publishes `installer_win.exe` / `installer_linux` /
+      `installer_mac` as assets of the `RELEASE_NAME` release and `helper_win.exe` / `helper_linux`
+      / `helper_mac` (+ the hash manifest) to the gh-pages branch. By default it builds only the
+      current OS — run it on each OS (or pass `--platform=win|linux|mac`) to cover all three.
+- [x] The updater tab UI is published as a third package, `updater-ui.zip` (built from
+      `tools/publish/remote-ui/` + generated `updater.css`), with a manifest `updater-ui` entry.
+- [ ] Re-add a `.github/workflows/build-and-upload.yml` action: a Windows/Linux/macOS build matrix
+      (each OS runs `upload` for its platform and stages the binaries) + one upload job that
+      publishes the staged set, for fully automated cross-platform publishing.
+- [ ] Publish a `helper_<platform>.sha256` asset alongside the helper binaries and assert the
+      downloaded binary matches it (see §2.2 helper-binary trust).
+- [x] `versionInfo.json` stopped shipping (createZip.mjs `CUSTOM_IGNORE_PATTERNS` + `upload.mjs`
+      `HASH_EXCLUDE`) and was deleted from the tree; the obsolete-file entry in
+      `installer/src/obsolete_files.h` now only cleans historically-installed copies.
+- [x] Zips are now published to the `firefox-scripts` repo (`ZIP_DOWNLOAD_REPO=firefox-scripts`) —
+      everything (zips, helpers, installer, manifest) is served from one place.
+
+### Generated-file consistency (resolved — nothing tracked to drift)
+
+The generated files (`updater-config.sys.mjs`, `updater.css`, `_config.h`, `resources.h`) are
+**untracked** and regenerated on demand by the Makefile / `createZip.mjs`, so the old commit-time
+sync problem is gone — there is nothing tracked that can drift (see
+`docs/generated-files-decision.md`). What a future CI job should verify instead:
+
+- **Deterministic publish output:** run `upload:local --mode=prod` (or the generators) and fail if
+  the produced snapshot (hashes, zips, manifest `files` lists) differs between runs.
+- **Build matrix:** the §3 multi-platform binary build (each OS compiles its own installer/helper).
+
+There is currently **no `.github/workflows/`** in the repo, so these run locally only.
+
+## 4. Installer UI polish
+
+- [ ] Expand/collapse all controls in the browser cards.
+- [ ] Scan all profiles and binaries using cityhash for faster status (currently one SHA-256 per
+      package per profile).
+- [ ] Test on Linux with and without snap; test on macOS (both Intel and arm64).
+
+## 5. Updater UX follow-ups
+
+- [ ] Manual-verification fallback when the elevated-copy helper download/elevation fails (show
+      copy-paste instructions with the exact source/destination paths).
+- [ ] Verify the tab's per-file progress reporting and the "Restart to apply" flow in a real profile
+      (currently requires a live browser).
+- [ ] Re-verify the `skippedHash.*` clearing logic when the remote hash changes or local files
+      match.
+
+## 6. Design decisions that were consciously kept (no further action)
+
+- `parse_manifest_files()` in the installer is strstr-based JSON parsing — fragile but sufficient; a
+  full JSON parser in C is out of scope.
+- The installer's token/restart race and the zip-derived hash fallback are accepted as-is
+  (documented in their respective code comments).
+- The updater keeps its in-memory state; only the daily check and skip prefs persist.
+- `updater-ui` has no per-package skip or status UI anywhere (installer or tab) — it is a silent
+  self-updating dependency of utils.

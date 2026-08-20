@@ -32,8 +32,10 @@ releases published since August 2024.
 
 - **Paths:**
   - `core/chrome/utils/updater/`
-- **Description:** Original updater UI, styles, and update logic (`scriptsUpdater.sys.mjs`,
-  `updater.js`, `scriptsUpdater.xhtml`, `update.css`, `updater-config.sys.mjs`, and associated
-  assets).
+  - `tools/publish/remote-ui/`
+- **Description:** In-browser updater: `scriptsUpdater.sys.mjs` (daily check + updater-ui
+  self-update, ships in utils.zip) and the updater tab UI/engine shipped in `updater-ui.zip`
+  (`updater.html`, `updater.js`, `updater-ui.js`, the generated `updater.css`, brand logos), served
+  as a chrome-privileged page at `chrome://firefox-scripts/content/ui/updater.html`.
 - **Author & Copyright:** Copyright (c) 2026 ONEMEN (<tabmix.onemen@gmail.com>)
 - **License:** [MIT License](../LICENSE)
