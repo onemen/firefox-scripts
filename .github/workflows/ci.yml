@@ -55,8 +55,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            make
+            mingw-w64-ucrt-x86_64-gcc make
 
       - name: Build all packages and binaries
         shell: bash
