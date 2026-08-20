@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast static gate: eslint (incl. security plugin) + prettier + clang-format
+  # + the gcc -fanalyzer C analysis.  Runs on every PR and on main pushes.
+  checks:
+    name: lint + format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm format
+
+  # Publish-path gate: `upload:local --mode=dev` rebuilds the zips and the
+  # native binaries for the runner's OS.  This is what catches regressions in
+  # the generated files, hashes and Makefile before they reach a release.
+  build:
+    name: publish gate — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Set up MSYS2 toolchain (make + gcc)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            make
+
+      - name: Build all packages and binaries
+        shell: bash
+        run: pnpm upload:local --mode=dev
+
+      # Security regression gate: every state-changing /api route must reject
+      # a missing/wrong session token, and no response may carry the wildcard
+      # Access-Control-Allow-Origin header.  Windows only: it drives the win
+      # binary; the same gate logic is covered on other OSes by review.
+      - name: Security smoke test — installer API
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node tools/test/smoke-security.mjs
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/
+          if-no-files-found: error

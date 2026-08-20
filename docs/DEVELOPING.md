@@ -169,6 +169,29 @@ node installer/test/test_hash.mjs
 
 Exit code 0 means every package's JS hash matches the C binary's (computed with `--test-hash`).
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every PR and on `main` pushes:
+
+- **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, clang-format,
+  `gcc -fanalyzer`) and `pnpm format`.
+- **publish gate** (Windows / Linux / macOS) — `pnpm upload:local --mode=dev` rebuilds every
+  package zip and the native binaries for the runner's OS, so regressions in generated files,
+  hashes or the Makefile fail the PR before they reach a release.
+- **Security smoke test** (Windows) — `tools/test/smoke-security.mjs` launches the built installer
+  headless and verifies every state-changing `/api` route rejects a missing/wrong session token,
+  valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`.
+
+Run the smoke test locally (Windows, from the repo root):
+
+```bash
+pnpm upload:local --mode=dev
+node tools/test/smoke-security.mjs
+```
+
+The installer's `--smoke-test` flag makes the headless run possible: it skips the
+no-browser-detected abort and the browser-tab open, and prints the session token to stdout.
+
 ## Test the auto-updater
 
 1. Open `about:config` and set `xpinstall.signatures.required` to `false` (Firefox

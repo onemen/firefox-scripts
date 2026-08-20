@@ -27,6 +27,11 @@
 // ===== Verbose logging =====
 static int g_verbose = 0;
 
+// --smoke-test: run headless for CI security smoke tests — never abort when
+// no browser is detected, never open a browser tab, and print the session
+// token to stdout so the test can drive the API.
+static int g_smoke_test = 0;
+
 #define verbose_printf(...)                 \
     do {                                    \
         if (g_verbose) printf(__VA_ARGS__); \
@@ -2228,6 +2233,9 @@ static void print_help(void) {
     printf("                  Compute SHA256 hash of files in <path> for <type>\n");
     printf("                  (type: \"utils\" or \"fx-folder\") using the canonical\n");
     printf("                  file list from <file> (e.g. a dist/prod-*/hashes.json)\n");
+    printf("  --smoke-test    Headless mode for CI security smoke tests: run the\n");
+    printf("                  HTTP API without aborting on missing browsers or\n");
+    printf("                  opening a browser tab; print the session token.\n");
     printf("\nWhen run without options, the installer starts an HTTP server\n");
     printf("and opens a browser-based UI for choosing installation options.\n");
     printf("Use --verbose when running from a terminal to see progress.\n");
@@ -2298,6 +2306,10 @@ static int main_impl(int argc, char *argv[]) {
 #endif
             g_verbose = 1;
         }
+        if (strcmp(argv[1], "--smoke-test") == 0) {
+            g_smoke_test = 1;
+            g_verbose = 1;
+        }
         if (strcmp(argv[1], "--scan-only") == 0) {
             // Debug helper: run browser detection only, print the result, and
             // exit without network checks, the HTTP server, or the UI.
@@ -2348,7 +2360,7 @@ static int main_impl(int argc, char *argv[]) {
     printf("Scanning for running browsers...\n");
     detected_count = scan_and_filter_browsers(detected_browsers, MAX_BROWSERS);
 
-    if (detected_count == 0) {
+    if (detected_count == 0 && !g_smoke_test) {
         printf("No supported browsers detected.\n");
         printf("Please start Firefox, Waterfox, Zen Browser, LibreWolf, or Floorp and run again.\n");
 #ifdef _WIN32
@@ -2426,6 +2438,12 @@ static int main_impl(int argc, char *argv[]) {
         return 1;
     }
     log_msg("[startup] port=%d session_token=%s\n", port, g_session_token);
+    if (g_smoke_test) {
+        // The smoke test needs the token to prove valid-token requests pass the
+        // gate; print it (flushed) so the spawned process can read it.
+        printf("SMOKE_TEST_SESSION_TOKEN=%s\n", g_session_token);
+        fflush(stdout);
+    }
 
     printf("\nStarting installer UI at http://localhost:%d/\n", port);
 
@@ -2465,24 +2483,26 @@ static int main_impl(int argc, char *argv[]) {
     // is why the restored session had no installer tab).
     snprintf(g_ui_url, sizeof(g_ui_url), "http://localhost:%d/?t=%s", port, g_session_token);
     log_msg("[startup] opening %s\n", g_ui_url);
-    if (detected_count > 0) {
-        // Prefer the most recently used browser window over the first detected
-        // entry, so with several browsers open the tab lands where the user is
-        // actually working instead of an arbitrary instance.
-        int ui_host_idx = find_last_used_browser_index(detected_browsers, detected_count);
-        if (ui_host_idx < 0) ui_host_idx = 0;
-        // Record which profile hosts the UI tab so the restart worker can
-        // reopen the UI there after a restart that kills this browser.
-        if (strlen(detected_browsers[ui_host_idx].profile_path) > 0) {
-            strncpy(g_ui_host_profile, detected_browsers[ui_host_idx].profile_path, MAX_PATH_LEN - 1);
-            g_ui_host_profile[MAX_PATH_LEN - 1] = '\0';
+    if (!g_smoke_test) {
+        if (detected_count > 0) {
+            // Prefer the most recently used browser window over the first
+            // detected entry, so with several browsers open the tab lands where
+            // the user is actually working instead of an arbitrary instance.
+            int ui_host_idx = find_last_used_browser_index(detected_browsers, detected_count);
+            if (ui_host_idx < 0) ui_host_idx = 0;
+            // Record which profile hosts the UI tab so the restart worker can
+            // reopen the UI there after a restart that kills this browser.
+            if (strlen(detected_browsers[ui_host_idx].profile_path) > 0) {
+                strncpy(g_ui_host_profile, detected_browsers[ui_host_idx].profile_path, MAX_PATH_LEN - 1);
+                g_ui_host_profile[MAX_PATH_LEN - 1] = '\0';
+            }
+            open_url_in_profile(detected_browsers[ui_host_idx].binary_path,
+                                detected_browsers[ui_host_idx].profile_path, g_ui_url);
+            // Bring the hosting window to the foreground so the new tab is visible.
+            focus_browser_window(detected_browsers[ui_host_idx].pid);
+        } else {
+            open_browser(g_ui_url, NULL);  // fallback to default browser
         }
-        open_url_in_profile(detected_browsers[ui_host_idx].binary_path,
-                            detected_browsers[ui_host_idx].profile_path, g_ui_url);
-        // Bring the hosting window to the foreground so the new tab is visible.
-        focus_browser_window(detected_browsers[ui_host_idx].pid);
-    } else {
-        open_browser(g_ui_url, NULL);  // fallback to default browser
     }
 
     printf("Press Ctrl+C to stop the installer.\n");
