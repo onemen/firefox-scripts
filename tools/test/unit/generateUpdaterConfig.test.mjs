@@ -84,12 +84,10 @@ test('generated module: dev mode — jsDelivr URLs, IS_DEV true, -dev suffix', (
   const {module} = probe('--mode=dev');
   assert.match(module, /IS_DEV: true/);
   assert.match(module, /IS_LOCAL: false/);
-  // Long URLs are prettier-wrapped across two lines:
-  //   ZIP_BASE_URL:\n    'https://cdn.jsdelivr.net/...'
-  assert.match(
-    module,
-    /ZIP_BASE_URL:\n\s+'https:\/\/cdn\.jsdelivr\.net\/gh\/onemen\/firefox-scripts@dev-build-/
-  );
+  // The URL may be prettier-wrapped (ZIP_BASE_URL:\n    'https://...') when the
+  // dev-build branch name makes it long (local branches) or kept on one line
+  // when it is short (CI's detached HEAD).  Match the URL itself, either way.
+  assert.match(module, /https:\/\/cdn\.jsdelivr\.net\/gh\/onemen\/firefox-scripts@dev-build-/);
   assert.match(module, /ASSET_SUFFIX: '-dev'/);
 });
 
@@ -97,8 +95,8 @@ test('generated module: prod-local — IS_LOCAL true, file:// URLs, no suffix ch
   const {module} = probe('--mode=prod', '--local');
   assert.match(module, /IS_DEV: false/);
   assert.match(module, /IS_LOCAL: true/);
-  assert.match(module, /ZIP_BASE_URL: 'file:\/\/\//);
-  assert.match(module, /LOCAL_DIST_PATH: '.*dist\/prod-/);
+  assert.match(module, /file:\/\/\//);
+  assert.match(module, /dist\/prod-/);
   assert.doesNotMatch(module, /ASSET_SUFFIX: '-dev'/);
 });
 
@@ -106,6 +104,6 @@ test('generated module: dev-local — dev suffix retained on top of file:// URLs
   const {module} = probe('--mode=dev', '--local');
   assert.match(module, /IS_DEV: true/);
   assert.match(module, /IS_LOCAL: true/);
-  assert.match(module, /ZIP_BASE_URL: 'file:\/\/\//);
+  assert.match(module, /file:\/\/\//);
   assert.match(module, /ASSET_SUFFIX: '-dev'/);
 });
