@@ -136,9 +136,11 @@ pnpm install
 pnpm lint          # eslint + C format check
 pnpm format        # check: C + prettier
 pnpm format:fix    # apply both
+pnpm test          # unit tests (tools/test/unit/, pure Node, no build)
 
-# only test suite (auto-generates a prod snapshot via upload:local if needed)
-node installer/test/test_hash.mjs
+# hash parity JS vs C (auto-generates a prod snapshot via upload:local if needed;
+# also works against the newest dev- snapshot, so it runs after upload:local --mode=dev)
+pnpm test:hash
 ```
 
 **Publish — only when the user explicitly asks.** `upload:local` is the token-less offline check:
@@ -176,12 +178,13 @@ Match the change to its validation:
 | Change                      | Validate with                                                           |
 | --------------------------- | ----------------------------------------------------------------------- |
 | C (`installer/src/`)        | build the affected target (`make dist_win` / `dist_linux` / `dist_mac`) |
-| Hash / file list            | `node installer/test/test_hash.mjs`                                     |
+| Hash / file list            | `pnpm test:hash`                                                        |
+| Publish helpers / hashing   | `pnpm test` (unit tests in `tools/test/unit/`)                          |
 | Generated-file sources      | `node tools/publish/syncGeneratedFiles.mjs`                             |
 | Packaging / publish scripts | `pnpm upload:local -- --mode=prod`                                      |
 
-Pre-PR gates: `pnpm lint`, `pnpm format`, and the hash test. **Do not claim tests passed if the
-required toolchain or environment was unavailable.**
+Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test. **Do not claim tests
+passed if the required toolchain or environment was unavailable.**
 
 ## Agent workflow
 

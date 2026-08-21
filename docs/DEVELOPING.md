@@ -157,14 +157,29 @@ deletes the generated files from disk when the run finishes (`cleanGenerated`), 
 always matches a fresh clone — a fresh clone builds and publishes without any pre-existing generated
 files, and no localhost/dev-baked copies are left behind after a local/dev run.
 
+## Test: unit tests (`pnpm test`)
+
+Fast, pure-Node unit tests (no build, no network) live in `tools/test/unit/` and run identically
+locally and in CI:
+
+```bash
+pnpm test
+```
+
+Coverage: `createZip.mjs` (flat vs fx-folder layout, extraFiles), `generateUpdaterConfig.mjs` (URLs
+per mode, LOCAL flag, dev/local overrides), `hashUtils.mjs` (directory/file-set hashing, gitignore
+filtering, sorting), and `embed.mjs` (generated C header via `--stdout`).
+
 ## Test: installer hash verification
 
 A cross-platform Node.js test verifies that the C installer's hash computation matches the
-JavaScript reference in `tools/publish/hashUtils.mjs`:
+JavaScript reference in `tools/publish/hashUtils.mjs`. It uses the newest `prod-` or `dev-` snapshot
+under `dist/` (generating a prod one via `upload:local --mode=prod` when none exists), so it can run
+right after a `--mode=dev` build without a second compile:
 
 ```bash
-cd installer && make dist_linux
-node installer/test/test_hash.mjs
+pnpm upload:local --mode=dev
+pnpm test:hash
 ```
 
 Exit code 0 means every package's JS hash matches the C binary's (computed with `--test-hash`).
@@ -174,13 +189,15 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
 `.github/workflows/ci.yml` runs on every PR and on `main` pushes:
 
 - **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, clang-format,
-  `gcc -fanalyzer`) and `pnpm format`.
+  `gcc -fanalyzer`), `pnpm format`, and `pnpm test` (unit tests).
 - **publish gate** (Windows / Linux / macOS) — `pnpm upload:local --mode=dev` rebuilds every package
   zip and the native binaries for the runner's OS, so regressions in generated files, hashes or the
   Makefile fail the PR before they reach a release.
 - **Security smoke test** (Windows) — `tools/test/smoke-security.mjs` launches the built installer
   headless and verifies every state-changing `/api` route rejects a missing/wrong session token,
   valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`.
+- **Hash parity** (Windows) — `pnpm test:hash` verifies the JS and C installer hashes match, using
+  the dev snapshot built by the publish gate (no second build).
 
 Run the smoke test locally (Windows, from the repo root):
 

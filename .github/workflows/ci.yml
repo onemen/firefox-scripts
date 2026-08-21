@@ -29,6 +29,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm format
+      - run: pnpm test
 
   # Publish-path gate: `upload:local --mode=dev` rebuilds the zips and the
   # native binaries for the runner's OS.  This is what catches regressions in
@@ -72,6 +73,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: node tools/test/smoke-security.mjs
+
+      # JS vs C hash parity against the dev snapshot built above (test_hash
+      # accepts both prod- and dev- snapshots, so no second build is needed).
+      - name: Hash parity — JS vs C installer
+        if: runner.os == 'Windows'
+        shell: bash
+        run: pnpm test:hash
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

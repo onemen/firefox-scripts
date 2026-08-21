@@ -7,6 +7,8 @@
     "lint:c": "node tools/format-c.mjs --check",
     "format": "node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
     "format:fix": "node tools/format-c.mjs --write && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --write",
+    "test": "node --test \"tools/test/unit/*.test.mjs\"",
+    "test:hash": "node installer/test/test_hash.mjs",
     "upload": "node --env-file-if-exists=.env tools/publish/upload.mjs",
     "upload:local": "node tools/publish/upload.mjs --local"
   },

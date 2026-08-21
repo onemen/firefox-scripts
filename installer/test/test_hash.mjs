@@ -9,10 +9,11 @@
  *
  * If no directories are given, defaults to: core/chrome/utils core/fx-folder
  *
- * The canonical `files` list per package comes from the newest prod-*
- * snapshot's manifest (dist/prod-<branch>-<hash>/hashes.json). If none exists
- * it is generated via `upload:local --mode=prod` (which writes one without
- * touching GitHub), so the test always reflects the current source set.
+ * The canonical `files` list per package comes from the newest snapshot's
+ * manifest (dist/prod-<branch>-<hash>/ or dist/dev-<branch>-<hash>/hashes.json,
+ * either mode works — the file set is identical). If none exists it is
+ * generated via `upload:local --mode=prod` (which writes one without touching
+ * GitHub), so the test always reflects the current source set.
  *
  * This test does NOT depend on @octokit/rest (only available in the publish
  * environment). It replicates the core hash algorithm inline.
@@ -49,14 +50,14 @@ function computeDirectoryHash(dirPath, relFiles) {
   return hash.digest('hex');
 }
 
-/** Newest prod-* snapshot dir (dist/prod-<branch>-<hash>/) with a manifest. */
+/** Newest prod- or dev- snapshot dir with a manifest (either mode works). */
 function findSnapshot() {
   const distRoot = path.join(REPO_ROOT, 'dist');
   if (!fs.existsSync(distRoot)) return null;
   let best = null;
   let bestMtime = 0;
   for (const entry of fs.readdirSync(distRoot, {withFileTypes: true})) {
-    if (!entry.isDirectory() || !entry.name.startsWith('prod-')) continue;
+    if (!entry.isDirectory() || !/^(prod|dev)-/.test(entry.name)) continue;
     const dir = path.join(distRoot, entry.name);
     if (!fs.existsSync(path.join(dir, 'hashes.json'))) continue;
     const mtime = fs.statSync(dir).mtimeMs;
@@ -92,7 +93,11 @@ function getInstallerPath(snapshotDir) {
   if (process.platform === 'win32') name = 'installer_win';
   else if (process.platform === 'darwin') name = 'installer_mac';
   else name = 'installer_linux';
-  return path.join(snapshotDir, `${name}${ext}`);
+  // Dev snapshots name binaries installer_win-dev.exe; prod keeps the plain
+  // name.  Accept either so a dev snapshot from CI's publish gate works.
+  const plain = path.join(snapshotDir, `${name}${ext}`);
+  if (fs.existsSync(plain)) return plain;
+  return path.join(snapshotDir, `${name}-dev${ext}`);
 }
 
 /** Read the canonical `files` list for a package from the snapshot manifest. */
