@@ -338,7 +338,7 @@ async function runStaleScenario(
       config: !document.getElementById('skip-config')?.hidden,
       utils: !document.getElementById('skip-utils')?.hidden,
     }));
-    check(counter, skipLabels.utils, 'skip checkbox shown for utils');
+    if (forceUtilsStale) check(counter, skipLabels.utils, 'skip checkbox shown for utils');
     if (forceConfigStale) check(counter, skipLabels.config, 'skip checkbox shown for config');
 
     // ── No page errors ──
