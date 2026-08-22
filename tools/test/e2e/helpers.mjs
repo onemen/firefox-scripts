@@ -53,7 +53,9 @@ export async function launchFirefox(binary, profileDir, {headless = false} = {})
     userDataDir: profileDir,
     headless,
     protocol: 'webDriverBiDi',
-    args: ['-no-remote', '-remote-allow-system-access'],
+    // GreD and chrome-manifest files are rewritten between scenarios. Purge
+    // startup caches so each fresh profile observes the current fixture.
+    args: ['-no-remote', '-remote-allow-system-access', '-purgecaches'],
   });
 }
 
