@@ -23,39 +23,47 @@ function gitBlobSha(buf) {
 
 /**
  * Landing page for the Pages site: the branch carries only binary artifacts and
- * hashes.json, so without this the site root would be a 404. GitHub's Jekyll
- * build renders a branch README.md as the index page when no index.html exists
- * — which is also why the branch must NOT get a .nojekyll. Content-addressed
+ * hashes.json, so without this the site root would be a 404. Plain static
+ * index.html on purpose — the branch inherits .nojekyll from the default
+ * branch, so Jekyll (and its README-as-index fallback) is disabled. The
+ * branch's own README.md stays for people browsing the repo. Content-addressed
  * like every other pushed file: unchanged content is skipped, so idle runs
  * create no commit for it.
  */
-export function pagesReadme() {
+export function pagesIndex() {
   const repoUrl = `https://github.com/${REPO_OWNER}/${ZIP_PAGES_REPO}`;
+  const li = (href, label, note = '') =>
+    `    <li><a href="${href}">${label}</a>${note ? ` — ${note}` : ''}</li>`;
   return Buffer.from(
     [
-      '# firefox-scripts',
-      '',
-      'Helper scripts that let Firefox-family browsers run legacy',
-      '(non-WebExtension) extensions.',
-      '',
-      '> **🚧 Under active development** — expect breaking changes.',
-      '',
-      '## Downloads',
-      '',
-      'Installers for Windows, Linux and macOS are attached to the',
-      `[latest release](${repoUrl}/releases/latest).`,
-      '',
-      'Packages fetched by the installer UI (also on this site):',
-      '',
-      '- [`fx-folder.zip`](fx-folder.zip) — browser config package',
-      '- [`utils.zip`](utils.zip) — chrome scripts + updater',
-      '- [`hashes.json`](hashes.json) — integrity manifest',
-      '',
-      '## Documentation',
-      '',
-      `- [Development guide](${repoUrl}/blob/main/docs/DEVELOPING.md)`,
-      `- [Auto-updater design](${repoUrl}/blob/main/docs/auto-updater.md)`,
-      `- [Contributing](${repoUrl}/blob/main/CONTRIBUTING.md)`,
+      '<!doctype html>',
+      '<html lang="en">',
+      '  <head>',
+      '    <meta charset="utf-8" />',
+      '    <meta name="viewport" content="width=device-width, initial-scale=1" />',
+      '    <title>firefox-scripts</title>',
+      '  </head>',
+      '  <body>',
+      '    <h1>firefox-scripts</h1>',
+      '    <p>Helper scripts that let Firefox-family browsers run legacy (non-WebExtension) extensions.</p>',
+      '    <p><strong>🚧 Under active development</strong> — expect breaking changes.</p>',
+      '    <h2>Downloads</h2>',
+      '    <p>Installers for Windows, Linux and macOS are attached to the',
+      `      <a href="${repoUrl}/releases/latest">latest release</a>.</p>`,
+      '    <p>Packages fetched by the installer UI (also on this site):</p>',
+      '    <ul>',
+      li('fx-folder.zip', 'fx-folder.zip', 'browser config package'),
+      li('utils.zip', 'utils.zip', 'chrome scripts + updater'),
+      li('hashes.json', 'hashes.json', 'integrity manifest'),
+      '    </ul>',
+      '    <h2>Documentation</h2>',
+      '    <ul>',
+      li(`${repoUrl}/blob/main/docs/DEVELOPING.md`, 'Development guide'),
+      li(`${repoUrl}/blob/main/docs/auto-updater.md`, 'Auto-updater design'),
+      li(`${repoUrl}/blob/main/CONTRIBUTING.md`, 'Contributing'),
+      '    </ul>',
+      '  </body>',
+      '</html>',
       '',
     ].join('\n'),
     'utf-8'

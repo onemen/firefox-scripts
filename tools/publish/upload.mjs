@@ -74,7 +74,7 @@ import {
   loadSharedPatterns,
   REPO_ROOT,
 } from './publishCommon.mjs';
-import {pagesReadme, uploadFilesToPages} from './uploadToPages.mjs';
+import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
 import {
   bold,
   detail,
@@ -447,9 +447,10 @@ async function publishToGitHub({
   // each blob, so unchanged files are skipped and an idle run creates no
   // commit at all.
   const pagesFiles = {};
-  // Landing page for the Pages site root (rendered from README.md by the
-  // Jekyll build). Content-addressed downstream: skipped when unchanged.
-  pagesFiles['README.md'] = pagesReadme();
+  // Landing page for the Pages site root (static index.html — the branch's
+  // .nojekyll disables the Jekyll README fallback). Content-addressed
+  // downstream: skipped when unchanged.
+  pagesFiles['index.html'] = pagesIndex();
 
   if (PUBLISH_MODE === 'dev') {
     for (const name of builtZips) pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
