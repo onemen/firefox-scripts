@@ -159,19 +159,18 @@ jobs:
           if-no-files-found: ignore
 
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
-  # Firefox Dev Edition, LibreWolf, and Floorp are on chocolatey.
-  # Waterfox and Zen require manual install — see docs/e2e-matrix-plan.md.
+  # LibreWolf is on chocolatey. Floorp via winget.
+  # Firefox Dev Edition, Waterfox, and Zen require manual install.
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
     runs-on: windows-latest
-    continue-on-error: true
+    continue-on-error: true # advisory until validated
     strategy:
       fail-fast: false
       matrix:
-        browser: [firefox-dev, librewolf, floorp]
+        browser: [librewolf, floorp]
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
-      RUNTIME_BROWSER: ${{ matrix.browser }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -183,8 +182,28 @@ jobs:
           version: 9
       - run: pnpm install --frozen-lockfile
 
-      - name: Install ${{ matrix.browser }}
-        run: choco install ${{ matrix.browser }} -y --no-progress
+      - name: Install ${{ matrix.browser }} (choco)
+        if: matrix.browser == 'librewolf'
+        run: choco install librewolf -y --no-progress
+
+      - name: Install ${{ matrix.browser }} (winget)
+        if: matrix.browser == 'floorp'
+        run: winget install Ablaze.Floorp --accept-package-agreements --accept-source-agreements
+
+      - name: Locate ${{ matrix.browser }} binary
+        run: |
+          $exe = Get-Command ${{ matrix.browser }}.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          if (-not $exe) {
+            $dirs = @("$env:LOCALAPPDATA", "$env:ProgramFiles", "${env:ProgramFiles(x86)}")
+            foreach ($d in $dirs) {
+              $found = Get-ChildItem "$d" -Recurse -Name "${{ matrix.browser }}.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($found) { $exe = Join-Path $d $found; break }
+            }
+          }
+          if (-not $exe) { Write-Error "${{ matrix.browser }}.exe not found"; exit 1 }
+          Write-Host "Found: $exe"
+          & $exe --version
+          "FIREFOX_BINARY=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
