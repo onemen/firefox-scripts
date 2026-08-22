@@ -112,8 +112,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
           mkdir -p "$HOME/firefox-app"
-          curl -L -o /tmp/firefox.tar.xz \
-            "https://download.mozilla.org/?product=firefox-latest&os=linux64&lang=en-US"
+          for i in 1 2 3; do
+            curl -L --retry 2 -o /tmp/firefox.tar.xz \
+              "https://download.mozilla.org/?product=firefox-latest&os=linux64&lang=en-US" && break
+            echo "Attempt $i failed, waiting..." && sleep 5
+          done
+          test -f /tmp/firefox.tar.xz || { echo 'Firefox download failed after 3 attempts'; exit 1; }
           tar xf /tmp/firefox.tar.xz -C "$HOME/firefox-app"
           echo "$HOME/firefox-app/firefox/firefox" > /tmp/firefox-path.txt
           "$HOME/firefox-app/firefox/firefox" --version
