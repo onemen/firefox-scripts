@@ -192,13 +192,17 @@ jobs:
 
       - name: Locate ${{ matrix.browser }} binary
         run: |
-          $exe = Get-Command ${{ matrix.browser }}.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          # Search Program Files first (real install, not choco shim) —
+          # Get-Command may resolve the chocolatey shim, whose dir is not GreD.
+          $exe = $null
+          $dirs = @("$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA")
+          foreach ($d in $dirs) {
+            $found = Get-ChildItem "$d" -Recurse -Name "${{ matrix.browser }}.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $exe = Join-Path $d $found; break }
+          }
+          # Fallback: PATH shim (winget-installed Floorp may only have this)
           if (-not $exe) {
-            $dirs = @("$env:LOCALAPPDATA", "$env:ProgramFiles", "${env:ProgramFiles(x86)}")
-            foreach ($d in $dirs) {
-              $found = Get-ChildItem "$d" -Recurse -Name "${{ matrix.browser }}.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($found) { $exe = Join-Path $d $found; break }
-            }
+            $exe = Get-Command ${{ matrix.browser }}.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
           }
           if (-not $exe) { Write-Error "${{ matrix.browser }}.exe not found"; exit 1 }
           Write-Host "Found: $exe"

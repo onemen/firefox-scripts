@@ -174,18 +174,25 @@ export function discoverFirefoxBinary() {
     const candidates = [];
     for (const [key, b] of Object.entries(BROWSERS)) {
       if (target && key !== target) continue;
+      const name = b.mac.replace('.app', '');
       candidates.push(
-        `/Applications/${b.mac}/Contents/MacOS/${b.mac.replace('.app', '')}`,
+        `/Applications/${b.mac}/Contents/MacOS/${name.toLowerCase()}`,
+        `/Applications/${b.mac}/Contents/MacOS/${name}`,
         `/Applications/${b.mac}/Contents/MacOS/firefox`
       );
     }
     return candidates.find(p => fs.existsSync(p)) || null;
   }
-  // Linux: /usr/bin is the typical symlink target
+  // Linux: /usr/bin is the typical symlink target.  Include legacy paths
+  // (firefox-esr, snap) that were supported before the BROWSERS registry.
   const candidates = [];
   for (const [key, b] of Object.entries(BROWSERS)) {
     if (target && key !== target) continue;
     candidates.push(`/usr/bin/${b.linux}`, `/opt/${b.linux}/${b.linux}`);
+  }
+  // Fallback paths not covered by BROWSERS entries
+  if (!target) {
+    candidates.push('/usr/bin/firefox-esr', '/snap/bin/firefox');
   }
   return candidates.find(p => fs.existsSync(p)) || null;
 }
