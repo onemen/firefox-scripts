@@ -357,6 +357,10 @@ platform would rebuild after a source change. Prod dispatches must target `main`
 `gh-pages`" — the workflow pushes to that branch, it does not switch Pages to the actions deployment
 method.
 
+Every publish also pushes a generated `README.md` (see `pagesReadme()` in
+`tools/publish/uploadToPages.mjs`) to the branch root: GitHub's Jekyll build renders it as the site
+index, so the artifact-only branch still has a landing page linking downloads and docs.
+
 ### Build outputs
 
 All build artifacts land in a single gitignored `dist/` tree at the repo root:

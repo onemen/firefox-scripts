@@ -22,6 +22,47 @@ function gitBlobSha(buf) {
 }
 
 /**
+ * Landing page for the Pages site: the branch carries only binary artifacts and
+ * hashes.json, so without this the site root would be a 404. GitHub's Jekyll
+ * build renders a branch README.md as the index page when no index.html exists
+ * — which is also why the branch must NOT get a .nojekyll. Content-addressed
+ * like every other pushed file: unchanged content is skipped, so idle runs
+ * create no commit for it.
+ */
+export function pagesReadme() {
+  const repoUrl = `https://github.com/${REPO_OWNER}/${ZIP_PAGES_REPO}`;
+  return Buffer.from(
+    [
+      '# firefox-scripts',
+      '',
+      'Helper scripts that let Firefox-family browsers run legacy',
+      '(non-WebExtension) extensions.',
+      '',
+      '> **🚧 Under active development** — expect breaking changes.',
+      '',
+      '## Downloads',
+      '',
+      'Installers for Windows, Linux and macOS are attached to the',
+      `[latest release](${repoUrl}/releases/latest).`,
+      '',
+      'Packages fetched by the installer UI (also on this site):',
+      '',
+      '- [`fx-folder.zip`](fx-folder.zip) — browser config package',
+      '- [`utils.zip`](utils.zip) — chrome scripts + updater',
+      '- [`hashes.json`](hashes.json) — integrity manifest',
+      '',
+      '## Documentation',
+      '',
+      `- [Development guide](${repoUrl}/blob/main/docs/DEVELOPING.md)`,
+      `- [Auto-updater design](${repoUrl}/blob/main/docs/auto-updater.md)`,
+      `- [Contributing](${repoUrl}/blob/main/CONTRIBUTING.md)`,
+      '',
+    ].join('\n'),
+    'utf-8'
+  );
+}
+
+/**
  * Ensure the Pages branch ref exists, creating it from the default branch if
  * needed.
  */
