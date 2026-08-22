@@ -23,17 +23,45 @@ function gitBlobSha(buf) {
 
 /**
  * Landing page for the Pages site: the branch carries only binary artifacts and
- * hashes.json, so without this the site root would be a 404. Plain static
- * index.html on purpose — the branch inherits .nojekyll from the default
- * branch, so Jekyll (and its README-as-index fallback) is disabled. The
- * branch's own README.md stays for people browsing the repo. Content-addressed
- * like every other pushed file: unchanged content is skipped, so idle runs
- * create no commit for it.
+ * hashes.json, so without this the site root would be a 404.
+ *
+ * The site serves the repository's own README.md, rendered by GitHub (the same
+ * HTML the repo page shows) — fetched fresh on every publish and wrapped in a
+ * minimal shell, so the landing page can never drift from the README. Static
+ * HTML on purpose: the branch ships .nojekyll because the legacy Jekyll build
+ * errored on this repo and left pushes undeployed. Content-addressed like every
+ * other pushed file: unchanged content is skipped, so idle runs create no
+ * commit for it.
+ *
+ * @returns {Promise<Buffer>} index.html, or a plain-text fallback when the
+ *   README cannot be fetched (the site must never 404).
  */
-export function pagesIndex() {
+export async function pagesIndex(octokit) {
   const repoUrl = `https://github.com/${REPO_OWNER}/${ZIP_PAGES_REPO}`;
-  const li = (href, label, note = '') =>
-    `    <li><a href="${href}">${label}</a>${note ? ` — ${note}` : ''}</li>`;
+  let body;
+  try {
+    const {data} = await octokit.request('GET /repos/{owner}/{repo}/readme', {
+      owner: REPO_OWNER,
+      repo: ZIP_PAGES_REPO,
+      headers: {accept: 'application/vnd.github.html+json'},
+      mediaType: {format: 'html'},
+    });
+    body = String(data);
+  } catch (error) {
+    console.log(yellow(`README fetch failed (${error.message}) — falling back to plain text.`));
+    try {
+      const {data} = await octokit.request('GET /repos/{owner}/{repo}/readme', {
+        owner: REPO_OWNER,
+        repo: ZIP_PAGES_REPO,
+        headers: {accept: 'application/vnd.github.raw+json'},
+      });
+      body = `<pre>${String(data).replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'})[c])}</pre>`;
+    } catch (fallbackError) {
+      throw new Error(`Failed to fetch the README for the Pages index: ${fallbackError.message}`, {
+        cause: fallbackError,
+      });
+    }
+  }
   return Buffer.from(
     [
       '<!doctype html>',
@@ -42,26 +70,18 @@ export function pagesIndex() {
       '    <meta charset="utf-8" />',
       '    <meta name="viewport" content="width=device-width, initial-scale=1" />',
       '    <title>firefox-scripts</title>',
+      '    <link',
+      '      rel="stylesheet"',
+      '      href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown.min.css"',
+      '    />',
+      '    <style>',
+      '      body { display: flex; justify-content: center; }',
+      '      .markdown-body { max-width: 980px; padding: 16px 24px; }',
+      '    </style>',
       '  </head>',
-      '  <body>',
-      '    <h1>firefox-scripts</h1>',
-      '    <p>Helper scripts that let Firefox-family browsers run legacy (non-WebExtension) extensions.</p>',
-      '    <p><strong>🚧 Under active development</strong> — expect breaking changes.</p>',
-      '    <h2>Downloads</h2>',
-      '    <p>Installers for Windows, Linux and macOS are attached to the',
-      `      <a href="${repoUrl}/releases/latest">latest release</a>.</p>`,
-      '    <p>Packages fetched by the installer UI (also on this site):</p>',
-      '    <ul>',
-      li('fx-folder.zip', 'fx-folder.zip', 'browser config package'),
-      li('utils.zip', 'utils.zip', 'chrome scripts + updater'),
-      li('hashes.json', 'hashes.json', 'integrity manifest'),
-      '    </ul>',
-      '    <h2>Documentation</h2>',
-      '    <ul>',
-      li(`${repoUrl}/blob/main/docs/DEVELOPING.md`, 'Development guide'),
-      li(`${repoUrl}/blob/main/docs/auto-updater.md`, 'Auto-updater design'),
-      li(`${repoUrl}/blob/main/CONTRIBUTING.md`, 'Contributing'),
-      '    </ul>',
+      '  <body class="markdown-body">',
+      `    <!-- Rendered from ${repoUrl}#readme -->`,
+      body,
       '  </body>',
       '</html>',
       '',

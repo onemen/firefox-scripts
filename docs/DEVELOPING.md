@@ -357,10 +357,11 @@ platform would rebuild after a source change. Prod dispatches must target `main`
 `gh-pages`" — the workflow pushes to that branch, it does not switch Pages to the actions deployment
 method.
 
-Every publish also pushes a generated `index.html` (see `pagesIndex()` in
-`tools/publish/uploadToPages.mjs`) to the branch root: a plain static page, because the branch
-inherits `.nojekyll` from `main` (Jekyll and its README fallback are disabled), so the artifact-only
-branch still has a landing page linking downloads and docs.
+Every publish also pushes an `index.html` to the branch root: the repository's own `README.md`,
+rendered server-side by GitHub (`pagesIndex()` in `tools/publish/uploadToPages.mjs`) and wrapped in
+a minimal shell with `github-markdown-css`. Static HTML because the branch ships `.nojekyll` (the
+legacy Jekyll build errored on this repo); fetched fresh each run, so the landing page can never
+drift from the README.
 
 ### Build outputs
 

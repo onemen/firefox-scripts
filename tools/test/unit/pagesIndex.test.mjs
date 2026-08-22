@@ -12,19 +12,41 @@ process.argv.push('--mode=prod');
 
 const {pagesIndex} = await import('../../../tools/publish/uploadToPages.mjs');
 
-test('pagesIndex: renders the landing-page contract', () => {
-  const html = pagesIndex().toString('utf-8');
-  // Static index.html on purpose: the branch's .nojekyll disables Jekyll and
-  // its README-as-index fallback. These are the links a visitor relies on.
+const renderedReadme =
+  '<article class="markdown-body"><h1>firefox-scripts</h1><p>Helper scripts.</p></article>';
+const okOctokit = {
+  request: async (_route, opts) => {
+    if (opts.headers.accept === 'application/vnd.github.html+json') return {data: renderedReadme};
+    throw new Error('unexpected raw fetch');
+  },
+};
+
+test('pagesIndex: serves the GitHub-rendered README as the site index', async () => {
+  const html = (await pagesIndex(okOctokit)).toString('utf-8');
   assert.match(html, /<title>firefox-scripts<\/title>/);
-  assert.match(html, /Under active development/);
-  assert.match(html, /<a href="fx-folder\.zip">/);
-  assert.match(html, /<a href="utils\.zip">/);
-  assert.match(html, /<a href="hashes\.json">/);
-  assert.match(html, /releases\/latest/);
-  assert.match(html, /docs\/DEVELOPING\.md/);
+  assert.match(html, /github-markdown-css/);
+  assert.ok(html.includes(renderedReadme), 'rendered README body is embedded');
 });
 
-test('pagesIndex: deterministic so unchanged runs push no commit', () => {
-  assert.deepEqual(pagesIndex().toString('utf-8'), pagesIndex().toString('utf-8'));
+test('pagesIndex: falls back to escaped plain text when HTML rendering fails', async () => {
+  const flakyOctokit = {
+    request: async (_route, opts) => {
+      if (opts.headers.accept !== 'application/vnd.github.raw+json') throw new Error('boom');
+      return {data: '# readme <with> & markup'};
+    },
+  };
+  const html = (await pagesIndex(flakyOctokit)).toString('utf-8');
+  assert.match(html, /<pre># readme &lt;with&gt; &amp; markup<\/pre>/);
+});
+
+test('pagesIndex: both fetches failing is a hard error', async () => {
+  await assert.rejects(
+    () =>
+      pagesIndex({
+        request: async () => {
+          throw new Error('down');
+        },
+      }),
+    /README/
+  );
 });

@@ -447,10 +447,10 @@ async function publishToGitHub({
   // each blob, so unchanged files are skipped and an idle run creates no
   // commit at all.
   const pagesFiles = {};
-  // Landing page for the Pages site root (static index.html — the branch's
-  // .nojekyll disables the Jekyll README fallback). Content-addressed
-  // downstream: skipped when unchanged.
-  pagesFiles['index.html'] = pagesIndex();
+  // Landing page: the repo's README, rendered by GitHub and served as
+  // index.html (see pagesIndex). Content-addressed downstream: skipped when
+  // unchanged.
+  pagesFiles['index.html'] = await pagesIndex(octokit);
 
   if (PUBLISH_MODE === 'dev') {
     for (const name of builtZips) pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
