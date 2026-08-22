@@ -174,8 +174,12 @@ const VALID_PLATFORMS = new Set(Object.keys(PLATFORM));
 
 const zipFileName = name => `${name}${ASSET_SUFFIX}.zip`;
 const zipPath = name => path.join(SCRIPTS_DIST, zipFileName(name));
-const installerAssetName = p => `installer_${p}${ASSET_SUFFIX}.${PLATFORM[p].ext}`;
-const helperAssetName = p => `helper_${p}${ASSET_SUFFIX}.${PLATFORM[p].ext}`;
+// linux/mac binaries have no extension (Makefile: `installer_linux$(ASSET_SUFFIX)`);
+// only win carries `.exe` — no trailing dot for the others.
+const withExt = (base, p) =>
+  `${base}${ASSET_SUFFIX}${PLATFORM[p].ext ? `.${PLATFORM[p].ext}` : ''}`;
+const installerAssetName = p => withExt(`installer_${p}`, p);
+const helperAssetName = p => withExt(`helper_${p}`, p);
 const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p));
 const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p));
 
