@@ -37,7 +37,7 @@ import {
 import {findSnapshot, findZip, extractZip, discoverFirefoxBinary, findGreDir} from './browsers.mjs';
 
 const UPDATER_URL = 'chrome://firefox-scripts/content/ui/updater.html';
-const FORCE_UTILS_STALE = 'updater/scriptsUpdater.sys.mjs';
+const FORCE_UTILS_STALE = 'RDFDataSource.sys.mjs';
 const FORCE_UTILS_STALE_MARKER = '\n// e2e-test: forced stale\n';
 const FORCE_CONFIG_STALE_MARKER = '// e2e-test\n';
 
@@ -103,9 +103,9 @@ function seedProfile(
     extractZip(utilsZip, chromeUtils);
   }
 
-  // Force utils stale without deleting a startup dependency. Removing a
-  // module imported during browser startup can prevent the scheduler from
-  // running at all, which would make the stale-state test meaningless.
+  // Force utils stale by changing a valid, non-startup module. Deleting a
+  // shipped module can prevent the scheduler from running at all, which would
+  // make the stale-state test meaningless.
   if (forceUtilsStale) {
     const stale = path.join(chromeUtils, FORCE_UTILS_STALE);
     if (fs.existsSync(stale)) {
