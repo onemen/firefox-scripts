@@ -361,6 +361,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
     }
   } catch (err) {
     console.error(`  UI layer error: ${err.message}`);
+    check(counter, false, 'installer UI layer completed', err.message);
     try {
       await browser?.close();
     } catch {
