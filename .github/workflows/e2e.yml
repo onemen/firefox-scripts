@@ -157,3 +157,45 @@ jobs:
             dist/updater-e2e-*.png
             dist/installer-e2e-*.png
           if-no-files-found: ignore
+
+  # ── Browser matrix (advisory, Windows) ────────────────────────────────────
+  # Firefox Dev Edition, LibreWolf, and Floorp are on chocolatey.
+  # Waterfox and Zen require manual install — see docs/e2e-matrix-plan.md.
+  browser-matrix:
+    name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
+    runs-on: windows-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox-dev, librewolf, floorp]
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      RUNTIME_BROWSER: ${{ matrix.browser }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install ${{ matrix.browser }}
+        run: choco install ${{ matrix.browser }} -y --no-progress
+
+      - name: Build snapshot
+        run: pnpm upload:local --mode=dev
+
+      - name: Run updater E2E
+        run: node tools/test/e2e/updater-e2e.mjs
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-${{ matrix.browser }}
+          path: dist/updater-e2e-*.png
+          if-no-files-found: ignore
