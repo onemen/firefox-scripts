@@ -12,7 +12,7 @@ import path from 'path';
 
 process.argv.push('--mode=prod');
 
-const {collectDirEntries, computeDirectoryHash, computeFileSetHash} =
+const {collectDirEntries, computeDirectoryHash, computeFileSetHash, getStoredHashes} =
   await import('../../../tools/publish/hashUtils.mjs');
 
 function makeTree(files) {
@@ -117,5 +117,38 @@ test('computeFileSetHash: labeled set, order-independent', () => {
     assert.deepEqual(h1.files, ['a/x.js', 'b/y.js']);
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('getStoredHashes: env override reads a local manifest instead of the network', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hashutils-override-'));
+  const file = path.join(dir, 'hashes.json');
+  try {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({utils: {hash: 'abc', files: ['a.js']}, installer: {hash: 'def'}})
+    );
+    process.env.FIREFOX_SCRIPTS_STORED_HASHES_FILE = file;
+    try {
+      // localOnly=false would hit the network without the override; with it
+      // the file wins and no fetch happens.
+      assert.deepEqual(await getStoredHashes({localOnly: false}), {
+        utils: {hash: 'abc', files: ['a.js']},
+        installer: {hash: 'def'},
+      });
+    } finally {
+      delete process.env.FIREFOX_SCRIPTS_STORED_HASHES_FILE;
+    }
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('getStoredHashes: unreadable env override starts fresh', async () => {
+  process.env.FIREFOX_SCRIPTS_STORED_HASHES_FILE = path.join(os.tmpdir(), 'does-not-exist.json');
+  try {
+    assert.deepEqual(await getStoredHashes({localOnly: false}), {});
+  } finally {
+    delete process.env.FIREFOX_SCRIPTS_STORED_HASHES_FILE;
   }
 });

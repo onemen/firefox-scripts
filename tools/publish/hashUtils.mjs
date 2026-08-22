@@ -177,8 +177,23 @@ function readLocalSnapshot() {
  *   in a real run means "fresh" — publish everything. Default is `false`
  */
 export async function getStoredHashes({localOnly = false} = {}) {
-  const remote = localOnly ? null : await readFromPages();
-  const text = remote ?? (localOnly ? readLocalSnapshot() : null);
+  let text;
+  // Explicit manifest override (env): CI publishes run one upload per OS as
+  // sequential jobs, and an earlier job's push would otherwise make later
+  // jobs diff against the just-updated manifest and skip their platform's
+  // binaries. All jobs must diff against the same pre-run baseline instead.
+  const overrideFile = process.env.FIREFOX_SCRIPTS_STORED_HASHES_FILE;
+  if (overrideFile) {
+    try {
+      text = fs.readFileSync(overrideFile, 'utf-8');
+    } catch {
+      warn(`stored-hashes override not readable: ${overrideFile}, starting fresh`);
+      return {};
+    }
+  } else {
+    const remote = localOnly ? null : await readFromPages();
+    text = remote ?? (localOnly ? readLocalSnapshot() : null);
+  }
   if (text == null) return {};
   try {
     return JSON.parse(text);

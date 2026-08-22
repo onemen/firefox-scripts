@@ -347,11 +347,15 @@ The same run compiles the installer and helper binaries when their source (`inst
 Pages publish → Run workflow) with a `mode` (prod/dev) and an optional `force` input. It runs the
 **same** `node tools/publish/upload.mjs` as the local commands above — no separate publish logic —
 once per OS (`--platform=win|linux|mac`) in three sequential jobs, so all three installer/helper
-platforms get built on their native toolchains. The jobs are serial by design: each re-reads the
-hash manifest the previous job pushed, so zips upload exactly once and each platform uploads only
-what it built. Prod dispatches must target `main` (enforced inside `upload.mjs`); dev dispatches
-work from any branch. Pages serving stays "Deploy from branch: `gh-pages`" — the workflow pushes to
-that branch, it does not switch Pages to the actions deployment method.
+platforms get built on their native toolchains. The jobs are serial so gh-pages commits and
+release-asset uploads can never interleave; change detection is anchored to a shared **pre-run
+baseline**: a first job captures the current `hashes.json` and every publish job diffs against it
+(via `FIREFOX_SCRIPTS_STORED_HASHES_FILE`) instead of the manifest an earlier sibling just pushed —
+the package hashes in the manifest are platform-independent, so without the baseline only the first
+platform would rebuild after a source change. Prod dispatches must target `main` (enforced inside
+`upload.mjs`); dev dispatches work from any branch. Pages serving stays "Deploy from branch:
+`gh-pages`" — the workflow pushes to that branch, it does not switch Pages to the actions deployment
+method.
 
 ### Build outputs
 

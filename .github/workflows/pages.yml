@@ -10,10 +10,13 @@ name: Pages publish
 # (enforced inside upload.mjs); dev mode publishes a disposable
 # dev-build-<branch>-<sha> branch + pre-release and never touches prod.
 #
-# The three jobs run SEQUENTIALLY on purpose: each one re-reads the hash
-# manifest the previous job just pushed, so the zips are uploaded exactly
-# once (by the first job) and every platform uploads only the binaries it
-# built. A parallel matrix would race on hashes.json / the release.
+# The three publish jobs run SEQUENTIALLY so they can never interleave
+# gh-pages commits or release-asset uploads. Change detection is anchored to
+# a shared PRE-RUN baseline (`baseline` job captures the current hashes.json;
+# every job diffs against it via FIREFOX_SCRIPTS_STORED_HASHES_FILE): the
+# installer/helper/zips hashes in the manifest are platform-independent, so
+# if each job re-read the branch after the previous job pushed, only the
+# first platform would ever rebuild after a source change.
 #
 # Pages serving stays "Deploy from branch: gh-pages" — this workflow pushes
 # to that branch; it does not use the actions-pages deployment method.
@@ -45,8 +48,35 @@ env:
   GITHUB_TOKEN_VAR: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
+  # Snapshot the hash manifest as it was BEFORE this run started. Every
+  # publish job diffs its sources against this same baseline, so a source
+  # change makes all three platforms rebuild their native binaries.
+  baseline:
+    name: capture pre-run hash manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch current hashes.json from gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p baseline
+          if gh api "repos/${{ github.repository }}/contents/hashes.json?ref=gh-pages" \
+              --jq '.content' > /tmp/content.b64 2>/dev/null; then
+            base64 -d /tmp/content.b64 > baseline/hashes.json
+            echo "captured $(wc -c < baseline/hashes.json) bytes"
+          else
+            echo "no hashes.json on gh-pages yet — first publish starts fresh"
+            echo '{}' > baseline/hashes.json
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: baseline-hashes
+          path: baseline/hashes.json
+          if-no-files-found: error
+
   publish-win:
     name: publish — windows binaries
+    needs: baseline
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,11 +94,20 @@ jobs:
           update: true
           install: >-
             mingw-w64-ucrt-x86_64-gcc make
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: baseline-hashes
+          path: baseline/
       - run: pnpm install --frozen-lockfile
       - shell: bash
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=win"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          # Prod: diff against the shared pre-run baseline, not whatever an
+          # earlier job already pushed. Dev rebuilds everything anyway.
+          if [ "${{ inputs.mode }}" = "prod" ]; then
+            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$PWD/baseline/hashes.json"
+          fi
           node tools/publish/upload.mjs $ARGS
 
   publish-linux:
@@ -84,11 +123,18 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: baseline-hashes
+          path: baseline/
       - run: pnpm install --frozen-lockfile
       - shell: bash
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=linux"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          if [ "${{ inputs.mode }}" = "prod" ]; then
+            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$PWD/baseline/hashes.json"
+          fi
           node tools/publish/upload.mjs $ARGS
 
   publish-mac:
@@ -104,9 +150,16 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: baseline-hashes
+          path: baseline/
       - run: pnpm install --frozen-lockfile
       - shell: bash
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=mac"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          if [ "${{ inputs.mode }}" = "prod" ]; then
+            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$PWD/baseline/hashes.json"
+          fi
           node tools/publish/upload.mjs $ARGS
