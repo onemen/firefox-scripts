@@ -191,7 +191,7 @@ export function discoverFirefoxBinary() {
     candidates.push(`/usr/bin/${b.linux}`, `/opt/${b.linux}/${b.linux}`);
   }
   // Fallback paths not covered by BROWSERS entries
-  if (!target) {
+  if (!target || target === 'firefox') {
     candidates.push('/usr/bin/firefox-esr', '/snap/bin/firefox');
   }
   return candidates.find(p => fs.existsSync(p)) || null;
