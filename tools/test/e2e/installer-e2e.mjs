@@ -453,7 +453,7 @@ async function run() {
 
   // Clean up
   proc.kill();
-  summary(counter);
+  if (!summary(counter)) process.exitCode = 1;
 }
 
 run().catch(err => {

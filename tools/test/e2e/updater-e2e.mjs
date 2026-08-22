@@ -143,6 +143,28 @@ function seedProfile(
   return {profileDir, chromeUtils, _greModNeeded: false};
 }
 
+/** Save config.js + config-prefs.js from GreD so we can restore them. */
+function saveGreConfig(greDir) {
+  const saved = [];
+  for (const name of ['config.js', 'defaults/pref/config-prefs.js']) {
+    const p = path.join(greDir, ...name.split('/'));
+    if (fs.existsSync(p)) saved.push({path: p, data: fs.readFileSync(p)});
+  }
+  return saved;
+}
+
+/** Restore original GreD files after the test run. */
+function restoreGreConfig(saved) {
+  for (const s of saved) {
+    try {
+      fs.mkdirSync(path.dirname(s.path), {recursive: true});
+      fs.writeFileSync(s.path, s.data);
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 function modifyGreConfig(greDir) {
   const configJs = path.join(greDir, 'config.js');
   if (fs.existsSync(configJs)) {
@@ -377,6 +399,9 @@ async function run() {
 
   const profiles = [];
 
+  // Save GreD config before we overwrite it (see issue #4)
+  const savedGre = saveGreConfig(findGreDir(firefoxBin));
+
   try {
     // Scenario 1: utils stale
     if (scenarios.includes('1')) {
@@ -395,7 +420,6 @@ async function run() {
       } else {
         const p = await runStaleScenario(counter, opts, snapshotDir, 'config-stale', {
           forceConfigStale: true,
-          forceUtilsStale: true,
         });
         profiles.push(p);
       }
@@ -436,9 +460,10 @@ async function run() {
         if (p) rmDir(p);
       }
     }
+    restoreGreConfig(savedGre);
   }
 
-  summary(counter);
+  if (!summary(counter)) process.exitCode = 1;
 }
 
 run().catch(err => {

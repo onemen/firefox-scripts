@@ -195,7 +195,8 @@ async function main() {
   if (opts.updater || (!opts.installer && !opts.updater)) {
     for (const browser of cfg.browsers) {
       console.log(`\n--- Updater E2E · ${browser.name} ---`);
-      const args = [...commonArgs, '--firefox', browser.binary || 'auto'];
+      const args = [...commonArgs];
+      if (browser.binary) args.push('--firefox', browser.binary);
       if (cfg.keepProfile) args.push('--keep-profile');
       if (cfg.helperAttempt) args.push('--helper-attempt');
       const pass = await runChild(
