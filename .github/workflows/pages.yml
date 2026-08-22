@@ -97,7 +97,7 @@ jobs:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: baseline-hashes
-          path: baseline/
+          path: ${{ runner.temp }}/baseline/
       - run: pnpm install --frozen-lockfile
       - shell: bash
         run: |
@@ -106,7 +106,7 @@ jobs:
           # Prod: diff against the shared pre-run baseline, not whatever an
           # earlier job already pushed. Dev rebuilds everything anyway.
           if [ "${{ inputs.mode }}" = "prod" ]; then
-            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$PWD/baseline/hashes.json"
+            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
           node tools/publish/upload.mjs $ARGS
 
@@ -126,14 +126,14 @@ jobs:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: baseline-hashes
-          path: baseline/
+          path: ${{ runner.temp }}/baseline/
       - run: pnpm install --frozen-lockfile
       - shell: bash
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=linux"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
           if [ "${{ inputs.mode }}" = "prod" ]; then
-            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$PWD/baseline/hashes.json"
+            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
           node tools/publish/upload.mjs $ARGS
 
@@ -153,13 +153,13 @@ jobs:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: baseline-hashes
-          path: baseline/
+          path: ${{ runner.temp }}/baseline/
       - run: pnpm install --frozen-lockfile
       - shell: bash
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=mac"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
           if [ "${{ inputs.mode }}" = "prod" ]; then
-            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$PWD/baseline/hashes.json"
+            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
           node tools/publish/upload.mjs $ARGS
