@@ -228,3 +228,31 @@ jobs:
           name: e2e-diagnostics-${{ matrix.browser }}
           path: dist/updater-e2e-*.png
           if-no-files-found: ignore
+
+  # ── E2E gate ─────────────────────────────────────────────────────────────
+  # Single branch-protection check.  Only hard-gate jobs (installer, helper)
+  # are verified — advisory jobs (updater, browser-matrix) are listed for
+  # completeness but their failures are warnings.
+  e2e-gate:
+    name: E2E gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [installer, helper, updater, browser-matrix]
+    steps:
+      - name: Verify hard-gate E2E jobs
+        run: |
+          fail() { echo "::error::$1: $2"; exit 1; }
+          warn() { echo "::warning::$1: $2 (advisory)"; }
+          ok()   { echo "$1: $2 (OK)"; }
+          verify() {
+            case "$2" in success) ok "$1" "$2" ;; *) fail "$1" "$2" ;; esac
+          }
+          # Hard gates — must pass
+          verify 'installer'     '${{ needs.installer.result }}'
+          verify 'helper'         '${{ needs.helper.result }}'
+          # Advisory — warn but don't block
+          for job in updater browser-matrix; do
+            result='${{ needs[format("{0}", job)].result }}'
+            case "$result" in success) ok "$job" "$result" ;; *) warn "$job" "$result" ;; esac
+          done
+          echo 'All hard-gate E2E jobs passed'

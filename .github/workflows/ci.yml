@@ -87,3 +87,23 @@ jobs:
           name: dist-${{ matrix.os }}
           path: dist/
           if-no-files-found: error
+
+  # ── CI gate ──────────────────────────────────────────────────────────────
+  # Single branch-protection check — only registers as success when all
+  # upstream jobs pass.  Add/remove jobs without touching branch-protection.
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [checks, build]
+    steps:
+      - name: Verify all CI jobs
+        run: |
+          fail() { echo "::error::$1: $2"; exit 1; }
+          ok()   { echo "$1: $2 (OK)"; }
+          verify() {
+            case "$2" in success) ok "$1" "$2" ;; *) fail "$1" "$2" ;; esac
+          }
+          verify 'checks' '${{ needs.checks.result }}'
+          verify 'build'   '${{ needs.build.result }}'
+          echo 'All CI jobs passed'
