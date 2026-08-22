@@ -71,7 +71,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Build helper binary
-        run: make -C installer helper_linux MODE=dev
+        run: |
+          mkdir -p dist/installer
+          make -C installer helper_linux MODE=dev
 
       - name: Test elevated copy (sudo)
         run: |
@@ -110,9 +112,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
           mkdir -p "$HOME/firefox-app"
-          curl -L -o /tmp/firefox.tar.bz2 \
+          curl -L -o /tmp/firefox.tar.xz \
             "https://download.mozilla.org/?product=firefox-latest&os=linux64&lang=en-US"
-          tar xjf /tmp/firefox.tar.bz2 -C "$HOME/firefox-app"
+          tar xf /tmp/firefox.tar.xz -C "$HOME/firefox-app"
           echo "$HOME/firefox-app/firefox/firefox" > /tmp/firefox-path.txt
           "$HOME/firefox-app/firefox/firefox" --version
 
