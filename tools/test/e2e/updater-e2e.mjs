@@ -143,22 +143,42 @@ function seedProfile(
   return {profileDir, chromeUtils, _greModNeeded: false};
 }
 
-/** Save config.js + config-prefs.js from GreD so we can restore them. */
+/**
+ * Snapshot GreD before the test writes over it. Returns a map: {[path]:
+ * data|null} — null means the file did NOT exist before the test (created by
+ * installFxFolder) and should be removed.
+ */
 function saveGreConfig(greDir) {
-  const saved = [];
+  const snapshot = {};
   for (const name of ['config.js', 'defaults/pref/config-prefs.js']) {
     const p = path.join(greDir, ...name.split('/'));
-    if (fs.existsSync(p)) saved.push({path: p, data: fs.readFileSync(p)});
+    snapshot[p] = fs.existsSync(p) ? fs.readFileSync(p) : null;
   }
-  return saved;
+  return snapshot;
 }
 
-/** Restore original GreD files after the test run. */
-function restoreGreConfig(saved) {
-  for (const s of saved) {
+/** Restore (or remove) GreD files after the test run. */
+function restoreGreConfig(snapshot) {
+  for (const [p, data] of Object.entries(snapshot)) {
     try {
-      fs.mkdirSync(path.dirname(s.path), {recursive: true});
-      fs.writeFileSync(s.path, s.data);
+      if (data !== null) {
+        fs.mkdirSync(path.dirname(p), {recursive: true});
+        fs.writeFileSync(p, data);
+      } else {
+        try {
+          fs.unlinkSync(p);
+        } catch {
+          /* already gone */
+        }
+        // Clean up empty defaults/pref dir if we created it
+        const dir = path.dirname(p);
+        try {
+          const files = fs.readdirSync(dir);
+          if (files.length === 0) fs.rmdirSync(dir);
+        } catch {
+          /* best effort */
+        }
+      }
     } catch {
       /* best effort */
     }

@@ -196,13 +196,19 @@ async function main() {
     for (const browser of cfg.browsers) {
       console.log(`\n--- Updater E2E · ${browser.name} ---`);
       const args = [...commonArgs];
-      if (browser.binary) args.push('--firefox', browser.binary);
+      const env = {};
+      if (browser.binary) {
+        args.push('--firefox', browser.binary);
+      } else if (browser.name && browser.name !== 'firefox') {
+        // No binary configured but a non-Firefox browser is selected — tell
+        // discoverFirefoxBinary() which browser to look for.
+        env.RUNTIME_BROWSER = browser.name;
+      }
       if (cfg.keepProfile) args.push('--keep-profile');
-      if (cfg.helperAttempt) args.push('--helper-attempt');
       const pass = await runChild(
         path.join(REPO_ROOT, 'tools', 'test', 'e2e', 'updater-e2e.mjs'),
         args,
-        {}
+        env
       );
       ok = ok && pass;
     }
