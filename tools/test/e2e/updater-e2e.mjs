@@ -95,6 +95,17 @@ function seedProfile(
   {forceConfigStale = false, forceUtilsStale = false, skipUtils = false, skipConfig = false} = {}
 ) {
   const profileDir = tempDir('fxs-e2e');
+  const userJsPath = path.join(profileDir, 'user.js');
+  // Every scenario has a fresh profile, but make the daily notification gate
+  // explicit so an inherited/default pref can never suppress a stale fixture.
+  fs.writeFileSync(
+    userJsPath,
+    [
+      'user_pref("extensions.firefox-scripts.lastUpdateTabShown", "");',
+      'user_pref("extensions.firefox-scripts.lastScriptsCheckDate", "");',
+      '',
+    ].join('\n')
+  );
   const chromeUtils = path.join(profileDir, 'chrome', 'utils');
 
   // Extract utils
