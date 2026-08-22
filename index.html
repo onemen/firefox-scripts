@@ -4,25 +4,103 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>firefox-scripts</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown.min.css"
+    />
+    <style>
+      body { display: flex; justify-content: center; }
+      .markdown-body { max-width: 980px; padding: 16px 24px; }
+    </style>
   </head>
-  <body>
-    <h1>firefox-scripts</h1>
-    <p>Helper scripts that let Firefox-family browsers run legacy (non-WebExtension) extensions.</p>
-    <p><strong>🚧 Under active development</strong> — expect breaking changes.</p>
-    <h2>Downloads</h2>
-    <p>Installers for Windows, Linux and macOS are attached to the
-      <a href="https://github.com/onemen/firefox-scripts/releases/latest">latest release</a>.</p>
-    <p>Packages fetched by the installer UI (also on this site):</p>
-    <ul>
-    <li><a href="fx-folder.zip">fx-folder.zip</a> — browser config package</li>
-    <li><a href="utils.zip">utils.zip</a> — chrome scripts + updater</li>
-    <li><a href="hashes.json">hashes.json</a> — integrity manifest</li>
-    </ul>
-    <h2>Documentation</h2>
-    <ul>
-    <li><a href="https://github.com/onemen/firefox-scripts/blob/main/docs/DEVELOPING.md">Development guide</a></li>
-    <li><a href="https://github.com/onemen/firefox-scripts/blob/main/docs/auto-updater.md">Auto-updater design</a></li>
-    <li><a href="https://github.com/onemen/firefox-scripts/blob/main/CONTRIBUTING.md">Contributing</a></li>
-    </ul>
+  <body class="markdown-body">
+    <!-- Rendered from https://github.com/onemen/firefox-scripts#readme -->
+<div id="readme" class="md" data-path="README.md"><article class="markdown-body entry-content container-lg" itemprop="text"><div class="markdown-heading" dir="auto"><h1 class="heading-element" dir="auto">Firefox Scripts</h1><a id="user-content-firefox-scripts" class="anchor" aria-label="Permalink: Firefox Scripts" href="#firefox-scripts"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<blockquote>
+<p dir="auto"><strong>🚧 Under active development</strong> — the <strong>installer</strong> and <strong>in-browser updater</strong> are new and being
+validated; the core scripts they install are the long-standing, stable ones. Found a problem?
+<a href="https://github.com/onemen/firefox-scripts/issues">Open an issue</a> and include your browser version
+and OS.</p>
+</blockquote>
+<p dir="auto">Install and keep Firefox-family browser scripts up to date.</p>
+<p dir="auto"><strong>firefox-scripts</strong> installs and keeps up to date the helper scripts that let Firefox-family
+browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Floorp) run legacy
+(non-WebExtension) extensions such as <strong>TabMixPlus</strong> — a small native installer copies two packages
+into the browser, and an in-browser updater keeps them current automatically as new versions are
+released.</p>
+<blockquote>
+<p dir="auto"><strong>Official install documentation:</strong> <a href="https://onemen.github.io/tabmixplus-docs/other/installation/" rel="nofollow">https://onemen.github.io/tabmixplus-docs/other/installation/</a></p>
+</blockquote>
+<div class="markdown-heading" dir="auto"><h2 class="heading-element" dir="auto">How to install the installer</h2><a id="user-content-how-to-install-the-installer" class="anchor" aria-label="Permalink: How to install the installer" href="#how-to-install-the-installer"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<ol dir="auto">
+<li><strong>Download</strong> the installer for your OS from the
+<a href="https://github.com/onemen/firefox-scripts/releases">releases page</a>:
+<ul dir="auto">
+<li><code>installer_win.exe</code> — Windows</li>
+<li><code>installer_linux</code> — Linux</li>
+<li><code>installer_mac</code> — macOS</li>
+</ul>
+</li>
+<li><strong>Run</strong> the downloaded installer. It connects to a running Firefox-family browser (Firefox,
+Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets
+you pick which browser to set up.</li>
+<li><strong>Choose the components</strong> to install:
+<ul dir="auto">
+<li><strong>Configuration files</strong> (<code>config.js</code>, <code>config-prefs.js</code>) — copied to the browser's installation
+directory</li>
+<li><strong>Utils</strong> (the chrome scripts) — copied to your profile's <code>chrome/utils/</code> directory</li>
+</ul>
+</li>
+<li>Click <strong>Install</strong>, wait for completion, then <strong>Restart the browser</strong> when prompted.</li>
+</ol>
+<blockquote>
+<p dir="auto">The install tab always opens. It is the piece that downloads the packages from the network; if
+they cannot be reached, the tab shows a network-error banner instead of the install screen.</p>
+</blockquote>
+<div class="markdown-heading" dir="auto"><h3 class="heading-element" dir="auto">Supported browsers</h3><a id="user-content-supported-browsers" class="anchor" aria-label="Permalink: Supported browsers" href="#supported-browsers"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<ul dir="auto">
+<li>Firefox (stable, Nightly, Developer Edition)</li>
+<li>Waterfox</li>
+<li>Zen Browser</li>
+<li>LibreWolf</li>
+<li>Floorp</li>
+</ul>
+<p dir="auto">A browser must be <strong>running</strong> to be detected (detection uses process scanning and lock-file
+inspection).</p>
+<div class="markdown-heading" dir="auto"><h2 class="heading-element" dir="auto">How the updater keeps your scripts up to date</h2><a id="user-content-how-the-updater-keeps-your-scripts-up-to-date" class="anchor" aria-label="Permalink: How the updater keeps your scripts up to date" href="#how-the-updater-keeps-your-scripts-up-to-date"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<p dir="auto">Once installed, the scripts keep themselves current without you re-running the installer:</p>
+<ul dir="auto">
+<li><strong>Daily check.</strong> The updater (a small privileged script that lives inside the browser) checks once
+a day whether a newer version of the scripts or configuration files has been published.</li>
+<li><strong>Notification tab.</strong> When an update is available, the updater opens a tab showing what would
+change. You can install the update right there, skip it for the day, or permanently ignore a
+specific update.</li>
+<li><strong>In-tab install.</strong> Applying an update downloads the new packages and copies them into place
+inside the browser — no installer download needed. Updating the configuration files, which live in
+admin-protected folders (e.g. Program Files on Windows), triggers a single elevation prompt via a
+small helper that ships with the update.</li>
+<li><strong>Manual update.</strong> You can always open the updater manually from the browser menu, or download the
+<code>utils.zip</code> / <code>fx-folder.zip</code> packages directly from the update tab.</li>
+</ul>
+<p dir="auto">Scripts update automatically; configuration-file updates and browser restarts are applied when you
+choose to install them, keeping the process predictable.</p>
+<div class="markdown-heading" dir="auto"><h2 class="heading-element" dir="auto">For developers</h2><a id="user-content-for-developers" class="anchor" aria-label="Permalink: For developers" href="#for-developers"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<ul dir="auto">
+<li><strong><a href="docs/DEVELOPING.md">Developer guide</a></strong> — building the installer, the publish/release workflow,
+the generated files, and how the installer works under the hood.</li>
+<li><strong><a href="CONTRIBUTING.md">Contributing</a></strong> — how to set up the repo, run checks, and submit changes.</li>
+</ul>
+<hr>
+<div class="markdown-heading" dir="auto"><h3 class="heading-element" dir="auto">Contributing</h3><a id="user-content-contributing" class="anchor" aria-label="Permalink: Contributing" href="#contributing"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<p dir="auto">Contributions are welcome — bug reports, fixes, and improvements all help. Read
+<a href="CONTRIBUTING.md">CONTRIBUTING.md</a> for setup and workflow guidance, then open a pull request. The
+project's source of truth for scripts is <code>core/</code>, plus the C installer under <code>installer/</code> and the
+publish scripts under <code>tools/publish/</code>.</p>
+<div class="markdown-heading" dir="auto"><h3 class="heading-element" dir="auto">Problems?</h3><a id="user-content-problems" class="anchor" aria-label="Permalink: Problems?" href="#problems"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<p dir="auto">File an <strong>issue</strong> on <a href="https://github.com/onemen/firefox-scripts/issues">the GitHub repository</a>.
+Please search existing issues first — your problem may already be reported.</p>
+<div class="markdown-heading" dir="auto"><h3 class="heading-element" dir="auto">License</h3><a id="user-content-license" class="anchor" aria-label="Permalink: License" href="#license"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<p dir="auto"><a href="LICENSE.md">MIT</a> © 2026 ONEMEN <a href="mailto:tabmix.onemen@gmail.com">tabmix.onemen@gmail.com</a></p>
+</article></div>
   </body>
 </html>

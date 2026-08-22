@@ -1,6 +1,6 @@
 {
   "utils": {
-    "hash": "b4cc7f05a3ea9a58054fae208fde82f394731483a1099ace7353a7430b212d72",
+    "hash": "7b08eafaabc79809321cd218e4259d47688a343d996a234c583da9f02c29a995",
     "files": [
       "BootstrapLoader.js",
       "chrome.manifest",
@@ -11,7 +11,7 @@
       "userChrome.js",
       "xPref.sys.mjs"
     ],
-    "date": "2026-08-22"
+    "date": "2026-08-23"
   },
   "fx-folder": {
     "hash": "98bda80b0c4036cb4ee849fdd1844aa0e8b0cd39f930ae4ae0d593b53d69fe5f",
@@ -19,7 +19,7 @@
       "config.js",
       "defaults/pref/config-prefs.js"
     ],
-    "date": "2026-08-22"
+    "date": "2026-08-23"
   },
   "updater-ui": {
     "hash": "7f424331ef442c4d7466e73efa20b5a301f5b0d728bacf4388a204edde53cd87",
@@ -35,7 +35,7 @@
       "updater.html",
       "updater.js"
     ],
-    "date": "2026-08-22"
+    "date": "2026-08-23"
   },
   "installer": {
     "hash": "5d415e049a5940dde1f2fd04e15f808195b5a5a169541c36f9e14e0570855c74",
