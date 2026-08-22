@@ -41,9 +41,11 @@ and let the tooling regenerate.
 Before opening a PR, run the local checks:
 
 ```bash
-npm run lint          # eslint
-npm run format        # prettier check (config/.prettierignore)
-node installer/test/test_hash.mjs   # C vs JS hash parity (build the installer first)
+pnpm lint          # eslint
+pnpm format        # prettier check
+pnpm test          # unit tests
+pnpm upload:local --mode=dev   # build snapshot
+pnpm test:e2e      # installer HTTP + updater scenarios
 ```
 
 Uploads are gated to `main` and require a GitHub token (see

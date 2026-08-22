@@ -168,7 +168,90 @@ pnpm test
 
 Coverage: `createZip.mjs` (flat vs fx-folder layout, extraFiles), `generateUpdaterConfig.mjs` (URLs
 per mode, LOCAL flag, dev/local overrides), `hashUtils.mjs` (directory/file-set hashing, gitignore
-filtering, sorting), and `embed.mjs` (generated C header via `--stdout`).
+filtering, sorting), `embed.mjs` (generated C header via `--stdout`), and `browsers.mjs` (GreD path
+derivation, snapshot discovery, Firefox binary detection).
+
+## Test: E2E tests (`pnpm test:e2e`)
+
+End-to-end tests verify the installer HTTP API, the elevated-copy helper, and the in-browser
+updater tab across multiple scenarios. They require a `upload:local` snapshot first.
+
+### Quick start
+
+```bash
+# Build a dev snapshot (needed once)
+pnpm upload:local --mode=dev
+
+# Run all E2E tests (installer HTTP + updater scenarios)
+pnpm test:e2e
+
+# Installer only (HTTP layer — fast, no browser needed)
+pnpm test:e2e:installer
+
+# Updater only (opens Firefox — see config below)
+pnpm test:e2e:updater
+```
+
+The orchestrator (`run.mjs`) passes `--snapshot <dir>` to child scripts automatically;
+individual scripts can also be invoked directly:
+
+```bash
+node tools/test/e2e/installer-e2e.mjs --snapshot dist/dev-main-abc1234
+node tools/test/e2e/updater-e2e.mjs --firefox "/path/to/firefox" --snapshot dist/dev-main-abc1234
+```
+
+### Installer E2E (29 assertions)
+
+Starts the installer in `--smoke-test` mode and exercises every state-changing `/api` route:
+token gate (missing, wrong, valid), CORS absence, ping, browsers, rescan, status, self-update,
+and the install/close-browser/manifest gated routes. No browser required.
+
+The optional `--ui` flag launches a real Firefox instance and verifies the web UI renders
+browser cards with correct status badges, but this is slower and requires a display.
+
+### Updater E2E (5 scenarios)
+
+Each scenario: fresh temp profile → seed `chrome/utils` from the snapshot → optionally
+delete files or modify prefs to force a specific state → launch Firefox via puppeteer-core +
+WebDriver BiDi → wait for the updater tab to auto-open → assert the card renders the expected
+status, all 8 buttons are present, checkbox wiring works, and no page/console errors appeared.
+
+| Scenario | Seed                                    | Expected                                    |
+| -------- | --------------------------------------- | ------------------------------------------- |
+| 1        | Delete `RDFDataSource.sys.mjs`          | utils Update Available, config Up To Date   |
+| 2        | Append comment to `config.js` + delete  | config Update Available, utils Up To Date   |
+| 3        | Delete + modify both                    | Both Update Available                       |
+| 4        | Unmodified utils + fx-folder            | Tab does NOT open (nothing to surface)      |
+| 5        | Set skip-pref to utils remote hash      | Tab does NOT open (skip suppresses)         |
+
+Skip individual scenarios during iteration with `--scenario 1,2,3`.
+
+### Configuration
+
+Copy `tools/test/e2e/config.example.mjs` to `e2e.config.mjs` at the repo root (gitignored)
+and adjust:
+
+- `browsers`: which browsers to run the updater test against (name + binary path; omit
+  `binary` to auto-detect).
+- `branchCheck`: `'strict'` (default — snapshot must match the current branch) or `'off'`.
+- `headless`: launch Firefox headless (Linux CI uses `xvfb-run` instead).
+- `keepProfile`: keep temp profiles after a run for debugging.
+
+CLI flags win over environment variables, which win over the config file.
+
+### CI matrix
+
+`.github/workflows/e2e.yml`:
+
+| Job        | OS matrix                      | Gate                     |
+| ---------- | ------------------------------ | ------------------------ |
+| installer  | ubuntu, macos, windows         | Hard (blocks merge)      |
+| helper     | ubuntu (sudo test)             | Hard                     |
+| updater    | ubuntu+apt, ubuntu+snap, macos, windows | Advisory (`continue-on-error`) |
+
+See `docs/e2e-matrix-plan.md` for the planned browser × OS expansion (Dev Edition, Waterfox,
+Zen, LibreWolf, Floorp).
+
 
 ## Test: installer hash verification
 

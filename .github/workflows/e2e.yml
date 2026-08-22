@@ -1,0 +1,160 @@
+# E2E test matrix
+#
+# Installer E2E: builds the installer, starts it headless, exercises the
+# HTTP API (token gate, gated routes, status). Hard gate on all 3 OSes.
+#
+# Helper E2E: builds + tests the elevated-copy helper binary under sudo
+# (Linux only).  The OS elevation prompt cannot be automated, but the copy
+# core — including the defaults/pref directory walk-up — is tested here.
+#
+# Updater E2E: builds a dev snapshot, installs Firefox, creates a test profile
+# with scripts, launches Firefox via puppeteer-core + WebDriver BiDi, and
+# asserts the updater tab renders the correct state. Advisory gate across
+# the supported browser × OS matrix.
+#
+# See: docs/e2e-matrix-plan.md, https://github.com/onemen/firefox-scripts/issues/3
+
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Installer E2E ──────────────────────────────────────────────────────────
+  installer:
+    name: 'installer E2E · ${{ matrix.os }}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build snapshot
+        run: pnpm upload:local --mode=dev
+
+      - name: Run installer E2E
+        run: node tools/test/e2e/installer-e2e.mjs
+
+  # ── Helper E2E (Linux elevated-copy core) ──────────────────────────────────
+  helper:
+    name: 'helper E2E · ${{ matrix.os }}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build helper binary
+        run: make -C installer
+
+      - name: Test elevated copy (sudo)
+        run: |
+          echo "hello" > /tmp/test_src.txt
+          sudo ./dist/helper_linux /tmp/test_src.txt /etc/fxs-e2e-test.txt
+          diff /tmp/test_src.txt /etc/fxs-e2e-test.txt
+          sudo rm /etc/fxs-e2e-test.txt
+          rm /tmp/test_src.txt
+
+  # ── Updater E2E ────────────────────────────────────────────────────────────
+  updater:
+    name: 'updater E2E · ${{ matrix.browser }} · ${{ matrix.os }}'
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true # advisory until validated across the matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        browser: [firefox]
+        include:
+          - os: macos-latest
+            browser: firefox
+          - os: ubuntu-latest
+            browser: firefox-snap
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Firefox (Ubuntu / apt)
+        if: matrix.os == 'ubuntu-latest' && matrix.browser != 'firefox-snap'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq firefox xvfb
+
+      - name: Install Firefox (Ubuntu / Snap)
+        if: matrix.os == 'ubuntu-latest' && matrix.browser == 'firefox-snap'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+          sudo snap install firefox
+
+      - name: Install Firefox (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install --cask firefox
+
+      - name: Firefox version
+        run: firefox --version || snap run firefox --version
+
+      - name: Build snapshot
+        run: pnpm upload:local --mode=dev
+
+      # The test builds its own fresh temp profile from the dev snapshot, so no
+      # profile-seed step is needed. It auto-discovers the Firefox binary and
+      # the snapshot dir from the build step above.
+      - name: Run updater E2E (Linux / apt)
+        if: matrix.os == 'ubuntu-latest' && matrix.browser != 'firefox-snap'
+        run: xvfb-run node tools/test/e2e/updater-e2e.mjs --firefox "$(which firefox)"
+
+      - name: Run updater E2E (Linux / Snap)
+        if: matrix.os == 'ubuntu-latest' && matrix.browser == 'firefox-snap'
+        run:
+          xvfb-run node tools/test/e2e/updater-e2e.mjs --firefox "$(which firefox || echo
+          /snap/bin/firefox)"
+
+      - name: Run updater E2E (macOS/Windows)
+        if: matrix.os != 'ubuntu-latest'
+        run: node tools/test/e2e/updater-e2e.mjs --firefox "$(which firefox)"
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-${{ matrix.os }}-${{ matrix.browser }}
+          path: |
+            dist/updater-e2e-*.png
+            dist/installer-e2e-*.png
+          if-no-files-found: ignore

@@ -1,5 +1,8 @@
 # Firefox Scripts
 
+[![CI](https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml/badge.svg)](https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml)
+[![E2E](https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml/badge.svg)](https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml)
+
 > **🚧 Under active development** — the **installer** and **in-browser updater** are new and being
 > validated; the core scripts they install are the long-standing, stable ones. Found a problem?
 > [Open an issue](https://github.com/onemen/firefox-scripts/issues) and include your browser version
