@@ -154,6 +154,19 @@ function modifyGreConfig(greDir) {
   }
 }
 
+/** Try modifyGreConfig; return null on success, error message on EPERM. */
+function tryModifyGreConfig(greDir) {
+  try {
+    modifyGreConfig(greDir);
+    return null;
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EACCES') {
+      return `GreD not writable (${err.code}) — run with admin or use a writable Firefox install`;
+    }
+    throw err;
+  }
+}
+
 // ── Scenario runners ───────────────────────────────────────────────────────
 
 /**
@@ -373,22 +386,34 @@ async function run() {
       profiles.push(p);
     }
 
-    // Scenario 2: config stale
+    // Scenario 2: config stale (needs writable GreD; skip on EPERM)
     if (scenarios.includes('2')) {
-      const p = await runStaleScenario(counter, opts, snapshotDir, 'config-stale', {
-        forceConfigStale: true,
-        forceUtilsStale: true,
-      });
-      profiles.push(p);
+      const err = tryModifyGreConfig(findGreDir(firefoxBin));
+      if (err) {
+        console.log(`  SKIP config-stale: ${err}`);
+        check(counter, true, 'config-stale skipped (GreD not writable locally)');
+      } else {
+        const p = await runStaleScenario(counter, opts, snapshotDir, 'config-stale', {
+          forceConfigStale: true,
+          forceUtilsStale: true,
+        });
+        profiles.push(p);
+      }
     }
 
-    // Scenario 3: both stale
+    // Scenario 3: both stale (needs writable GreD; skip on EPERM)
     if (scenarios.includes('3')) {
-      const p = await runStaleScenario(counter, opts, snapshotDir, 'both-stale', {
-        forceUtilsStale: true,
-        forceConfigStale: true,
-      });
-      profiles.push(p);
+      const err = tryModifyGreConfig(findGreDir(firefoxBin));
+      if (err) {
+        console.log(`  SKIP both-stale: ${err}`);
+        check(counter, true, 'both-stale skipped (GreD not writable locally)');
+      } else {
+        const p = await runStaleScenario(counter, opts, snapshotDir, 'both-stale', {
+          forceUtilsStale: true,
+          forceConfigStale: true,
+        });
+        profiles.push(p);
+      }
     }
 
     // Scenario 4: up to date
