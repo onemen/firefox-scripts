@@ -37,7 +37,8 @@ import {
 import {findSnapshot, findZip, extractZip, discoverFirefoxBinary, findGreDir} from './browsers.mjs';
 
 const UPDATER_URL = 'chrome://firefox-scripts/content/ui/updater.html';
-const FORCE_UTILS_STALE = 'RDFDataSource.sys.mjs';
+const FORCE_UTILS_STALE = 'updater/scriptsUpdater.sys.mjs';
+const FORCE_UTILS_STALE_MARKER = '\n// e2e-test: forced stale\n';
 const FORCE_CONFIG_STALE_MARKER = '// e2e-test\n';
 
 // ── Parse args ────────────────────────────────────────────────────────────
@@ -102,10 +103,14 @@ function seedProfile(
     extractZip(utilsZip, chromeUtils);
   }
 
-  // Force utils stale: delete a non-essential file
+  // Force utils stale without deleting a startup dependency. Removing a
+  // module imported during browser startup can prevent the scheduler from
+  // running at all, which would make the stale-state test meaningless.
   if (forceUtilsStale) {
     const stale = path.join(chromeUtils, FORCE_UTILS_STALE);
-    if (fs.existsSync(stale)) fs.rmSync(stale);
+    if (fs.existsSync(stale)) {
+      fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
+    }
   }
 
   // Force config stale: modify config.js in GreD
@@ -159,6 +164,7 @@ function saveGreConfig(greDir) {
 
 /** Restore (or remove) GreD files after the test run. */
 function restoreGreConfig(snapshot) {
+  const errors = [];
   for (const [p, data] of Object.entries(snapshot)) {
     try {
       if (data !== null) {
@@ -167,22 +173,23 @@ function restoreGreConfig(snapshot) {
       } else {
         try {
           fs.unlinkSync(p);
-        } catch {
-          /* already gone */
+        } catch (err) {
+          if (err.code !== 'ENOENT') throw err;
         }
         // Clean up empty defaults/pref dir if we created it
         const dir = path.dirname(p);
         try {
           const files = fs.readdirSync(dir);
           if (files.length === 0) fs.rmdirSync(dir);
-        } catch {
-          /* best effort */
+        } catch (err) {
+          if (err.code !== 'ENOENT' && err.code !== 'ENOTEMPTY') throw err;
         }
       }
-    } catch {
-      /* best effort */
+    } catch (err) {
+      errors.push(`${p}: ${err.message}`);
     }
   }
+  return errors;
 }
 
 function modifyGreConfig(greDir) {
@@ -480,7 +487,10 @@ async function run() {
         if (p) rmDir(p);
       }
     }
-    restoreGreConfig(savedGre);
+    const restoreErrors = restoreGreConfig(savedGre);
+    for (const error of restoreErrors) {
+      check(counter, false, 'GreD configuration restored', error);
+    }
   }
 
   if (!summary(counter)) process.exitCode = 1;
