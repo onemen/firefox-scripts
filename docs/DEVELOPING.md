@@ -341,6 +341,18 @@ The same run compiles the installer and helper binaries when their source (`inst
 - By default it builds only the current OS. Use `--ci` to cover all three platforms, or
   `--platform=win|linux|mac` for an explicit set (each platform needs its own build machine).
 
+### Run from CI
+
+`.github/workflows/pages.yml` publishes via GitHub Actions: a manual `workflow_dispatch` (Actions →
+Pages publish → Run workflow) with a `mode` (prod/dev) and an optional `force` input. It runs the
+**same** `node tools/publish/upload.mjs` as the local commands above — no separate publish logic —
+once per OS (`--platform=win|linux|mac`) in three sequential jobs, so all three installer/helper
+platforms get built on their native toolchains. The jobs are serial by design: each re-reads the
+hash manifest the previous job pushed, so zips upload exactly once and each platform uploads only
+what it built. Prod dispatches must target `main` (enforced inside `upload.mjs`); dev dispatches
+work from any branch. Pages serving stays "Deploy from branch: `gh-pages`" — the workflow pushes to
+that branch, it does not switch Pages to the actions deployment method.
+
 ### Build outputs
 
 All build artifacts land in a single gitignored `dist/` tree at the repo root:

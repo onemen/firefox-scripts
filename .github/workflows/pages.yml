@@ -1,0 +1,112 @@
+name: Pages publish
+
+# Publishes the release artifacts (package zips, installer/helper binaries,
+# hash manifest) to the `latest` release + the `gh-pages` site — the same
+# `node tools/publish/upload.mjs` run that was previously executed by hand.
+#
+# Trigger is manual only (workflow_dispatch): every run touches live
+# artifacts consumed by installed browsers, so it must stay a deliberate,
+# human-initiated act. Prod mode refuses to run from any branch but main
+# (enforced inside upload.mjs); dev mode publishes a disposable
+# dev-build-<branch>-<sha> branch + pre-release and never touches prod.
+#
+# The three jobs run SEQUENTIALLY on purpose: each one re-reads the hash
+# manifest the previous job just pushed, so the zips are uploaded exactly
+# once (by the first job) and every platform uploads only the binaries it
+# built. A parallel matrix would race on hashes.json / the release.
+#
+# Pages serving stays "Deploy from branch: gh-pages" — this workflow pushes
+# to that branch; it does not use the actions-pages deployment method.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'prod = latest release + gh-pages (main only) · dev = disposable dev-build-*'
+        type: choice
+        default: 'dev'
+        options:
+          - dev
+          - prod
+      force:
+        description: 'Rebuild + re-upload even when hashes are unchanged (prod only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # release assets + gh-pages pushes
+
+concurrency:
+  group: pages-publish
+  cancel-in-progress: false # a publish must never be killed mid-upload
+
+env:
+  # upload.mjs reads its token from this fixed variable name.
+  GITHUB_TOKEN_VAR: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  publish-win:
+    name: publish — windows binaries
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Set up MSYS2 toolchain (make + gcc)
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc make
+      - run: pnpm install --frozen-lockfile
+      - shell: bash
+        run: |
+          ARGS="--mode=${{ inputs.mode }} --platform=win"
+          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          node tools/publish/upload.mjs $ARGS
+
+  publish-linux:
+    name: publish — linux binaries
+    needs: publish-win
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - shell: bash
+        run: |
+          ARGS="--mode=${{ inputs.mode }} --platform=linux"
+          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          node tools/publish/upload.mjs $ARGS
+
+  publish-mac:
+    name: publish — mac binaries
+    needs: publish-linux
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - shell: bash
+        run: |
+          ARGS="--mode=${{ inputs.mode }} --platform=mac"
+          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          node tools/publish/upload.mjs $ARGS
