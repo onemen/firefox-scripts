@@ -461,6 +461,9 @@ async function publishToGitHub({
     // Pages); installers are release-only; helpers are Pages-only.
     for (const name of builtZips) {
       pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
+      // updater-ui is internal: the updater downloads and updates it from the
+      // Pages branch itself — never a release asset (mirrors the dev path).
+      if (name === 'updater-ui') continue;
       if (release) {
         await deleteExistingAsset(octokit, release.id, zipFileName(name));
         await uploadAsset(octokit, release.id, zipPath(name), zipFileName(name));
