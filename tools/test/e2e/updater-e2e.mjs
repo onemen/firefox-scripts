@@ -24,9 +24,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   REPO_ROOT,
+  launchFirefox,
+  attachProcessLogging,
   check,
   createCounter,
-  launchFirefox,
   findPageByUrl,
   waitForCondition,
   screenshotPrivileged,
@@ -40,6 +41,39 @@ const UPDATER_URL = 'chrome://firefox-scripts/content/ui/updater.html';
 const FORCE_UTILS_STALE = 'RDFDataSource.sys.mjs';
 const FORCE_UTILS_STALE_MARKER = '\n// e2e-test: forced stale\n';
 const FORCE_CONFIG_STALE_MARKER = '// e2e-test\n';
+
+/**
+ * Appended to the seeded GreD config.js: proves autoconfig executed (pref) and
+ * mirrors all console-service messages to <profile>/e2e-console.log so silent
+ * updater bails become visible in CI logs.
+ */
+const CONFIG_PROBE_SNIPPET = `
+// e2e-test probe
+try {
+  pref('extensions.firefox-scripts.e2eAutoconfigRan', 'yes');
+  const Cc = Components.classes;
+  const Ci = Components.interfaces;
+  const cs = Cc['@mozilla.org/consoleservice;1'].getService(Ci.nsIConsoleService);
+  const f = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
+  f.initWithPath(Services.dirsvc.get('ProfD', Ci.nsIFile).path + '/e2e-console.log');
+  const fos = Cc['@mozilla.org/network/file-output-stream;1'].createInstance(
+    Ci.nsIFileOutputStream
+  );
+  fos.init(f, 0x02 | 0x08 | 0x10, -1, 0); // write | create | append
+  cs.registerListener({
+    observe(aMessage, aTopic, aData) {
+      try {
+        const line =
+          new Date().toISOString() +
+          ' ' +
+          (aMessage.QueryInterface(Ci.nsIScriptError)?.errorMessage || aData || '') +
+          '\\n';
+        fos.write(line, line.length);
+      } catch (e) {}
+    },
+  });
+} catch (e) {}
+`;
 
 // ── Parse args ────────────────────────────────────────────────────────────
 
@@ -234,9 +268,11 @@ function tryModifyGreConfig(greDir) {
 
 /**
  * Launch Firefox with a seeded profile, wait for the updater tab, run generic
- * action assertions (identity, buttons, checkbox, errors, screenshot). /** Log
- * the update URLs baked into the snapshot's generated updater config.
+ * action assertions (identity, buttons, checkbox, errors, screenshot).
  */
+
+/** Log the update URLs baked into the snapshot's generated updater config. */
+
 function logBakedConfig(snapshotDir) {
   const staging = tempDir('fxs-cfg');
   try {
@@ -293,6 +329,31 @@ function dumpUpdaterPrefs(profileDir) {
   }
 }
 
+/** Append the diagnostic probe to the seeded GreD config.js. */
+function appendConfigProbe(greDir) {
+  try {
+    fs.appendFileSync(path.join(greDir, 'config.js'), CONFIG_PROBE_SNIPPET);
+    return true;
+  } catch (err) {
+    console.log(`  [diag] could not append config probe: ${err.message}`);
+    return false;
+  }
+}
+
+/** Tail the console mirror written by the config probe. */
+function dumpConsoleLog(profileDir) {
+  try {
+    const lines = fs
+      .readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8')
+      .trimEnd()
+      .split('\n');
+    console.log(`  [diag] console mirror: ${lines.length} lines, last 25:`);
+    for (const line of lines.slice(-25)) console.log(`  [diag:c] ${line}`);
+  } catch {
+    console.log('  [diag] console mirror: no e2e-console.log written');
+  }
+}
+
 async function runStaleScenario(
   counter,
   opts,
@@ -325,10 +386,13 @@ async function runStaleScenario(
     }
   }
 
+  appendConfigProbe(greDir);
+
   let browser;
   let openedPage = null;
   try {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {headless: opts.headless});
+    attachProcessLogging(browser, label);
 
     const page = await findPageByUrl(browser, UPDATER_URL, 90_000);
     openedPage = page;
@@ -449,7 +513,10 @@ async function runStaleScenario(
     } catch {
       /* ignore */
     }
-    if (!openedPage) dumpUpdaterPrefs(seeded.profileDir);
+    if (!openedPage) {
+      dumpUpdaterPrefs(seeded.profileDir);
+      dumpConsoleLog(seeded.profileDir);
+    }
   }
 }
 
@@ -474,9 +541,12 @@ async function runNoTabScenario(counter, opts, snapshotDir, label, {skipUtils, s
   check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
   if (!greSeed.ok) return seeded.profileDir;
 
+  appendConfigProbe(greDir);
+
   let browser;
   try {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {headless: opts.headless});
+    attachProcessLogging(browser, label);
     const page = await findPageByUrl(browser, UPDATER_URL, 30_000);
     check(counter, !page, `tab does NOT open (${label})`);
     return seeded.profileDir;
