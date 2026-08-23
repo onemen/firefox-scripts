@@ -67,7 +67,7 @@ function parseArgs() {
 
 function installFxFolder(snapshotDir, greDir) {
   const fxZip = findZip(snapshotDir, ['fx-folder-dev.zip', 'fx-folder.zip']);
-  if (!fxZip) return false;
+  if (!fxZip) return {ok: false, error: 'no fx-folder zip in snapshot'};
   const staging = tempDir('fxs-fx');
   try {
     extractZip(fxZip, staging);
@@ -76,15 +76,17 @@ function installFxFolder(snapshotDir, greDir) {
     for (const rel of pairs) {
       const src = path.join(base, ...rel.split('/'));
       const dst = path.join(greDir, ...rel.split('/'));
-      if (!fs.existsSync(src)) return false;
+      if (!fs.existsSync(src)) {
+        return {ok: false, error: `${rel} missing from ${path.basename(fxZip)}`};
+      }
       try {
         fs.mkdirSync(path.dirname(dst), {recursive: true});
         fs.writeFileSync(dst, fs.readFileSync(src));
-      } catch {
-        /* GreD not writable */
+      } catch (err) {
+        return {ok: false, error: `cannot write ${dst}: ${err.message}`};
       }
     }
-    return true;
+    return {ok: true, error: ''};
   } finally {
     rmDir(staging);
   }
@@ -119,9 +121,10 @@ function seedProfile(
   // make the stale-state test meaningless.
   if (forceUtilsStale) {
     const stale = path.join(chromeUtils, FORCE_UTILS_STALE);
-    if (fs.existsSync(stale)) {
-      fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
+    if (!fs.existsSync(stale)) {
+      throw new Error(`cannot force utils stale: ${FORCE_UTILS_STALE} missing from utils zip`);
     }
+    fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
   }
 
   // Force config stale: modify config.js in GreD
@@ -231,8 +234,65 @@ function tryModifyGreConfig(greDir) {
 
 /**
  * Launch Firefox with a seeded profile, wait for the updater tab, run generic
- * action assertions (identity, buttons, checkbox, errors, screenshot).
+ * action assertions (identity, buttons, checkbox, errors, screenshot). /** Log
+ * the update URLs baked into the snapshot's generated updater config.
  */
+function logBakedConfig(snapshotDir) {
+  const staging = tempDir('fxs-cfg');
+  try {
+    const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);
+    if (!utilsZip) return;
+    extractZip(utilsZip, staging);
+    const cfgPath = path.join(staging, 'updater', 'updater-config.sys.mjs');
+    if (!fs.existsSync(cfgPath)) {
+      console.log('  [diag] updater-config.sys.mjs not found in utils zip');
+      return;
+    }
+    for (const line of fs.readFileSync(cfgPath, 'utf-8').split('\n')) {
+      if (/HASHES_URL|ZIP_BASE_URL|LOCAL_DIST_PATH|ASSET_SUFFIX/.test(line)) {
+        console.log(`  [diag] baked config: ${line.trim()}`);
+      }
+    }
+  } catch (err) {
+    console.log(`  [diag] could not read baked config: ${err.message}`);
+  } finally {
+    rmDir(staging);
+  }
+}
+
+/** Dump every open tab URL — used when the updater tab never appeared. */
+async function dumpPages(browser) {
+  try {
+    const pages = await browser.pages();
+    console.log('  [diag] open pages at timeout:');
+    for (const p of pages) console.log(`    ${p.url() || '(untitled)'}`);
+  } catch (err) {
+    console.log(`  [diag] could not list pages: ${err.message}`);
+  }
+}
+
+/**
+ * Post-mortem: which extensions.firefox-scripts prefs did the browser persist?
+ * A lastUpdateTabShown=today pref proves the scheduler ran and TRIED to show
+ * the tab; an empty dump means the autoconfig/loader never ran at all.
+ */
+function dumpUpdaterPrefs(profileDir) {
+  try {
+    const prefs = fs.readFileSync(path.join(profileDir, 'prefs.js'), 'utf-8');
+    const hits = prefs
+      .split('\n')
+      .filter(line => line.includes('extensions.firefox-scripts'))
+      .map(line => line.trim());
+    if (hits.length === 0) {
+      console.log('  [diag] no firefox-scripts prefs persisted (loader never ran?)');
+    } else {
+      for (const line of hits) console.log(`  [diag] pref ${line}`);
+    }
+  } catch (err) {
+    console.log(`  [diag] prefs.js unreadable: ${err.message}`);
+  }
+}
+
 async function runStaleScenario(
   counter,
   opts,
@@ -251,18 +311,32 @@ async function runStaleScenario(
     skipConfig,
   });
 
-  // GreD install
+  // GreD install — a silent seed failure means the loader never runs and every
+  // later assertion misfires, so report it as its own failed check and stop.
   const greDir = findGreDir(firefoxBin);
-  installFxFolder(snapshotDir, greDir);
-  if (seeded._greModNeeded) modifyGreConfig(greDir);
+  const greSeed = installFxFolder(snapshotDir, greDir);
+  check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
+  if (!greSeed.ok) return seeded.profileDir;
+  if (seeded._greModNeeded) {
+    const err = tryModifyGreConfig(greDir);
+    if (err) {
+      check(counter, false, `mark config stale (${label})`, err);
+      return seeded.profileDir;
+    }
+  }
 
   let browser;
+  let openedPage = null;
   try {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {headless: opts.headless});
 
     const page = await findPageByUrl(browser, UPDATER_URL, 90_000);
+    openedPage = page;
     check(counter, Boolean(page), `tab opens (${label})`);
-    if (!page) return seeded.profileDir;
+    if (!page) {
+      await dumpPages(browser);
+      return seeded.profileDir;
+    }
 
     console.log(`  tab URL: ${page.url()}`);
 
@@ -375,6 +449,7 @@ async function runStaleScenario(
     } catch {
       /* ignore */
     }
+    if (!openedPage) dumpUpdaterPrefs(seeded.profileDir);
   }
 }
 
@@ -395,7 +470,9 @@ async function runNoTabScenario(counter, opts, snapshotDir, label, {skipUtils, s
   });
 
   const greDir = findGreDir(firefoxBin);
-  installFxFolder(snapshotDir, greDir);
+  const greSeed = installFxFolder(snapshotDir, greDir);
+  check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
+  if (!greSeed.ok) return seeded.profileDir;
 
   let browser;
   try {
@@ -424,6 +501,14 @@ async function run() {
     process.exit(1);
   }
   console.log(`Updater E2E\n  snapshot: ${snapshotDir}`);
+  if (!fs.existsSync(path.join(snapshotDir, 'hashes.json'))) {
+    console.error(
+      `Snapshot ${snapshotDir} has no hashes.json — rebuild it with ` +
+        '`pnpm upload:local --mode=dev`.'
+    );
+    process.exit(1);
+  }
+  logBakedConfig(snapshotDir);
 
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) {
