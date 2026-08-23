@@ -118,11 +118,15 @@ jobs:
             # Call Groq with retry-on-rate-limit backoff; a failure must never
             # fail the job (insurance). Free-tier TPM is easy to hit on a
             # multi-file PR, so honor Groq's Retry-After header before retrying.
+            # --max-time bounds a hung connection (no curl default timeout);
+            # the sleep is capped at 60s so a huge Retry-After value (or a
+            # non-numeric date form) can never stall the job.
             http_code=000
             attempt=0
             while [ "$http_code" != "200" ] && [ "$attempt" -lt 3 ]; do
               attempt=$((attempt + 1))
-              http_code="$(curl -sS -o /tmp/groq.json -D /tmp/groq.headers -w '%{http_code}' \
+              http_code="$(curl -sS --connect-timeout 10 --max-time 90 \
+                -o /tmp/groq.json -D /tmp/groq.headers -w '%{http_code}' \
                 -X POST https://api.groq.com/openai/v1/chat/completions \
                 -H "Authorization: Bearer $GROQ_API_KEY" \
                 -H 'Content-Type: application/json' \
@@ -132,7 +136,10 @@ jobs:
               fi
               wait_s="$(awk 'tolower($1) == "retry-after:" {gsub("\r", "", $2); print $2}' \
                 /tmp/groq.headers 2>/dev/null || true)"
-              wait_s="${wait_s:-60}"
+              case "$wait_s" in
+                ''|*[!0-9]*) wait_s=60 ;;
+              esac
+              [ "$wait_s" -gt 60 ] && wait_s=60
               echo "  ($file: HTTP $http_code — retrying in ${wait_s}s)"
               sleep "$wait_s"
             done
