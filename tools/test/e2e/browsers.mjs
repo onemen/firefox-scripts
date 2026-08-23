@@ -166,10 +166,22 @@ export function findGreDir(firefoxBin) {
   const macOSResources = firefoxBin.replace(/\/Contents\/MacOS\/[^/]+$/, '/Contents/Resources');
   if (macOSResources !== firefoxBin) return macOSResources;
 
-  if (process.platform === 'linux' && /\/snap\//.test(firefoxBin)) {
+  // Linux /usr/bin/<browser> is usually a symlink into the real install dir
+  // (e.g. /usr/bin/librewolf -> /usr/lib/librewolf/librewolf); GreD must be
+  // derived from the RESOLVED path or installFxFolder would write config.js
+  // into /usr/bin (wrong + permission-denied).
+  let resolved = firefoxBin;
+  if (process.platform === 'linux') {
+    try {
+      resolved = fs.realpathSync(firefoxBin);
+    } catch {
+      // binary may not exist yet (candidate probing, unit tests)
+    }
+  }
+  if (process.platform === 'linux' && /\/snap\//.test(resolved)) {
     return '/etc/firefox';
   }
-  const binDir = path.dirname(firefoxBin);
+  const binDir = path.dirname(resolved);
   if (fs.existsSync(path.join(binDir, 'application.ini'))) {
     return binDir; // tarball / portable
   }
