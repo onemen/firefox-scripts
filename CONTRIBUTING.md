@@ -44,6 +44,7 @@ Before opening a PR, run the local checks:
 pnpm lint          # eslint
 pnpm format        # prettier check
 pnpm test          # unit tests
+pnpm test:hash     # C vs JS hash parity (see installer/test/test_hash.mjs)
 pnpm upload:local --mode=dev   # build snapshot
 pnpm test:e2e      # installer HTTP + updater scenarios
 ```
