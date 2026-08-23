@@ -191,7 +191,7 @@ function seedProfile(
 
   // Force config stale: modify config.js in GreD
   if (forceConfigStale) {
-    return {profileDir, chromeUtils, _greModNeeded: true};
+    return {profileDir, chromeUtils, _greModNeeded: true, prefs};
   }
 
   // Per-package skip prefs (extensions.firefox-scripts.skippedHash.<pkg> =

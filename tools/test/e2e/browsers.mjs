@@ -178,7 +178,10 @@ export function findGreDir(firefoxBin) {
       // binary may not exist yet (candidate probing, unit tests)
     }
   }
-  if (process.platform === 'linux' && /\/snap\//.test(resolved)) {
+  // Check the ORIGINAL path too: realpathSync of /snap/bin/firefox may
+  // resolve to a launcher outside /snap/ (e.g. under /usr/lib), which would
+  // otherwise make Snap detection miss.
+  if (process.platform === 'linux' && (/\/snap\//.test(firefoxBin) || /\/snap\//.test(resolved))) {
     return '/etc/firefox';
   }
   const binDir = path.dirname(resolved);
