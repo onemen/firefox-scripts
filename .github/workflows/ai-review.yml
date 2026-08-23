@@ -221,7 +221,9 @@ jobs:
           comment_id="$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
             --jq '.[] | select(.body | startswith("<!-- groq-ai-review:summary -->")) | .id' | head -1 || true)"
           if [ -n "$comment_id" ]; then
-            gh api -X PATCH "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments/$comment_id" \
+            # NOTE: issue-comment update/delete use /issues/comments/{id} —
+            # the /issues/{n}/comments/{id} path does not exist (404).
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$comment_id" \
               -F body=@/tmp/summary-final.md
           else
             gh api -X POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
