@@ -54,6 +54,29 @@ test('findGreDir: tarball/portable dir contains application.ini', () => {
   }
 });
 
+test(
+  'findGreDir: resolves /usr/bin symlink to the real install dir on Linux',
+  {
+    skip: process.platform !== 'linux',
+  },
+  () => {
+    // /usr/bin/librewolf -> /opt/librewolf/librewolf (real dir with application.ini)
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gre-symlink-'));
+    try {
+      const realDir = path.join(tmp, 'librewolf');
+      fs.mkdirSync(realDir);
+      fs.writeFileSync(path.join(realDir, 'application.ini'), '[App]\nName=LibreWolf');
+      fs.writeFileSync(path.join(realDir, 'librewolf'), 'fake');
+      fs.mkdirSync(path.join(tmp, 'bin'));
+      const link = path.join(tmp, 'bin', 'librewolf');
+      fs.symlinkSync(path.join(realDir, 'librewolf'), link);
+      assert.equal(findGreDir(link), realDir);
+    } finally {
+      fs.rmSync(tmp, {recursive: true, force: true});
+    }
+  }
+);
+
 test('findGreDir: returns the bin dir when nothing else matches', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gre-test-'));
   try {
