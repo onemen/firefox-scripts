@@ -86,7 +86,21 @@ jobs:
           - If the changes are fine, return {"summary": "No issues found.", "findings": []}'
 
           while IFS= read -r -d '' file; do
-            # Bound the number of files per run (free-tier RPM safety).
+            # Skip paths excluded in .coderabbit.yaml. Gitignored today, but
+            # keeps the workflow self-consistent if the ignore set changes.
+            case "$file" in
+              dist/*|docs/local_plan/*) continue ;;
+            esac
+
+            # Skip empty/binary diffs.
+            diff_text="$(git diff "$BASE...HEAD" --no-ext-diff -- "$file" || true)"
+            if [ -z "$diff_text" ] || printf '%s' "$diff_text" | grep -q '^Binary files'; then
+              continue
+            fi
+
+            # Bound the number of files per run (free-tier RPM safety). Count
+            # only files with an eligible text diff so excluded/binary/empty
+            # files cannot consume the cap.
             if [ "$reviewed_files" -ge 30 ]; then
               echo '> Reached the 30-file cap; remaining files were not reviewed.' >> /tmp/summary.md
               break
@@ -98,12 +112,6 @@ jobs:
             if [ "$rate_limited" = "1" ]; then
               echo '> Groq rate limit exhausted; remaining files were skipped.' >> /tmp/summary.md
               break
-            fi
-
-            # Skip empty/binary diffs.
-            diff_text="$(git diff "$BASE...HEAD" --no-ext-diff -- "$file" || true)"
-            if [ -z "$diff_text" ] || printf '%s' "$diff_text" | grep -q '^Binary files'; then
-              continue
             fi
 
             # Cap per-file diff size (token budget). Truncation is flagged so
@@ -243,7 +251,7 @@ jobs:
         shell: bash
         run: |
           comment_id="$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-            --jq '.[] | select(.body | startswith("<!-- groq-ai-review:summary -->")) | .id' | head -1 || true)"
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- groq-ai-review:summary -->"))) | .id' | head -1 || true)"
           if [ -n "$comment_id" ]; then
             # NOTE: issue-comment update/delete use /issues/comments/{id} —
             # the /issues/{n}/comments/{id} path does not exist (404).
