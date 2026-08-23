@@ -45,13 +45,6 @@ export default {
   /** Installer binary override (else auto-detected from the snapshot). */
   installerBin: '',
 
-  /**
-   * Linux/macOS only: also run the updater scenario that makes GreD read-only
-   * and asserts the elevated-helper attempt + graceful failure. Off by default
-   * (the helper-under-sudo CI step covers the elevated core).
-   */
-  helperAttempt: false,
-
   /** Tune timeouts if a machine is slow. */
   timeouts: {
     updaterTabMs: 90_000,

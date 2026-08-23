@@ -91,11 +91,16 @@ export function findZip(snapshotDir, names) {
 export function extractZip(zipPath, destDir) {
   const buf = fs.readFileSync(zipPath);
   fs.mkdirSync(destDir, {recursive: true});
+  const root = path.resolve(destDir);
   for (const entry of listZipEntries(buf)) {
     if (entry.name.endsWith('/')) continue;
     const parts = entry.name.split('/');
     if (parts.some(p => p === '..' || p === '.' || p === '')) continue;
-    const destPath = path.join(destDir, ...parts);
+    // Windows quirk: '..\\outside.txt' contains no '/', slips past the
+    // segment check, and path.join would escape destDir. Verify containment
+    // on the resolved path instead.
+    const destPath = path.resolve(root, ...parts);
+    if (destPath !== root && !destPath.startsWith(root + path.sep)) continue;
     fs.mkdirSync(path.dirname(destPath), {recursive: true});
     fs.writeFileSync(destPath, readZipEntry(buf, entry));
   }
