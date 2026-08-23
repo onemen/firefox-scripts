@@ -131,6 +131,7 @@ jobs:
 
       - name: Install Firefox (Windows)
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
           choco install firefox -y --no-progress
           echo "C:\Program Files\Mozilla Firefox\firefox.exe" > $env:TEMP\firefox-path.txt
