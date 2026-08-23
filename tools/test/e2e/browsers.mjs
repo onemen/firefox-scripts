@@ -208,11 +208,11 @@ export function discoverFirefoxBinary() {
  * - Linux Snap: /etc/firefox (the user-writable config location)
  */
 export function findGreDir(firefoxBin) {
-  if (process.platform === 'darwin') {
-    // .../Contents/MacOS/firefox -> .../Contents/Resources
-    const macosDir = path.dirname(firefoxBin);
-    return path.join(path.dirname(path.dirname(macosDir)), 'Resources');
-  }
+  // .../Contents/MacOS/firefox -> .../Contents/Resources
+  // Pure string rewrite so unit tests run on every platform.
+  const macOSResources = firefoxBin.replace(/\/Contents\/MacOS\/[^/]+$/, '/Contents/Resources');
+  if (macOSResources !== firefoxBin) return macOSResources;
+
   if (process.platform === 'linux' && /\/snap\//.test(firefoxBin)) {
     return '/etc/firefox';
   }
