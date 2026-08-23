@@ -58,6 +58,29 @@ export async function launchFirefox(binary, profileDir, {headless = false} = {})
 }
 
 /**
+ * Mirror the Firefox process stdout/stderr into the test log — autoconfig and
+ * startup JS errors surface there.
+ */
+export function attachProcessLogging(browser, label = 'ff') {
+  const proc = browser.process?.();
+  if (!proc?.stdout || !proc?.stderr) return;
+  const pipe = (stream, name) => {
+    stream.setEncoding('utf8');
+    let buf = '';
+    stream.on('data', chunk => {
+      buf += chunk;
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (line.trim()) console.log(`  [${label}:${name}] ${line}`);
+      }
+    });
+  };
+  pipe(proc.stdout, 'out');
+  pipe(proc.stderr, 'err');
+}
+
+/**
  * Poll browser.pages() for a page whose url starts with `prefix`.
  *
  * @param {import('puppeteer-core').Browser} browser
@@ -67,9 +90,16 @@ export async function launchFirefox(binary, profileDir, {headless = false} = {})
  */
 export async function findPageByUrl(browser, prefix, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
+  let lastProgressLog = 0;
   while (Date.now() < deadline) {
     try {
       const pages = await browser.pages();
+      if (Date.now() - lastProgressLog > 15_000) {
+        console.log(
+          `  [diag] polling pages: ${pages.length} open [${pages.map(p => p.url()).join(' | ')}]`
+        );
+        lastProgressLog = Date.now();
+      }
       const page = pages.find(p => {
         try {
           return p.url().startsWith(prefix);
@@ -78,8 +108,12 @@ export async function findPageByUrl(browser, prefix, timeoutMs = 90_000) {
         }
       });
       if (page) return page;
-    } catch {
-      // browser not ready yet
+    } catch (err) {
+      // browser not ready yet — but log repeated attach failures
+      if (Date.now() - lastProgressLog > 15_000) {
+        console.log(`  [diag] pages() threw: ${err.message}`);
+        lastProgressLog = Date.now();
+      }
     }
     await new Promise(r => setTimeout(r, 500));
   }
