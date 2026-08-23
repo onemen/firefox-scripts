@@ -45,7 +45,11 @@ export function summary(counter) {
  * @param {{headless?: boolean}} opts
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
-export async function launchFirefox(binary, profileDir, {headless = false} = {}) {
+export async function launchFirefox(
+  binary,
+  profileDir,
+  {headless = false, extraPrefsFirefox = {}} = {}
+) {
   const puppeteer = await import('puppeteer-core');
   return puppeteer.launch({
     browser: 'firefox',
@@ -53,6 +57,11 @@ export async function launchFirefox(binary, profileDir, {headless = false} = {})
     userDataDir: profileDir,
     headless,
     protocol: 'webDriverBiDi',
+    // Puppeteer overwrites user.js with its own preferences before launch
+    // (createProfile -> syncPreferences), so any prefs the caller needs must
+    // be injected through this option — a caller-written user.js would be
+    // silently replaced and never reach Firefox.
+    extraPrefsFirefox,
     args: ['-no-remote', '-remote-allow-system-access'],
   });
 }

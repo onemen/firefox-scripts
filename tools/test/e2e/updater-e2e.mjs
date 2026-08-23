@@ -160,17 +160,16 @@ function seedProfile(
   {forceConfigStale = false, forceUtilsStale = false, skipUtils = false, skipConfig = false} = {}
 ) {
   const profileDir = tempDir('fxs-e2e');
-  const userJsPath = path.join(profileDir, 'user.js');
-  // Every scenario has a fresh profile, but make the daily notification gate
-  // explicit so an inherited/default pref can never suppress a stale fixture.
-  fs.writeFileSync(
-    userJsPath,
-    [
-      'user_pref("extensions.firefox-scripts.lastUpdateTabShown", "");',
-      'user_pref("extensions.firefox-scripts.lastScriptsCheckDate", "");',
-      '',
-    ].join('\n')
-  );
+  // Prefs are injected via puppeteer's extraPrefsFirefox (see launchFirefox):
+  // puppeteer replaces any caller-written user.js with its own preferences
+  // before launch, so a user.js here would silently never reach Firefox.
+  // Every scenario has a fresh profile, but the daily notification gate is
+  // made explicit so an inherited/default pref can never suppress a stale
+  // fixture.
+  const prefs = {
+    'extensions.firefox-scripts.lastUpdateTabShown': '',
+    'extensions.firefox-scripts.lastScriptsCheckDate': '',
+  };
   const chromeUtils = path.join(profileDir, 'chrome', 'utils');
 
   // Extract utils
@@ -195,34 +194,26 @@ function seedProfile(
     return {profileDir, chromeUtils, _greModNeeded: true};
   }
 
-  // Skip prefs — appended, not overwritten: the daily-gate prefs written
-  // above must stay in user.js for every scenario.
+  // Per-package skip prefs (extensions.firefox-scripts.skippedHash.<pkg> =
+  // remote hash) — seeded from the snapshot's own manifest.
   if (skipUtils || skipConfig) {
-    const lines = [];
     try {
       const hashesPath = path.join(snapshotDir, 'hashes.json');
       if (fs.existsSync(hashesPath)) {
         const hashes = JSON.parse(fs.readFileSync(hashesPath, 'utf-8'));
         if (skipUtils && hashes.utils?.hash) {
-          lines.push(
-            `user_pref("extensions.firefox-scripts.skippedHash.utils", "${hashes.utils.hash}");`
-          );
+          prefs['extensions.firefox-scripts.skippedHash.utils'] = hashes.utils.hash;
         }
         if (skipConfig && hashes['fx-folder']?.hash) {
-          lines.push(
-            `user_pref("extensions.firefox-scripts.skippedHash.fx-folder", "${hashes['fx-folder'].hash}");`
-          );
+          prefs['extensions.firefox-scripts.skippedHash.fx-folder'] = hashes['fx-folder'].hash;
         }
       }
     } catch {
       /* manifest missing */
     }
-    if (lines.length) {
-      fs.appendFileSync(userJsPath, lines.join('\n') + '\n');
-    }
   }
 
-  return {profileDir, chromeUtils, _greModNeeded: false};
+  return {profileDir, chromeUtils, _greModNeeded: false, prefs};
 }
 
 /**
@@ -448,7 +439,10 @@ async function runStaleScenario(
   let browser;
   let openedPage = null;
   try {
-    browser = await launchFirefox(firefoxBin, seeded.profileDir, {headless: opts.headless});
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+    });
     attachProcessLogging(browser, label);
 
     // Wait on both channels: BiDi page enumeration (needed for UI assertions)
@@ -646,7 +640,10 @@ async function runNoTabScenario(
 
   let browser;
   try {
-    browser = await launchFirefox(firefoxBin, seeded.profileDir, {headless: opts.headless});
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+    });
     attachProcessLogging(browser, label);
     const page = await findPageByUrl(browser, UPDATER_URL, 30_000);
     check(counter, !page, `tab does NOT open (${label})`);
