@@ -39,6 +39,10 @@ jobs:
       MAX_FINDINGS: '10'
       BASE_REF: ${{ github.base_ref }}
       HEAD_REF: ${{ github.head_ref }}
+      # gh and reviewdog do not auto-read the runner token — both need it
+      # explicitly to post comments.
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
