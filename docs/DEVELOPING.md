@@ -243,11 +243,11 @@ CLI flags win over environment variables, which win over the config file.
 
 `.github/workflows/e2e.yml`:
 
-| Job       | OS matrix                               | Gate                           |
-| --------- | --------------------------------------- | ------------------------------ |
-| installer | ubuntu, macos, windows                  | Hard (blocks merge)            |
-| helper    | ubuntu (sudo test)                      | Hard                           |
-| updater   | ubuntu+apt, ubuntu+snap, macos, windows | Advisory (`continue-on-error`) |
+| Job       | OS matrix                                | Gate                |
+| --------- | ---------------------------------------- | ------------------- |
+| installer | ubuntu, macos, windows                   | Hard (blocks merge) |
+| helper    | ubuntu (sudo test)                       | Hard                |
+| updater   | ubuntu (Mozilla tarball), macos, windows | Hard                |
 
 See `docs/e2e-matrix-plan.md` for the planned browser × OS expansion (Dev Edition, Waterfox, Zen,
 LibreWolf, Floorp).
