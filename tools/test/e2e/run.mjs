@@ -35,7 +35,6 @@ function parseArgs() {
     branchCheck: null, // null = not specified
     headless: null,
     keepProfile: null,
-    helperAttempt: null,
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -50,10 +49,9 @@ function parseArgs() {
     else if (a === '--no-branch-check') opts.branchCheck = false;
     else if (a === '--headless') opts.headless = true;
     else if (a === '--keep-profile') opts.keepProfile = true;
-    else if (a === '--helper-attempt') opts.helperAttempt = true;
     else if (a === '--help') {
       console.log(`Usage: pnpm test:e2e [--installer] [--updater] [--browser a,b] [--snapshot <dir>]
-  [--no-branch-check] [--headless] [--keep-profile] [--helper-attempt]
+  [--no-branch-check] [--headless] [--keep-profile]
 Config file: e2e.config.mjs at the repo root (see config.example.mjs).`);
       process.exit(0);
     }
@@ -95,9 +93,9 @@ async function resolveConfig(opts) {
   // env FIREFOX_BINARY applies only to a firefox entry: assigning it to a
   // named non-Firefox browser would test Firefox under the wrong label and
   // bypass the runtime-browser guard in updater-e2e.
-  if (env.FIREFOX_BINARY && !browsers.some(b => b.binary)) {
-    const ff = browsers.find(b => b.name === 'firefox') ?? browsers[0];
-    browsers[browsers.indexOf(ff)] = {...ff, binary: env.FIREFOX_BINARY};
+  if (env.FIREFOX_BINARY) {
+    const ff = browsers.find(b => b.name === 'firefox' && !b.binary);
+    if (ff) browsers[browsers.indexOf(ff)] = {...ff, binary: env.FIREFOX_BINARY};
   }
 
   const installerBrowsers = file.installerBrowsers || browsers;
@@ -109,7 +107,7 @@ async function resolveConfig(opts) {
     branchCheck: first(
       opts.branchCheck === null ? undefined : opts.branchCheck,
       env.E2E_BRANCH_CHECK === 'off' ? false : undefined,
-      file.branchCheck,
+      file.branchCheck === 'off' ? false : file.branchCheck,
       'strict'
     ),
     headless: first(
@@ -121,11 +119,6 @@ async function resolveConfig(opts) {
     keepProfile: first(
       opts.keepProfile === null ? undefined : opts.keepProfile,
       file.keepProfile,
-      false
-    ),
-    helperAttempt: first(
-      opts.helperAttempt === null ? undefined : opts.helperAttempt,
-      file.helperAttempt,
       false
     ),
     installerBin: first(env.INSTALLER_BIN, file.installerBin) || '',

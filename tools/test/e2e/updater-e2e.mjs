@@ -195,9 +195,9 @@ function seedProfile(
     return {profileDir, chromeUtils, _greModNeeded: true};
   }
 
-  // Skip prefs
+  // Skip prefs — appended, not overwritten: the daily-gate prefs written
+  // above must stay in user.js for every scenario.
   if (skipUtils || skipConfig) {
-    const userJsPath = path.join(profileDir, 'user.js');
     const lines = [];
     try {
       const hashesPath = path.join(snapshotDir, 'hashes.json');
@@ -218,7 +218,7 @@ function seedProfile(
       /* manifest missing */
     }
     if (lines.length) {
-      fs.writeFileSync(userJsPath, lines.join('\n') + '\n');
+      fs.appendFileSync(userJsPath, lines.join('\n') + '\n');
     }
   }
 
@@ -621,14 +621,20 @@ async function runStaleScenario(
  * Launch Firefox with both packages up to date (or skipped), assert the updater
  * tab does NOT open within the timeout.
  */
-async function runNoTabScenario(counter, opts, snapshotDir, label, {skipUtils, skipConfig}) {
+async function runNoTabScenario(
+  counter,
+  opts,
+  snapshotDir,
+  label,
+  {skipUtils, skipConfig, forceUtilsStale = false}
+) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error('Firefox not found');
 
   const seeded = seedProfile(snapshotDir, {
     forceConfigStale: false,
-    forceUtilsStale: false,
+    forceUtilsStale,
     skipUtils,
     skipConfig,
   });
@@ -651,6 +657,15 @@ async function runNoTabScenario(counter, opts, snapshotDir, label, {skipUtils, s
     } catch {
       /* ignore */
     }
+    // BiDi cannot reliably enumerate trusted chrome:// tabs; the persisted
+    // lastUpdateTabShown pref is the ground truth that the tab did NOT open.
+    const shown = greShownToday(seeded.profileDir);
+    check(
+      counter,
+      !shown,
+      `no tab-open signal (${label})`,
+      shown ? 'lastUpdateTabShown persisted although the tab should stay closed' : ''
+    );
   }
 }
 
@@ -746,7 +761,10 @@ async function run() {
         id: '5',
         run: async () => {
           profiles.push(
-            await runNoTabScenario(counter, opts, snapshotDir, 'skipped', {skipUtils: true})
+            await runNoTabScenario(counter, opts, snapshotDir, 'skipped', {
+              skipUtils: true,
+              forceUtilsStale: true,
+            })
           );
         },
       },

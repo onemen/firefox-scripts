@@ -426,11 +426,6 @@ async function run() {
     }
   });
 
-  process.on('SIGINT', () => {
-    proc.kill();
-    process.exit(130);
-  });
-
   console.log('Waiting for server to start...');
   const ready = await waitForServer();
   if (!ready) {
@@ -441,17 +436,18 @@ async function run() {
   console.log('Server ready.');
   await new Promise(r => setTimeout(r, 500)); // wait for token
 
-  // Run test layers — the smoke-test installer must be killed even when a
-  // layer throws, or it keeps port 8777 and poisons subsequent runs.
+  // Run HTTP layer — the smoke-test installer must be killed before the UI
+  // layer starts its own installer in normal mode, or both fight over port
+  // 8777 and waitForServer answers from the wrong process.
   try {
     await runHttpLayer(counter, sessionToken);
-
-    // UI layer (optional)
-    if (opts.ui) {
-      await runUiLayer(counter, opts, snapshotDir);
-    }
   } finally {
     proc.kill();
+  }
+
+  // UI layer (optional) — spawns a fresh installer that now owns the port.
+  if (opts.ui) {
+    await runUiLayer(counter, opts, snapshotDir);
   }
 
   if (!summary(counter)) process.exitCode = 1;
