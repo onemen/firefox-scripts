@@ -72,6 +72,34 @@ try {
       } catch (e) {}
     },
   });
+  // Watch for the updater tab and record the moment it appears — WebDriver
+  // BiDi cannot reliably enumerate trusted chrome:// tabs on CI.
+  let polls = 0;
+  const watcher = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
+  watcher.initWithCallback(
+    {
+      notify() {
+        try {
+          if (++polls > 180) {
+            watcher.cancel();
+            return;
+          }
+          const win = Services.wm.getMostRecentWindow('navigator:browser');
+          for (const tab of win?.gBrowser?.tabs || []) {
+            const spec = tab.linkedBrowser?.currentURI?.spec || '';
+            if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
+              const line = 'TAB_OPENED ' + new Date().toISOString() + ' ' + spec + '\\n';
+              fos.write(line, line.length);
+              watcher.cancel();
+              return;
+            }
+          }
+        } catch (e) {}
+      },
+    },
+    1000,
+    Ci.nsITimer.TYPE_REPEATING_SLACK
+  );
 } catch (e) {}
 `;
 
@@ -85,6 +113,7 @@ function parseArgs() {
     else if (args[i] === '--snapshot' && args[i + 1]) opts.snapshot = args[++i];
     else if (args[i] === '--headless') opts.headless = true;
     else if (args[i] === '--keep-profile') opts.keepProfile = true;
+    else if (args[i] === '--no-fail-fast') opts.failFast = false;
     else if (args[i] === '--scenario' && args[i + 1])
       opts.scenarios = args[++i].split(',').map(s => s.trim());
     else if (args[i] === '--help') {
@@ -354,6 +383,17 @@ function dumpConsoleLog(profileDir) {
   }
 }
 
+/** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
+function mirrorSaysTabOpened(profileDir) {
+  try {
+    return fs
+      .readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8')
+      .includes('TAB_OPENED');
+  } catch {
+    return false;
+  }
+}
+
 /**
  * True when prefs.js records lastUpdateTabShown = today — the scheduler writes
  * it immediately before addTrustedTab, so it proves the tab was opened even
@@ -411,13 +451,40 @@ async function runStaleScenario(
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {headless: opts.headless});
     attachProcessLogging(browser, label);
 
-    const page = await findPageByUrl(browser, UPDATER_URL, 90_000);
+    // Wait on both channels: BiDi page enumeration (needed for UI assertions)
+    // and the probe's TAB_OPENED mirror line (fast, BiDi-independent). When
+    // only the mirror fires, close early and let the finally block decide via
+    // the persisted lastUpdateTabShown pref instead of burning the full window.
+    const deadline = Date.now() + 90_000;
+    let sawMirrorLine = false;
+    let page = null;
+    while (Date.now() < deadline && !page && !sawMirrorLine) {
+      try {
+        page =
+          (await browser.pages()).find(p => {
+            try {
+              return p.url().startsWith(UPDATER_URL);
+            } catch {
+              return false;
+            }
+          }) || null;
+      } catch {
+        /* browser not ready yet */
+      }
+      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
+        sawMirrorLine = true;
+        break;
+      }
+      if (!page) await new Promise(r => setTimeout(r, 500));
+    }
     openedPage = page;
     if (page) check(counter, true, `tab opens (${label})`);
 
-    // When BiDi cannot enumerate the trusted chrome tab (flaky on CI), the
-    // finally block decides via the persisted lastUpdateTabShown pref, which
-    // the scheduler writes immediately before addTrustedTab.
+    if (!page && sawMirrorLine) {
+      console.log('  [diag] probe reported the tab open; closing early');
+      return seeded.profileDir;
+    }
+
     if (!page) {
       await dumpPages(browser);
       return seeded.profileDir;
@@ -624,56 +691,82 @@ async function run() {
   const savedGre = saveGreConfig(findGreDir(firefoxBin));
 
   try {
-    // Scenario 1: utils stale
-    if (scenarios.includes('1')) {
-      const p = await runStaleScenario(counter, opts, snapshotDir, 'utils-stale', {
-        forceUtilsStale: true,
-      });
-      profiles.push(p);
-    }
+    // Scenario steps run in order; after the first failure the remaining
+    // scenarios almost always fail for the same root cause, so skip them
+    // (opt out with --no-fail-fast).
 
-    // Scenario 2: config stale (needs writable GreD; skip on EPERM)
-    if (scenarios.includes('2')) {
-      const err = tryModifyGreConfig(findGreDir(firefoxBin));
-      if (err) {
-        console.log(`  SKIP config-stale: ${err}`);
-        check(counter, true, 'config-stale skipped (GreD not writable locally)');
-      } else {
-        const p = await runStaleScenario(counter, opts, snapshotDir, 'config-stale', {
-          forceConfigStale: true,
-        });
-        profiles.push(p);
+    const scenarioSteps = [
+      {
+        id: '1',
+        run: async () => {
+          profiles.push(
+            await runStaleScenario(counter, opts, snapshotDir, 'utils-stale', {
+              forceUtilsStale: true,
+            })
+          );
+        },
+      },
+      {
+        id: '2',
+        pre: () => tryModifyGreConfig(findGreDir(firefoxBin)),
+        skipLabel: 'config-stale',
+        run: async () => {
+          profiles.push(
+            await runStaleScenario(counter, opts, snapshotDir, 'config-stale', {
+              forceConfigStale: true,
+            })
+          );
+        },
+      },
+      {
+        id: '3',
+        pre: () => tryModifyGreConfig(findGreDir(firefoxBin)),
+        skipLabel: 'both-stale',
+        run: async () => {
+          profiles.push(
+            await runStaleScenario(counter, opts, snapshotDir, 'both-stale', {
+              forceUtilsStale: true,
+              forceConfigStale: true,
+            })
+          );
+        },
+      },
+      {
+        id: '4',
+        run: async () => {
+          profiles.push(
+            await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
+              skipUtils: false,
+              skipConfig: false,
+            })
+          );
+        },
+      },
+      {
+        id: '5',
+        run: async () => {
+          profiles.push(
+            await runNoTabScenario(counter, opts, snapshotDir, 'skipped', {skipUtils: true})
+          );
+        },
+      },
+    ];
+
+    for (const step of scenarioSteps) {
+      if (!scenarios.includes(step.id)) continue;
+      if ((opts.failFast ?? true) && counter.failed > 0) {
+        console.log(`\n  SKIP scenario ${step.id}: fail-fast after earlier failure`);
+        continue;
       }
-    }
-
-    // Scenario 3: both stale (needs writable GreD; skip on EPERM)
-    if (scenarios.includes('3')) {
-      const err = tryModifyGreConfig(findGreDir(firefoxBin));
-      if (err) {
-        console.log(`  SKIP both-stale: ${err}`);
-        check(counter, true, 'both-stale skipped (GreD not writable locally)');
-      } else {
-        const p = await runStaleScenario(counter, opts, snapshotDir, 'both-stale', {
-          forceUtilsStale: true,
-          forceConfigStale: true,
-        });
-        profiles.push(p);
+      if (step.pre) {
+        const err = step.pre();
+        if (err) {
+          console.log(`  SKIP ${step.skipLabel}: ${err}`);
+          check(counter, true, `${step.skipLabel} skipped (GreD not writable locally)`);
+          continue;
+        }
       }
-    }
-
-    // Scenario 4: up to date
-    if (scenarios.includes('4')) {
-      const p = await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
-        skipUtils: false,
-        skipConfig: false,
-      });
-      profiles.push(p);
-    }
-
-    // Scenario 5: skipped
-    if (scenarios.includes('5')) {
-      const p = await runNoTabScenario(counter, opts, snapshotDir, 'skipped', {skipUtils: true});
-      profiles.push(p);
+      await step.run();
     }
   } finally {
     if (!opts.keepProfile) {
