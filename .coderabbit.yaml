@@ -5,9 +5,9 @@ reviews:
     enabled: true
     drafts: false # draft-until-green gate: reviews fire when a PR is marked ready
     base_branches:
-      - main
-      - feat/e2e
-      - feat/e2e-browser-matrix # stacked-PR targets
-path_filters:
-  - '!dist/**'
-  - '!docs/local_plan/**'
+      # regex patterns; covers every stacked PR branched under feat/
+      - 'feat/.*'
+      - 'stack/.*'
+  path_filters:
+    - '!dist/**'
+    - '!docs/local_plan/**'
