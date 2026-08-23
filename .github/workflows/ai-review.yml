@@ -7,9 +7,9 @@
 #
 # Model: openai/gpt-oss-120b by default (131k context, JSON mode). Alternatives
 # to consider — groq/compound, qwen/qwen3.6-27b — and current rate limits:
-# https://console.groq.com/docs/models. Free tier is ~30 RPM / ~1k RPD, so the
-# per-file loop sleeps between calls and caps per-file diff size. If you hit
-# 429s, watch the x-ratelimit-* response headers.
+# https://console.groq.com/docs/models. Free tier is ~30 RPM and ~8k tokens/min
+# on this model, so per-file diffs are capped small and 429s are retried with
+# backoff honoring Groq's Retry-After header.
 #
 # Stacked PRs: github.base_ref is the PREVIOUS PR's branch, not main. The
 # three-dot range origin/$base...HEAD isolates exactly this PR's layer.
@@ -35,7 +35,9 @@ jobs:
     env:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       GROQ_MODEL: openai/gpt-oss-120b
-      MAX_DIFF_CHARS: '40000'
+      # Keep per-request size well under the free-tier TPM budget (8k
+      # tokens/min on this model): ~8k chars ≈ 2k tokens per request.
+      MAX_DIFF_CHARS: '8000'
       MAX_FINDINGS: '10'
       BASE_REF: ${{ github.base_ref }}
       HEAD_REF: ${{ github.head_ref }}
@@ -113,12 +115,27 @@ jobs:
               '{model: $model, temperature: 0.2, response_format: {type: "json_object"}, messages: [{role: "system", content: $system}, {role: "user", content: ("Review the diff of " + $file + ":\n\n" + $diff)}]}' \
               > /tmp/payload.json
 
-            # Call Groq; a failure must never fail the job (insurance).
-            http_code="$(curl -sS -o /tmp/groq.json -w '%{http_code}' \
-              -X POST https://api.groq.com/openai/v1/chat/completions \
-              -H "Authorization: Bearer $GROQ_API_KEY" \
-              -H 'Content-Type: application/json' \
-              -d @/tmp/payload.json || true)"
+            # Call Groq with retry-on-rate-limit backoff; a failure must never
+            # fail the job (insurance). Free-tier TPM is easy to hit on a
+            # multi-file PR, so honor Groq's Retry-After header before retrying.
+            http_code=000
+            attempt=0
+            while [ "$http_code" != "200" ] && [ "$attempt" -lt 3 ]; do
+              attempt=$((attempt + 1))
+              http_code="$(curl -sS -o /tmp/groq.json -D /tmp/groq.headers -w '%{http_code}' \
+                -X POST https://api.groq.com/openai/v1/chat/completions \
+                -H "Authorization: Bearer $GROQ_API_KEY" \
+                -H 'Content-Type: application/json' \
+                -d @/tmp/payload.json || true)"
+              if [ "$http_code" = "200" ]; then
+                break
+              fi
+              wait_s="$(awk 'tolower($1) == "retry-after:" {gsub("\r", "", $2); print $2}' \
+                /tmp/groq.headers 2>/dev/null || true)"
+              wait_s="${wait_s:-60}"
+              echo "  ($file: HTTP $http_code — retrying in ${wait_s}s)"
+              sleep "$wait_s"
+            done
 
             if [ "$http_code" != "200" ]; then
               echo "⚠️ \`$file\` — Groq API returned HTTP $http_code (skipped)." >> /tmp/summary.md
