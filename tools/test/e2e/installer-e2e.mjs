@@ -458,16 +458,19 @@ async function run() {
   console.log('Server ready.');
   await new Promise(r => setTimeout(r, 500)); // wait for token
 
-  // Run HTTP layer
-  await runHttpLayer(counter, sessionToken);
+  // Run test layers — the smoke-test installer must be killed even when a
+  // layer throws, or it keeps port 8777 and poisons subsequent runs.
+  try {
+    await runHttpLayer(counter, sessionToken);
 
-  // Run UI layer (optional)
-  if (opts.ui) {
-    await runUiLayer(counter, opts, snapshotDir);
+    // UI layer (optional)
+    if (opts.ui) {
+      await runUiLayer(counter, opts, snapshotDir);
+    }
+  } finally {
+    proc.kill();
   }
 
-  // Clean up
-  proc.kill();
   if (!summary(counter)) process.exitCode = 1;
 }
 

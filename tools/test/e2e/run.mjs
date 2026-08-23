@@ -92,9 +92,12 @@ async function resolveConfig(opts) {
       return known ? {...known} : {name, binary: ''};
     });
   }
-  // env FIREFOX_BINARY applies to the first firefox entry
+  // env FIREFOX_BINARY applies only to a firefox entry: assigning it to a
+  // named non-Firefox browser would test Firefox under the wrong label and
+  // bypass the runtime-browser guard in updater-e2e.
   if (env.FIREFOX_BINARY && !browsers.some(b => b.binary)) {
-    browsers[0] = {...browsers[0], binary: env.FIREFOX_BINARY};
+    const ff = browsers.find(b => b.name === 'firefox') ?? browsers[0];
+    browsers[browsers.indexOf(ff)] = {...ff, binary: env.FIREFOX_BINARY};
   }
 
   const installerBrowsers = file.installerBrowsers || browsers;
