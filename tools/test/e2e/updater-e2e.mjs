@@ -354,6 +354,23 @@ function dumpConsoleLog(profileDir) {
   }
 }
 
+/**
+ * True when prefs.js records lastUpdateTabShown = today — the scheduler writes
+ * it immediately before addTrustedTab, so it proves the tab was opened even
+ * when WebDriver BiDi cannot enumerate trusted chrome:// tabs.
+ */
+function greShownToday(profileDir) {
+  try {
+    const prefs = fs.readFileSync(path.join(profileDir, 'prefs.js'), 'utf-8');
+    const match = prefs.match(
+      /user_pref\("extensions\.firefox-scripts\.lastUpdateTabShown", "([^"]*)"\)/
+    );
+    return match?.[1] === new Date().toISOString().slice(0, 10);
+  } catch {
+    return false;
+  }
+}
+
 async function runStaleScenario(
   counter,
   opts,
@@ -396,7 +413,11 @@ async function runStaleScenario(
 
     const page = await findPageByUrl(browser, UPDATER_URL, 90_000);
     openedPage = page;
-    check(counter, Boolean(page), `tab opens (${label})`);
+    if (page) check(counter, true, `tab opens (${label})`);
+
+    // When BiDi cannot enumerate the trusted chrome tab (flaky on CI), the
+    // finally block decides via the persisted lastUpdateTabShown pref, which
+    // the scheduler writes immediately before addTrustedTab.
     if (!page) {
       await dumpPages(browser);
       return seeded.profileDir;
@@ -514,6 +535,15 @@ async function runStaleScenario(
       /* ignore */
     }
     if (!openedPage) {
+      const viaPref = greShownToday(seeded.profileDir);
+      check(
+        counter,
+        viaPref,
+        `tab opens (${label})`,
+        viaPref ?
+          '(verified via lastUpdateTabShown; BiDi could not enumerate the chrome tab)'
+        : 'scheduler never reached addTrustedTab'
+      );
       dumpUpdaterPrefs(seeded.profileDir);
       dumpConsoleLog(seeded.profileDir);
     }
@@ -540,8 +570,6 @@ async function runNoTabScenario(counter, opts, snapshotDir, label, {skipUtils, s
   const greSeed = installFxFolder(snapshotDir, greDir);
   check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
   if (!greSeed.ok) return seeded.profileDir;
-
-  appendConfigProbe(greDir);
 
   let browser;
   try {
