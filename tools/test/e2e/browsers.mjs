@@ -109,6 +109,17 @@ export function discoverFirefoxBinary() {
   if (process.env.FIREFOX_BINARY && fs.existsSync(process.env.FIREFOX_BINARY)) {
     return process.env.FIREFOX_BINARY;
   }
+  // This stack's auto-discovery only knows Firefox locations. A named
+  // non-Firefox browser must come from an explicit path, or the run would
+  // silently test Firefox under the wrong label (multi-browser discovery
+  // lands with the browser-matrix PR).
+  const runtime = process.env.RUNTIME_BROWSER;
+  if (runtime && runtime !== 'firefox') {
+    throw new Error(
+      `RUNTIME_BROWSER=${runtime}: no auto-discovery for this browser yet — ` +
+        'pass --firefox / FIREFOX_BINARY explicitly'
+    );
+  }
   if (process.platform === 'win32') {
     const candidates = [
       path.join(process.env.LOCALAPPDATA || '', 'Mozilla Firefox', 'firefox.exe'),
