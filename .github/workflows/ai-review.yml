@@ -205,8 +205,8 @@ jobs:
             --jq '.[] | select(.body | startswith("<!-- groq-ai-review:summary -->")) | .id' | head -1 || true)"
           if [ -n "$comment_id" ]; then
             gh api -X PATCH "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments/$comment_id" \
-              -f body=@/tmp/summary-final.md
+              -F body=@/tmp/summary-final.md
           else
             gh api -X POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-              -f body=@/tmp/summary-final.md
+              -F body=@/tmp/summary-final.md
           fi
