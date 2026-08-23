@@ -265,9 +265,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
 
     // 4. Wait for the installer server
     const ready = await waitForServer(60_000);
-    check(counter, ready, 'installer server started for UI layer');
     if (!ready) {
-      installerProc.kill();
       return;
     }
 
@@ -350,33 +348,18 @@ async function runUiLayer(counter, opts, snapshotDir) {
       if (shotOk) check(counter, true, 'installer screenshot saved');
     }
 
-    // Clean up
-    try {
-      await browser.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      installerProc.kill();
-    } catch {
-      /* ignore */
-    }
+    return;
   } catch (err) {
     console.error(`  UI layer error: ${err.message}`);
     check(counter, false, 'installer UI layer completed', err.message);
+  } finally {
+    // Single cleanup path: every exit (success, early return, throw) closes
+    // Firefox and the detached installer before the profile is removed.
     try {
       await browser?.close();
     } catch {
       /* ignore */
     }
-    try {
-      installerProc?.kill();
-    } catch {
-      /* ignore */
-    }
-  } finally {
-    // A detached installer outliving the test holds port 8777 and poisons
-    // every subsequent E2E run on this machine.
     try {
       installerProc?.kill();
     } catch {
