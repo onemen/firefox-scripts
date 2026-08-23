@@ -31,7 +31,7 @@ test('findGreDir: returns the bin dir on Windows', {skip: process.platform !== '
   assert.equal(gre, 'C:\\Program Files\\Mozilla Firefox');
 });
 
-test('findGreDir: resolves Resources on macOS', {skip: process.platform !== 'darwin'}, () => {
+test('findGreDir: resolves Resources on macOS', () => {
   const gre = findGreDir('/Applications/Firefox.app/Contents/MacOS/firefox-bin');
   assert.equal(gre, '/Applications/Firefox.app/Contents/Resources');
 });
