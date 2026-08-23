@@ -245,6 +245,9 @@ async function runUiLayer(counter, opts, snapshotDir) {
   // 2. Launch Firefox via puppeteer
   let browser;
   let page;
+  // Hoisted so the catch/finally blocks can kill a detached installer that is
+  // still holding port 8777 when the UI layer throws.
+  let installerProc = null;
   try {
     browser = await launchFirefox(firefoxBin, testProfile, {headless: opts.headless});
 
@@ -255,8 +258,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
       return;
     }
 
-    console.log(`  Starting installer: ${bin}`);
-    const installerProc = spawn(bin, [], {
+    installerProc = spawn(bin, [], {
       stdio: ['ignore', 'inherit', 'inherit'],
       detached: true,
     });
@@ -367,7 +369,19 @@ async function runUiLayer(counter, opts, snapshotDir) {
     } catch {
       /* ignore */
     }
+    try {
+      installerProc?.kill();
+    } catch {
+      /* ignore */
+    }
   } finally {
+    // A detached installer outliving the test holds port 8777 and poisons
+    // every subsequent E2E run on this machine.
+    try {
+      installerProc?.kill();
+    } catch {
+      /* ignore */
+    }
     try {
       fs.rmSync(testProfile, {recursive: true, force: true});
     } catch {

@@ -419,6 +419,19 @@ async function runStaleScenario(
   {forceConfigStale, forceUtilsStale, skipUtils, skipConfig}
 ) {
   console.log(`\n## Scenario: ${label}`);
+  // This stack's discovery only knows Firefox locations. A RUNTIME_BROWSER
+  // naming a non-Firefox browser without an explicit path would launch
+  // Firefox under the wrong label — fail loudly instead of a false green.
+  const runtime = process.env.RUNTIME_BROWSER;
+  if (!opts.firefox && !process.env.FIREFOX_BINARY && runtime && runtime !== 'firefox') {
+    check(
+      counter,
+      false,
+      `${runtime} binary available`,
+      'no explicit path configured; multi-browser discovery arrives with the browser-matrix PR'
+    );
+    return null;
+  }
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error('Firefox not found');
 
@@ -623,6 +636,17 @@ async function runStaleScenario(
  */
 async function runNoTabScenario(counter, opts, snapshotDir, label, {skipUtils, skipConfig}) {
   console.log(`\n## Scenario: ${label}`);
+  // Same false-green guard as the stale scenarios.
+  const runtime = process.env.RUNTIME_BROWSER;
+  if (!opts.firefox && !process.env.FIREFOX_BINARY && runtime && runtime !== 'firefox') {
+    check(
+      counter,
+      false,
+      `${runtime} binary available`,
+      'no explicit path configured; multi-browser discovery arrives with the browser-matrix PR'
+    );
+    return null;
+  }
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error('Firefox not found');
 
