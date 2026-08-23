@@ -74,6 +74,7 @@ jobs:
 
           total_findings=0
           reviewed_files=0
+          rate_limited=0 # circuit breaker: once 429s exhaust a file, skip the rest
 
           SYSTEM_PROMPT='You are a senior software engineer reviewing a pull request diff.
           Return ONLY a JSON object (no markdown, no code fences) with this shape:
@@ -91,6 +92,13 @@ jobs:
               break
             fi
             reviewed_files=$((reviewed_files + 1))
+
+            # Circuit breaker: if any file exhausted its retries with 429, the
+            # daily/minute budget is gone — stop hammering and skip the rest.
+            if [ "$rate_limited" = "1" ]; then
+              echo '> Groq rate limit exhausted; remaining files were skipped.' >> /tmp/summary.md
+              break
+            fi
 
             # Skip empty/binary diffs.
             diff_text="$(git diff "$BASE...HEAD" --no-ext-diff -- "$file" || true)"
@@ -146,6 +154,7 @@ jobs:
 
             if [ "$http_code" != "200" ]; then
               echo "⚠️ \`$file\` — Groq API returned HTTP $http_code (skipped)." >> /tmp/summary.md
+              [ "$http_code" = "429" ] && rate_limited=1
               sleep 1
               continue
             fi
