@@ -142,6 +142,14 @@ jobs:
               if [ "$http_code" = "200" ]; then
                 break
               fi
+              # Don't retry permanent failures — only 429 (rate limit),
+              # 5xx (server transient), and 000 (connection failure) are
+              # worth retrying. Permanent 4xx (400/401/403/404) mean the
+              # request is fundamentally broken — skip immediately.
+              if [ "$http_code" != "429" ] && \
+                  ! echo "$http_code" | grep -qE '^(5[0-9]{2}|000)$'; then
+                break
+              fi
               wait_s="$(awk 'tolower($1) == "retry-after:" {gsub("\r", "", $2); print $2}' \
                 /tmp/groq.headers 2>/dev/null || true)"
               case "$wait_s" in

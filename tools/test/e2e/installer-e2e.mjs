@@ -24,6 +24,7 @@ import {
   createCounter,
   launchFirefox,
   waitForCondition,
+  waitForProcessExit,
   screenshotPrivileged,
   tempDir,
   summary,
@@ -443,6 +444,7 @@ async function run() {
     await runHttpLayer(counter, sessionToken);
   } finally {
     proc.kill();
+    await waitForProcessExit(proc, 10_000);
   }
 
   // UI layer (optional) — spawns a fresh installer that now owns the port.
