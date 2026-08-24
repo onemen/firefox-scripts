@@ -127,11 +127,14 @@ async function installTarball(url, browser) {
   return binary;
 }
 
-async function fetchWithRetry(url, attempts) {
+async function fetchWithRetry(url, attempts, timeoutMs = 300_000) {
   let lastErr;
   for (let i = 1; i <= attempts; i++) {
     try {
-      const res = await fetch(url);
+      // Bound each attempt: a stalled connection would otherwise hang CI until
+      // the runner kills the job. Timeout failures flow through the retry
+      // path below like any other fetch error.
+      const res = await fetch(url, {signal: AbortSignal.timeout(timeoutMs)});
       if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
       return res;
     } catch (err) {
