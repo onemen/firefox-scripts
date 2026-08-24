@@ -4,6 +4,10 @@ Status: **Roadmap** — items below are the remaining hardening tasks for the in
 in-browser auto-updater. The updater is implemented (see `docs/auto-updater.md` for the design); the
 hash-based status logic is in `docs/status-logic.md`.
 
+Post-v1.0 items here are tracked by the
+[Post-v1.0 roadmap](https://github.com/onemen/firefox-scripts/issues/38) umbrella issue (milestone
+"Post v1.0"); this file is the detailed backlog. See also `docs/roadmap.md`.
+
 ## 1. Updater end-to-end test list
 
 The updater UI is now a shipped package (`updater-ui.zip` → `chrome/utils/updater/ui`), updated by
@@ -140,7 +144,9 @@ sync problem is gone — there is nothing tracked that can drift (see
   the produced snapshot (hashes, zips, manifest `files` lists) differs between runs.
 - **Build matrix:** the §3 multi-platform binary build (each OS compiles its own installer/helper).
 
-There is currently **no `.github/workflows/`** in the repo, so these run locally only.
+The repo now ships `.github/workflows/` (`ci.yml`, `e2e.yml`, `pages.yml`, `ai-review.yml`); the §3
+publish automation below (cross-platform build-and-upload, deterministic-publish check) is not in CI
+yet — it is a post-v1.0 item (issue #33).
 
 ## 4. Installer UI polish
 
