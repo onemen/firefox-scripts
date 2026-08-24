@@ -45,6 +45,9 @@ jobs:
       # explicitly to post comments.
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
+      # Pinned sha256 of reviewdog_0.21.0_Linux_x86_64.tar.gz (from the
+      # release's checksums.txt) — verified before extraction.
+      REVIEWDOG_SHA256: ad5ce7d5ffa52aaa7ec8710a8fa764181b6cecaab843cc791e1cce1680381569
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -239,6 +242,7 @@ jobs:
             # v0.21.0+ assets are <version>_<os>_<arch>.tar.gz (earlier versions
             # shipped a bare reviewdog_linux_amd64 binary).
             curl -sSfL https://github.com/reviewdog/reviewdog/releases/download/v0.21.0/reviewdog_0.21.0_Linux_x86_64.tar.gz -o /tmp/reviewdog.tgz
+            echo "$REVIEWDOG_SHA256  /tmp/reviewdog.tgz" | sha256sum -c -
             tar -xzf /tmp/reviewdog.tgz -C /tmp
             chmod +x /tmp/reviewdog
             # rdjson input; reviewdog filters to lines present in the PR diff
