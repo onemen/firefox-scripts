@@ -532,19 +532,32 @@ async function publishToGitHub({
     const tagRef = `tags/${RELEASE_NAME}`;
     const headSha = execSync('git rev-parse HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'}).trim();
     let oldSha = '(none)';
+    let missing = false;
     try {
       const {data} = await octokit.git.getRef({owner: REPO_OWNER, repo: REPO_NAME, ref: tagRef});
       oldSha = data.object.sha;
     } catch (err) {
       if (err.status !== 404) throw err;
+      missing = true;
     }
-    await octokit.git.updateRef({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
-      ref: tagRef,
-      sha: headSha,
-      force: true,
-    });
+    if (missing) {
+      // First prod upload, or a tag deleted by hand: create the ref instead of
+      // failing on a missing target.
+      await octokit.git.createRef({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        ref: `refs/${tagRef}`,
+        sha: headSha,
+      });
+    } else {
+      await octokit.git.updateRef({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        ref: tagRef,
+        sha: headSha,
+        force: true,
+      });
+    }
     info(`  ${bold('latest')} tag: ${dim(shortHash(oldSha))} → ${green(shortHash(headSha))}`);
   }
 }
