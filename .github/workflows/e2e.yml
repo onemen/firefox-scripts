@@ -106,50 +106,36 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # ── Linux: download Mozilla tarball (apt gives Snap wrapper; BiDi fails) ──
+      # The install script (tools/test/e2e/downloads.mjs) downloads the browser
+      # via its official recipe and exports FIREFOX_BINARY through $GITHUB_ENV.
       - name: Install Firefox (Linux tarball)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
-          mkdir -p "$HOME/firefox-app"
-          for i in 1 2 3; do
-            curl -L --retry 2 -o /tmp/firefox.tar.xz \
-              "https://download.mozilla.org/?product=firefox-latest&os=linux64&lang=en-US" && break
-            echo "Attempt $i failed, waiting..." && sleep 5
-          done
-          test -f /tmp/firefox.tar.xz || { echo 'Firefox download failed after 3 attempts'; exit 1; }
-          tar xf /tmp/firefox.tar.xz -C "$HOME/firefox-app"
-          echo "$HOME/firefox-app/firefox/firefox" > /tmp/firefox-path.txt
-          "$HOME/firefox-app/firefox/firefox" --version
+          node tools/test/e2e/downloads.mjs firefox
 
       - name: Install Firefox (macOS)
         if: matrix.os == 'macos-latest'
-        run: |
-          brew install --cask firefox
-          echo "/Applications/Firefox.app/Contents/MacOS/firefox" > /tmp/firefox-path.txt
-          "/Applications/Firefox.app/Contents/MacOS/firefox" --version
+        run: node tools/test/e2e/downloads.mjs firefox
 
       - name: Install Firefox (Windows)
         if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          choco install firefox -y --no-progress
-          echo "C:\Program Files\Mozilla Firefox\firefox.exe" > $env:TEMP\firefox-path.txt
-          & "C:\Program Files\Mozilla Firefox\firefox.exe" --version
+        run: node tools/test/e2e/downloads.mjs firefox
 
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
 
       # The test builds its own fresh temp profile from the dev snapshot, so no
-      # profile-seed step is needed. It auto-discovers the Firefox binary and
-      # the snapshot dir from the build step above.
+      # profile-seed step is needed. It reads FIREFOX_BINARY (set by the install
+      # step above) and auto-discovers the snapshot dir.
       - name: Run updater E2E (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: xvfb-run node tools/test/e2e/updater-e2e.mjs --firefox "$(cat /tmp/firefox-path.txt)"
+        run: xvfb-run node tools/test/e2e/updater-e2e.mjs
 
       - name: Run updater E2E (macOS)
         if: matrix.os == 'macos-latest'
-        run: node tools/test/e2e/updater-e2e.mjs --firefox "$(cat /tmp/firefox-path.txt)"
+        run: node tools/test/e2e/updater-e2e.mjs
 
       - name: Run updater E2E (Windows)
         if: matrix.os == 'windows-latest'
@@ -188,31 +174,11 @@ jobs:
           version: 9
       - run: pnpm install --frozen-lockfile
 
-      - name: Install ${{ matrix.browser }} (choco)
-        if: matrix.browser == 'librewolf'
-        run: choco install librewolf -y --no-progress
-
-      - name: Install ${{ matrix.browser }} (winget)
-        if: matrix.browser == 'floorp'
-        run: winget install Ablaze.Floorp --accept-package-agreements --accept-source-agreements
-
-      - name: Locate ${{ matrix.browser }} binary
-        run: |
-          # Search Program Files first (real install, not choco shim) —
-          # Get-Command may resolve the chocolatey shim, whose dir is not GreD.
-          $exe = $null
-          $dirs = @("$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA")
-          foreach ($d in $dirs) {
-            $found = Get-ChildItem "$d" -Recurse -Name "${{ matrix.browser }}.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) { $exe = Join-Path $d $found; break }
-          }
-          # Do not use PATH shims or app-execution aliases: their parent
-          # directory is not the browser's GreD, so seeded config would be
-          # written to the wrong location. Fail clearly instead.
-          if (-not $exe) { Write-Error "Real ${{ matrix.browser }}.exe not found under an install directory"; exit 1 }
-          Write-Host "Found: $exe"
-          & $exe --version
-          "FIREFOX_BINARY=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      # downloads.mjs installs via the official recipe and resolves the real
+      # binary from install dirs (never a PATH shim or app-execution alias,
+      # whose parent dir is not the browser's GreD), exporting FIREFOX_BINARY.
+      - name: Install ${{ matrix.browser }}
+        run: node tools/test/e2e/downloads.mjs ${{ matrix.browser }}
 
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
