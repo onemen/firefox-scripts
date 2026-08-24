@@ -16,6 +16,18 @@ const UC = {
   sandboxes: new WeakMap(),
 };
 
+// Firefox 149+ (bug 2008041) evaluates boolean attributes by PRESENCE rather
+// than value: `checked="false"` is still treated as checked. createElement
+// below therefore uses toggleAttribute (presence-based) on 149+, while older
+// builds keep the value-based setAttribute behavior they always had.
+const FF149 = (() => {
+  try {
+    return parseInt(Services.appinfo.version.split('.')[0], 10) >= 149;
+  } catch {
+    return false;
+  }
+})();
+
 const _uc = {
   ALWAYSEXECUTE: 'rebuild_userChrome.uc.js',
   BROWSERCHROME:
@@ -216,6 +228,14 @@ const _uc = {
             Cu.evalInSandbox(`(function(event){${atts[att]}})`, this.getSandbox(doc))
           : atts[att]
         );
+      // Firefox 149+ checks boolean attributes by presence, not value — see
+      // the FF149 gate above. toggleAttribute(att, false) removes the
+      // attribute entirely, which is what "unchecked" means there.
+      else if (
+        FF149 &&
+        (typeof atts[att] == 'boolean' || atts[att] === 'true' || atts[att] === 'false')
+      )
+        el.toggleAttribute(att, atts[att] === true || atts[att] === 'true');
       else el.setAttribute(att, atts[att]);
     }
     return el;
