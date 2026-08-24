@@ -217,3 +217,9 @@ export function waitForProcessExit(child, timeoutMs) {
     });
   });
 }
+
+// TEMP scratch PR: deliberate E2E failure to verify the E2E gate branch
+// protection rule blocks merges. Remove before this PR is ever merged.
+if (process.env.CI) {
+  throw new Error('Scratch test: deliberate E2E failure — verify E2E gate blocks');
+}
