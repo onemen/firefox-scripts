@@ -4,6 +4,12 @@
 
 'use strict';
 
+// Pure helpers (attribute semantics + version gate) — loaded first so the
+// FF149 gate below can use them. Plain subscript with no imports, so the
+// unit tests can evaluate the same file in Node with a mock DOM.
+/* global isFirefox149Plus, applyAttribute -- defined by attributeUtils.js */
+Services.scriptloader.loadSubScript('chrome://userchromejs/content/attributeUtils.js', this);
+
 ChromeUtils.defineESModuleGetters(this, {
   xPref: 'chrome://userchromejs/content/xPref.sys.mjs',
   Management: 'resource://gre/modules/Extension.sys.mjs',
@@ -22,7 +28,7 @@ const UC = {
 // builds keep the value-based setAttribute behavior they always had.
 const FF149 = (() => {
   try {
-    return parseInt(Services.appinfo.version.split('.')[0], 10) >= 149;
+    return isFirefox149Plus(Services.appinfo);
   } catch {
     return false;
   }
@@ -228,15 +234,10 @@ const _uc = {
             Cu.evalInSandbox(`(function(event){${atts[att]}})`, this.getSandbox(doc))
           : atts[att]
         );
-      // Firefox 149+ checks boolean attributes by presence, not value — see
-      // the FF149 gate above. toggleAttribute(att, false) removes the
-      // attribute entirely, which is what "unchecked" means there.
-      else if (
-        FF149 &&
-        (typeof atts[att] == 'boolean' || atts[att] === 'true' || atts[att] === 'false')
-      )
-        el.toggleAttribute(att, atts[att] === true || atts[att] === 'true');
-      else el.setAttribute(att, atts[att]);
+      // Firefox 149+ checks boolean attributes by presence, not value — the
+      // semantics live in applyAttribute (attributeUtils.js), unit-tested
+      // with a mock DOM.
+      else applyAttribute(el, att, atts[att], FF149);
     }
     return el;
   },
