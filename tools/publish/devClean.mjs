@@ -128,10 +128,14 @@ export async function listRemoteRefs(octokit) {
  * }}
  */
 export function selectTargets(local, remote, opts) {
+  // The lists arrive pre-filtered (listLocalRefs/listRemoteRefs), but re-check
+  // the prefix so a non-dev-build ref can never be selected even if a future
+  // caller stops pre-filtering.
   const pick = list =>
-    opts.all ? [...list]
+    (opts.all ? [...list]
     : list.includes(opts.id) ? [opts.id]
-    : [];
+    : []
+    ).filter(n => n.startsWith(DEV_PREFIX));
   return {
     local: {branches: pick(local.branches), tags: pick(local.tags)},
     remote: {branches: pick(remote.branches), tags: pick(remote.tags)},
@@ -246,8 +250,13 @@ export async function run(argv) {
   let ok = true;
   for (const name of targets.local.branches) ok = deleteLocalBranch(name, opts.dryRun) && ok;
   for (const name of targets.local.tags) ok = deleteLocalTag(name, opts.dryRun) && ok;
-  for (const name of targets.remote.branches)
+  for (const name of targets.remote.branches) {
+    if (name === currentBranch()) {
+      console.log(`  SKIP ${name}: it is the current branch`);
+      continue;
+    }
     ok = (await deleteRemoteRef(octokit, 'heads', name, opts.dryRun)) && ok;
+  }
   for (const name of targets.remote.tags)
     ok = (await deleteRemoteRef(octokit, 'tags', name, opts.dryRun)) && ok;
 

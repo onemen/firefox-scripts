@@ -61,11 +61,18 @@ test('selectTargets: --id matches the exact name only', () => {
   assert.deepEqual(miss.remote.tags, []);
 });
 
-test('selectTargets: --all selects every dev-build ref', () => {
-  const local = {branches: ['dev-build-a', 'dev-build-b'], tags: ['dev-build-a']};
-  const remote = {branches: ['dev-build-c'], tags: []};
+test('selectTargets: --all selects every dev-build ref and nothing else', () => {
+  const local = {
+    branches: ['dev-build-a', 'dev-build-b', 'main'],
+    tags: ['dev-build-a', 'v1.0.0'],
+  };
+  const remote = {
+    branches: ['dev-build-c', 'gh-pages'],
+    tags: ['dev-build-a', 'v1.0.0'],
+  };
   const all = selectTargets(local, remote, {id: null, all: true});
   assert.deepEqual(all.local.branches, ['dev-build-a', 'dev-build-b']);
   assert.deepEqual(all.local.tags, ['dev-build-a']);
   assert.deepEqual(all.remote.branches, ['dev-build-c']);
+  assert.deepEqual(all.remote.tags, ['dev-build-a']);
 });
