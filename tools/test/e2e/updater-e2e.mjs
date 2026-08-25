@@ -34,6 +34,7 @@ import {
   tempDir,
   rmDir,
   summary,
+  repointLocalConfig,
 } from './helpers.mjs';
 import {findSnapshot, findZip, extractZip, discoverFirefoxBinary, findGreDir} from './browsers.mjs';
 
@@ -177,6 +178,10 @@ function seedProfile(
   const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);
   if (utilsZip) {
     extractZip(utilsZip, chromeUtils);
+    // The shared snapshot (built once per run on ubuntu) bakes the builder's
+    // dist dir into the generated updater config; repoint its file:// URLs at
+    // this runner's copy so the scheduler reads the manifest/zips locally.
+    repointLocalConfig(chromeUtils, snapshotDir);
   }
 
   // Force utils stale by changing a valid, non-startup module. Deleting a
