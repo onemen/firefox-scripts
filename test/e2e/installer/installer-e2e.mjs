@@ -28,8 +28,8 @@ import {
   screenshotPrivileged,
   tempDir,
   summary,
-} from './helpers.mjs';
-import {findSnapshot, discoverFirefoxBinary} from './browsers.mjs';
+} from '../shared/helpers.mjs';
+import {findSnapshot, discoverFirefoxBinary} from '../shared/browsers.mjs';
 
 const PORT = 8777;
 const BASE = `http://127.0.0.1:${PORT}`;
