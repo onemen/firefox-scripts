@@ -26,6 +26,9 @@
 //                      detached worktree (your checkout is left untouched).
 //   --ci               build binaries for all platforms (default: current OS).
 //   --platform=win|linux|mac (repeatable)  explicit binary platform set.
+//   --no-tag           (prod only) skip moving the 'latest' release tag to the
+//                      uploaded commit (it is force-updated after every
+//                      non-idle prod upload).
 //   --verbose          per-file zip listings and other detail lines.
 //   --quiet            suppress progress output (errors still print).
 //
@@ -100,6 +103,9 @@ import {cleanGenerated} from './syncGeneratedFiles.mjs';
 
 const LOCAL = process.argv.includes('--local');
 const FORCE = process.argv.includes('--force');
+// Prod only: skip moving the 'latest' release tag to the uploaded commit
+// (see the tag-move block in publishToGitHub). Escape hatch for debugging.
+const NO_TAG = process.argv.includes('--no-tag');
 // --ref=<branch|commit>: build a specific ref in a temporary detached
 // worktree (see runRefBuild below) instead of the current checkout.
 const REF = (() => {
@@ -430,6 +436,7 @@ async function publishToGitHub({
   builtHelpers,
   merged,
   manifestChanged,
+  anythingUploaded,
 }) {
   // Prod: upload to the 'latest' release (the manual-download link).  Dev:
   // the release is created AFTER the branch push below, so its tag can point
@@ -513,6 +520,45 @@ async function publishToGitHub({
     for (const p of builtHelpers) {
       await deleteExistingAsset(octokit, devRelease.id, helperAssetName(p));
     }
+  }
+
+  // Prod: keep the 'latest' release tag pointing at the commit this upload was
+  // built from (the current HEAD — prod is main-only with a clean worktree).
+  // The installer/updater fetch everything via
+  // .../releases/download/latest, so the tag NAME must stay stable while its
+  // target follows each publish; an idle run (nothing rebuilt) leaves it where
+  // it is, since the release assets did not change either. --no-tag skips.
+  if (PUBLISH_MODE === 'prod' && release && !NO_TAG && anythingUploaded) {
+    const tagRef = `tags/${RELEASE_NAME}`;
+    const headSha = execSync('git rev-parse HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'}).trim();
+    let oldSha = '(none)';
+    let missing = false;
+    try {
+      const {data} = await octokit.git.getRef({owner: REPO_OWNER, repo: REPO_NAME, ref: tagRef});
+      oldSha = data.object.sha;
+    } catch (err) {
+      if (err.status !== 404) throw err;
+      missing = true;
+    }
+    if (missing) {
+      // First prod upload, or a tag deleted by hand: create the ref instead of
+      // failing on a missing target.
+      await octokit.git.createRef({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        ref: `refs/${tagRef}`,
+        sha: headSha,
+      });
+    } else {
+      await octokit.git.updateRef({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        ref: tagRef,
+        sha: headSha,
+        force: true,
+      });
+    }
+    info(`  ${bold('latest')} tag: ${dim(shortHash(oldSha))} → ${green(shortHash(headSha))}`);
   }
 }
 
@@ -703,6 +749,15 @@ async function main() {
         k => JSON.stringify(merged[k]) !== JSON.stringify(storedHashes[k])
       );
 
+    // Only a run that actually changed something should move the 'latest'
+    // tag — an idle prod upload leaves the release assets untouched, so the
+    // tag stays where it is.
+    const anythingUploaded =
+      builtZips.length > 0 ||
+      builtInstallers.length > 0 ||
+      builtHelpers.length > 0 ||
+      manifestChanged;
+
     if (LOCAL) {
       writeSnapshot({merged, platforms, dir: snapshotDir(false), label: 'Snapshot'});
     } else {
@@ -715,6 +770,7 @@ async function main() {
         builtHelpers,
         merged,
         manifestChanged,
+        anythingUploaded,
       });
       if (KEEP_COPY) {
         writeSnapshot({merged, platforms, dir: snapshotDir(true), label: 'Keep copy'});

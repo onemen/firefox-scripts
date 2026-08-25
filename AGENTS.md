@@ -11,6 +11,7 @@ own `AGENTS.md`, that nested file is more specific and overrides this one where 
   from their sources (see the Generated files section).
 - **Do not publish or upload** unless the user explicitly asks. Use `upload:local` for offline
   validation.
+- **Never merge a PR without the user's explicit approval** — open PRs for review and wait.
 - **Never expose the GitHub token.** It lives only in an untracked root `.env` under the fixed
   `GITHUB_TOKEN_VAR` name — do not commit, log, or rename that variable.
 - **Do not introduce Python**; build and asset tooling uses Node.js.
@@ -186,6 +187,10 @@ Match the change to its validation:
 Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test. **Do not claim tests
 passed if the required toolchain or environment was unavailable.**
 
+PRs that modify `core/**` must add or extend a test where feasible; if not, the PR description must
+explain why. (The mechanical "core changed && no test changed → fail" CI gate lands together with
+the core smoke tests — see issue #30.)
+
 ## Agent workflow
 
 Before changing code:
@@ -205,6 +210,15 @@ Before finishing:
 - `docs/local_plan/` changes remain in its own repository;
 - no unrelated files were modified;
 - failed/unavailable validation is reported.
+
+### Roadmap tracking
+
+- GitHub is the live tracker: the v1.0 milestone, phase issues #3 (Phase 4) / #4 (Phase 5) and the
+  Post-v1.0 roadmap umbrella (#38) hold the checklists; `docs/roadmap.md` is the durable snapshot.
+- Every PR links its issue (`Fixes #x` / `Part of #y`); tick the checklist item when the work
+  merges.
+- Update `docs/roadmap.md` only in the PR that changes scope — never per-commit.
+- Never duplicate a checklist in both a doc and an issue: the doc links to the issues.
 
 ## Tooling
 

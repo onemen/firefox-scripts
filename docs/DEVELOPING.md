@@ -494,3 +494,15 @@ Edit these files to change GitHub URLs and repository owners:
 | `config/installer.conf`                            | `REPO_OWNER`, `REPO_NAME`, `ZIP_DOWNLOAD_REPO`, `ZIP_PAGES_URL`, `ZIP_PAGES_REPO`, `ZIP_PAGES_BRANCH`, `HASHES_URL`, `RELEASE_NAME`, `HELPER_BASE_URL`, `DEFAULT_PORT`, `ASSET_SUFFIX`                                   | URLs for zips / manifest / helpers (gh-pages) + releases           |
 | `tools/publish/paths.js`                           | `RELEASE_NAME`, `REPO_OWNER`, `REPO_NAME`, `ZIP_DOWNLOAD_REPO`, `ZIP_PAGES_REPO`, `ZIP_PAGES_BRANCH`, `PROFILE_PATH`, `REMOTE_UI_DIR`, `GITHUB_TOKEN_VAR` + `PUBLISH_MODE`, `DEV_BUILD_ID`, `DEV_BRANCH`, `ASSET_SUFFIX` | Publish settings + mode-derived dev values + updater-ui source dir |
 | `core/chrome/utils/updater/updater-config.sys.mjs` | `CONFIG.HASHES_URL`, `ZIP_BASE_URL`, `HELPER_BASE_URL`, `ASSET_SUFFIX` (generated from `config/installer.conf`; untracked, generated on demand)                                                                          | Auto-update URLs                                                   |
+
+## Appendix: Design decisions (no further action)
+
+These were intentionally kept and documented here for future maintainers.
+
+- `parse_manifest_files()` in the installer is strstr-based JSON parsing — fragile but sufficient; a
+  full JSON parser in C is out of scope.
+- The installer's token/restart race and the zip-derived hash fallback are accepted as-is
+  (documented in their respective code comments).
+- The updater keeps its in-memory state; only the daily check and skip prefs persist.
+- `updater-ui` has no per-package skip or status UI anywhere (installer or tab) — it is a silent
+  self-updating dependency of utils.
