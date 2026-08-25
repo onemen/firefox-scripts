@@ -80,7 +80,8 @@ try {
     {
       notify() {
         try {
-          if (++polls > 180) {
+          // 30 s of polls comfortably exceeds the 15 s test deadline below.
+          if (++polls > 30) {
             watcher.cancel();
             return;
           }
@@ -449,7 +450,10 @@ async function runStaleScenario(
     // and the probe's TAB_OPENED mirror line (fast, BiDi-independent). When
     // only the mirror fires, close early and let the finally block decide via
     // the persisted lastUpdateTabShown pref instead of burning the full window.
-    const deadline = Date.now() + 90_000;
+    // The scheduler runs at startup: if the tab has not opened in ~15 s it
+    // will not open at all. The mirror-line + pref fast paths still fire
+    // early, so a working scenario returns in a couple of seconds.
+    const deadline = Date.now() + 15_000;
     let sawMirrorLine = false;
     let page = null;
     while (Date.now() < deadline && !page && !sawMirrorLine) {
@@ -497,7 +501,7 @@ async function runStaleScenario(
         const title = document.getElementById('card-title');
         return Boolean(title && title.textContent);
       },
-      60_000,
+      15_000,
       'card rendered'
     );
     check(counter, rendered, `card rendered (${label})`);
@@ -645,7 +649,8 @@ async function runNoTabScenario(
       extraPrefsFirefox: seeded.prefs,
     });
     attachProcessLogging(browser, label);
-    const page = await findPageByUrl(browser, UPDATER_URL, 30_000);
+    // No-tab scenarios assert absence: 10 s is enough for startup to finish.
+    const page = await findPageByUrl(browser, UPDATER_URL, 10_000);
     check(counter, !page, `tab does NOT open (${label})`);
     return seeded.profileDir;
   } finally {

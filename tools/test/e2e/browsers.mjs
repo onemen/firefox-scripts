@@ -147,7 +147,9 @@ export const BROWSERS = {
     choco: 'librewolf',
   },
   'floorp': {
-    win: ['Floorp', 'floorp.exe'],
+    // The NSIS installer (winget Ablaze.Floorp, machine scope) installs to
+    // 'C:\Program Files\Ablaze Floorp', not 'Floorp'.
+    win: ['Ablaze Floorp', 'floorp.exe'],
     mac: ['Floorp.app'],
     linux: ['floorp'],
     choco: 'floorp',
@@ -179,11 +181,12 @@ export function discoverFirefoxBinary() {
     const candidates = [];
     for (const [key, b] of Object.entries(BROWSERS)) {
       if (target && key !== target) continue;
-      const name = b.mac.replace('.app', '');
+      const [app] = b.mac; // e.g. 'Firefox.app' (b.mac is an array, like b.win)
+      const name = app.replace('.app', '');
       candidates.push(
-        `/Applications/${b.mac}/Contents/MacOS/${name.toLowerCase()}`,
-        `/Applications/${b.mac}/Contents/MacOS/${name}`,
-        `/Applications/${b.mac}/Contents/MacOS/firefox`
+        `/Applications/${app}/Contents/MacOS/${name.toLowerCase()}`,
+        `/Applications/${app}/Contents/MacOS/${name}`,
+        `/Applications/${app}/Contents/MacOS/firefox`
       );
     }
     return candidates.find(p => fs.existsSync(p)) || null;

@@ -94,10 +94,11 @@ export function attachProcessLogging(browser, label = 'ff') {
  *
  * @param {import('puppeteer-core').Browser} browser
  * @param {string} prefix - URL prefix to match
- * @param {number} [timeoutMs=90000] Default is `90000`
+ * @param {number} [timeoutMs=15000] — the updater scheduler runs at startup, so
+ *   a tab that has not appeared in ~15 s will not appear. Default is `15000`
  * @returns {Promise<import('puppeteer-core').Page | null>}
  */
-export async function findPageByUrl(browser, prefix, timeoutMs = 90_000) {
+export async function findPageByUrl(browser, prefix, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   let lastProgressLog = 0;
   while (Date.now() < deadline) {
