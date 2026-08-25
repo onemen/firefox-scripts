@@ -59,28 +59,36 @@ runs:
       shell: bash
       run: |
         CACHE_DIR="$HOME/setup-pnpm"
-        echo "HOME=$HOME"
-        echo "CACHE_DIR=$CACHE_DIR"
         if [ ! -d "$CACHE_DIR" ]; then
           echo "::error::pnpm cache dir missing at $CACHE_DIR"
           exit 1
         fi
-        echo "--- cache tree ---"
-        ls -la "$CACHE_DIR" 2>/dev/null | head -8
-        ls -la "$CACHE_DIR/node_modules/.bin" 2>/dev/null | grep -i pnpm || echo "(no .bin/pnpm*)"
-        ls -la "$CACHE_DIR/node_modules/@pnpm/exe" 2>/dev/null | grep -i pnpm || echo "(no @pnpm/exe/pnpm*)"
         NEW_PATH=""
         add_bin() {
           if [ -x "$1/pnpm" ] || [ -f "$1/pnpm.cmd" ] || [ -x "$1/pnpm.exe" ]; then
+            # The install layout varies (npm-package shims under
+            # node_modules/.bin, the self-updated version under .bin/bin or
+            # the cache root, and the standalone @pnpm/exe native binary on
+            # Windows runners whose PATH node is too old for the action's
+            # bootstrap). Later entries win PATH precedence, mirroring the
+            # action's own ordering (PNPM_HOME/bin added last).
             NEW_PATH="$1${NEW_PATH:+:$NEW_PATH}"
-            echo "$1" >> "$GITHUB_PATH"
+            # msys HOME is /c/... — Windows-native tools (setup-node's which)
+            # cannot resolve such entries. The runner prepends GITHUB_PATH
+            # verbatim, so write Windows-style paths there while keeping the
+            # msys form for in-step bash checks.
+            if command -v cygpath >/dev/null 2>&1; then
+              echo "$(cygpath -w "$1")" >> "$GITHUB_PATH"
+            else
+              echo "$1" >> "$GITHUB_PATH"
+            fi
           fi
         }
         add_bin "$CACHE_DIR/node_modules/.bin"
         add_bin "$CACHE_DIR/node_modules/@pnpm/exe"
         add_bin "$CACHE_DIR/node_modules/@pnpm/exe/bin"
         add_bin "$CACHE_DIR/node_modules/.bin/bin"
-        echo "NEW_PATH=$NEW_PATH"
+        add_bin "$CACHE_DIR"
         if [ -n "$NEW_PATH" ]; then
           export PATH="$NEW_PATH:$PATH"
         fi
@@ -88,7 +96,6 @@ runs:
           echo "::error::cached pnpm unusable — no pnpm binary under $CACHE_DIR; delete the 'pnpm-bin-${{ runner.os }}-${{ inputs.pnpm-version }}' Actions cache and re-run"
           exit 1
         fi
-        echo "pnpm -> $(command -v pnpm)"
 
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
