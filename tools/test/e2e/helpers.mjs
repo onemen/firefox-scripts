@@ -4,9 +4,46 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 
 export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+
+const OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
+
+/**
+ * When the dev snapshot was built on another machine (cross-OS sharing), its
+ * baked updater config points at the BUILDER's dist dir (file:// URLs), which
+ * is unreachable here. Rather than rewrite the config — it ships inside
+ * utils.zip and is part of the hashed file set, so rewriting it would flip the
+ * package hash and break the staleness check — point the updater at THIS
+ * machine's snapshot via pref overrides (scriptsUpdater.sys.mjs checks
+ * extensions.firefox-scripts.override.<KEY> before the generated CONFIG).
+ *
+ * @param {string} chromeUtils profile's chrome/utils dir (post-extract)
+ * @param {string} snapshotDir this machine's local snapshot dir
+ * @returns {Record<string, string>} extra prefs, or {} when already consistent
+ */
+export function localConfigOverrides(chromeUtils, snapshotDir) {
+  const cfg = path.join(chromeUtils, 'updater', 'updater-config.sys.mjs');
+  if (!fs.existsSync(cfg)) {
+    return {};
+  }
+  const text = fs.readFileSync(cfg, 'utf-8');
+  const baked = text.match(/LOCAL_DIST_PATH:\s*'([^']*)'/)?.[1];
+  if (!baked) {
+    return {};
+  }
+  const local = snapshotDir.replace(/\\/g, '/');
+  if (baked === local) {
+    return {};
+  }
+  const base = pathToFileURL(local).href.replace(/\/$/, '');
+  return {
+    [OVERRIDE_PREFIX + 'HASHES_URL']: `${base}/hashes.json`,
+    [OVERRIDE_PREFIX + 'ZIP_BASE_URL']: base,
+    [OVERRIDE_PREFIX + 'HELPER_BASE_URL']: base,
+  };
+}
 
 // ── Assertion counters ────────────────────────────────────────────────────
 

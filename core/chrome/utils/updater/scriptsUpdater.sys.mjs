@@ -36,6 +36,39 @@ const {CONFIG} = ChromeUtils.importESModule(
   'chrome://firefox-scripts/content/updater-config.sys.mjs'
 );
 
+// Test/local override prefs: a string pref
+// extensions.firefox-scripts.override.<KEY> (HASHES_URL, ZIP_BASE_URL,
+// HELPER_BASE_URL) wins over the generated CONFIG value.  This lets tests
+// point the updater at any local snapshot (e.g. one built on another OS)
+// WITHOUT touching the config file — it ships inside utils.zip and is part of
+// the hashed file set, so rewriting it would flip the package hash and break
+// the staleness check.
+const PREF_OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
+
+function configValue(key) {
+  try {
+    const override = Services.prefs.getStringPref(PREF_OVERRIDE_PREFIX + key, '');
+    if (override) {
+      return override;
+    }
+  } catch (_) {
+    // unreadable pref → fall back to the generated CONFIG value
+  }
+  return CONFIG[key];
+}
+
+export function getHashesUrl() {
+  return configValue('HASHES_URL');
+}
+
+export function getZipBaseUrl() {
+  return configValue('ZIP_BASE_URL');
+}
+
+export function getHelperBaseUrl() {
+  return configValue('HELPER_BASE_URL');
+}
+
 const {Downloads} = ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs');
 
 // The actual update tab (updater-ui.zip) — a privileged chrome:// page.
@@ -191,7 +224,7 @@ export async function checkScriptsUpdateNeeded() {
   try {
     // Never hang on a dead/stalled manifest host: the daily check must fail
     // fast and leave the tab closed rather than spin.
-    const responseText = await withTimeout(fetchText(CONFIG.HASHES_URL), MANIFEST_TIMEOUT_MS);
+    const responseText = await withTimeout(fetchText(getHashesUrl()), MANIFEST_TIMEOUT_MS);
     const remoteInfo = JSON.parse(responseText);
 
     const greDir = Services.dirsvc.get('GreD', Ci.nsIFile).path;
@@ -266,7 +299,7 @@ export async function ensureUpdaterUi(info) {
 
   const tmpDir = PathUtils.join(PathUtils.tempDir, `fxs-updater-ui-${Date.now()}`);
   try {
-    const zipUrl = `${CONFIG.ZIP_BASE_URL}/updater-ui${CONFIG.ASSET_SUFFIX || ''}.zip`;
+    const zipUrl = `${getZipBaseUrl()}/updater-ui${CONFIG.ASSET_SUFFIX || ''}.zip`;
     const zipPath = PathUtils.join(tmpDir, 'updater-ui.zip');
     await Downloads.fetch(zipUrl, zipPath);
 

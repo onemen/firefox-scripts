@@ -34,6 +34,7 @@ import {
   tempDir,
   rmDir,
   summary,
+  localConfigOverrides,
 } from './helpers.mjs';
 import {findSnapshot, findZip, extractZip, discoverFirefoxBinary, findGreDir} from './browsers.mjs';
 
@@ -172,6 +173,11 @@ function seedProfile(
     'extensions.firefox-scripts.lastScriptsCheckDate': '',
   };
   const chromeUtils = path.join(profileDir, 'chrome', 'utils');
+  // Cross-OS snapshot sharing: when the snapshot was built elsewhere its baked
+  // file:// URLs point at the builder's dist dir. Repoint them at THIS
+  // machine's snapshot via pref overrides (never by rewriting the config — it
+  // is part of the hashed utils file set). No-op when the paths already match.
+  Object.assign(prefs, localConfigOverrides(chromeUtils, snapshotDir));
 
   // Extract utils
   const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);

@@ -37,8 +37,15 @@ const {Downloads} = ChromeUtils.importESModule('resource://gre/modules/Downloads
 const {Subprocess} = ChromeUtils.importESModule('resource://gre/modules/Subprocess.sys.mjs');
 const {AppConstants} = ChromeUtils.importESModule('resource://gre/modules/AppConstants.sys.mjs');
 
-const {computeFilesHash, checkScriptsUpdateNeeded, extractZipFlatten, copyFileList, fetchBytes} =
-  ChromeUtils.importESModule('chrome://firefox-scripts/content/scriptsUpdater.sys.mjs');
+const {
+  computeFilesHash,
+  checkScriptsUpdateNeeded,
+  extractZipFlatten,
+  copyFileList,
+  fetchBytes,
+  getZipBaseUrl,
+  getHelperBaseUrl,
+} = ChromeUtils.importESModule('chrome://firefox-scripts/content/scriptsUpdater.sys.mjs');
 
 // URL/path configuration — generated from config/installer.conf at publish
 // time (tools/publish/generateUpdaterConfig.mjs).  Single source of truth.
@@ -46,7 +53,10 @@ const {CONFIG} = ChromeUtils.importESModule(
   'chrome://firefox-scripts/content/updater-config.sys.mjs'
 );
 
-const ZIP_BASE_URL = CONFIG.ZIP_BASE_URL;
+// Resolved through scriptsUpdater.sys.mjs so tests can override the URLs via
+// extensions.firefox-scripts.override.<KEY> prefs without touching hashed
+// files (the config ships inside utils.zip).
+const ZIP_BASE_URL = getZipBaseUrl();
 // Asset-name suffix ('' prod / '-dev' dev): dev zips and helpers are
 // published as utils-dev.zip / helper_win-dev.exe etc.
 const ASSET_SUFFIX = CONFIG.ASSET_SUFFIX || '';
@@ -55,7 +65,7 @@ const UTILS_URL = `${ZIP_BASE_URL}/utils${ASSET_SUFFIX}.zip`;
 
 // Standalone elevated-copy helper — source of the binary is config-driven too
 // (installer.conf HELPER_BASE_URL, generated into updater-config.sys.mjs).
-const HELPER_BASE_URL = CONFIG.HELPER_BASE_URL;
+const HELPER_BASE_URL = getHelperBaseUrl();
 const HELPER_FILENAMES = {
   win: `helper_win${ASSET_SUFFIX}.exe`,
   macosx: `helper_mac${ASSET_SUFFIX}`,
