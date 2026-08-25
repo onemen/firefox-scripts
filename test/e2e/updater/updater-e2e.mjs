@@ -786,7 +786,13 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     });
     attachProcessLogging(browser, label);
 
-    const deadline = Date.now() + 15_000;
+    // Like runStaleScenario: BiDi cannot reliably enumerate trusted chrome://
+    // tabs on CI, so ALSO watch the probe's TAB_OPENED mirror line. If the
+    // mirror fires but BiDi never surfaces the page, the finally block falls
+    // back to the persisted lastUpdateTabShown pref. The wait is longer than
+    // the other scenarios because it runs last on a cold runner.
+    const deadline = Date.now() + 30_000;
+    let sawMirrorLine = false;
     while (Date.now() < deadline && !page) {
       try {
         page =
@@ -799,6 +805,12 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
           }) || null;
       } catch {
         /* browser not ready yet */
+      }
+      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
+        sawMirrorLine = true;
+        // The tab is open; keep polling BiDi a little longer — it may
+        // enumerate the chrome tab late.
+        await new Promise(r => setTimeout(r, 2_000));
       }
       if (!page) await new Promise(r => setTimeout(r, 500));
     }
@@ -866,6 +878,19 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       await browser?.close();
     } catch {
       /* ignore */
+    }
+    if (!page) {
+      const viaPref = greShownToday(seeded.profileDir);
+      check(
+        counter,
+        viaPref,
+        `tab opens (${label})`,
+        viaPref ?
+          '(verified via lastUpdateTabShown; BiDi could not enumerate the chrome tab)'
+        : 'scheduler never reached addTrustedTab'
+      );
+      dumpUpdaterPrefs(seeded.profileDir);
+      dumpConsoleLog(seeded.profileDir);
     }
   }
 
