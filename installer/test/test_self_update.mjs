@@ -58,8 +58,10 @@ function runSelfUpdate(installer, jsonPath, version, asset) {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  // Windows (msvcrt/mingw) text mode converts \n to \r\n on stdout.
+  const text = out.replace(/\r/g, '');
   const result = {status: NaN, latest: '', url: ''};
-  for (const line of out.split('\n')) {
+  for (const line of text.split('\n')) {
     if (line.startsWith('status=')) result.status = Number(line.slice(7));
     else if (line.startsWith('latest_version=')) result.latest = line.slice(15);
     else if (line.startsWith('download_url=')) result.url = line.slice(13);
@@ -117,7 +119,7 @@ function main() {
     },
     {
       name: 'newer version → update + matching asset URL',
-      json: releaseJson('v1.0.1', [
+      json: releaseJson('1.0.1', [
         [otherAsset, 'https://x/other'],
         [asset, 'https://x/installer-download'],
       ]),
@@ -126,9 +128,15 @@ function main() {
     },
     {
       name: 'newer version, no matching asset → no update offered',
-      json: releaseJson('v1.0.1', [[otherAsset, 'https://x/other']]),
+      json: releaseJson('1.0.1', [[otherAsset, 'https://x/other']]),
       version: '1.0.0',
       expect: {status: 0, latest: '1.0.1', url: ''},
+    },
+    {
+      name: 'raw tag passed through to latest_version (the UI prepends v)',
+      json: releaseJson('v1.0.1', [[asset, 'https://x/installer-download']]),
+      version: '1.0.0',
+      expect: {status: 1, latest: 'v1.0.1', url: 'https://x/installer-download'},
     },
     {
       name: 'missing tag_name → error',

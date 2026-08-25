@@ -270,7 +270,9 @@ async function runHttpLayer(counter, sessionToken) {
       check(counter, Boolean(su), 'GET /api/self-update returns JSON', got.body.slice(0, 80));
       if (su) {
         check(counter, su.updateAvailable === true, 'update available detected');
-        check(counter, su.latestVersion === '1.0.1', `latest version parsed: ${su.latestVersion}`);
+        // Raw tag passthrough (the UI prepends 'v', so a v-less release tag
+        // renders "v1.0.1" — see the test_self_update.mjs contract note).
+        check(counter, su.latestVersion === 'v1.0.1', `latest version parsed: ${su.latestVersion}`);
         check(
           counter,
           su.downloadUrl === 'https://example.invalid/installer-download',
