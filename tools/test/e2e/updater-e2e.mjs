@@ -663,6 +663,7 @@ async function runNoTabScenario(
   const greSeed = installFxFolder(snapshotDir, greDir);
   check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
   if (!greSeed.ok) return seeded.profileDir;
+  appendConfigProbe(greDir);
 
   let browser;
   try {
@@ -675,7 +676,9 @@ async function runNoTabScenario(
     // marker (browser window up = startup finished and the scheduler decision
     // made — ~1-2 s past launch), allow a short margin for the tab to appear,
     // then assert it never did. No blind fixed wait.
-    await waitForMirror(seeded.profileDir, 'WINDOW_READY', 15_000);
+    const ready = await waitForMirror(seeded.profileDir, 'WINDOW_READY', 15_000);
+    if (!ready)
+      console.log(`  [diag] WINDOW_READY not observed (${label}) — relying on pref ground truth`);
     await new Promise(r => setTimeout(r, 1_500));
     const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
     check(counter, !page, `tab does NOT open (${label})`);
