@@ -20,7 +20,8 @@ inputs:
     required: false
     default: '11'
   install:
-    description: Run `pnpm install --frozen-lockfile` (set 'false' when the job must run other steps first)
+    description:
+      Run `pnpm install --frozen-lockfile` (set 'false' when the job must run other steps first)
     required: false
     default: 'true'
 
@@ -58,10 +59,16 @@ runs:
       shell: bash
       run: |
         CACHE_DIR="$HOME/setup-pnpm"
+        echo "HOME=$HOME"
+        echo "CACHE_DIR=$CACHE_DIR"
         if [ ! -d "$CACHE_DIR" ]; then
           echo "::error::pnpm cache dir missing at $CACHE_DIR"
           exit 1
         fi
+        echo "--- cache tree ---"
+        ls -la "$CACHE_DIR" 2>/dev/null | head -8
+        ls -la "$CACHE_DIR/node_modules/.bin" 2>/dev/null | grep -i pnpm || echo "(no .bin/pnpm*)"
+        ls -la "$CACHE_DIR/node_modules/@pnpm/exe" 2>/dev/null | grep -i pnpm || echo "(no @pnpm/exe/pnpm*)"
         NEW_PATH=""
         add_bin() {
           if [ -x "$1/pnpm" ] || [ -f "$1/pnpm.cmd" ] || [ -x "$1/pnpm.exe" ]; then
@@ -73,6 +80,7 @@ runs:
         add_bin "$CACHE_DIR/node_modules/@pnpm/exe"
         add_bin "$CACHE_DIR/node_modules/@pnpm/exe/bin"
         add_bin "$CACHE_DIR/node_modules/.bin/bin"
+        echo "NEW_PATH=$NEW_PATH"
         if [ -n "$NEW_PATH" ]; then
           export PATH="$NEW_PATH:$PATH"
         fi
@@ -80,6 +88,7 @@ runs:
           echo "::error::cached pnpm unusable — no pnpm binary under $CACHE_DIR; delete the 'pnpm-bin-${{ runner.os }}-${{ inputs.pnpm-version }}' Actions cache and re-run"
           exit 1
         fi
+        echo "pnpm -> $(command -v pnpm)"
 
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
