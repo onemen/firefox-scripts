@@ -4,11 +4,52 @@
 
 'use strict';
 
-// Pure helpers (attribute semantics + version gate) — loaded first so the
-// FF149 gate below can use them. Plain subscript with no imports, so the
-// unit tests can evaluate the same file in Node with a mock DOM.
-/* global isFirefox149Plus, applyAttribute -- defined by attributeUtils.js */
-Services.scriptloader.loadSubScript('chrome://userchromejs/content/attributeUtils.js', this);
+// Firefox 149+ (bug 2008041) evaluates boolean attributes by PRESENCE rather
+// than value: `checked="false"` is still treated as checked. createElement
+// below therefore uses toggleAttribute (presence-based) on 149+, while older
+// builds keep the value-based setAttribute behavior they always had.
+//
+// These helpers are tested by evaluating the full userChrome.js in a Node vm
+// with mocked Services / ChromeUtils / XPCOM globals
+// (tools/test/unit/userChrome.test.mjs).
+
+/**
+ * The change is a Gecko change, so the gate reads appinfo.platformVersion (the
+ * Gecko version) instead of appinfo.version: some Firefox-family forks
+ * (LibreWolf, Waterfox, Floorp, Zen) put their own release number in `version`,
+ * while `platformVersion` always tracks the Gecko code this build is made from.
+ * A build made from Gecko >= 149 has the new behavior no matter what its brand
+ * version says.
+ *
+ * @param {{platformVersion?: string}} appinfo - Services.appinfo (or a mock)
+ * @returns {boolean}
+ */
+function isFirefox149Plus(appinfo) {
+  const major = parseInt(String(appinfo && appinfo.platformVersion), 10);
+  return Number.isInteger(major) && major >= 149;
+}
+
+/**
+ * Apply one attribute honoring the bug 2008041 semantics for the build.
+ *
+ * - ff149 (new behavior): boolean / 'true' / 'false' values become presence-based
+ *   via toggleAttribute — toggleAttribute(name, false) REMOVES the attribute,
+ *   which is what "unchecked" means there.
+ * - pre-149 (legacy behavior): every value goes through setAttribute, exactly as
+ *   the old code always did.
+ *
+ * @param {{setAttribute: Function; toggleAttribute: Function}} el
+ * @param {string} name
+ * @param {any} value
+ * @param {boolean} ff149
+ */
+function applyAttribute(el, name, value, ff149) {
+  if (ff149 && (typeof value === 'boolean' || value === 'true' || value === 'false')) {
+    el.toggleAttribute(name, value === true || value === 'true');
+  } else {
+    el.setAttribute(name, value);
+  }
+}
 
 ChromeUtils.defineESModuleGetters(this, {
   xPref: 'chrome://userchromejs/content/xPref.sys.mjs',
@@ -234,9 +275,7 @@ const _uc = {
             Cu.evalInSandbox(`(function(event){${atts[att]}})`, this.getSandbox(doc))
           : atts[att]
         );
-      // Firefox 149+ checks boolean attributes by presence, not value — the
-      // semantics live in applyAttribute (attributeUtils.js), unit-tested
-      // with a mock DOM.
+      // Firefox 149+ checks boolean attributes by presence, not value.
       else applyAttribute(el, att, atts[att], FF149);
     }
     return el;
