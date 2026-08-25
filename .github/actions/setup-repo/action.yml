@@ -1,11 +1,17 @@
 # .github/actions/setup-repo/action.yml — Shared job prologue for every
-# CI / E2E / publish job: checkout, install Node, make pnpm available (from a
-# cached install dir when possible), and install dependencies.
+# CI / E2E / publish job: checkout, install Node, make pnpm available, and
+# install dependencies.
 #
 # Everything here used to be duplicated in every job of ci.yml / e2e.yml /
-# pages.yml; a bug in the pnpm-binary cache was fixed once here instead of in
-# ten places. All actions are pinned to full commit SHAs (see
-# .github/dependabot.yml).
+# pages.yml; fixes to the setup steps now land in one place. All actions are
+# pinned to full commit SHAs (see .github/dependabot.yml).
+#
+# pnpm comes from the official standalone build (single self-contained
+# binary from the pnpm GitHub release, cached per OS+arch) rather than
+# pnpm/action-setup's npm-bootstrap tree — that tree relies on shims,
+# self-update junctions and PNPM_HOME internals, which break when restored
+# from the Actions cache on Windows (msys /c/... paths invisible to Node,
+# EPERM on junction realpath).
 
 name: Setup repository
 description: Checkout, Node + cached pnpm, pnpm install
@@ -16,7 +22,7 @@ inputs:
     required: false
     default: '24'
   pnpm-version:
-    description: pnpm version to make available
+    description: pnpm version (major) to make available
     required: false
     default: '11'
   install:
@@ -30,72 +36,53 @@ runs:
   steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    # pnpm/action-setup reinstalls pnpm via `npm ci` on every run (~17-32s/job).
-    # Cache the install dir and skip the action on a hit, re-adding the cached
-    # bin dirs to PATH instead.
+    # The standalone pnpm binary (~15 MB, bundles its own Node) is cached per
+    # OS+arch. First run downloads it from the official pnpm release; later
+    # runs restore it and skip the download.
     - name: Cache pnpm binary
       id: pnpm-bin
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
-        path: ~/setup-pnpm
-        key: pnpm-bin-${{ runner.os }}-${{ inputs.pnpm-version }}
+        path: ~/pnpm-bin
+        key: pnpm-bin-${{ runner.os }}-${{ runner.arch }}-${{ inputs.pnpm-version }}
 
-    - name: Install pnpm
+    - name: Download pnpm standalone
       if: steps.pnpm-bin.outputs.cache-hit != 'true'
-      uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      with:
-        version: ${{ inputs.pnpm-version }}
-
-    # On a cache hit the action above is skipped, so reconstruct its PATH
-    # effects. The install layout varies: the npm package puts shims under
-    # node_modules/.bin, while Windows runners get the standalone @pnpm/exe
-    # native binary (node_modules/@pnpm/exe[/bin]) because their PATH node is
-    # too old for the action's bootstrap. The self-updated requested version
-    # lives in a `bin/` subdir when it differs from the bootstrap. Add every
-    # dir that holds a pnpm executable — later entries win PATH precedence,
-    # mirroring the action's own ordering (PNPM_HOME/bin added last).
-    - name: Use cached pnpm
-      if: steps.pnpm-bin.outputs.cache-hit == 'true'
       shell: bash
       run: |
-        CACHE_DIR="$HOME/setup-pnpm"
-        if [ ! -d "$CACHE_DIR" ]; then
-          echo "::error::pnpm cache dir missing at $CACHE_DIR"
-          exit 1
+        mkdir -p "$HOME/pnpm-bin"
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64)    ASSET="pnpm-linux-x64" ;;
+          Linux-ARM64)  ASSET="pnpm-linux-arm64" ;;
+          macOS-X64)    ASSET="pnpm-macos-x64" ;;
+          macOS-ARM64)  ASSET="pnpm-macos-arm64" ;;
+          Windows-X64)  ASSET="pnpm-win-x64.exe" ;;
+          Windows-ARM64) ASSET="pnpm-win-arm64.exe" ;;
+          *) echo "::error::unsupported runner ${{ runner.os }}-${{ runner.arch }}" && exit 1 ;;
+        esac
+        OUT="$HOME/pnpm-bin/pnpm"
+        [ "${{ runner.os }}" = "Windows" ] && OUT="$OUT.exe"
+        curl -fsSL -o "$OUT" "https://github.com/pnpm/pnpm/releases/latest/download/$ASSET"
+        chmod +x "$OUT"
+
+    - name: Add pnpm to PATH
+      shell: bash
+      run: |
+        # msys HOME is /c/... — Windows-native tools (setup-node's which)
+        # cannot resolve such entries. The runner prepends GITHUB_PATH
+        # verbatim, so write Windows-style paths there while keeping the
+        # msys form for the in-step check.
+        if command -v cygpath >/dev/null 2>&1; then
+          echo "$(cygpath -w "$HOME/pnpm-bin")" >> "$GITHUB_PATH"
+        else
+          echo "$HOME/pnpm-bin" >> "$GITHUB_PATH"
         fi
-        NEW_PATH=""
-        add_bin() {
-          if [ -x "$1/pnpm" ] || [ -f "$1/pnpm.cmd" ] || [ -x "$1/pnpm.exe" ]; then
-            # The install layout varies (npm-package shims under
-            # node_modules/.bin, the self-updated version under .bin/bin or
-            # the cache root, and the standalone @pnpm/exe native binary on
-            # Windows runners whose PATH node is too old for the action's
-            # bootstrap). Later entries win PATH precedence, mirroring the
-            # action's own ordering (PNPM_HOME/bin added last).
-            NEW_PATH="$1${NEW_PATH:+:$NEW_PATH}"
-            # msys HOME is /c/... — Windows-native tools (setup-node's which)
-            # cannot resolve such entries. The runner prepends GITHUB_PATH
-            # verbatim, so write Windows-style paths there while keeping the
-            # msys form for in-step bash checks.
-            if command -v cygpath >/dev/null 2>&1; then
-              echo "$(cygpath -w "$1")" >> "$GITHUB_PATH"
-            else
-              echo "$1" >> "$GITHUB_PATH"
-            fi
-          fi
-        }
-        add_bin "$CACHE_DIR/node_modules/.bin"
-        add_bin "$CACHE_DIR/node_modules/@pnpm/exe"
-        add_bin "$CACHE_DIR/node_modules/@pnpm/exe/bin"
-        add_bin "$CACHE_DIR/node_modules/.bin/bin"
-        add_bin "$CACHE_DIR"
-        if [ -n "$NEW_PATH" ]; then
-          export PATH="$NEW_PATH:$PATH"
-        fi
+        export PATH="$HOME/pnpm-bin:$PATH"
         if ! command -v pnpm >/dev/null 2>&1; then
-          echo "::error::cached pnpm unusable — no pnpm binary under $CACHE_DIR; delete the 'pnpm-bin-${{ runner.os }}-${{ inputs.pnpm-version }}' Actions cache and re-run"
+          echo "::error::cached pnpm unusable — delete the 'pnpm-bin-${{ runner.os }}-${{ runner.arch }}-${{ inputs.pnpm-version }}' Actions cache and re-run"
           exit 1
         fi
+        pnpm --version
 
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
