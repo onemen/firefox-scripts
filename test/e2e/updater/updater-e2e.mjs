@@ -812,7 +812,7 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       }
       if (!page) await new Promise(r => setTimeout(r, 500));
     }
-    check(counter, Boolean(page), `tab opens (${label})`);
+    if (page) check(counter, true, `tab opens (${label})`);
     if (!page) {
       await dumpPages(browser);
       return seeded.profileDir;
