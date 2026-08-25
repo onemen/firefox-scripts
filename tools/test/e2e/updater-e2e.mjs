@@ -75,6 +75,7 @@ try {
   // Watch for the updater tab and record the moment it appears — WebDriver
   // BiDi cannot reliably enumerate trusted chrome:// tabs on CI.
   let polls = 0;
+  let readyLogged = false;
   const watcher = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
   watcher.initWithCallback(
     {
@@ -86,6 +87,14 @@ try {
             return;
           }
           const win = Services.wm.getMostRecentWindow('navigator:browser');
+          // Startup-complete signal for the no-tab scenarios: the browser
+          // window is up, so the scheduler decision has been made — if the
+          // updater tab is not open by now it will not open.
+          if (!readyLogged && win?.gBrowser) {
+            readyLogged = true;
+            const line = 'WINDOW_READY ' + new Date().toISOString() + '\\n';
+            fos.write(line, line.length);
+          }
           for (const tab of win?.gBrowser?.tabs || []) {
             const spec = tab.linkedBrowser?.currentURI?.spec || '';
             if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
@@ -375,15 +384,28 @@ function dumpConsoleLog(profileDir) {
   }
 }
 
-/** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
-function mirrorSaysTabOpened(profileDir) {
+/** True when the probe's mirror log contains the given marker. */
+function mirrorHasMarker(profileDir, marker) {
   try {
-    return fs
-      .readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8')
-      .includes('TAB_OPENED');
+    return fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8').includes(marker);
   } catch {
     return false;
   }
+}
+
+/** Poll the probe's mirror log until `marker` appears or the timeout passes. */
+async function waitForMirror(profileDir, marker, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (mirrorHasMarker(profileDir, marker)) return true;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return false;
+}
+
+/** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
+function mirrorSaysTabOpened(profileDir) {
+  return mirrorHasMarker(profileDir, 'TAB_OPENED');
 }
 
 /**
@@ -649,8 +671,13 @@ async function runNoTabScenario(
       extraPrefsFirefox: seeded.prefs,
     });
     attachProcessLogging(browser, label);
-    // No-tab scenarios assert absence: 10 s is enough for startup to finish.
-    const page = await findPageByUrl(browser, UPDATER_URL, 10_000);
+    // No-tab scenarios assert absence. Wait for the probe's WINDOW_READY
+    // marker (browser window up = startup finished and the scheduler decision
+    // made — ~1-2 s past launch), allow a short margin for the tab to appear,
+    // then assert it never did. No blind fixed wait.
+    await waitForMirror(seeded.profileDir, 'WINDOW_READY', 15_000);
+    await new Promise(r => setTimeout(r, 1_500));
+    const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
     check(counter, !page, `tab does NOT open (${label})`);
     return seeded.profileDir;
   } finally {

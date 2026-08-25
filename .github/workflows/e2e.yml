@@ -42,7 +42,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 9
+          version: 11
       - run: pnpm install --frozen-lockfile
 
       - name: Build snapshot
@@ -67,7 +67,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 9
+          version: 11
       - run: pnpm install --frozen-lockfile
 
       - name: Build helper binary
@@ -102,7 +102,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 9
+          version: 11
       - run: pnpm install --frozen-lockfile
 
       # ── Linux: download Mozilla tarball (apt gives Snap wrapper; BiDi fails) ──
@@ -171,7 +171,7 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: 9
+          version: 11
       - run: pnpm install --frozen-lockfile
 
       # downloads.mjs installs via the official recipe and resolves the real

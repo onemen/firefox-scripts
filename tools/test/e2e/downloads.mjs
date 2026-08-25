@@ -29,10 +29,18 @@ import {discoverFirefoxBinary} from './browsers.mjs';
 /**
  * Per-browser install recipes keyed by platform (win|mac|linux).
  *
- * - {manager, args} → run a package manager (choco/brew/winget), then resolve the
- *   binary from the browser's known install dirs (see resolveBinary).
+ * - {url, args} → download the official installer from `url` (fetchWithRetry, so
+ *   transient 5xx are retried) and run it with `args` (e.g. NSIS `/S` silent
+ *   install), then resolve the binary from known install dirs.
+ * - {url, app} → download the official dmg from `url`, mount it, and copy `app`
+ *   into /Applications (macOS).
  * - {tarball, url} → download the official tarball and extract it; returns the
  *   binary path directly.
+ * - {manager, args} → run a package manager (choco/winget/brew), then resolve the
+ *   binary from the browser's known install dirs. Only used where the browser
+ *   publishes no stable "latest" installer URL (forks whose release asset names
+ *   embed the version). Retried 3× because third-party mirrors (e.g.
+ *   librewolf.dev) 502 transiently.
  * - `manual: true` → no automated install; `page` is the official download page
  *   (informational, for the manual legs).
  *
@@ -43,8 +51,17 @@ import {discoverFirefoxBinary} from './browsers.mjs';
 export const DOWNLOADS = {
   'firefox': {
     install: {
-      win: {manager: 'choco', args: ['install', 'firefox', '-y', '--no-progress']},
-      mac: {manager: 'brew', args: ['install', '--cask', 'firefox']},
+      // Official Mozilla "latest" redirects — stable URLs, so download
+      // directly (fetchWithRetry) and silent-install ourselves instead of
+      // delegating to a package manager.
+      win: {
+        url: 'https://download.mozilla.org/?product=firefox-latest&os=win64&lang=en-US',
+        args: ['/S'], // NSIS silent install → Program Files\Mozilla Firefox
+      },
+      mac: {
+        url: 'https://download.mozilla.org/?product=firefox-latest&os=osx&lang=en-US',
+        app: 'Firefox.app', // dmg → copy into /Applications
+      },
       // Mozilla official tarball — apt ships a Snap wrapper whose BiDi
       // connection fails, so CI installs the tarball instead.
       linux: {
@@ -146,10 +163,59 @@ async function fetchWithRetry(url, attempts, timeoutMs = 300_000) {
   throw lastErr;
 }
 
+/** Download a URL to a local file (retrying), returning the file path. */
+async function downloadTo(url, dest) {
+  const res = await fetchWithRetry(url, 3);
+  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+  return dest;
+}
+
+/** Download an official installer and run it with args (e.g. NSIS `/S`). */
+async function installInstaller(url, browser, args) {
+  const exe = path.join(os.tmpdir(), `${browser}-setup.exe`);
+  await downloadTo(url, exe);
+  execSync(`"${exe}" ${args.join(' ')}`, {stdio: 'inherit'});
+}
+
+/** Download an official dmg, mount it, and copy the app into /Applications. */
+async function installDmg(url, appName) {
+  const dmg = path.join(os.tmpdir(), `${appName.replace(/\.app$/, '')}.dmg`);
+  await downloadTo(url, dmg);
+  // hdiutil prints e.g. `/dev/disk4s1  Apple_HFS  /Volumes/Firefox`.
+  const out = execSync(`hdiutil attach -nobrowse -readonly "${dmg}"`).toString();
+  const mountPoint = (out.match(/\/Volumes\/\S+/g) || []).pop();
+  if (!mountPoint) {
+    throw new Error(`cannot find mount point in hdiutil output: ${out}`);
+  }
+  try {
+    execSync(`cp -R "${mountPoint}/${appName}" /Applications/`);
+  } finally {
+    execSync(`hdiutil detach "${mountPoint}" || true`);
+  }
+}
+
 function runManager(manager, args) {
-  // execSync goes through the platform shell, so choco.bat / winget.exe /
-  // brew work the same on every OS.
-  execSync(`${manager} ${args.join(' ')}`, {stdio: 'inherit'});
+  // Package-manager installs hit third-party mirrors that can 502 transiently
+  // (e.g. librewolf.dev). Retry the whole install so a one-off upstream hiccup
+  // does not fail CI; browsers are idempotent to reinstall.
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      // execSync goes through the platform shell, so choco.bat / winget.exe /
+      // brew work the same on every OS.
+      execSync(`${manager} ${args.join(' ')}`, {stdio: 'inherit'});
+      return;
+    } catch (err) {
+      lastErr = err;
+      console.log(`  ${manager} attempt ${attempt}/3 failed: ${err.message}`);
+      if (attempt < 3) {
+        console.log('  retrying in 15s…');
+        // execSync blocks the event loop; sleep via node so it works on pwsh.
+        execSync('node -e "setTimeout(() => {}, 15000)"', {stdio: 'inherit'});
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -175,6 +241,24 @@ export async function installBrowser(browser, platform = process.platform) {
   if (recipe.tarball) {
     const binary = await installTarball(recipe.tarball, browser);
     console.log(`  ${browser} installed from official tarball: ${binary}`);
+    return binary;
+  }
+  if (recipe.url && recipe.args) {
+    // Official installer (e.g. NSIS silent install on Windows).
+    await installInstaller(recipe.url, browser, recipe.args);
+    const binary = resolveBinary(browser);
+    if (!binary) {
+      throw new Error(`${browser} installer ran, but no binary found in known install dirs`);
+    }
+    return binary;
+  }
+  if (recipe.url && recipe.app) {
+    // Official dmg → /Applications (macOS).
+    await installDmg(recipe.url, recipe.app);
+    const binary = resolveBinary(browser);
+    if (!binary) {
+      throw new Error(`${browser} dmg installed, but no binary found in known install dirs`);
+    }
     return binary;
   }
   runManager(recipe.manager, recipe.args);
