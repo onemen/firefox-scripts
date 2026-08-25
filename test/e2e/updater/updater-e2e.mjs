@@ -792,7 +792,6 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     // back to the persisted lastUpdateTabShown pref. The wait is longer than
     // the other scenarios because it runs last on a cold runner.
     const deadline = Date.now() + 30_000;
-    let sawMirrorLine = false;
     while (Date.now() < deadline && !page) {
       try {
         page =
@@ -807,7 +806,6 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
         /* browser not ready yet */
       }
       if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-        sawMirrorLine = true;
         // The tab is open; keep polling BiDi a little longer — it may
         // enumerate the chrome tab late.
         await new Promise(r => setTimeout(r, 2_000));
