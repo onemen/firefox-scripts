@@ -1,4 +1,4 @@
-// tools/test/unit/devClean.test.mjs — unit tests for tools/publish/devClean.mjs
+// test/unit/publish/devClean.test.mjs — unit tests for tools/publish/devClean.mjs
 //
 // devClean.mjs imports paths.js, which calls requireMode() at import time, so
 // the test pushes --mode=prod into process.argv before the dynamic import

@@ -1,4 +1,4 @@
-// tools/test/unit/embed.test.mjs — Unit tests for installer/embed.mjs.
+// test/unit/installer/embed.test.mjs — Unit tests for installer/embed.mjs.
 //
 // embed.mjs runs main() at import (it writes src/resources.h), so the tests
 // spawn it with --stdout and assert on the generated header text instead of

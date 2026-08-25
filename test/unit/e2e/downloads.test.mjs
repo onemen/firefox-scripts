@@ -1,4 +1,4 @@
-// tools/test/unit/downloads.test.mjs — Unit tests for tools/test/e2e/downloads.mjs
+// test/unit/e2e/downloads.test.mjs — Unit tests for test/e2e/shared/downloads.mjs
 //
 // Tests: resolveDownloadUrl (per-platform URL resolution + error cases),
 // downloadTo cache reuse (HEAD size match → reuse, mismatch/missing →
@@ -14,7 +14,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const downloadsUrl = pathToFileURL(
-  path.join(REPO_ROOT, 'tools', 'test', 'e2e', 'downloads.mjs')
+  path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'downloads.mjs')
 ).href;
 const {downloadDir, downloadTo, resolveDownloadUrl} = await import(downloadsUrl);
 

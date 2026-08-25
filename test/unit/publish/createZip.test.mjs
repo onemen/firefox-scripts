@@ -1,4 +1,4 @@
-// tools/test/unit/createZip.test.mjs — Unit tests for tools/publish/createZip.mjs
+// test/unit/publish/createZip.test.mjs — Unit tests for tools/publish/createZip.mjs
 //
 // createZip.mjs imports paths.js, which calls requireMode() at import time, so
 // the test pushes --mode=prod into process.argv before the dynamic import.
@@ -17,7 +17,7 @@ process.argv.push('--mode=prod');
 
 const {createZip, loadAllGitignorePatterns, zipPrefixFor} =
   await import('../../../tools/publish/createZip.mjs');
-import {listZipEntries, readZipEntry} from './zipReader.mjs';
+import {listZipEntries, readZipEntry} from '../../shared/zipReader.mjs';
 
 /** Make a temp source tree with a fixed set of files. */
 function makeSourceTree(files) {

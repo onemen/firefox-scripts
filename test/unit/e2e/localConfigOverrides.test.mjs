@@ -1,5 +1,5 @@
-// tools/test/unit/localConfigOverrides.test.mjs — Unit tests for
-// tools/test/e2e/helpers.mjs localConfigOverrides().
+// test/unit/e2e/localConfigOverrides.test.mjs — Unit tests for
+// test/e2e/shared/helpers.mjs localConfigOverrides().
 //
 // Tests: cross-OS snapshot (baked LOCAL_DIST_PATH ≠ local snapshot dir) →
 // override prefs pointing at the local snapshot; same path → no-op; missing
@@ -13,7 +13,7 @@ import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
-const helpersUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'test', 'e2e', 'helpers.mjs')).href;
+const helpersUrl = pathToFileURL(path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'helpers.mjs')).href;
 const {localConfigOverrides} = await import(helpersUrl);
 
 const OVERRIDE = 'extensions.firefox-scripts.override.';

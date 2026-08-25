@@ -10,8 +10,8 @@ Each section links to its tracking issue under the
 ## 1. Updater end-to-end test list
 
 The updater UI is now a shipped package (`updater-ui.zip` → `chrome/utils/updater/ui`), updated by
-`scriptsUpdater.sys.mjs` (`ensureUpdaterUi`) before the tab opens. The E2E suite in
-`tools/test/e2e/` (`pnpm test:e2e`) automates the installer and updater flows on CI.
+`scriptsUpdater.sys.mjs` (`ensureUpdaterUi`) before the tab opens. The E2E suite in `test/e2e/`
+(`pnpm test:e2e`) automates the installer and updater flows on CI.
 
 > **Note:** §1.1–§1.4 describe the desired test coverage. Many are already implemented in the E2E
 > suite on `main`; the remaining gaps are tracked as individual checklist items. §1.5 (Firefox 155

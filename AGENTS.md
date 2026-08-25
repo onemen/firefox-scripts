@@ -137,7 +137,7 @@ pnpm install
 pnpm lint          # eslint + C format check
 pnpm format        # check: C + prettier
 pnpm format:fix    # apply both
-pnpm test          # unit tests (tools/test/unit/, pure Node, no build)
+pnpm test          # unit tests (test/unit/, pure Node, no build)
 
 # hash parity JS vs C (auto-generates a prod snapshot via upload:local if needed;
 # also works against the newest dev- snapshot, so it runs after upload:local --mode=dev)
@@ -180,7 +180,7 @@ Match the change to its validation:
 | --------------------------- | ----------------------------------------------------------------------- |
 | C (`installer/src/`)        | build the affected target (`make dist_win` / `dist_linux` / `dist_mac`) |
 | Hash / file list            | `pnpm test:hash`                                                        |
-| Publish helpers / hashing   | `pnpm test` (unit tests in `tools/test/unit/`)                          |
+| Publish helpers / hashing   | `pnpm test` (unit tests in `test/unit/`)                                |
 | Generated-file sources      | `node tools/publish/syncGeneratedFiles.mjs`                             |
 | Packaging / publish scripts | `pnpm upload:local -- --mode=prod`                                      |
 

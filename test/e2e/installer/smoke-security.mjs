@@ -12,8 +12,9 @@
  *    that made cross-origin pages able to drive the API is gone).
  *
  * Usage (run from the repo root, after `pnpm upload:local --mode=dev`): node
- * tools/test/smoke-security.mjs INSTALLER_BIN=/path/to/installer_win-dev.exe
- * node tools/test/smoke-security.mjs
+ * test/e2e/installer/smoke-security.mjs
+ * INSTALLER_BIN=/path/to/installer_win-dev.exe node
+ * test/e2e/installer/smoke-security.mjs
  *
  * Exits non-zero on the first failed category so CI fails the build.
  */
@@ -23,8 +24,8 @@ import {existsSync, readdirSync, statSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-// tools/test/smoke-security.mjs → repo root
-const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
+// test/e2e/installer/smoke-security.mjs → repo root
+const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const PORT = 8777;
 const BASE = `http://127.0.0.1:${PORT}`;
 const WRONG_TOKEN = '0'.repeat(16);

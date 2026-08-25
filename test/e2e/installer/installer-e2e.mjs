@@ -11,7 +11,7 @@
  *    mode, so it detects the browser), navigates to the web UI, and asserts
  *    cards render with expected statuses.
  *
- * Usage: node tools/test/e2e/installer-e2e.mjs --snapshot <dir> [--ui] pnpm
+ * Usage: node test/e2e/installer/installer-e2e.mjs --snapshot <dir> [--ui] pnpm
  * test:e2e:installer -- [--ui]
  */
 

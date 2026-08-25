@@ -6,8 +6,8 @@
  * defaults), validates the snapshot (strict branch check by default), then
  * runs:
  *
- * - installer E2E (node tools/test/e2e/installer-e2e.mjs)
- * - updater E2E (node tools/test/e2e/updater-e2e.mjs, once per browser)
+ * - installer E2E (node test/e2e/installer/installer-e2e.mjs)
+ * - updater E2E (node test/e2e/updater/updater-e2e.mjs, once per browser)
  *
  * Usage: pnpm test:e2e # installer + updater (auto-detect Firefox) pnpm
  * test:e2e --installer # installer only pnpm test:e2e --updater --browser

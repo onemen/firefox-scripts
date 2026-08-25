@@ -1,4 +1,4 @@
-// tools/test/unit/zipReader.mjs — Minimal pure-Node ZIP reader used by the
+// test/shared/zipReader.mjs — Minimal pure-Node ZIP reader used by the
 // createZip unit tests.  Parses the end-of-central-directory record and the
 // central directory to list entry names and decompress entry contents, so the
 // tests make no assumption about `unzip` being installed (cross-platform).

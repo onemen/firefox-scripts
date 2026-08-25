@@ -1,4 +1,4 @@
-// tools/test/unit/pagesIndex.test.mjs — Tests for the generated Pages-site
+// test/unit/publish/pagesIndex.test.mjs — Tests for the generated Pages-site
 // landing page (tools/publish/uploadToPages.mjs).
 //
 // uploadToPages.mjs imports paths.js, which calls requireMode() at import

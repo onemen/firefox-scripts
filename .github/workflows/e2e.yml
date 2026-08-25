@@ -37,7 +37,7 @@ jobs:
   # into utils.zip's generated config (part of the hashed file set), so on a
   # different OS the test repoints the updater at its own copy via
   # extensions.firefox-scripts.override.<KEY> prefs (localConfigOverrides in
-  # tools/test/e2e/helpers.mjs) — never by rewriting the config, which would
+  # test/e2e/shared/helpers.mjs) — never by rewriting the config, which would
   # flip the package hash and break the staleness check.
   snapshot:
     name: build dev snapshot
@@ -71,7 +71,7 @@ jobs:
         run: pnpm upload:local --mode=dev
 
       - name: Run installer E2E
-        run: node tools/test/e2e/installer-e2e.mjs
+        run: node test/e2e/installer/installer-e2e.mjs
 
   # ── Helper E2E (Linux elevated-copy core) ──────────────────────────────────
   helper:
@@ -124,7 +124,7 @@ jobs:
         id: ffurl
         shell: bash
         run: |
-          URL=$(node tools/test/e2e/downloads.mjs firefox --url)
+          URL=$(node test/e2e/shared/downloads.mjs firefox --url)
           KEY=$(node -e "console.log(require('crypto').createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "key=firefox-dl-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
@@ -136,22 +136,23 @@ jobs:
           key: ${{ steps.ffurl.outputs.key }}
 
       # ── Linux: download Mozilla tarball (apt gives Snap wrapper; BiDi fails) ──
-      # The install script (tools/test/e2e/downloads.mjs) downloads the browser
-      # via its official recipe and exports FIREFOX_BINARY through $GITHUB_ENV.
+      # The install script (test/e2e/shared/downloads.mjs) downloads the
+      # browser via its official recipe and exports FIREFOX_BINARY through
+      # $GITHUB_ENV.
       - name: Install Firefox (Linux tarball)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
-          node tools/test/e2e/downloads.mjs firefox
+          node test/e2e/shared/downloads.mjs firefox
 
       - name: Install Firefox (macOS)
         if: matrix.os == 'macos-latest'
-        run: node tools/test/e2e/downloads.mjs firefox
+        run: node test/e2e/shared/downloads.mjs firefox
 
       - name: Install Firefox (Windows)
         if: matrix.os == 'windows-latest'
-        run: node tools/test/e2e/downloads.mjs firefox
+        run: node test/e2e/shared/downloads.mjs firefox
 
       # Restores dist/dev-<branch>-<sha>/ built once by the `snapshot` job.
       # On non-ubuntu legs the baked LOCAL_DIST_PATH differs from this
@@ -168,15 +169,15 @@ jobs:
       # step above) and auto-discovers the snapshot dir.
       - name: Run updater E2E (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: xvfb-run node tools/test/e2e/updater-e2e.mjs
+        run: xvfb-run node test/e2e/updater/updater-e2e.mjs
 
       - name: Run updater E2E (macOS)
         if: matrix.os == 'macos-latest'
-        run: node tools/test/e2e/updater-e2e.mjs
+        run: node test/e2e/updater/updater-e2e.mjs
 
       - name: Run updater E2E (Windows)
         if: matrix.os == 'windows-latest'
-        run: node tools/test/e2e/updater-e2e.mjs
+        run: node test/e2e/updater/updater-e2e.mjs
 
       - name: Upload diagnostics
         if: failure()
@@ -209,7 +210,7 @@ jobs:
       # binary from install dirs (never a PATH shim or app-execution alias,
       # whose parent dir is not the browser's GreD), exporting FIREFOX_BINARY.
       - name: Install ${{ matrix.browser }}
-        run: node tools/test/e2e/downloads.mjs ${{ matrix.browser }}
+        run: node test/e2e/shared/downloads.mjs ${{ matrix.browser }}
 
       # Restores dist/dev-<branch>-<sha>/ built by the `snapshot` job. The
       # ubuntu snapshot's baked LOCAL_DIST_PATH differs from this Windows
@@ -222,7 +223,7 @@ jobs:
           path: dist/
 
       - name: Run updater E2E
-        run: node tools/test/e2e/updater-e2e.mjs
+        run: node test/e2e/updater/updater-e2e.mjs
 
       - name: Upload diagnostics
         if: failure()

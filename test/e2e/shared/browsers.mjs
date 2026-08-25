@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {execSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {listZipEntries, readZipEntry} from '../unit/zipReader.mjs';
+import {listZipEntries, readZipEntry} from '../../shared/zipReader.mjs';
 
 export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 

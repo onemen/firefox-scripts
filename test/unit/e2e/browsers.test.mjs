@@ -1,4 +1,4 @@
-// tools/test/unit/browsers.test.mjs — Unit tests for tools/test/e2e/browsers.mjs
+// test/unit/e2e/browsers.test.mjs — Unit tests for test/e2e/shared/browsers.mjs
 //
 // Tests: findGreDir (per-platform path derivation), findSnapshot (discovery
 // with/without branch check), discoverFirefoxBinary (existence fallback),
@@ -13,7 +13,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const browsersUrl = pathToFileURL(
-  path.join(REPO_ROOT, 'tools', 'test', 'e2e', 'browsers.mjs')
+  path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'browsers.mjs')
 ).href;
 const {
   findGreDir,

@@ -1,4 +1,4 @@
-// tools/test/unit/generateUpdaterConfig.test.mjs — Unit tests for
+// test/unit/publish/generateUpdaterConfig.test.mjs — Unit tests for
 // tools/publish/generateUpdaterConfig.mjs.
 //
 // MODE/LOCAL are captured from process.argv at module load, so per-mode behavior

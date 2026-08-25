@@ -132,7 +132,12 @@ export default defineConfig([
   // etc.) apply to installer/ and tools/ exactly as everywhere else.
   {
     name: 'node-scripts',
-    files: ['tools/**/*.{js,mjs,cjs}', 'installer/**/*.{js,mjs,cjs}', 'config/**/*.{js,mjs,cjs}'],
+    files: [
+      'tools/**/*.{js,mjs,cjs}',
+      'test/**/*.{js,mjs,cjs}',
+      'installer/**/*.{js,mjs,cjs}',
+      'config/**/*.{js,mjs,cjs}',
+    ],
     languageOptions: {
       globals: globals.node,
     },

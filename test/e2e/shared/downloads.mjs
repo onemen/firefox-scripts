@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * tools/test/e2e/downloads.mjs — official browser download/install map for the
+ * test/e2e/shared/downloads.mjs — official browser download/install map for the
  * E2E CI matrix.
  *
  * The workflow (e2e.yml) used to hard-code each browser's install commands per
@@ -9,7 +9,7 @@
  * recipe, plus a CLI that performs the install for the current OS and exports
  * the resolved binary path.
  *
- * CLI (used by e2e.yml, works locally too): node tools/test/e2e/downloads.mjs
+ * CLI (used by e2e.yml, works locally too): node test/e2e/shared/downloads.mjs
  * <browser> [--os win|mac|linux]
  *
  * On success the resolved binary path is printed to stdout and, when running
@@ -349,7 +349,7 @@ async function main() {
   const args = process.argv.slice(2);
   const browser = args[0];
   if (!browser || args.includes('--help')) {
-    console.log(`Usage: node tools/test/e2e/downloads.mjs <browser> [--os win|mac|linux] [--url]
+    console.log(`Usage: node test/e2e/shared/downloads.mjs <browser> [--os win|mac|linux] [--url]
 
 Installs <browser> for the current OS (or --os) using its official download
 recipe, then prints the resolved binary path and, in GitHub Actions, sets

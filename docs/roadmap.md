@@ -13,7 +13,7 @@ Order matters: installer / updater / tests / CI first, core-file PRs last.
 - **P1-1** Port `docs/e2e-matrix-plan.md` as historical context; retire `feat/e2e-orig`.
 - **P0-1** `upload --mode=prod` moves the `latest` tag to the uploaded commit.
 - **P0-2** `pnpm dev-clean` removes old `dev-build-*` branches + tags.
-- **P0-3** E2E speed: browser download map (`tools/test/e2e/downloads.mjs`) + shorter waits.
+- **P0-3** E2E speed: browser download map (`test/e2e/shared/downloads.mjs`) + shorter waits.
 - **P1-2** Docs restructure (developer/maintainer vs user docs) + `future-work.md` sync.
 - **P2-1** `userChrome.js` `createElement`: `toggleAttribute` for Firefox 149+ (bug 2008041).
 - **P2-2** `BootstrapLoader`: release the spin wait on load errors (#25, PR #26 — merge pending

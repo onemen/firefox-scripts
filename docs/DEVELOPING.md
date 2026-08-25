@@ -159,8 +159,8 @@ files, and no localhost/dev-baked copies are left behind after a local/dev run.
 
 ## Test: unit tests (`pnpm test`)
 
-Fast, pure-Node unit tests (no build, no network) live in `tools/test/unit/` and run identically
-locally and in CI:
+Fast, pure-Node unit tests (no build, no network) live in `test/unit/` and run identically locally
+and in CI:
 
 ```bash
 pnpm test
@@ -196,8 +196,8 @@ The orchestrator (`run.mjs`) passes `--snapshot <dir>` to child scripts automati
 scripts can also be invoked directly:
 
 ```bash
-node tools/test/e2e/installer-e2e.mjs --snapshot dist/dev-main-abc1234
-node tools/test/e2e/updater-e2e.mjs --firefox "/path/to/firefox" --snapshot dist/dev-main-abc1234
+node test/e2e/installer/installer-e2e.mjs --snapshot dist/dev-main-abc1234
+node test/e2e/updater/updater-e2e.mjs --firefox "/path/to/firefox" --snapshot dist/dev-main-abc1234
 ```
 
 ### Installer E2E (29 assertions)
@@ -228,7 +228,7 @@ Skip individual scenarios during iteration with `--scenario 1,2,3`.
 
 ### Configuration
 
-Copy `tools/test/e2e/config.example.mjs` to `e2e.config.mjs` at the repo root (gitignored) and
+Copy `test/e2e/shared/config.example.mjs` to `e2e.config.mjs` at the repo root (gitignored) and
 adjust:
 
 - `browsers`: which browsers to run the updater test against (name + binary path; omit `binary` to
@@ -275,9 +275,9 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
 - **publish gate** (Windows / Linux / macOS) — `pnpm upload:local --mode=dev` rebuilds every package
   zip and the native binaries for the runner's OS, so regressions in generated files, hashes or the
   Makefile fail the PR before they reach a release.
-- **Security smoke test** (Windows) — `tools/test/smoke-security.mjs` launches the built installer
-  headless and verifies every state-changing `/api` route rejects a missing/wrong session token,
-  valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`.
+- **Security smoke test** (Windows) — `test/e2e/installer/smoke-security.mjs` launches the built
+  installer headless and verifies every state-changing `/api` route rejects a missing/wrong session
+  token, valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`.
 - **Hash parity** (Windows) — `pnpm test:hash` verifies the JS and C installer hashes match, using
   the dev snapshot built by the publish gate (no second build).
 
@@ -285,7 +285,7 @@ Run the smoke test locally (Windows, from the repo root):
 
 ```bash
 pnpm upload:local --mode=dev
-node tools/test/smoke-security.mjs
+node test/e2e/installer/smoke-security.mjs
 ```
 
 The installer's `--smoke-test` flag makes the headless run possible: it skips the

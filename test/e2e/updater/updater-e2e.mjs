@@ -17,7 +17,7 @@
  * force desired state → launch Firefox → wait for tab (or assert none) → run
  * assertions → close.
  *
- * Usage: node tools/test/e2e/updater-e2e.mjs --firefox <path> --snapshot <dir>
+ * Usage: node test/e2e/updater/updater-e2e.mjs --firefox <path> --snapshot<dir>
  */
 
 import fs from 'node:fs';

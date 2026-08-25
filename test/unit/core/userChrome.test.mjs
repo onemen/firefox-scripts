@@ -1,4 +1,4 @@
-// tools/test/unit/userChrome.test.mjs — Unit tests for
+// test/unit/core/userChrome.test.mjs — Unit tests for
 // core/chrome/utils/userChrome.js, evaluating the *full* file in a Node vm with
 // mocked Firefox globals (Services, ChromeUtils, XPCOM Cc/Ci/Cu, AppConstants,
 // xPref, Management). No real Firefox needed.

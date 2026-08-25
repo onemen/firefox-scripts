@@ -56,7 +56,7 @@ jobs:
       - name: Security smoke test — installer API
         if: runner.os == 'Windows'
         shell: bash
-        run: node tools/test/smoke-security.mjs
+        run: node test/e2e/installer/smoke-security.mjs
 
       # JS vs C hash parity against the dev snapshot built above (test_hash
       # accepts both prod- and dev- snapshots, so no second build is needed).

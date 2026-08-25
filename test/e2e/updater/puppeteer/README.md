@@ -11,7 +11,7 @@ pnpm add -D puppeteer-core
 
 Run Close all Firefox instances and run:
 
-node tools/test/puppeteer/firefox-updater-test.mjs "C:\\path\\to\\profile"
+node test/e2e/updater/puppeteer/firefox-updater-test.mjs "C:\\path\\to\\profile"
 "C:\\path\\to\\firefox.exe"
 
 Notes
