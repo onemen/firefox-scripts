@@ -18,7 +18,7 @@ jobs:
     name: lint + format
     runs-on: ubuntu-latest
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
       - run: pnpm lint
       - run: pnpm format
       - run: pnpm test
@@ -34,7 +34,7 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       - name: Set up MSYS2 toolchain (make + gcc)
         if: runner.os == 'Windows'
