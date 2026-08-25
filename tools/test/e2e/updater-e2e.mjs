@@ -75,7 +75,6 @@ try {
   // Watch for the updater tab and record the moment it appears — WebDriver
   // BiDi cannot reliably enumerate trusted chrome:// tabs on CI.
   let polls = 0;
-  let readyLogged = false;
   const watcher = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
   watcher.initWithCallback(
     {
@@ -87,14 +86,6 @@ try {
             return;
           }
           const win = Services.wm.getMostRecentWindow('navigator:browser');
-          // Startup-complete signal for the no-tab scenarios: the browser
-          // window is up, so the scheduler decision has been made — if the
-          // updater tab is not open by now it will not open.
-          if (!readyLogged && win?.gBrowser) {
-            readyLogged = true;
-            const line = 'WINDOW_READY ' + new Date().toISOString() + '\\n';
-            fos.write(line, line.length);
-          }
           for (const tab of win?.gBrowser?.tabs || []) {
             const spec = tab.linkedBrowser?.currentURI?.spec || '';
             if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
@@ -393,19 +384,26 @@ function mirrorHasMarker(profileDir, marker) {
   }
 }
 
-/** Poll the probe's mirror log until `marker` appears or the timeout passes. */
-async function waitForMirror(profileDir, marker, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (mirrorHasMarker(profileDir, marker)) return true;
-    await new Promise(r => setTimeout(r, 250));
-  }
-  return false;
-}
-
 /** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
 function mirrorSaysTabOpened(profileDir) {
   return mirrorHasMarker(profileDir, 'TAB_OPENED');
+}
+
+/**
+ * Resolve once BiDi reports at least one open page — the main browser window is
+ * up, so the scheduler (which needs the window) has made its decision.
+ */
+async function waitForFirstPage(browser, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if ((await browser.pages()).length > 0) return true;
+    } catch {
+      /* browser not ready yet */
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return false;
 }
 
 /**
@@ -663,7 +661,6 @@ async function runNoTabScenario(
   const greSeed = installFxFolder(snapshotDir, greDir);
   check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
   if (!greSeed.ok) return seeded.profileDir;
-  appendConfigProbe(greDir);
 
   let browser;
   try {
@@ -672,14 +669,15 @@ async function runNoTabScenario(
       extraPrefsFirefox: seeded.prefs,
     });
     attachProcessLogging(browser, label);
-    // No-tab scenarios assert absence. Wait for the probe's WINDOW_READY
-    // marker (browser window up = startup finished and the scheduler decision
-    // made — ~1-2 s past launch), allow a short margin for the tab to appear,
-    // then assert it never did. No blind fixed wait.
-    const ready = await waitForMirror(seeded.profileDir, 'WINDOW_READY', 15_000);
-    if (!ready)
-      console.log(`  [diag] WINDOW_READY not observed (${label}) — relying on pref ground truth`);
-    await new Promise(r => setTimeout(r, 1_500));
+    // No-tab scenarios assert absence. The scheduler runs at startup and
+    // decides within a couple of seconds of the window being up (manifest
+    // fetch + hash). Wait for the main window via BiDi page enumeration,
+    // allow a short margin for the async check to complete, then assert the
+    // tab never appeared. No blind fixed wait. (The GreD config probe cannot
+    // be used here: it changes config.js, which breaks the fx-folder hash and
+    // makes the scheduler open the tab.)
+    await waitForFirstPage(browser, 15_000);
+    await new Promise(r => setTimeout(r, 3_000));
     const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
     check(counter, !page, `tab does NOT open (${label})`);
     return seeded.profileDir;
