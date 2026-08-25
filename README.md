@@ -3,10 +3,16 @@
 [![CI](https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml/badge.svg)](https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml)
 [![E2E](https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml/badge.svg)](https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml)
 
-> **🚧 Under active development** — the **installer** and **in-browser updater** are new and being
-> validated; the core scripts they install are the long-standing, stable ones. Found a problem?
-> [Open an issue](https://github.com/onemen/firefox-scripts/issues) and include your browser version
-> and OS.
+## Table of Contents
+
+- [How to install the installer](#how-to-install-the-installer)
+- [Supported browsers](#supported-browsers)
+- [How the updater keeps your scripts up to date](#how-the-updater-keeps-your-scripts-up-to-date)
+- [Original Scripts and Core Folders](#original-scripts-and-core-folders)
+- [For developers](#for-developers)
+- [Contributing](#contributing)
+- [Problems?](#problems)
+- [License](#license)
 
 Install and keep Firefox-family browser scripts up to date.
 
@@ -17,6 +23,17 @@ into the browser, and an in-browser updater keeps them current automatically as 
 released.
 
 > **Official install documentation:** https://onemen.github.io/tabmixplus-docs/other/installation/
+
+## Supported browsers
+
+- Firefox (stable, Nightly, Developer Edition)
+- Waterfox
+- Zen Browser
+- LibreWolf
+- Floorp
+
+A browser must be **running** to be detected (detection uses process scanning and lock-file
+inspection).
 
 ## How to install the installer
 
@@ -37,17 +54,6 @@ released.
 > The install tab always opens. It is the piece that downloads the packages from the network; if
 > they cannot be reached, the tab shows a network-error banner instead of the install screen.
 
-### Supported browsers
-
-- Firefox (stable, Nightly, Developer Edition)
-- Waterfox
-- Zen Browser
-- LibreWolf
-- Floorp
-
-A browser must be **running** to be detected (detection uses process scanning and lock-file
-inspection).
-
 ## How the updater keeps your scripts up to date
 
 Once installed, the scripts keep themselves current without you re-running the installer:
@@ -64,8 +70,30 @@ Once installed, the scripts keep themselves current without you re-running the i
 - **Manual update.** You can always open the updater manually from the browser menu, or download the
   `utils.zip` / `fx-folder.zip` packages directly from the update tab.
 
-Scripts update automatically; configuration-file updates and browser restarts are applied when you
-choose to install them, keeping the process predictable.
+Updater UI scripts update automatically in the background. Configuration-file updates and browser restarts are applied only when you choose to install them, keeping the process predictable and under your control.
+
+## Original Scripts and Core Folders
+
+This repository wraps the original `firefox-scripts` components under `core/`. The source tree is split into three logical areas:
+
+### Upstream Components (MPL 2.0)
+- `core/chrome/utils/` (except `core/chrome/utils/updater/`)
+- `core/fx-folder/`
+
+These are derived from [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) and are governed by the Mozilla Public License 2.0.
+
+### Custom Components (MIT License)
+- `core/chrome/utils/updater/`
+- `tools/publish/remote-ui/`
+
+These contain the in-browser updater, including `scriptsUpdater.sys.mjs` (daily check + updater-ui self-update), the updater tab UI shipped in `updater-ui.zip` (`updater.html`, `updater.js`, `updater-ui.js`, the generated `updater.css`, and brand logos), and the publish pipeline.
+
+### Installer (custom)
+- `installer/`
+
+The native C installer that detects running browsers, serves a local web UI, and copies the fx-folder and utils packages into the browser.
+
+The project's source of truth for scripts is `core/`, plus the C installer under `installer/` and the publish scripts under `tools/publish/`.
 
 ## For developers
 
