@@ -87,11 +87,11 @@ manually.
 
 | Scenario                      | Browser dir                        | Expectation                                                                     |
 | ----------------------------- | ---------------------------------- | ------------------------------------------------------------------------------- |
-| Portable / user-owned install | e.g. `D:\firefox`                  | Direct `IOUtils.copy` — no helper, no UAC.                                      |
+| Portable / user-owned install | e.g. `D:\firefox`                  | Direct `IOUtils.copy` — no helper, no UAC. (automation tracked in #56)          |
 | Standard Windows install      | `C:\Program Files\Mozilla Firefox` | Direct copy fails → elevated-copy helper → exactly one UAC prompt → files land. |
 | Elevation cancelled           | —                                  | Helper exits `2` → tab shows "elevation cancelled", nothing written.            |
 | Linux (deb/rpm)               | `/usr/lib/firefox`                 | `pkexec` prompt once (fallback `sudo`).                                         |
-| Linux snap                    | `/etc/firefox` (per docs)          | **open**: GreD differs from the documented target — verify actual path.         |
+| Linux snap                    | `/etc/firefox` (per docs)          | **open**: GreD differs from the documented target — verify actual path (#55).   |
 | macOS                         | `Firefox.app/Contents/Resources`   | `osascript` prompt once.                                                        |
 
 ### 2.2 Automated (planned, tool undecided)
