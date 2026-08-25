@@ -36,7 +36,13 @@ import {
   summary,
   localConfigOverrides,
 } from '../shared/helpers.mjs';
-import {findSnapshot, findZip, extractZip, discoverFirefoxBinary, findGreDir} from '../shared/browsers.mjs';
+import {
+  findSnapshot,
+  findZip,
+  extractZip,
+  discoverFirefoxBinary,
+  findGreDir,
+} from '../shared/browsers.mjs';
 
 const UPDATER_URL = 'chrome://firefox-scripts/content/ui/updater.html';
 const FORCE_UTILS_STALE = 'RDFDataSource.sys.mjs';
