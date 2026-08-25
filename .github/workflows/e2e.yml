@@ -96,9 +96,6 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
-      # downloads.mjs saves official installers here; actions/cache restores
-      # the dir on later runs, keyed on the exact download URL (see below).
-      BROWSER_DL_DIR: ${{ runner.temp }}/browser-dl
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,15 +112,22 @@ jobs:
       # cache it keyed on the exact download URL (which embeds the release
       # version — Firefox stable bumps ~monthly, invalidating the key). Only the
       # downloaded installer is cached; the install itself still runs per job.
+      # BROWSER_DL_DIR is exported here (step context, where ${{ runner.temp }}
+      # is valid) so downloads.mjs saves into the cache-backed dir.
       - name: Resolve Firefox download URL
         id: ffurl
         shell: bash
-        run: echo "url=$(node tools/test/e2e/downloads.mjs firefox --url)" >> "$GITHUB_OUTPUT"
+        run: |
+          URL=$(node tools/test/e2e/downloads.mjs firefox --url)
+          KEY=$(node -e "console.log(require('crypto').createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "key=firefox-dl-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
       - name: Cache Firefox installer
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.BROWSER_DL_DIR }}
-          key: firefox-dl-${{ runner.os }}-${{ hashString(steps.ffurl.outputs.url) }}
+          key: ${{ steps.ffurl.outputs.key }}
 
       # ── Linux: download Mozilla tarball (apt gives Snap wrapper; BiDi fails) ──
       # The install script (tools/test/e2e/downloads.mjs) downloads the browser
