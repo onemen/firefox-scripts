@@ -93,24 +93,6 @@ These are derived from
 [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) and are governed
 by the Mozilla Public License 2.0.
 
-### Custom Components (MIT License)
-
-- `core/chrome/utils/updater/`
-- `tools/publish/remote-ui/`
-
-These contain the in-browser updater, including `scriptsUpdater.sys.mjs` (daily check + updater-ui
-self-update), the updater tab UI shipped in `updater-ui.zip` (`updater.html`, `updater.js`,
-`updater-ui.js`, the generated `updater.css`, and brand logos), and the publish pipeline.
-
-### Installer (custom)
-
-- `installer/`
-
-The native C installer that detects running browsers, serves a local web UI, and copies the
-fx-folder and utils packages into the browser.
-
-The project's source of truth for scripts is `core/`, plus the C installer under `installer/` and
-the publish scripts under `tools/publish/`.
 
 ## For developers
 
@@ -123,9 +105,7 @@ the publish scripts under `tools/publish/`.
 ### Contributing
 
 Contributions are welcome — bug reports, fixes, and improvements all help. Read
-[CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow guidance, then open a pull request. The
-project's source of truth for scripts is `core/`, plus the C installer under `installer/` and the
-publish scripts under `tools/publish/`.
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow guidance, then open a pull request. The project's source of truth for scripts is `core/`, plus the C installer under `installer/` and the publish scripts under `tools/publish/`.
 
 ### Problems?
 
