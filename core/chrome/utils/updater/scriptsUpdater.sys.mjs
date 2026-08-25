@@ -598,12 +598,17 @@ export async function extractZipFlatten(zipPath, destDir) {
   }
   zipReader.close();
 
-  // Flatten a single top-level wrapper folder.
+  // Flatten a single top-level wrapper folder. IOUtils.getChildren returns
+  // PATH STRINGS, not FileInfo objects — classify each child with
+  // IOUtils.stat, whose FileInfo.type is 'regular' | 'directory' | 'other'
+  // (there is no 'file' value). Without this the wrapper is never descended
+  // into and the extracted files are missed (fx-folder.zip style).
   let base = destDir;
   for (let depth = 0; depth < 4; depth++) {
     const children = await IOUtils.getChildren(base);
-    const subDirs = children.filter(c => c.type === 'directory');
-    const files = children.filter(c => c.type === 'file');
+    const stats = await Promise.all(children.map(c => IOUtils.stat(c).catch(() => null)));
+    const subDirs = stats.filter(s => s && s.type === 'directory');
+    const files = stats.filter(s => s && s.type === 'regular');
     if (files.length > 0) {
       break;
     }

@@ -11,7 +11,8 @@
  * errors, screenshot Scenario 2 (config-stale): config Update Available, utils
  * Up To Date Scenario 3 (both-stale): both Update Available Scenario 4
  * (up-to-date): tab does NOT open (no state to surface) Scenario 5 (skipped):
- * skip pref suppresses the tab entirely
+ * skip pref suppresses the tab entirely Scenario 6 (install-applies): click
+ * btn-install and assert the packages are actually copied to disk (issue #37)
  *
  * Each scenario: fresh temp profile → seed utils + fx-folder → modify files to
  * force desired state → launch Firefox → wait for tab (or assert none) → run
@@ -20,6 +21,7 @@
  * Usage: node test/e2e/updater/updater-e2e.mjs --firefox <path> --snapshot<dir>
  */
 
+import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -273,6 +275,21 @@ function restoreGreConfig(snapshot) {
     }
   }
   return errors;
+}
+
+/**
+ * Replicate the updater's runtime hash (scriptsUpdater.computeFilesHash):
+ * sha256 over rel_path + '\n' + file_bytes for every file in the manifest's
+ * file list, sorted with localeCompare. Used to assert that an install actually
+ * restored the installed tree to the manifest state (issue #37).
+ */
+function computeInstalledHash(files, dir) {
+  const hash = createHash('sha256');
+  for (const relative of [...files].sort((a, b) => a.localeCompare(b))) {
+    hash.update(relative + '\n');
+    hash.update(fs.readFileSync(path.join(dir, ...relative.split('/'))));
+  }
+  return hash.digest('hex');
 }
 
 function modifyGreConfig(greDir) {
@@ -715,6 +732,171 @@ async function runNoTabScenario(
   }
 }
 
+/**
+ * Issue #37 — "install applies": with utils stale (forced marker) and config
+ * stale (the GreD probe changes config.js), click btn-install in the tab and
+ * assert the packages are ACTUALLY copied to disk — both installed trees
+ * re-hash to the manifest and the forced-stale marker / probe are gone.
+ *
+ * Pre-install sanity: the seeded trees must NOT match the manifest hashes,
+ * otherwise the equality assertions below would pass vacuously.
+ */
+async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
+  console.log(`\n## Scenario: ${label}`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error('Firefox not found');
+
+  const seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, 'hashes.json'), 'utf-8'));
+  const utilsHash = manifest.utils?.hash;
+  const utilsFiles = manifest.utils?.files;
+  const configHash = manifest['fx-folder']?.hash;
+  const configFiles = manifest['fx-folder']?.files;
+  if (!utilsHash || !Array.isArray(utilsFiles) || !configHash || !Array.isArray(configFiles)) {
+    check(counter, false, `manifest has both package hashes+files (${label})`);
+    return seeded.profileDir;
+  }
+
+  const greDir = findGreDir(firefoxBin);
+  const greSeed = installFxFolder(snapshotDir, greDir);
+  check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
+  if (!greSeed.ok) return seeded.profileDir;
+
+  // The probe changes GreD config.js, forcing config stale. It is appended
+  // before the sanity checks so both packages start mismatched.
+  check(counter, appendConfigProbe(greDir), `config probe appended (${label})`);
+  check(
+    counter,
+    computeInstalledHash(utilsFiles, seeded.chromeUtils) !== utilsHash,
+    `pre-install utils hash differs from manifest (${label})`
+  );
+  check(
+    counter,
+    computeInstalledHash(configFiles, greDir) !== configHash,
+    `pre-install config hash differs from manifest (${label})`
+  );
+
+  let browser;
+  let page = null;
+  try {
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+    });
+    attachProcessLogging(browser, label);
+
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && !page) {
+      try {
+        page =
+          (await browser.pages()).find(p => {
+            try {
+              return p.url().startsWith(UPDATER_URL);
+            } catch {
+              return false;
+            }
+          }) || null;
+      } catch {
+        /* browser not ready yet */
+      }
+      if (!page) await new Promise(r => setTimeout(r, 500));
+    }
+    check(counter, Boolean(page), `tab opens (${label})`);
+    if (!page) {
+      await dumpPages(browser);
+      return seeded.profileDir;
+    }
+
+    const rendered = await waitForCondition(
+      page,
+      () => Boolean(document.getElementById('card-title')?.textContent),
+      15_000,
+      'card rendered'
+    );
+    check(counter, rendered, `card rendered (${label})`);
+    if (!rendered) return seeded.profileDir;
+
+    // Check BOTH checkboxes (utils + config are both stale), then click
+    // install. handleInstallCommand installs config first, then utils, and
+    // refreshPackageState flips each badge to OK as it finishes.
+    const clicked = await page.evaluate(() => {
+      const btn = document.getElementById('btn-install');
+      if (!btn) return false;
+      for (const kind of ['chk-config', 'chk-utils']) {
+        const cb = document.getElementById(kind);
+        if (!cb) return false;
+        if (!cb.checked) cb.click();
+      }
+      btn.click();
+      return true;
+    });
+    check(counter, clicked, `install clicked (${label})`);
+
+    // Completion: both badges flipped to OK and the progress bar hidden once
+    // the whole flow finishes. Local file:// downloads take a couple of
+    // seconds per package, so allow a generous margin.
+    const completed = await waitForCondition(
+      page,
+      () => {
+        const utilsOk = document.getElementById('utils-badge-ok');
+        const configOk = document.getElementById('config-badge-ok');
+        const progress = document.getElementById('card-progress');
+        const err = document.getElementById('card-progress-error');
+        return Boolean(
+          utilsOk &&
+          !utilsOk.hidden &&
+          configOk &&
+          !configOk.hidden &&
+          progress?.hidden &&
+          err?.style.display === 'none'
+        );
+      },
+      60_000,
+      'install completed'
+    );
+    check(counter, completed, `install completes in tab (${label})`);
+
+    const successShown = await page.evaluate(
+      () => !document.getElementById('success-banner')?.hidden
+    );
+    check(counter, successShown, `success banner shown after install (${label})`);
+  } finally {
+    try {
+      await browser?.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // ── On-disk assertions (node side) ──
+  const staleFile = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
+  check(
+    counter,
+    fs.existsSync(staleFile) &&
+      !fs.readFileSync(staleFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER),
+    `stale marker replaced by install (${label})`
+  );
+  check(
+    counter,
+    computeInstalledHash(utilsFiles, seeded.chromeUtils) === utilsHash,
+    `installed utils re-hashes to the manifest (${label})`
+  );
+  const greConfig = path.join(greDir, 'config.js');
+  check(
+    counter,
+    fs.existsSync(greConfig) && !fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+    `config probe replaced by install (${label})`
+  );
+  check(
+    counter,
+    computeInstalledHash(configFiles, greDir) === configHash,
+    `installed config re-hashes to the manifest (${label})`
+  );
+
+  return seeded.profileDir;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -744,7 +926,7 @@ async function run() {
   console.log(`  firefox: ${firefoxBin}`);
   console.log(`  GreD:    ${findGreDir(firefoxBin)}`);
 
-  const scenarios = opts.scenarios || ['1', '2', '3', '4', '5'];
+  const scenarios = opts.scenarios || ['1', '2', '3', '4', '5', '6'];
 
   const profiles = [];
 
@@ -811,6 +993,14 @@ async function run() {
               skipUtils: true,
               forceUtilsStale: true,
             })
+          );
+        },
+      },
+      {
+        id: '6',
+        run: async () => {
+          profiles.push(
+            await runInstallAppliesScenario(counter, opts, snapshotDir, 'install-applies')
           );
         },
       },
