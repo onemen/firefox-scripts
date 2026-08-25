@@ -189,16 +189,22 @@ async function installInstaller(url, browser, args) {
 async function installDmg(url, appName) {
   const dmg = path.join(os.tmpdir(), `${appName.replace(/\.app$/, '')}.dmg`);
   await downloadTo(url, dmg);
-  // hdiutil prints e.g. `/dev/disk4s1  Apple_HFS  /Volumes/Firefox`.
+  // hdiutil prints e.g. `/dev/disk4s1  Apple_HFS  /Volumes/Firefox`. Keep the
+  // device too, so cleanup can detach even when the mount-point parse fails.
   const out = execSync(`hdiutil attach -nobrowse -readonly "${dmg}"`).toString();
   const mountPoint = (out.match(/\/Volumes\/\S+/g) || []).pop();
-  if (!mountPoint) {
-    throw new Error(`cannot find mount point in hdiutil output: ${out}`);
-  }
+  const device = (out.match(/\/dev\/disk\S+/g) || [])[0];
   try {
+    if (!mountPoint) {
+      throw new Error(`cannot find mount point in hdiutil output: ${out}`);
+    }
     execSync(`cp -R "${mountPoint}/${appName}" /Applications/`);
   } finally {
-    execSync(`hdiutil detach "${mountPoint}" || true`);
+    // No `|| true`: a detach failure propagates (fail-fast) instead of
+    // silently leaving the image mounted after a successful copy.
+    if (device || mountPoint) {
+      execSync(`hdiutil detach "${device || mountPoint}"`);
+    }
   }
 }
 

@@ -676,7 +676,9 @@ async function runNoTabScenario(
     // tab never appeared. No blind fixed wait. (The GreD config probe cannot
     // be used here: it changes config.js, which breaks the fx-folder hash and
     // makes the scheduler open the tab.)
-    await waitForFirstPage(browser, 15_000);
+    const browserReady = await waitForFirstPage(browser, 15_000);
+    check(counter, browserReady, `browser ready (${label})`, 'BiDi did not report an open page');
+    if (!browserReady) return seeded.profileDir;
     await new Promise(r => setTimeout(r, 3_000));
     const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
     check(counter, !page, `tab does NOT open (${label})`);
