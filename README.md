@@ -7,6 +7,7 @@
 > validated; the core scripts they install are the long-standing, stable ones. Found a problem?
 > [Open an issue](https://github.com/onemen/firefox-scripts/issues) and include your browser version
 > and OS.
+
 ## Table of Contents
 
 - [How to install the installer](#how-to-install-the-installer)
@@ -74,30 +75,42 @@ Once installed, the scripts keep themselves current without you re-running the i
 - **Manual update.** You can always open the updater manually from the browser menu, or download the
   `utils.zip` / `fx-folder.zip` packages directly from the update tab.
 
-Updater UI scripts update automatically in the background. Configuration-file updates and browser restarts are applied only when you choose to install them, keeping the process predictable and under your control.
+Updater UI scripts update automatically in the background. Configuration-file updates and browser
+restarts are applied only when you choose to install them, keeping the process predictable and under
+your control.
 
 ## Original Scripts and Core Folders
 
-This repository wraps the original `firefox-scripts` components under `core/`. The source tree is split into three logical areas:
+This repository wraps the original `firefox-scripts` components under `core/`. The source tree is
+split into three logical areas:
 
 ### Upstream Components (MPL 2.0)
+
 - `core/chrome/utils/` (except `core/chrome/utils/updater/`)
 - `core/fx-folder/`
 
-These are derived from [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) and are governed by the Mozilla Public License 2.0.
+These are derived from
+[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) and are governed
+by the Mozilla Public License 2.0.
 
 ### Custom Components (MIT License)
+
 - `core/chrome/utils/updater/`
 - `tools/publish/remote-ui/`
 
-These contain the in-browser updater, including `scriptsUpdater.sys.mjs` (daily check + updater-ui self-update), the updater tab UI shipped in `updater-ui.zip` (`updater.html`, `updater.js`, `updater-ui.js`, the generated `updater.css`, and brand logos), and the publish pipeline.
+These contain the in-browser updater, including `scriptsUpdater.sys.mjs` (daily check + updater-ui
+self-update), the updater tab UI shipped in `updater-ui.zip` (`updater.html`, `updater.js`,
+`updater-ui.js`, the generated `updater.css`, and brand logos), and the publish pipeline.
 
 ### Installer (custom)
+
 - `installer/`
 
-The native C installer that detects running browsers, serves a local web UI, and copies the fx-folder and utils packages into the browser.
+The native C installer that detects running browsers, serves a local web UI, and copies the
+fx-folder and utils packages into the browser.
 
-The project's source of truth for scripts is `core/`, plus the C installer under `installer/` and the publish scripts under `tools/publish/`.
+The project's source of truth for scripts is `core/`, plus the C installer under `installer/` and
+the publish scripts under `tools/publish/`.
 
 ## For developers
 
