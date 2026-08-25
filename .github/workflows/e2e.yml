@@ -31,16 +31,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Windows dev snapshot (shared by the fork legs) ───────────────────────
-  # The browser-matrix legs (librewolf, floorp) run on windows-latest with an
-  # identical workspace path, so one Windows snapshot is hash-consistent for
-  # all three: LOCAL-mode URLs baked into utils.zip point at the same dist dir
-  # on every job. Sharing across OSes is impossible — the baked path is part
-  # of the hashed utils file set, so a repointed config flips the package hash
-  # and the updater sees a false "update available".
-  snapshot-win:
-    name: build windows dev snapshot
-    runs-on: windows-latest
+  # ── Dev snapshot (built ONCE per run, shared across all updater legs) ────
+  # The package zips + hashes.json are OS-independent, so one ubuntu build
+  # serves every updater leg. A LOCAL-mode build bakes the BUILDER's dist dir
+  # into utils.zip's generated config (part of the hashed file set), so on a
+  # different OS the test repoints the updater at its own copy via
+  # extensions.firefox-scripts.override.<KEY> prefs (localConfigOverrides in
+  # tools/test/e2e/helpers.mjs) — never by rewriting the config, which would
+  # flip the package hash and break the staleness check.
+  snapshot:
+    name: build dev snapshot
+    runs-on: ubuntu-latest
     steps:
       - uses: $/.github/actions/setup-repo
 
@@ -50,7 +51,7 @@ jobs:
       - name: Upload dev snapshot
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dev-snapshot-win
+          name: dev-snapshot
           path: dist/
           if-no-files-found: error
 
@@ -101,6 +102,7 @@ jobs:
   # Every OS leg is required; the updater must work across the supported matrix.
   updater:
     name: 'updater E2E · ${{ matrix.os }}'
+    needs: snapshot
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -151,8 +153,15 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: node tools/test/e2e/downloads.mjs firefox
 
-      - name: Build snapshot
-        run: pnpm upload:local --mode=dev
+      # Restores dist/dev-<branch>-<sha>/ built once by the `snapshot` job.
+      # On non-ubuntu legs the baked LOCAL_DIST_PATH differs from this
+      # runner's, so the test sets the override prefs (localConfigOverrides)
+      # to point the updater at this copy.
+      - name: Download dev snapshot
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dev-snapshot
+          path: dist/
 
       # The test builds its own fresh temp profile from the dev snapshot, so no
       # profile-seed step is needed. It reads FIREFOX_BINARY (set by the install
@@ -184,7 +193,7 @@ jobs:
   # Zen require manual install.
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
-    needs: snapshot-win
+    needs: snapshot
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -202,14 +211,14 @@ jobs:
       - name: Install ${{ matrix.browser }}
         run: node tools/test/e2e/downloads.mjs ${{ matrix.browser }}
 
-      # Restores dist/dev-<branch>-<sha>/ built by snapshot-win. `needs`
-      # already waits for that job, so the artifact always exists here. The
-      # Windows snapshot's baked LOCAL_DIST_PATH matches this runner's path,
-      # so the hash check stays consistent.
+      # Restores dist/dev-<branch>-<sha>/ built by the `snapshot` job. The
+      # ubuntu snapshot's baked LOCAL_DIST_PATH differs from this Windows
+      # runner's, so the test sets the override prefs (localConfigOverrides)
+      # to point the updater at this copy.
       - name: Download dev snapshot
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: dev-snapshot-win
+          name: dev-snapshot
           path: dist/
 
       - name: Run updater E2E
