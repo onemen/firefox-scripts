@@ -49,9 +49,7 @@ function repoSlug() {
 function token() {
   const t = process.env.GITHUB_TOKEN_VAR || process.env.GH_TOKEN;
   if (!t) {
-    throw new Error(
-      'No token: set GITHUB_TOKEN_VAR (or GH_TOKEN) with `actions: write` scope.'
-    );
+    throw new Error('No token: set GITHUB_TOKEN_VAR (or GH_TOKEN) with `actions: write` scope.');
   }
   return t;
 }
@@ -68,10 +66,9 @@ async function main() {
 
   const caches = [];
   for (let page = 1; ; page++) {
-    const res = await fetch(
-      `${api}/repos/${repo}/actions/caches?per_page=100&page=${page}`,
-      {headers: {authorization: auth, 'x-github-api-version': '2022-11-28'}}
-    );
+    const res = await fetch(`${api}/repos/${repo}/actions/caches?per_page=100&page=${page}`, {
+      headers: {'authorization': auth, 'x-github-api-version': '2022-11-28'},
+    });
     if (!res.ok) throw new Error(`list caches failed: ${res.status} ${await res.text()}`);
     const body = await res.json();
     caches.push(...(body.actions_caches ?? []));
@@ -79,9 +76,8 @@ async function main() {
     if (body.actions_caches.length < 100) break;
   }
 
-  const inScope = PREFIXES.length === 0
-    ? caches
-    : caches.filter(c => PREFIXES.some(re => re.test(c.key)));
+  const inScope =
+    PREFIXES.length === 0 ? caches : caches.filter(c => PREFIXES.some(re => re.test(c.key)));
 
   const byStem = new Map();
   for (const c of inScope) {
@@ -109,7 +105,7 @@ async function main() {
     if (!DRY_RUN) {
       const res = await fetch(`${api}/repos/${repo}/actions/caches/${c.id}`, {
         method: 'DELETE',
-        headers: {authorization: auth, 'x-github-api-version': '2022-11-28'},
+        headers: {'authorization': auth, 'x-github-api-version': '2022-11-28'},
       });
       if (!res.ok) throw new Error(`delete ${c.key} failed: ${res.status} ${await res.text()}`);
     }
