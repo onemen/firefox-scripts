@@ -8,32 +8,6 @@ import {fileURLToPath} from 'node:url';
 
 export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
-// ── Shared-snapshot config repoint ────────────────────────────────────────
-
-/**
- * The E2E dev snapshot is built ONCE per run on an ubuntu job and shared via
- * artifact, but a LOCAL-mode build bakes the BUILDER's dist dir into the
- * generated updater config inside utils.zip (file:// URLs). Repoint those URLs
- * at this runner's copy of the snapshot so the scheduler can read the
- * manifest/zips from disk on any OS. No-op when the config already points at
- * this machine's snapshot dir.
- *
- * @param {string} chromeUtils the profile's chrome/utils dir (post-extract)
- * @param {string} snapshotDir this runner's local snapshot dir
- * @returns {boolean} true when the config was rewritten
- */
-export function repointLocalConfig(chromeUtils, snapshotDir) {
-  const cfg = path.join(chromeUtils, 'updater', 'updater-config.sys.mjs');
-  if (!fs.existsSync(cfg)) return false;
-  const text = fs.readFileSync(cfg, 'utf-8');
-  const baked = text.match(/LOCAL_DIST_PATH: '([^']*)'/)?.[1];
-  if (!baked) return false;
-  const dist = snapshotDir.replace(/\\/g, '/');
-  if (baked === dist) return false;
-  fs.writeFileSync(cfg, text.split(baked).join(dist));
-  return true;
-}
-
 // ── Assertion counters ────────────────────────────────────────────────────
 
 /** @returns {{passed: number; failed: number}} */
