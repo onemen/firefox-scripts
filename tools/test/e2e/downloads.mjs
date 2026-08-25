@@ -83,7 +83,15 @@ export const DOWNLOADS = {
   },
   'librewolf': {
     install: {
-      win: {manager: 'choco', args: ['install', 'librewolf', '-y', '--no-progress']},
+      win: {
+        manager: 'winget',
+        args: [
+          'install',
+          'LibreWolf.LibreWolf',
+          '--accept-package-agreements',
+          '--accept-source-agreements',
+        ],
+      },
     },
   },
   'floorp': {
