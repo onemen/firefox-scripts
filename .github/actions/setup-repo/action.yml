@@ -51,19 +51,28 @@ runs:
       shell: bash
       run: |
         mkdir -p "$HOME/pnpm-bin"
+        # pnpm's standalone builds: tar.gz on Linux/macOS, zip on Windows
+        # (assets renamed since v11; see the pnpm GitHub release).
         case "${{ runner.os }}-${{ runner.arch }}" in
-          Linux-X64)    ASSET="pnpm-linux-x64" ;;
-          Linux-ARM64)  ASSET="pnpm-linux-arm64" ;;
-          macOS-X64)    ASSET="pnpm-macos-x64" ;;
-          macOS-ARM64)  ASSET="pnpm-macos-arm64" ;;
-          Windows-X64)  ASSET="pnpm-win-x64.exe" ;;
-          Windows-ARM64) ASSET="pnpm-win-arm64.exe" ;;
+          Linux-X64)     ASSET="pnpm-linux-x64.tar.gz" ;;
+          Linux-ARM64)   ASSET="pnpm-linux-arm64.tar.gz" ;;
+          macOS-X64)     ASSET="pnpm-darwin-x64.tar.gz" ;;
+          macOS-ARM64)   ASSET="pnpm-darwin-arm64.tar.gz" ;;
+          Windows-X64)   ASSET="pnpm-win32-x64.zip" ;;
+          Windows-ARM64) ASSET="pnpm-win32-arm64.zip" ;;
           *) echo "::error::unsupported runner ${{ runner.os }}-${{ runner.arch }}" && exit 1 ;;
         esac
-        OUT="$HOME/pnpm-bin/pnpm"
-        [ "${{ runner.os }}" = "Windows" ] && OUT="$OUT.exe"
-        curl -fsSL -o "$OUT" "https://github.com/pnpm/pnpm/releases/latest/download/$ASSET"
-        chmod +x "$OUT"
+        curl -fsSL -o "$HOME/pnpm-bin/pnpm.${{ runner.os }}" \
+          "https://github.com/pnpm/pnpm/releases/latest/download/$ASSET"
+        if [ "${{ runner.os }}" = "Windows" ]; then
+          unzip -o "$HOME/pnpm-bin/pnpm.Windows" -d "$HOME/pnpm-bin"
+          rm "$HOME/pnpm-bin/pnpm.Windows"
+        else
+          tar -xzf "$HOME/pnpm-bin/pnpm.${{ runner.os }}" -C "$HOME/pnpm-bin"
+          rm "$HOME/pnpm-bin/pnpm.${{ runner.os }}"
+        fi
+        chmod +x "$HOME/pnpm-bin/pnpm" 2>/dev/null || true
+        ls -la "$HOME/pnpm-bin" | head -5
 
     - name: Add pnpm to PATH
       shell: bash
