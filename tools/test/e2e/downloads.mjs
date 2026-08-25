@@ -133,15 +133,54 @@ export function resolveBinary(browser) {
   }
 }
 
+/**
+ * Directory for downloaded installers. The E2E workflow sets BROWSER_DL_DIR to
+ * a path backed by actions/cache, so the ~100 MB Firefox downloads are restored
+ * instead of re-downloaded on every run. Defaults to the OS temp dir for local
+ * runs.
+ */
+export function downloadDir() {
+  return process.env.BROWSER_DL_DIR || os.tmpdir();
+}
+
+/**
+ * Resolve a browser's download URL for a platform (the recipe's tarball or
+ * installer URL) — used to key the CI download cache, since the URL embeds the
+ * release version. Package-manager recipes have no download URL.
+ *
+ * @param {string} browser
+ * @param {string} [platform] process.platform value (win32|darwin|linux)
+ * @returns {string}
+ */
+export function resolveDownloadUrl(browser, platform = process.platform) {
+  const key = platformKey(
+    platform === 'win' ? 'win32'
+    : platform === 'mac' ? 'darwin'
+    : platform
+  );
+  const recipe = DOWNLOADS[browser]?.install?.[key];
+  if (!recipe) {
+    throw new Error(
+      `${browser} has no automated install for ${key}` +
+        (DOWNLOADS[browser]?.page ?
+          ` — manual install only (official page: ${DOWNLOADS[browser].page})`
+        : '')
+    );
+  }
+  const url = recipe.tarball || recipe.url;
+  if (!url) {
+    throw new Error(`${browser} installs via a package manager — no download URL to cache`);
+  }
+  return url;
+}
+
 /** Download an official Mozilla tarball and extract it; returns the binary path. */
 async function installTarball(url, browser) {
   const dest = path.join(os.homedir(), 'firefox-app');
-  const archive = path.join(os.tmpdir(), `firefox-${browser}.tar.xz`);
+  const archive = path.join(downloadDir(), `firefox-${browser}.tar.xz`);
   fs.mkdirSync(dest, {recursive: true});
 
-  // Retry the download up to 3 times (transient network flakiness on CI).
-  const res = await fetchWithRetry(url, 3);
-  fs.writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
+  await downloadTo(url, archive);
 
   // Extract next to existing content (tar xf, no strip): $HOME/firefox-app/firefox/
   execSync(`tar xf "${archive}" -C "${dest}"`, {stdio: 'inherit'});
@@ -171,8 +210,29 @@ async function fetchWithRetry(url, attempts, timeoutMs = 300_000) {
   throw lastErr;
 }
 
-/** Download a URL to a local file (retrying), returning the file path. */
-async function downloadTo(url, dest) {
+/**
+ * Download a URL to a local file (retrying), returning the file path.
+ *
+ * A non-empty local file is reused when it matches the remote size (the
+ * workflow restores downloads from the CI cache); a size mismatch means the
+ * previous download was cut short, so it is re-fetched.
+ */
+export async function downloadTo(url, dest) {
+  if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+    try {
+      const head = await fetch(url, {method: 'HEAD', signal: AbortSignal.timeout(15_000)});
+      const expected = head.ok ? Number(head.headers.get('content-length')) : 0;
+      if (expected && fs.statSync(dest).size === expected) {
+        console.log(`  reusing cached ${path.basename(dest)}`);
+        return dest;
+      }
+    } catch {
+      // HEAD failed (flaky network) — reuse the local file rather than fail.
+      console.log(`  HEAD failed; reusing cached ${path.basename(dest)}`);
+      return dest;
+    }
+  }
+  fs.mkdirSync(path.dirname(dest), {recursive: true});
   const res = await fetchWithRetry(url, 3);
   fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
   return dest;
@@ -180,14 +240,14 @@ async function downloadTo(url, dest) {
 
 /** Download an official installer and run it with args (e.g. NSIS `/S`). */
 async function installInstaller(url, browser, args) {
-  const exe = path.join(os.tmpdir(), `${browser}-setup.exe`);
+  const exe = path.join(downloadDir(), `${browser}-setup.exe`);
   await downloadTo(url, exe);
   execSync(`"${exe}" ${args.join(' ')}`, {stdio: 'inherit'});
 }
 
 /** Download an official dmg, mount it, and copy the app into /Applications. */
 async function installDmg(url, appName) {
-  const dmg = path.join(os.tmpdir(), `${appName.replace(/\.app$/, '')}.dmg`);
+  const dmg = path.join(downloadDir(), `${appName.replace(/\.app$/, '')}.dmg`);
   await downloadTo(url, dmg);
   // hdiutil prints e.g. `/dev/disk4s1  Apple_HFS  /Volumes/Firefox`. Keep the
   // device too, so cleanup can detach even when the mount-point parse fails.
@@ -289,11 +349,12 @@ async function main() {
   const args = process.argv.slice(2);
   const browser = args[0];
   if (!browser || args.includes('--help')) {
-    console.log(`Usage: node tools/test/e2e/downloads.mjs <browser> [--os win|mac|linux]
+    console.log(`Usage: node tools/test/e2e/downloads.mjs <browser> [--os win|mac|linux] [--url]
 
 Installs <browser> for the current OS (or --os) using its official download
 recipe, then prints the resolved binary path and, in GitHub Actions, sets
-FIREFOX_BINARY via $GITHUB_ENV.`);
+FIREFOX_BINARY via $GITHUB_ENV. With --url, prints the download URL instead
+(used to key the CI download cache).`);
     process.exit(browser ? 0 : 1);
   }
   const osIndex = args.indexOf('--os');
@@ -302,6 +363,13 @@ FIREFOX_BINARY via $GITHUB_ENV.`);
     platform === 'win' ? 'win32'
     : platform === 'mac' ? 'darwin'
     : platform;
+
+  if (args.includes('--url')) {
+    // Print the exact download URL for this platform so the workflow can key
+    // the CI download cache on it (the URL embeds the release version).
+    console.log(resolveDownloadUrl(browser, normalized));
+    return;
+  }
 
   const binary = await installBrowser(browser, normalized);
   console.log(binary);
