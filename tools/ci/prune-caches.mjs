@@ -27,13 +27,16 @@ import {execSync} from 'node:child_process';
 const argv = process.argv.slice(2);
 const KEEP = Number(argv.find(a => a.startsWith('--keep='))?.split('=')[1] ?? 3);
 const DRY_RUN = argv.includes('--dry-run');
-// Accept both `--prefix <re>` and `--prefix=<re>`.
+// Accept both `--prefix <re>` and `--prefix=<re>`. The pattern is the user's
+// own CLI filter — intentionally arbitrary, so disable the ReDoS lint.
+/* eslint-disable security/detect-non-literal-regexp */
 const PREFIXES = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a.startsWith('--prefix=')) PREFIXES.push(new RegExp(a.slice('--prefix='.length)));
   else if (a === '--prefix' && argv[i + 1]) PREFIXES.push(new RegExp(argv[++i]));
 }
+/* eslint-enable security/detect-non-literal-regexp */
 
 function repoSlug() {
   if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY;
@@ -88,7 +91,7 @@ async function main() {
   }
 
   const toDelete = [];
-  for (const [s, group] of byStem) {
+  for (const [, group] of byStem) {
     group.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     for (const c of group.slice(KEEP)) toDelete.push(c);
   }
