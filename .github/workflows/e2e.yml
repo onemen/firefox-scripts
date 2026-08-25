@@ -17,6 +17,9 @@
 
 name: E2E
 
+permissions:
+  contents: read
+
 on:
   pull_request:
   push:
@@ -239,10 +242,10 @@ jobs:
       - name: Install ${{ matrix.browser }}
         run: node tools/test/e2e/downloads.mjs ${{ matrix.browser }}
 
-      # Restores dist/dev-<branch>-<sha>/ built by snapshot-win (blocks until
-      # that artifact exists; the winget install above covers its build time).
-      # The Windows snapshot's baked LOCAL_DIST_PATH matches this runner's
-      # path, so the hash check stays consistent.
+      # Restores dist/dev-<branch>-<sha>/ built by snapshot-win. `needs`
+      # already waits for that job, so the artifact always exists here. The
+      # Windows snapshot's baked LOCAL_DIST_PATH matches this runner's path,
+      # so the hash check stays consistent.
       - name: Download dev snapshot
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
