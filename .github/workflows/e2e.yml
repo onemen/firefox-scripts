@@ -7,10 +7,11 @@
 # (Linux only).  The OS elevation prompt cannot be automated, but the copy
 # core — including the defaults/pref directory walk-up — is tested here.
 #
-# Updater E2E: builds a dev snapshot, installs Firefox, creates a test profile
-# with scripts, launches Firefox via puppeteer-core + WebDriver BiDi, and
-# asserts the updater tab renders the correct state. Advisory gate across
-# the supported browser × OS matrix.
+# Updater E2E: uses the shared dev snapshot (built once by the `snapshot`
+# job), installs Firefox, creates a test profile with scripts, launches
+# Firefox via puppeteer-core + WebDriver BiDi, and asserts the updater tab
+# renders the correct state. Advisory gate across the supported browser × OS
+# matrix.
 #
 # See: docs/e2e-matrix-plan.md, https://github.com/onemen/firefox-scripts/issues/3
 
@@ -20,12 +21,43 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # ── Shared dev snapshot ───────────────────────────────────────────────────
+  # The package zips + hashes.json are OS-independent, so they are built ONCE
+  # here and shared as an artifact; the updater and browser-matrix jobs
+  # download them instead of each running `upload:local --mode=dev` (11
+  # identical builds per PR today). Installer E2E still builds its own native
+  # binary per OS — the installer is OS-specific, so it cannot be shared.
+  snapshot:
+    name: build dev snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build snapshot
+        run: pnpm upload:local --mode=dev
+
+      - name: Upload dev snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-snapshot
+          path: dist/
+          if-no-files-found: error
+
   # ── Installer E2E ──────────────────────────────────────────────────────────
   installer:
     name: 'installer E2E · ${{ matrix.os }}'
@@ -89,6 +121,7 @@ jobs:
   # Every OS leg is required; the updater must work across the supported matrix.
   updater:
     name: 'updater E2E · ${{ matrix.os }}'
+    needs: snapshot
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -147,12 +180,15 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: node tools/test/e2e/downloads.mjs firefox
 
-      - name: Build snapshot
-        run: pnpm upload:local --mode=dev
+      # Restores dist/dev-<branch>-<sha>/ built by the snapshot job (blocks
+      # until that artifact exists; the browser install above already covers
+      # its build time). The test auto-discovers the snapshot dir.
+      - name: Download dev snapshot
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dev-snapshot
+          path: dist/
 
-      # The test builds its own fresh temp profile from the dev snapshot, so no
-      # profile-seed step is needed. It reads FIREFOX_BINARY (set by the install
-      # step above) and auto-discovers the snapshot dir.
       - name: Run updater E2E (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: xvfb-run node tools/test/e2e/updater-e2e.mjs
@@ -180,6 +216,7 @@ jobs:
   # Firefox Dev Edition, Waterfox, and Zen require manual install.
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
+    needs: snapshot
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -205,8 +242,11 @@ jobs:
       - name: Install ${{ matrix.browser }}
         run: node tools/test/e2e/downloads.mjs ${{ matrix.browser }}
 
-      - name: Build snapshot
-        run: pnpm upload:local --mode=dev
+      - name: Download dev snapshot
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dev-snapshot
+          path: dist/
 
       - name: Run updater E2E
         run: node tools/test/e2e/updater-e2e.mjs
@@ -226,7 +266,7 @@ jobs:
     name: E2E gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [installer, helper, updater, browser-matrix]
+    needs: [snapshot, installer, helper, updater, browser-matrix]
     steps:
       - name: Verify all E2E jobs
         run: |
@@ -235,6 +275,7 @@ jobs:
           verify() {
             case "$2" in success) ok "$1" "$2" ;; *) fail "$1" "$2" ;; esac
           }
+          verify 'snapshot' '${{ needs.snapshot.result }}'
           verify 'installer' '${{ needs.installer.result }}'
           verify 'helper' '${{ needs.helper.result }}'
           verify 'updater' '${{ needs.updater.result }}'
