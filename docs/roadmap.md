@@ -18,11 +18,13 @@ Order matters: installer / updater / tests / CI first, core-file PRs last.
 - **P2-1** `userChrome.js` `createElement`: `toggleAttribute` for Firefox 149+ (bug 2008041).
 - **P2-2** `BootstrapLoader`: release the spin wait on load errors (#25, PR #26 — merge pending
   approval).
+- **P1-6** Test restructure: type-first layout under `test/` (PR #52).
 - **Release gate (#4)** — remove README banner, v1.0 tag, milestone close, env protection for prod
   uploads, zip-the-installer-exe decision, tag move (P0-1).
 
 Remaining Phase 4 gaps are tracked by child issues #35–#37 (Dev Edition leg, installer UI layer,
-install-applies path).
+install-applies path) and #53–#56 (manual utils install, installer self-update tests, snap legs,
+portable-install legs).
 
 ## Post v1.0 (umbrella #38, milestone "Post v1.0")
 
