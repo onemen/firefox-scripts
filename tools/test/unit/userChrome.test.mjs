@@ -3,9 +3,8 @@
 // mocked Firefox globals (Services, ChromeUtils, XPCOM Cc/Ci/Cu, AppConstants,
 // xPref, Management). No real Firefox needed.
 //
-// This is the general pattern for testing userChrome.js internals: add any new
-// mock a future test needs to `makeSandbox()`, evaluate the file once, then
-// reach into the sandbox for the function under test.
+// Pattern: add any new mock a future test needs to `makeSandbox()`, evaluate
+// the file once, then reach into the sandbox for the value/function under test.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,25 +19,32 @@ const SRC = fs.readFileSync(
   'utf-8'
 );
 
-/** Mock DOM element that records every attribute call. */
+/**
+ * Mock DOM element that records setAttribute, toggleAttribute, and
+ * addEventListener calls so tests can assert the exact arguments.
+ */
 function mockElement() {
   const calls = [];
+  const listeners = [];
   return {
     calls,
+    listeners,
     setAttribute(name, value) {
       calls.push(['set', name, value]);
     },
     toggleAttribute(name, force) {
       calls.push(['toggle', name, force]);
     },
-    addEventListener() {},
+    addEventListener(type, handler) {
+      listeners.push({type, handler});
+    },
   };
 }
 
 /**
  * Build a vm sandbox with just enough Firefox global surface for userChrome.js
  * to evaluate top-to-bottom. `inSafeMode: true` skips the filesystem/window
- * enumeration at the bottom of the file; everything else is a no-op stub.
+ * enumeration at the bottom of the file.
  */
 function makeSandbox(platformVersion) {
   const sandbox = {
@@ -108,30 +114,22 @@ function makeSandbox(platformVersion) {
 }
 
 /**
- * Evaluate userChrome.js once for the given Gecko version.
+ * Evaluate userChrome.js once for the given Gecko platformVersion.
  *
  * Top-level `function` declarations attach to the vm's global object, but
- * `const`/`let` bindings (FF149, _uc, UC, …) do not — so expose them via an
- * explicit `globalThis` assignment appended to the evaluated source.
- *
- * @returns {{
- *   FF149: boolean;
- *   _uc: object;
- *   isFirefox149Plus: Function;
- *   applyAttribute: Function;
- * }}
+ * `const`/`let` bindings do not — expose them via a `globalThis` assignment
+ * appended to the evaluated source.
  */
 function evaluate(platformVersion) {
   const sandbox = makeSandbox(platformVersion);
   vm.createContext(sandbox);
-  vm.runInContext(
-    SRC + '\nglobalThis.__userChrome = { FF149, _uc, isFirefox149Plus, applyAttribute };',
-    sandbox
-  );
+  vm.runInContext(SRC + '\nglobalThis.__userChrome = { FF149, _uc, isFirefox149Plus };', sandbox);
   return sandbox.__userChrome;
 }
 
-test('isFirefox149Plus: reads the Gecko (platform) version', () => {
+// ── isFirefox149Plus ────────────────────────────────────────────────────────
+
+test('isFirefox149Plus: reads Gecko (platform) version, not brand version', () => {
   const {isFirefox149Plus} = evaluate('153.0');
   assert.equal(isFirefox149Plus({platformVersion: '149.0'}), true);
   assert.equal(isFirefox149Plus({platformVersion: '153.0'}), true);
@@ -140,81 +138,93 @@ test('isFirefox149Plus: reads the Gecko (platform) version', () => {
   assert.equal(isFirefox149Plus({platformVersion: '140.5.0esr'}), false);
 });
 
-test('isFirefox149Plus: fork brand versions do not matter, only Gecko does', () => {
+test('isFirefox149Plus: fork brand versions do not matter', () => {
   const {isFirefox149Plus} = evaluate('153.0');
-  // Waterfox-style fork: its own release number in `version`, Gecko 153.
+  // Waterfox: its own release number in version, Gecko 153.
   assert.equal(isFirefox149Plus({version: '10.0', platformVersion: '153.0'}), true);
-  // ESR-based fork (e.g. LibreWolf): Gecko 115 — bug 2008041 not present.
+  // LibreWolf ESR-based fork: Gecko 115 → bug 2008041 not present.
   assert.equal(isFirefox149Plus({version: '128.0esr', platformVersion: '115.0'}), false);
 });
 
-test('isFirefox149Plus: missing/garbage version falls back to pre-149 behavior', () => {
+test('isFirefox149Plus: missing/garbage version falls back to false', () => {
   const {isFirefox149Plus} = evaluate('153.0');
   assert.equal(isFirefox149Plus({}), false);
   assert.equal(isFirefox149Plus({platformVersion: 'garbage'}), false);
   assert.equal(isFirefox149Plus(null), false);
 });
 
+// ── FF149 ───────────────────────────────────────────────────────────────────
+
 test('FF149: derived from Services.appinfo.platformVersion at load time', () => {
   assert.equal(evaluate('153.0').FF149, true);
   assert.equal(evaluate('148.0').FF149, false);
-  // Garbage / missing → pre-149 fallback.
   assert.equal(evaluate('garbage').FF149, false);
 });
 
-test('applyAttribute: pre-149 keeps the legacy value-based setAttribute for every value', () => {
-  const {applyAttribute} = evaluate('153.0');
-  for (const value of [true, false, 'true', 'false', 'checked', '', 0, 'foo']) {
-    const el = mockElement();
-    applyAttribute(el, 'checked', value, false);
-    assert.deepEqual(el.calls, [['set', 'checked', value]], `value=${JSON.stringify(value)}`);
-  }
+// ── _uc.createElement ───────────────────────────────────────────────────────
+
+test('createElement: boolean attrs toggle on FF149+', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  const doc = {createXULElement: () => el, createElement: () => el};
+  _uc.createElement(doc, 'toolbarbutton', {checked: true, disabled: false}, true);
+  assert.deepEqual(el.calls, [
+    ['toggle', 'checked', true],
+    ['toggle', 'disabled', false],
+  ]);
 });
 
-test('applyAttribute: 149+ maps boolean-ish values to presence-based toggleAttribute', () => {
-  const {applyAttribute} = evaluate('153.0');
-  const cases = [
-    [true, ['toggle', 'checked', true]],
-    [false, ['toggle', 'checked', false]],
-    ['true', ['toggle', 'checked', true]],
-    ['false', ['toggle', 'checked', false]],
-  ];
-  for (const [value, expected] of cases) {
-    const el = mockElement();
-    applyAttribute(el, 'checked', value, true);
-    assert.deepEqual(el.calls, [expected], `value=${JSON.stringify(value)}`);
-  }
+test('createElement: "true"/"false" strings toggle on FF149+', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  const doc = {createXULElement: () => el, createElement: () => el};
+  _uc.createElement(doc, 'checkbox', {checked: 'true', disabled: 'false'}, true);
+  assert.deepEqual(el.calls, [
+    ['toggle', 'checked', true],
+    ['toggle', 'disabled', false],
+  ]);
 });
 
-test('applyAttribute: 149+ non-boolean values still go through setAttribute', () => {
-  const {applyAttribute} = evaluate('153.0');
-  for (const value of ['checked', '', 0, 'foo', null, undefined]) {
+test('createElement: non-boolean values always setAttribute on FF149+', () => {
+  const {_uc} = evaluate('153.0');
+  for (const value of ['foo', '', 0, 42, null, undefined, 'checked']) {
     const el = mockElement();
-    applyAttribute(el, 'class', value, true);
+    const doc = {createXULElement: () => el, createElement: () => el};
+    _uc.createElement(doc, 'elem', {class: value}, true);
     assert.deepEqual(el.calls, [['set', 'class', value]], `value=${JSON.stringify(value)}`);
   }
 });
 
-test('createElement: boolean attrs toggle on FF149+, others setAttribute', () => {
-  const {_uc, FF149} = evaluate('153.0');
-  assert.equal(FF149, true);
+test('createElement: pre-149 uses setAttribute for boolean attrs', () => {
+  const {_uc} = evaluate('148.0');
   const el = mockElement();
   const doc = {createXULElement: () => el, createElement: () => el};
-  const result = _uc.createElement(doc, 'toolbarbutton', {checked: true, class: 'foo'}, true);
-  assert.equal(result, el);
+  _uc.createElement(doc, 'toolbarbutton', {checked: true, disabled: false}, true);
   assert.deepEqual(el.calls, [
-    ['toggle', 'checked', true],
-    ['set', 'class', 'foo'],
+    ['set', 'checked', true],
+    ['set', 'disabled', false],
   ]);
 });
 
-test('createElement: pre-149 uses setAttribute for boolean attrs', () => {
-  const {_uc, FF149} = evaluate('148.0');
-  assert.equal(FF149, false);
+test('createElement: mixed boolean + non-boolean attrs in one call', () => {
+  const {_uc} = evaluate('153.0');
   const el = mockElement();
   const doc = {createXULElement: () => el, createElement: () => el};
-  _uc.createElement(doc, 'toolbarbutton', {checked: true}, true);
-  assert.deepEqual(el.calls, [['set', 'checked', true]]);
+  _uc.createElement(
+    doc,
+    'toolbarbutton',
+    {
+      checked: true,
+      label: 'Go',
+      class: 'primary',
+    },
+    true
+  );
+  assert.deepEqual(el.calls, [
+    ['toggle', 'checked', true],
+    ['set', 'label', 'Go'],
+    ['set', 'class', 'primary'],
+  ]);
 });
 
 test('createElement: XUL=false uses document.createElement', () => {
@@ -235,4 +245,122 @@ test('createElement: XUL=false uses document.createElement', () => {
   _uc.createElement(doc, 'div', {id: 'x'}, false);
   assert.equal(usedCreateElement, true);
   assert.equal(usedCreateXULElement, false);
+});
+
+test('createElement: XUL=true (default) uses document.createXULElement', () => {
+  const {_uc} = evaluate('153.0');
+  let usedCreateElement = false;
+  let usedCreateXULElement = false;
+  const el = mockElement();
+  const doc = {
+    createXULElement: () => {
+      usedCreateXULElement = true;
+      return el;
+    },
+    createElement: () => {
+      usedCreateElement = true;
+      return el;
+    },
+  };
+  _uc.createElement(doc, 'toolbarbutton', {});
+  assert.equal(usedCreateXULElement, true);
+  assert.equal(usedCreateElement, false);
+});
+
+test('createElement: returns the created element', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  const doc = {createXULElement: () => el, createElement: () => el};
+  const result = _uc.createElement(doc, 'toolbarbutton', {checked: true}, true);
+  assert.equal(result, el);
+});
+
+test('createElement: empty attrs object — no attribute calls', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  const doc = {createXULElement: () => el, createElement: () => el};
+  _uc.createElement(doc, 'toolbarbutton', {}, true);
+  assert.deepEqual(el.calls, []);
+});
+
+// ── on* event handlers ──────────────────────────────────────────────────────
+
+test('createElement: on-click with function calls addEventListener', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  const doc = {createXULElement: () => el, createElement: () => el};
+  const handler = () => {};
+  _uc.createElement(doc, 'button', {onclick: handler}, true);
+  assert.equal(el.listeners.length, 1);
+  assert.equal(el.listeners[0].type, 'click');
+  assert.equal(el.listeners[0].handler, handler);
+});
+
+test('createElement: on-mousedown strips "on" prefix', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  const doc = {createXULElement: () => el, createElement: () => el};
+  const handler = () => {};
+  _uc.createElement(doc, 'button', {onmousedown: handler}, true);
+  assert.equal(el.listeners.length, 1);
+  assert.equal(el.listeners[0].type, 'mousedown');
+  assert.equal(el.listeners[0].handler, handler);
+});
+
+test('createElement: on-command string handler goes through evalInSandbox', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  // String handlers go through Cu.evalInSandbox → the result is a function.
+  const doc = {createXULElement: () => el, createElement: () => el};
+  _uc.createElement(doc, 'button', {oncommand: 'console.log(1)'}, true);
+  assert.equal(el.listeners.length, 1);
+  assert.equal(el.listeners[0].type, 'command');
+  assert.equal(typeof el.listeners[0].handler, 'function');
+});
+
+test('createElement: multiple on* handlers in one call', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  const doc = {createXULElement: () => el, createElement: () => el};
+  const clickHandler = () => {};
+  const keyHandler = () => {};
+  _uc.createElement(
+    doc,
+    'button',
+    {
+      onclick: clickHandler,
+      onkeydown: keyHandler,
+    },
+    true
+  );
+  assert.equal(el.listeners.length, 2);
+  assert.equal(el.listeners[0].type, 'click');
+  assert.equal(el.listeners[0].handler, clickHandler);
+  assert.equal(el.listeners[1].type, 'keydown');
+  assert.equal(el.listeners[1].handler, keyHandler);
+});
+
+test('createElement: on* handler mixed with regular attrs', () => {
+  const {_uc} = evaluate('153.0');
+  const el = mockElement();
+  const doc = {createXULElement: () => el, createElement: () => el};
+  const handler = () => {};
+  _uc.createElement(
+    doc,
+    'toolbarbutton',
+    {
+      checked: true,
+      label: 'OK',
+      oncommand: handler,
+    },
+    true
+  );
+  // attrs first (for-in order), then on* handlers
+  assert.deepEqual(el.calls.slice(0, 2), [
+    ['toggle', 'checked', true],
+    ['set', 'label', 'OK'],
+  ]);
+  assert.equal(el.listeners.length, 1);
+  assert.equal(el.listeners[0].type, 'command');
+  assert.equal(el.listeners[0].handler, handler);
 });
