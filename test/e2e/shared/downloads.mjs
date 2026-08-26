@@ -379,7 +379,10 @@ FIREFOX_BINARY via $GITHUB_ENV. With --url, prints the download URL instead
   }
 }
 
-const isMain = process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('downloads.mjs');
+// Basename (not endsWith) so modules with a similar name — e.g.
+// tools/check-browser-downloads.mjs — can import this file without tripping
+// the CLI entry-point guard.
+const isMain = process.argv[1] && path.basename(process.argv[1]) === 'downloads.mjs';
 if (isMain) {
   main().catch(err => {
     console.error(`✗ Error: ${err.message}`);

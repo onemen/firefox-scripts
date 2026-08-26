@@ -240,6 +240,26 @@ jobs:
     steps:
       - uses: $/.github/actions/setup-repo
 
+      # The ~100 MB LibreWolf / Floorp installers dominate the job; cache them
+      # keyed on the resolved download URL. LibreWolf's URL embeds the version,
+      # so a new release invalidates the key; Floorp's is a stable latest URL,
+      # so its key is constant — downloadTo() re-fetches when the remote size
+      # changes, and save-always re-caches the fresh file.
+      - name: Resolve download URL
+        id: dlurl
+        shell: bash
+        run: |
+          URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
+          KEY=$(node -e "console.log(require('crypto').createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          echo "key=browser-dl-${{ runner.os }}-${{ matrix.browser }}-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
+      - name: Cache ${{ matrix.browser }} installer
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.BROWSER_DL_DIR }}
+          key: ${{ steps.dlurl.outputs.key }}
+          save-always: true
+
       # downloads.mjs installs via the official recipe and resolves the real
       # binary from install dirs (never a PATH shim or app-execution alias,
       # whose parent dir is not the browser's GreD), exporting FIREFOX_BINARY.
