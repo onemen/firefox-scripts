@@ -14,7 +14,8 @@
     "test:e2e:updater": "node test/e2e/shared/run.mjs --updater",
     "upload": "node --env-file-if-exists=.env tools/publish/upload.mjs",
     "upload:local": "node tools/publish/upload.mjs --local",
-    "dev-clean": "node --env-file-if-exists=.env tools/publish/devClean.mjs"
+    "dev-clean": "node --env-file-if-exists=.env tools/publish/devClean.mjs",
+    "review:batch": "node tools/ci/batch-review.mjs"
   },
   "keywords": [],
   "author": "ONEMEN <tabmix.onemen@gmail.com> (https://github.com/onemen)",
