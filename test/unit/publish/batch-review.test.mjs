@@ -56,6 +56,8 @@ test('parseArgs: defaults', () => {
 test('parseArgs: --check and --wait', () => {
   assert.equal(parseArgs(['--check']).check, true);
   assert.equal(parseArgs(['--pr', '1', '--wait', '45']).wait, 45);
+  // --wait 0 is a valid "retry immediately" and must not be treated as absent.
+  assert.equal(parseArgs(['--wait', '0']).wait, 0);
   assert.throws(() => parseArgs(['--wait', 'abc']), /Invalid --wait/);
   assert.throws(() => parseArgs(['--wait', '-5']), /Invalid --wait/);
 });

@@ -265,7 +265,7 @@ export async function main() {
       const output = `${cr.stdout || ''}\n${cr.stderr || ''}`;
       if (isRateLimited(output)) {
         console.error('CodeRabbit rate limit hit — the free-plan bucket is ~1 review/hour.');
-        if (args.wait) {
+        if (args.wait !== null) {
           console.error(`Waiting ${args.wait} minute(s), then retrying once...`);
           await sleep(args.wait * 60_000);
           cr = runCrReview();
@@ -296,9 +296,13 @@ export async function main() {
     );
   } finally {
     run('git', ['worktree', 'remove', '--force', wtree], {ignoreFail: true});
-    run('git', ['branch', '-D', tempBranch], {ignoreFail: true});
+    if (!args.keep) run('git', ['branch', '-D', tempBranch], {ignoreFail: true});
   }
-  if (!args.keep) console.log('\nTemp branch removed; checkout untouched.');
+  console.log(
+    args.keep ?
+      `\nKept temp branch ${tempBranch} (worktree removed); checkout untouched.`
+    : '\nTemp branch removed; checkout untouched.'
+  );
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
