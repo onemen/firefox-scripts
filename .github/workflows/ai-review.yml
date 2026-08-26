@@ -129,9 +129,11 @@ jobs:
       - name: Run AI review
         id: review
         if: ${{ env.CODERABBIT_API_KEY != '' }}
-        env:
-          CR_BIN: "${{ runner.home }}/.local/bin/cr"
-        run: node tools/ai-review.mjs --provider coderabbit --name 'CodeRabbit CLI review'
+        # cr installs to $HOME/.local/bin; put it on PATH so the script's
+        # default CR_BIN (cr) resolves.
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          node tools/ai-review.mjs --provider coderabbit --name 'CodeRabbit CLI review'
 
       - name: Post inline comments (reviewdog)
         if: ${{ steps.review.outcome == 'success' }}
