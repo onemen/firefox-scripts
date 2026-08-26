@@ -9,6 +9,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ageToUnixSeconds,
+  isRateLimited,
   parseArgs,
   parseOpenPrBranchesOutput,
 } from '../../../tools/ci/batch-review.mjs';
@@ -48,6 +49,25 @@ test('parseArgs: defaults', () => {
   assert.equal(args.keep, false);
   assert.equal(args.agent, false);
   assert.equal(args.dryRun, false);
+  assert.equal(args.check, false);
+  assert.equal(args.wait, null);
+});
+
+test('parseArgs: --check and --wait', () => {
+  assert.equal(parseArgs(['--check']).check, true);
+  assert.equal(parseArgs(['--pr', '1', '--wait', '45']).wait, 45);
+  assert.throws(() => parseArgs(['--wait', 'abc']), /Invalid --wait/);
+  assert.throws(() => parseArgs(['--wait', '-5']), /Invalid --wait/);
+});
+
+test('isRateLimited: detects rate-limit messaging', () => {
+  assert.equal(isRateLimited('Review rate limit exceeded, skipping this review.'), true);
+  assert.equal(isRateLimited('quota exhausted for this period'), true);
+  assert.equal(isRateLimited('429 Too Many Requests'), true);
+  assert.equal(isRateLimited('too many reviews in this window'), true);
+  assert.equal(isRateLimited('try again later'), true);
+  assert.equal(isRateLimited('merge conflict in package.json'), false);
+  assert.equal(isRateLimited(''), false);
 });
 
 test('parseArgs: rejects unknown flags', () => {

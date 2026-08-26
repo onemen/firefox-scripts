@@ -12,6 +12,8 @@
 //   node tools/ci/batch-review.mjs --open            # all open PR branches
 //   node tools/ci/batch-review.mjs --open --since 3d  # PRs updated recently
 //   node tools/ci/batch-review.mjs --pr 57 --agent    # pass --agent to cr
+//   node tools/ci/batch-review.mjs --check           # show cr usage report only
+//   node tools/ci/batch-review.mjs --pr 57 --wait 60 # retry once after an hour if rate-limited
 //
 // Flags:
 //   --pr <number>      GitHub PR number (resolves to its head branch). Repeatable.
@@ -22,13 +24,19 @@
 //   --keep             Keep the temp branch after review (default: delete).
 //   --agent            Pass --agent to cr review (structured findings).
 //   --dry-run          List what would be merged without running cr.
+//   --check            Show `cr usage` (period review count + reset date) and exit.
+//   --wait <minutes>   If cr is rate-limited, wait this long and retry once.
 //
-// Exit codes: 0 = review ran (or dry-run); 2 = nothing to review; 3 = cr failed.
+// Exit codes: 0 = review ran (or dry-run); 2 = nothing to review / bad usage;
+//             3 = cr failed; 4 = CodeRabbit rate limit hit (retry later).
 //
 // Notes:
-// - Requires `cr` on PATH (or CR_BIN) and the agentic API key in
-//   CODERABBIT_API_KEY (agentic keys start with `cr-`; user keys are
-//   rejected by the CLI).
+// - Local use needs only a browser login: run `cr auth login` once (device
+//   flow, no API key). An agentic API key (cr-...) is required only for
+//   headless CI — see the headless integration docs; user API keys are
+//   rejected by the CLI.
+// - On rate limit the CLI does not retry automatically; this script detects
+//   the condition and tells you, or waits and retries once with --wait.
 // - `git worktree` is used so your current checkout is never touched; the
 //   temp branch lives in a scratch worktree under the repo's .git.
 // - After the review, the temp branch and worktree are removed and your
@@ -63,6 +71,8 @@ export function parseArgs(argv) {
     keep: false,
     agent: false,
     dryRun: false,
+    check: false,
+    wait: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const value = () => argv[++i];
@@ -91,12 +101,31 @@ export function parseArgs(argv) {
       case '--dry-run':
         args.dryRun = true;
         break;
+      case '--check':
+        args.check = true;
+        break;
+      case '--wait':
+        args.wait = Number(value());
+        if (!Number.isFinite(args.wait) || args.wait < 0) {
+          throw new Error(`Invalid --wait minutes: ${argv[i - 1]}`);
+        }
+        break;
       default:
         throw new Error(`Unknown flag: ${argv[i]}`);
     }
   }
   return args;
 }
+
+// Match the CLI's rate-limit / quota messaging (the GitHub bot reports
+// "Review rate limit exceeded"; the CLI exits non-zero with similar text).
+const RATE_LIMIT_RE =
+  /rate[ -]?limit|quota|exhausted|too many (requests|reviews)|\b429\b|try again later/i;
+export function isRateLimited(output) {
+  return RATE_LIMIT_RE.test(String(output || ''));
+}
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Convert a --since age like '3d' or '12h' to a Unix timestamp (seconds).
 // jq's `now` is seconds, so we compute the cutoff in JS and pass it as a
@@ -164,6 +193,29 @@ export function parseOpenPrBranchesOutput(stdout) {
 
 export async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const crBin = process.env.CR_BIN || 'cr';
+
+  // --check: show the usage report without touching anything.
+  if (args.check) {
+    const usage = run(crBin, ['usage'], {ignoreFail: true});
+    if (usage.status !== 0) {
+      console.error('cr usage failed — are you logged in? Run `cr auth login` first.');
+      console.error(usage.stderr?.trim().slice(-1000));
+      process.exit(3);
+    }
+    console.log(usage.stdout?.trim());
+    return;
+  }
+
+  // Pre-flight: auth must exist before we build a worktree.
+  const auth = run(crBin, ['auth', 'status'], {ignoreFail: true});
+  if (auth.status !== 0) {
+    console.error(
+      'CodeRabbit CLI is not logged in — run `cr auth login` once (browser flow, no API key needed).'
+    );
+    process.exit(2);
+  }
+
   const refs = [];
   for (const pr of args.prs) refs.push(prHeadBranch(pr));
   refs.push(...args.branches);
@@ -200,14 +252,41 @@ export async function main() {
     }
     run('bash', ['-lc', `cd '${wtree}' && git switch -c '${tempBranch}'`]);
 
-    const crArgs = ['review'];
-    if (args.agent) crArgs.push('--agent');
-    const crBin = process.env.CR_BIN || 'cr';
-    const cr = run(crBin, crArgs, {ignoreFail: true, cwd: wtree});
+    const runCrReview = () => {
+      const crArgs = ['review'];
+      if (args.agent) crArgs.push('--agent');
+      return run(crBin, crArgs, {ignoreFail: true, cwd: wtree});
+    };
+    let cr = runCrReview();
     if (cr.status !== 0) {
-      console.error(`cr review exited ${cr.status}:`);
-      console.error(cr.stderr?.trim().slice(-2000));
-      process.exit(3);
+      const output = `${cr.stdout || ''}\n${cr.stderr || ''}`;
+      if (isRateLimited(output)) {
+        console.error('CodeRabbit rate limit hit — the free-plan bucket is ~1 review/hour.');
+        if (args.wait) {
+          console.error(`Waiting ${args.wait} minute(s), then retrying once...`);
+          await sleep(args.wait * 60_000);
+          cr = runCrReview();
+          if (cr.status !== 0) {
+            console.error(`Still rate-limited after the wait (exited ${cr.status}):`);
+            console.error(cr.stderr?.trim().slice(-2000));
+            process.exit(4);
+          }
+        } else {
+          console.error(
+            'Run `cr usage` for period usage, or rerun later. Pass --wait <minutes> to auto-retry.'
+          );
+          process.exit(4);
+        }
+      } else {
+        console.error(`cr review exited ${cr.status}:`);
+        console.error(cr.stderr?.trim().slice(-2000));
+        process.exit(3);
+      }
+    } else if (isRateLimited(`${cr.stdout || ''}\n${cr.stderr || ''}`)) {
+      // Defensive: some environments report the limit in a passing exit.
+      console.error(
+        'Warning: cr exited 0 but reported a rate limit — the review likely did not run.'
+      );
     }
     console.log(
       cr.stdout?.trim() ? `\n${cr.stdout.trim()}` : 'cr review completed with no text output.'
