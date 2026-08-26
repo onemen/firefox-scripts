@@ -285,9 +285,11 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
   LibreWolf, Floorp, Zen; Waterfox tracked by version only) from its vendor API and verifies the
   download endpoint with a 1 KB ranged GET. Each new release is downloaded once, SHA-256'd and
   recorded in the per-release watchdog issue (`label:url-watchdog`) — the durable ledger. Opens
-  issues on rot (404, HTML error page, changed API shape) and same-version binary size changes. The
-  PR mode (`--pr`) is stateless, always green, and surfaces findings as annotations. Run manually
-  via `workflow_dispatch`, or locally with `node tools/check-browser-downloads.mjs --dry-run`.
+  issues on rot (404, HTML error page, changed API shape) and same-version binary size changes. Each
+  run logs the baseline's cache-hit status and age, so a silently evicted Actions cache is visible
+  instead of masquerading as a first run. The PR mode (`--pr`) is stateless, always green, and
+  surfaces findings as annotations. Run manually via `workflow_dispatch`, or locally with
+  `node tools/check-browser-downloads.mjs --dry-run`.
 
 **PR path filtering** — the installer + updater E2E jobs (`.github/workflows/e2e.yml`) run only when
 a changed file can affect them (`core/**`, `config/installer.conf`, `installer/**`,
