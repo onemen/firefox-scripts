@@ -1,0 +1,98 @@
+# Core smoke (Nightly) — issue #30 Level 2: the scheduled leg that catches
+# upstream Firefox changes breaking the userChromeJS loader chain.
+#
+# Boots Firefox stable + Nightly with a dev snapshot's utils + fx-folder
+# installed, then asserts autoconfig ran (config.js) and the userChromeJS
+# loader executed (userChrome.js) with no startup errors in either.
+#
+# Skip-if-build-unchanged: Mozilla publishes no machine-readable "latest
+# Nightly build ID", so tools/ci/nightly-buildid.mjs derives one from the
+# Linux64 tarball's Last-Modified header. The Actions-cache marker is keyed
+# on that ID, so nights without a new build skip the leg entirely (the 7-day
+# cache TTL means a missed run simply re-runs).
+
+name: Core smoke (Nightly)
+
+on:
+  schedule:
+    # 05:30 UTC — after the first daily Nightly build lands on
+    # archive.mozilla.org (Nightly ships twice a day; one check is enough to
+    # catch upstream regressions within ~24 h).
+    - cron: '30 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-smoke-nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    name: core smoke · stable + Nightly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/.github/actions/setup-repo
+
+      - name: Resolve Nightly build ID
+        id: nightly
+        run: |
+          ID=$(node tools/ci/nightly-buildid.mjs)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Restore validation marker
+        id: cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .core-smoke
+          key: core-smoke-${{ steps.nightly.outputs.id }}
+
+      - name: Skip — build already validated
+        if: steps.cache.outputs.cache-hit == 'true'
+        run:
+          echo "::notice::Nightly build ${{ steps.nightly.outputs.id }} already validated —
+          skipping"
+
+      - name: Build dev snapshot
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: pnpm upload:local --mode=dev
+
+      - name: Install xvfb
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+
+      # Both Linux tarballs extract into per-browser subdirs (downloads.mjs),
+      # so stable and Nightly can coexist in one job. FIREFOX_BINARY would be
+      # overwritten by the second install, so capture each path explicitly.
+      - name: Install Firefox stable + Nightly (tarballs)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          STABLE_BIN=$(node test/e2e/shared/downloads.mjs firefox)
+          echo "STABLE_BIN=$STABLE_BIN" >> "$GITHUB_ENV"
+          NIGHTLY_BIN=$(node test/e2e/shared/downloads.mjs firefox-nightly)
+          echo "NIGHTLY_BIN=$NIGHTLY_BIN" >> "$GITHUB_ENV"
+
+      - name: Core smoke · Firefox stable
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: xvfb-run node test/e2e/core/core-smoke.mjs --firefox "$STABLE_BIN" --label stable
+
+      - name: Core smoke · Firefox Nightly
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: xvfb-run node test/e2e/core/core-smoke.mjs --firefox "$NIGHTLY_BIN" --label nightly
+
+      - name: Write validation marker
+        if: steps.cache.outputs.cache-hit != 'true' && success()
+        run: |
+          mkdir -p .core-smoke
+          echo "${{ steps.nightly.outputs.id }}" > .core-smoke/validated
+
+      - name: Save validation marker
+        if: steps.cache.outputs.cache-hit != 'true' && success()
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .core-smoke
+          key: core-smoke-${{ steps.nightly.outputs.id }}
+          save-always: true

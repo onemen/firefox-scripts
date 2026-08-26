@@ -77,6 +77,26 @@ export const DOWNLOADS = {
     },
     page: 'https://www.mozilla.org/firefox/developer/',
   },
+  // Nightly: same Mozilla "latest" redirects as stable, nightly channel. The
+  // URL is constant — the build under it changes daily. The core-smoke
+  // workflow keys its skip-if-build-unchanged gate on the build's
+  // Last-Modified (tools/ci/nightly-buildid.mjs), not on this URL.
+  'firefox-nightly': {
+    install: {
+      win: {
+        url: 'https://download.mozilla.org/?product=firefox-nightly-latest&os=win64&lang=en-US',
+        args: ['/S'], // NSIS silent install → %LOCALAPPDATA%\Nightly
+      },
+      mac: {
+        url: 'https://download.mozilla.org/?product=firefox-nightly-latest&os=osx&lang=en-US',
+        app: 'Firefox Nightly.app', // dmg → copy into /Applications
+      },
+      linux: {
+        tarball:
+          'https://download.mozilla.org/?product=firefox-nightly-latest&os=linux64&lang=en-US',
+      },
+    },
+  },
   'waterfox': {
     // No stable installer URL: Waterfox publishes no release assets on GitHub
     // (site-distributed), so it stays manual. The URL watchdog tracks its
@@ -221,9 +241,15 @@ async function installTarball(url, browser) {
 
   await downloadTo(url, archive);
 
-  // Extract next to existing content (tar xf, no strip): $HOME/firefox-app/firefox/
-  execSync(`tar xf "${archive}" -C "${dest}"`, {stdio: 'inherit'});
-  const binary = path.join(dest, 'firefox', 'firefox');
+  // Extract INTO a per-browser subdir (tar xf, no strip): both stable and
+  // Nightly tarballs contain a top-level `firefox/` dir, so extracting them
+  // side by side would clobber each other — the core-smoke job installs both
+  // in one run. The binary path is returned explicitly; nothing relies on
+  // the old flat layout. $HOME/firefox-app/<browser>/firefox/firefox
+  const appDir = path.join(dest, browser);
+  fs.mkdirSync(appDir, {recursive: true});
+  execSync(`tar xf "${archive}" -C "${appDir}"`, {stdio: 'inherit'});
+  const binary = path.join(appDir, 'firefox', 'firefox');
   if (!fs.existsSync(binary)) {
     throw new Error(`tarball extracted, but ${binary} not found`);
   }
