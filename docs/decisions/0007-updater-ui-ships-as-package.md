@@ -17,7 +17,7 @@ The updater tab UI is a **third package**, `updater-ui.zip` — `updater.html` +
 (privileged engine) + `updater-ui.js` (client) + generated `updater.css` + brand logos — installed
 to `ProfD/chrome/utils/updater/ui/` and served as `chrome://firefox-scripts/content/ui/*`. There is
 no remote page, no iframe, no postMessage. `scriptsUpdater.sys.mjs` (in utils.zip) downloads,
-verifies and extracts `updater-ui.zip` before opening the tab, so the UIself-updates without a
+verifies and extracts `updater-ui.zip` before opening the tab, so the UI self-updates without a
 restart (`da24dc0`, 2026-08-11; the parallel remote-UI branch converged on the same package in
 `83fefd6`, 2026-08-19).
 

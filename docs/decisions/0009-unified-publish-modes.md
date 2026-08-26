@@ -15,8 +15,9 @@ One pipeline, `node tools/publish/upload.mjs`, run as `upload` / `upload:local` 
 `--mode=prod|dev`. Prod publishes the `latest` release + `gh-pages` and is gated to branch `main`;
 dev publishes to a disposable `dev-build-<id>` branch and pre-release with `-dev` artifact names,
 served via jsDelivr. `upload:local` writes a full offline snapshot to `dist/<mode>-<branch>-<hash>/`
-with no token. A missing/empty token fails fast before building anything (`46ad7c3`, 2026-08-09;
-consolidated `21a3304` / `ca54de6` / `51a5d1e`).
+and never touches the token. Token validation applies to real uploads only: a missing/empty token
+fails `upload` fast before building anything (`46ad7c3`, 2026-08-09; consolidated `21a3304` /
+`ca54de6` / `51a5d1e`).
 
 ## Consequences
 

@@ -97,6 +97,10 @@ for (const record of records) {
 
 // index.md must mention every record.
 const indexPath = path.join(decisionsDir, INDEX);
+if (!fs.existsSync(indexPath)) {
+  console.error(`${INDEX} not found at ${indexPath} — the decision log needs its index`);
+  process.exit(1);
+}
 const indexContent = fs.readFileSync(indexPath, 'utf8');
 for (const record of records) {
   if (!indexContent.includes(record.file)) {
