@@ -286,8 +286,12 @@ function restoreGreConfig(snapshot) {
 function computeInstalledHash(files, dir) {
   const hash = createHash('sha256');
   for (const relative of [...files].sort((a, b) => a.localeCompare(b))) {
+    const abs = path.join(dir, ...relative.split('/'));
+    // A missing manifest-listed file means the tree does not match. Return a
+    // sentinel so callers record a FAIL instead of throwing ENOENT.
+    if (!fs.existsSync(abs)) return null;
     hash.update(relative + '\n');
-    hash.update(fs.readFileSync(path.join(dir, ...relative.split('/'))));
+    hash.update(fs.readFileSync(abs));
   }
   return hash.digest('hex');
 }
@@ -867,9 +871,9 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     );
     check(counter, completed, `install completes in tab (${label})`);
 
-    const successShown = await page.evaluate(
-      () => !document.getElementById('success-banner')?.hidden
-    );
+    const successShown = await page
+      .evaluate(() => !document.getElementById('success-banner')?.hidden)
+      .catch(() => false);
     check(counter, successShown, `success banner shown after install (${label})`);
   } finally {
     try {
