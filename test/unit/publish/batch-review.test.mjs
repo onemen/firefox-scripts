@@ -60,6 +60,15 @@ test('parseArgs: --check and --wait', () => {
   assert.throws(() => parseArgs(['--wait', '-5']), /Invalid --wait/);
 });
 
+test('parseArgs: ignores the pnpm `--` separator', () => {
+  // `pnpm review:batch -- <flags>` forwards a literal `--` to the script.
+  const args = parseArgs(['--', '--check']);
+  assert.equal(args.check, true);
+  const mixed = parseArgs(['--pr', '57', '--', '--dry-run']);
+  assert.deepEqual(mixed.prs, [57]);
+  assert.equal(mixed.dryRun, true);
+});
+
 test('isRateLimited: detects rate-limit messaging', () => {
   assert.equal(isRateLimited('Review rate limit exceeded, skipping this review.'), true);
   assert.equal(isRateLimited('quota exhausted for this period'), true);

@@ -110,6 +110,9 @@ export function parseArgs(argv) {
           throw new Error(`Invalid --wait minutes: ${argv[i - 1]}`);
         }
         break;
+      case '--':
+        // pnpm forwards the `--` separator to the script; ignore it.
+        break;
       default:
         throw new Error(`Unknown flag: ${argv[i]}`);
     }
