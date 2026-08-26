@@ -1,0 +1,69 @@
+// test/unit/publish/batch-review.test.mjs — Unit tests for
+// tools/ci/batch-review.mjs (local batched CodeRabbit review).
+//
+// Only the pure helpers are tested here (arg parsing, output splitting);
+// the git-worktree/octopus-merge/cr-review flow requires gh + cr + a repo,
+// so it is validated manually with --dry-run.
+
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  ageToUnixSeconds,
+  parseArgs,
+  parseOpenPrBranchesOutput,
+} from '../../../tools/ci/batch-review.mjs';
+
+test('parseArgs: flags and repeatables', () => {
+  const args = parseArgs([
+    '--pr',
+    '57',
+    '--pr',
+    '59',
+    '--branch',
+    'wip/foo',
+    '--open',
+    '--since',
+    '3d',
+    '--agent',
+    '--keep',
+    '--dry-run',
+  ]);
+  assert.deepEqual(args.prs, [57, 59]);
+  assert.deepEqual(args.branches, ['wip/foo']);
+  assert.equal(args.open, true);
+  assert.equal(args.since, '3d');
+  assert.equal(args.base, 'origin/main');
+  assert.equal(args.agent, true);
+  assert.equal(args.keep, true);
+  assert.equal(args.dryRun, true);
+});
+
+test('parseArgs: defaults', () => {
+  const args = parseArgs(['--pr', '1']);
+  assert.deepEqual(args.prs, [1]);
+  assert.deepEqual(args.branches, []);
+  assert.equal(args.open, false);
+  assert.equal(args.since, null);
+  assert.equal(args.base, 'origin/main');
+  assert.equal(args.keep, false);
+  assert.equal(args.agent, false);
+  assert.equal(args.dryRun, false);
+});
+
+test('parseArgs: rejects unknown flags', () => {
+  assert.throws(() => parseArgs(['--nope']), /Unknown flag: --nope/);
+});
+
+test('parseOpenPrBranchesOutput: splits and drops empties', () => {
+  assert.deepEqual(parseOpenPrBranchesOutput('buffy/a\nbuffy/b\n'), ['buffy/a', 'buffy/b']);
+  assert.deepEqual(parseOpenPrBranchesOutput('\n\n'), []);
+});
+
+test('ageToUnixSeconds: converts human ages to timestamps', () => {
+  const now = Math.floor(Date.now() / 1000);
+  assert.ok(ageToUnixSeconds('1s') <= now && ageToUnixSeconds('1s') >= now - 2);
+  assert.ok(ageToUnixSeconds('30m') < now - 1000 && ageToUnixSeconds('30m') > now - 1900);
+  assert.ok(ageToUnixSeconds('3d') < now - 250000 && ageToUnixSeconds('3d') > now - 270000);
+  assert.throws(() => ageToUnixSeconds('nope'), /Invalid --since age/);
+  assert.throws(() => ageToUnixSeconds('3'), /Invalid --since age/);
+});
