@@ -172,8 +172,16 @@ export function normalizeFinding(finding, file) {
   };
 }
 
+// Retry budget per provider request. An advisory review that hits a flaky or
+// rate-limited provider should degrade in seconds, not minutes (CI observed a
+// 6-minute run that ended with every file skipped). The retry-after header is
+// honored but capped well below the old 30s so a 429 storm cannot stall a job.
+const MAX_RETRY_MS = 15_000;
+const MAX_RETRY_AFTER_MS = 5_000;
+
 export async function request(provider, body) {
   let delay = 2000;
+  const start = Date.now();
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const response = await fetch(provider.endpoint, {
@@ -205,16 +213,20 @@ export async function request(provider, body) {
         };
       }
       const retryAfter = Number(response.headers.get('retry-after'));
-      await new Promise(resolve =>
-        setTimeout(
-          resolve,
-          Math.min(Number.isFinite(retryAfter) ? retryAfter * 1000 : delay, 30_000)
-        )
+      const wait = Math.min(
+        Number.isFinite(retryAfter) ? retryAfter * 1000 : delay,
+        MAX_RETRY_AFTER_MS
       );
+      if (attempt === 2 || Date.now() - start + wait > MAX_RETRY_MS) {
+        return {kind: 'transient', status: response.status};
+      }
+      await new Promise(resolve => setTimeout(resolve, wait));
       delay = Math.min(delay * 2, 16_000);
     } catch {
-      if (attempt === 2) return {kind: 'transient', status: 0};
-      await new Promise(resolve => setTimeout(resolve, delay));
+      if (attempt === 2 || Date.now() - start > MAX_RETRY_MS) {
+        return {kind: 'transient', status: 0};
+      }
+      await new Promise(resolve => setTimeout(resolve, Math.min(delay, MAX_RETRY_MS)));
       delay = Math.min(delay * 2, 16_000);
     }
   }
@@ -275,6 +287,24 @@ function availableProviders(args) {
 
 // Review a list of files with the given providers, calling requestImpl for
 // each file (injectable for tests). Returns diagnostics + per-file summaries.
+// Run fn over items with at most `limit` concurrent in-flight calls, keeping
+// result order aligned with input order. Used to review files in parallel so a
+// healthy run costs ~one request round-trip instead of one per file.
+async function withConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next;
+      next += 1;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({length: Math.min(limit, items.length)}, worker));
+  return results;
+}
+
 export async function reviewFiles({
   files,
   fileDiffs,
@@ -284,18 +314,17 @@ export async function reviewFiles({
   summaryOnly = false,
   name = 'AI review',
   requestImpl = request,
+  concurrency = 4,
 }) {
   const diagnostics = [];
   const summaries = [];
   let rateLimited = false;
-  for (const file of files) {
-    if (rateLimited) {
-      summaries.push('> Groq rate limit exhausted; remaining files were skipped.');
-      break;
-    }
-    const diff = fileDiffs?.get(file) ?? '';
-    if (!diff || diff.startsWith('Binary files')) continue;
+  const entries = files
+    .map(file => ({file, diff: fileDiffs?.get(file) ?? ''}))
+    .filter(({diff}) => diff && !diff.startsWith('Binary files'));
 
+  const results = await withConcurrency(entries, concurrency, async ({file, diff}) => {
+    if (rateLimited) return {file, skipped: true};
     const prompt = truncateDiff(diff, maxDiffChars);
     let result;
     let providerName = 'none';
@@ -322,31 +351,48 @@ export async function reviewFiles({
       if (outcome.kind === 'permanent' && outcome.status !== 404) break;
     }
     if (!result) {
-      const reason =
-        providerFailure?.kind === 'permanent' ?
-          `${providerFailure.reason} (HTTP ${providerFailure.status}${providerFailure.detail ? `: ${providerFailure.detail}` : ''})`
-        : 'transient providers unavailable';
-      summaries.push(`⚠️ \`${file}\` — no provider completed the review (${reason}); skipped.`);
       if (providerFailure?.status === 429) rateLimited = true;
+      return {file, failed: providerFailure};
+    }
+    return {file, result, providerName};
+  });
+
+  let skipped = 0;
+  for (const r of results) {
+    if (r.skipped) {
+      skipped += 1;
       continue;
     }
-    const content = result.choices?.[0]?.message?.content;
+    if (r.failed) {
+      const reason =
+        r.failed.kind === 'permanent' ?
+          `${r.failed.reason} (HTTP ${r.failed.status}${r.failed.detail ? `: ${r.failed.detail}` : ''})`
+        : r.failed.status ?
+          `${r.failed.status === 429 ? 'rate limited' : 'transient provider error'} (HTTP ${r.failed.status})`
+        : 'transient providers unavailable (network/timeout)';
+      summaries.push(`⚠️ \`${r.file}\` — no provider completed the review (${reason}); skipped.`);
+      continue;
+    }
+    const content = r.result.choices?.[0]?.message?.content;
     let parsed;
     try {
       parsed = JSON.parse(content);
     } catch {
       summaries.push(
-        `### \`${file}\` — ${providerName}\nModel returned invalid JSON; findings skipped.`
+        `### \`${r.file}\` — ${r.providerName}\nModel returned invalid JSON; findings skipped.`
       );
       continue;
     }
     summaries.push(
-      `### \`${file}\` — ${providerName}\n${parsed.summary || 'No summary provided.'}`
+      `### \`${r.file}\` — ${r.providerName}\n${parsed.summary || 'No summary provided.'}`
     );
     for (const finding of parsed.findings || []) {
-      const normalized = normalizeFinding(finding, file);
+      const normalized = normalizeFinding(finding, r.file);
       if (normalized.message.trim()) diagnostics.push(normalized);
     }
+  }
+  if (skipped > 0) {
+    summaries.push('> Groq rate limit exhausted; remaining files were skipped.');
   }
   const finalDiagnostics = summaryOnly ? [] : diagnostics.slice(0, maxFindings);
   return {
