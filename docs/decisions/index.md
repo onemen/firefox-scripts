@@ -66,6 +66,10 @@ Open these before proposing a new primitive, surface, or storage home.
   `content userchromejs`
 - [0017](./0017-ci-validation-contract.md) — CI validation contract: path-filtered gates, advisory
   fork legs, download map as source of truth
+- [0018](./0018-installer-ui-browser-tab.md) — Installer UI stays an embedded browser tab; no
+  desktop/webview app
+- [0019](./0019-release-versioning.md) — Stable unversioned artifact names + date-stamped component
+  tags + moving `latest`
 
 ## Historical
 
