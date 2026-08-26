@@ -3,21 +3,12 @@
 [![CI](https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml/badge.svg)](https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml)
 [![E2E](https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml/badge.svg)](https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml)
 
-> **🚧 Under active development** — the **installer** and **in-browser updater** are new and being
-> validated; the core scripts they install are the long-standing, stable ones. Found a problem?
+> **🚧 Under active development.** The **installer** and **in-browser updater** are new and being
+> validated. The core scripts they install are long-standing and stable, but because the updater
+> ships inside `utils.zip`, installing a fresh `utils.zip` starts the update checks — so the
+> repository as a whole is under active development for now. Found a problem?
 > [Open an issue](https://github.com/onemen/firefox-scripts/issues) and include your browser version
 > and OS.
-
-## Table of Contents
-
-- [How to install the installer](#how-to-install-the-installer)
-- [Supported browsers](#supported-browsers)
-- [How the updater keeps your scripts up to date](#how-the-updater-keeps-your-scripts-up-to-date)
-- [Original Scripts and Core Folders](#original-scripts-and-core-folders)
-- [For developers](#for-developers)
-- [Contributing](#contributing)
-- [Problems?](#problems)
-- [License](#license)
 
 Install and keep Firefox-family browser scripts up to date.
 
@@ -26,8 +17,6 @@ browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Fl
 (non-WebExtension) extensions such as **TabMixPlus** — a small native installer copies two packages
 into the browser, and an in-browser updater keeps them current automatically as new versions are
 released.
-
-> **Official install documentation:** https://onemen.github.io/tabmixplus-docs/other/installation/
 
 ## Supported browsers
 
@@ -59,6 +48,9 @@ inspection).
 > The install tab always opens. It is the piece that downloads the packages from the network; if
 > they cannot be reached, the tab shows a network-error banner instead of the install screen.
 
+Prefer to install by hand? Follow the
+[manual installation guide](https://onemen.github.io/tabmixplus-docs/other/installation/).
+
 ## How the updater keeps your scripts up to date
 
 Once installed, the scripts keep themselves current without you re-running the installer:
@@ -81,18 +73,26 @@ your control.
 
 ## Original Scripts and Core Folders
 
-This repository wraps the original `firefox-scripts` components under `core/`. The source tree is
-split into three logical areas:
+The scripts this project installs are the long-standing ones from
+[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) — the original
+project that lets Firefox-family browsers run legacy (non-WebExtension) extensions. In this
+repository they are bundled into two packages:
 
-### Upstream Components (MPL 2.0)
+- **`utils.zip`** — the chrome scripts (the userChromeJS loader, the legacy-extension shim, and the
+  in-browser updater), installed to your profile's `chrome/utils/` directory.
+- **`fx-folder.zip`** — the configuration files (`config.js`, `config-prefs.js`), installed to the
+  browser's installation directory.
 
-- `core/chrome/utils/` (except `core/chrome/utils/updater/`)
-- `core/fx-folder/`
+Both packages are also available for download from the
+[releases page](https://github.com/onemen/firefox-scripts/releases) — you can install or update them
+by hand. After your first install from this repository, the browser will notify you when a new
+version is available (see
+[How the updater keeps your scripts up to date](#how-the-updater-keeps-your-scripts-up-to-date)).
 
-These are derived from
-[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) and are governed
-by the Mozilla Public License 2.0.
-
+The original scripts are governed by the
+[Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/); the in-browser updater
+(`core/chrome/utils/updater/`) is custom to this project and licensed under the
+[MIT License](LICENSE.md).
 
 ## For developers
 
@@ -105,7 +105,9 @@ by the Mozilla Public License 2.0.
 ### Contributing
 
 Contributions are welcome — bug reports, fixes, and improvements all help. Read
-[CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow guidance, then open a pull request. The project's source of truth for scripts is `core/`, plus the C installer under `installer/` and the publish scripts under `tools/publish/`.
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow guidance, then open a pull request. The
+project's source of truth for scripts is `core/`, plus the C installer under `installer/` and the
+publish scripts under `tools/publish/`.
 
 ### Problems?
 
