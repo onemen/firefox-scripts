@@ -27,6 +27,10 @@ trustworthy between releases.
 
 Docs-only PRs get fast, green CI, and a flaky third-party host can no longer block a merge. Coverage
 gaps on docs-only PRs are accepted; any PR touching the download map runs the watchdog's PR check
-and the affected legs. The download map and watchdog are test harness, not product — they are noted
-as "Not recorded" in the index, not re-ADRed. Revisit-if: a fork host becomes reliable enough for
-hard gates, or a docs-only change needs the full E2E matrix.
+and the affected legs. One caveat: a PR that branched before a gating change and is later updated
+from main (the "Update branch" button, required by strict branch protection) over-runs the full
+matrix once — GitHub's changed-files diff counts base-branch changes merged into the head, so the
+paths filter over-triggers. Rebase the PR onto main instead of merging it in to avoid the over-run;
+when it happens it is harmless (conservative direction). The download map and watchdog are test
+harness, not product — they are noted as "Not recorded" in the index, not re-ADRed. Revisit-if: a
+fork host becomes reliable enough for hard gates, or a docs-only change needs the full E2E matrix.
