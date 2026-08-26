@@ -208,17 +208,33 @@ export async function request(provider, body) {
     }
   }
   return {kind: 'transient', status: 0};
-}function changedFiles(baseRef, headRef, maxFiles) {
-  return execFileSync('git', ['diff', `${resolveBaseRef(baseRef)}...${resolveHeadRef(headRef)}`, '--name-only', '-z'], {
-    encoding: 'utf8',
-  })
+}
+function changedFiles(baseRef, headRef, maxFiles) {
+  return execFileSync(
+    'git',
+    ['diff', `${resolveBaseRef(baseRef)}...${resolveHeadRef(headRef)}`, '--name-only', '-z'],
+    {
+      encoding: 'utf8',
+    }
+  )
     .split('\0')
     .filter(file => file && !file.startsWith('dist/') && !file.startsWith('docs/local_plan/'))
     .slice(0, maxFiles);
-}function fileDiff(baseRef, headRef, file) {
-  return execFileSync('git', ['diff', `${resolveBaseRef(baseRef)}...${resolveHeadRef(headRef)}`, '--no-ext-diff', '--', file], {
-    encoding: 'utf8',
-  });
+}
+function fileDiff(baseRef, headRef, file) {
+  return execFileSync(
+    'git',
+    [
+      'diff',
+      `${resolveBaseRef(baseRef)}...${resolveHeadRef(headRef)}`,
+      '--no-ext-diff',
+      '--',
+      file,
+    ],
+    {
+      encoding: 'utf8',
+    }
+  );
 }
 
 function truncateDiff(diff, maxChars) {
