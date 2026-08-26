@@ -57,17 +57,25 @@ jobs:
   build:
     name: publish gate — ${{ matrix.os }}
     needs: changes
-    if: needs.changes.outputs.publish == 'true'
+    # No job-level if: a skipped required check blocks strict branch
+    # protection, so the job always runs and reports success. The real steps
+    # are gated on publish-relevant changes below; a filtered-out run is a
+    # fast no-op (the ci-gate still treats it as 'skipped — no publish-
+    # relevant changes'). See ADR 0017: required checks never go missing.
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Skip publish gate — no publish-relevant changes
+        if: needs.changes.outputs.publish != 'true'
+        run: echo "::notice::no publish-relevant changes — publish gate skipped"
       - uses: $/.github/actions/setup-repo
+        if: needs.changes.outputs.publish == 'true'
 
       - name: Set up MSYS2 toolchain (make + gcc)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && needs.changes.outputs.publish == 'true'
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
           msystem: UCRT64
@@ -76,6 +84,7 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc make
 
       - name: Build all packages and binaries
+        if: needs.changes.outputs.publish == 'true'
         shell: bash
         run: pnpm upload:local --mode=dev
 
@@ -84,18 +93,19 @@ jobs:
       # Access-Control-Allow-Origin header.  Windows only: it drives the win
       # binary; the same gate logic is covered on other OSes by review.
       - name: Security smoke test — installer API
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && needs.changes.outputs.publish == 'true'
         shell: bash
         run: node test/e2e/installer/smoke-security.mjs
 
       # JS vs C hash parity against the dev snapshot built above (test_hash
       # accepts both prod- and dev- snapshots, so no second build is needed).
       - name: Hash parity — JS vs C installer
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && needs.changes.outputs.publish == 'true'
         shell: bash
         run: pnpm test:hash
 
       - name: Upload dist artifacts
+        if: needs.changes.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.os }}
