@@ -137,5 +137,14 @@ jobs:
             verify 'build' '${{ needs.build.result }}'
           else
             echo 'publish gate: skipped — no publish-relevant changes (OK)'
+            # Guard: `build` deliberately has NO job-level `if:` — it always
+            # runs and reports success, with the heavy steps gated inside. A
+            # job-level `if:` would skip it on docs-only PRs and make the
+            # required check go missing, blocking strict branch protection
+            # (the #65 regression). Fail loudly if that design is undone.
+            if [ "${{ needs.build.result }}" != "success" ]; then
+              echo "::error::publish gate did not report success (${{ needs.build.result }}) — always-run design undone?"
+              exit 1
+            fi
           fi
           echo 'All CI jobs passed'
