@@ -1,0 +1,88 @@
+# URL watchdog — catch rot in the E2E browser download map.
+#
+# CI installs Firefox, Firefox Dev Edition, LibreWolf, Floorp and Zen from
+# third-party hosts (Mozilla, librewolf.dev, GitHub releases). Those URLs can
+# rot silently: a 404, an HTML error page where a binary used to be, or a
+# package-registry API that changed shape. This workflow re-resolves each
+# browser's latest version and verifies its download endpoint with a 1 KB
+# ranged GET — nothing is downloaded in full except one SHA-256 pass per new
+# release — and opens an issue when something breaks or a new version is out.
+#
+# Two modes (see tools/check-browser-downloads.mjs):
+# - Weekly (schedule/dispatch): version baseline in the Actions cache
+#   (.watchdog/baseline.json) + deduped issues.
+# - PR (pull_request touching the download map): stateless and always green —
+#   findings surface as ::warning:: / ::notice:: annotations, so the check can
+#   be required without ever blocking.
+
+name: URL watchdog
+
+on:
+  pull_request:
+    paths:
+      - 'test/e2e/shared/downloads.mjs'
+  schedule:
+    - cron: '0 6 * * 1' # Monday 06:00 UTC — browsers release ~monthly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: url-watchdog
+  cancel-in-progress: false
+
+jobs:
+  # ── Weekly: baseline + issues ─────────────────────────────────────────────
+  check:
+    name: check browser download URLs
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      # Baseline = last-seen version + size (+ one-time sha256 per release).
+      # Weekly access keeps the 7-day cache TTL rolling; a missed run just
+      # re-baselines.
+      - name: Restore baseline
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .watchdog
+          key: url-watchdog-baseline-v1
+
+      - name: Check browser downloads
+        run: node tools/check-browser-downloads.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # save-always: the script rewrites baseline.json every run even when the
+      # restore step hit, so a version bump is persisted for the next run.
+      - name: Save baseline
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .watchdog
+          key: url-watchdog-baseline-v1
+          save-always: true
+
+  # ── PR: stateless rot check at review time ────────────────────────────────
+  # Runs only when the download map itself changed. The script exits 0 and
+  # prints ::warning:: annotations on rot, so this job never blocks — but it
+  # can be added to branch protection as a required check.
+  pr-check:
+    name: browser download URLs (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Check browser downloads
+        run: node tools/check-browser-downloads.mjs --pr

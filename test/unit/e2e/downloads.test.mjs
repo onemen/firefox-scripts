@@ -20,34 +20,66 @@ const {downloadDir, downloadTo, resolveDownloadUrl} = await import(downloadsUrl)
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
 
-test('resolveDownloadUrl: official installer URLs per platform', () => {
-  const win = resolveDownloadUrl('firefox', 'win32');
-  const mac = resolveDownloadUrl('firefox', 'darwin');
-  const linux = resolveDownloadUrl('firefox', 'linux');
+test('resolveDownloadUrl: official installer URLs per platform', async () => {
+  const win = await resolveDownloadUrl('firefox', 'win32');
+  const mac = await resolveDownloadUrl('firefox', 'darwin');
+  const linux = await resolveDownloadUrl('firefox', 'linux');
   assert.match(win, /^https:\/\/download\.mozilla\.org\/\?product=firefox-latest&os=win64/);
   assert.match(mac, /^https:\/\/download\.mozilla\.org\/\?product=firefox-latest&os=osx/);
   assert.match(linux, /^https:\/\/download\.mozilla\.org\/\?product=firefox-latest&os=linux64/);
 });
 
-test('resolveDownloadUrl: accepts short platform names (win/mac)', () => {
-  assert.equal(resolveDownloadUrl('firefox', 'win'), resolveDownloadUrl('firefox', 'win32'));
-  assert.equal(resolveDownloadUrl('firefox', 'mac'), resolveDownloadUrl('firefox', 'darwin'));
+test('resolveDownloadUrl: accepts short platform names (win/mac)', async () => {
+  assert.equal(
+    await resolveDownloadUrl('firefox', 'win'),
+    await resolveDownloadUrl('firefox', 'win32')
+  );
+  assert.equal(
+    await resolveDownloadUrl('firefox', 'mac'),
+    await resolveDownloadUrl('firefox', 'darwin')
+  );
 });
 
-test('resolveDownloadUrl: package-manager browsers have no URL to cache', () => {
-  assert.throws(() => resolveDownloadUrl('librewolf', 'win32'), /package manager/);
-  assert.throws(() => resolveDownloadUrl('floorp', 'win32'), /package manager/);
+test('resolveDownloadUrl: floorp uses the stable GitHub latest-download URL', async () => {
+  assert.equal(
+    await resolveDownloadUrl('floorp', 'win32'),
+    'https://github.com/Floorp-Projects/Floorp/releases/latest/download/floorp-windows-x86_64.installer.exe'
+  );
 });
 
-test('resolveDownloadUrl: manual-only browsers throw with the official page', () => {
-  assert.throws(
-    () => resolveDownloadUrl('waterfox', 'win32'),
+test('resolveDownloadUrl: librewolf resolves the latest version from the packages API', async () => {
+  // Stub global fetch: no network in unit tests. The stub mimics Gitea's
+  // package list (newest-first); the resolver must pick the `generic`
+  // `librewolf` package and build the version-embedded installer URL.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => [
+      {type: 'generic', name: 'librewolf-source', version: '154.0.1-2'},
+      {type: 'generic', name: 'librewolf', version: '154.0.1-2'},
+      {type: 'generic', name: 'librewolf', version: '153.0.4-1'},
+    ],
+  });
+  try {
+    const url = await resolveDownloadUrl('librewolf', 'win32');
+    assert.equal(
+      url,
+      'https://librewolf.dev/api/packages/librewolf/generic/librewolf/154.0.1-2/librewolf-154.0.1-2-windows-x86_64-setup.exe'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('resolveDownloadUrl: manual-only browsers throw with the official page', async () => {
+  await assert.rejects(
+    resolveDownloadUrl('waterfox', 'win32'),
     /manual install only.*waterfox\.net/
   );
 });
 
-test('resolveDownloadUrl: unknown browser throws', () => {
-  assert.throws(() => resolveDownloadUrl('not-a-browser', 'linux'), /has no automated install/);
+test('resolveDownloadUrl: unknown browser throws', async () => {
+  await assert.rejects(resolveDownloadUrl('not-a-browser', 'linux'), /has no automated install/);
 });
 
 // ── downloadTo cache reuse ────────────────────────────────────────────────
