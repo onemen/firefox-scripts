@@ -64,6 +64,8 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0015](./0015-e2e-puppeteer-bidi.md) — E2E tests use Puppeteer-core + WebDriver BiDi
 - [0016](./0016-chrome-namespace.md) — Dedicated `chrome://firefox-scripts` namespace; not
   `content userchromejs`
+- [0017](./0017-ci-validation-contract.md) — CI validation contract: path-filtered gates, advisory
+  fork legs, download map as source of truth
 
 ## Historical
 
@@ -87,3 +89,7 @@ Micro-decisions deliberately left out of the log so nobody re-adds them:
   download) — an installer/updater UI detail.
 - AI-review tooling choices (Groq / OpenRouter / reviewdog) — process, tracked in
   `.github/workflows/ai-review.yml`.
+- Browser download map mechanics (winget → direct downloads; vendor version APIs for "latest") —
+  test harness, see `test/e2e/shared/downloads.mjs` and ADR 0017.
+- URL watchdog internals (weekly + PR modes, per-release SHA-256 ledger in issues, baseline in the
+  Actions cache) — monitoring tooling, see `.github/workflows/url-watchdog.yml` and ADR 0017.
