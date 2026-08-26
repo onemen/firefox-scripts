@@ -326,6 +326,13 @@ jobs:
             esac
           else
             echo 'installer + updater E2E: skipped — no E2E-relevant changes (OK)'
+            # Guard: if browser-matrix ran despite no E2E-relevant changes, its
+            # changed-paths gate was removed — fail loudly instead of silently
+            # burning ~14 Windows runner-minutes on every docs-only PR again.
+            if [ "${{ needs.browser-matrix.result }}" != "skipped" ]; then
+              echo "::error::browser-matrix ran despite no E2E-relevant changes — changed-paths gate removed?"
+              exit 1
+            fi
             echo 'browser-matrix: skipped — no E2E-relevant changes (OK)'
           fi
           echo 'All E2E jobs passed'
