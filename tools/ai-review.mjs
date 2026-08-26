@@ -9,10 +9,12 @@
 // swapping models/providers or switching modes never requires editing YAML:
 //
 //   node tools/ai-review.mjs --provider groq --max-findings 10
+//   node tools/ai-review.mjs --provider coderabbit   # cr review --agent
 //
 // Flags:
-//   --provider <name>   Provider to use (default: groq). Repeatable — the
-//                       first provider with a configured key wins.
+//   --provider <name>   Provider to use (default: groq). HTTP providers
+//                       (groq, openrouter) are repeatable; coderabbit runs
+//                       the local `cr review --agent` CLI instead.
 //   --model <name>      Override the provider's default model.
 //   --base-ref <ref>    Base ref for the diff (default: $BASE_REF env).
 //   --head-ref <ref>    Head ref (default: $HEAD_REF env or HEAD).
@@ -27,9 +29,10 @@
 // recorded in the summary and the run continues. Exit code 0 even when the
 // provider is down — this is an advisory reviewer, never a required check.
 
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
+import {parseAgentEvents} from './ci/parse-cr-agent.mjs';
 
 const PROVIDERS = {
   groq: {
@@ -42,6 +45,16 @@ const PROVIDERS = {
     model: process.env.OPENROUTER_MODEL || 'openrouter/free',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
   },
+};
+
+// CodeRabbit CLI review (`cr review --agent`): a local CLI, not an HTTP
+// provider. Selected via --provider coderabbit; needs cr on PATH and/or
+// CODERABBIT_API_KEY.
+const CODERABBIT = {
+  name: 'coderabbit',
+  key: process.env.CODERABBIT_API_KEY,
+  cli: process.env.CR_BIN || 'cr',
+  version: process.env.CODERABBIT_VERSION || '0.7.5',
 };
 
 const DEFAULT_SYSTEM_PROMPT = `You are a senior software engineer reviewing a pull request diff.
@@ -247,6 +260,13 @@ function availableProviders(args) {
   const seen = new Set();
   const available = [];
   for (const name of args.providers) {
+    if (name === CODERABBIT.name) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      // Needs cr on PATH (CI installs it) and/or an API key.
+      available.push({...CODERABBIT, model: null});
+      continue;
+    }
     const provider = PROVIDERS[name];
     if (!provider) throw new Error(`Unknown provider: ${name}`);
     if (seen.has(name)) continue;
@@ -260,6 +280,98 @@ function availableProviders(args) {
     });
   }
   return available;
+}
+
+// Run `cr review --agent` (CodeRabbit CLI) against the PR layer and convert
+// its NDJSON events to RDJSON diagnostics + a markdown summary. Fail-soft:
+// a non-zero CLI exit (quota exhausted, too-large diff, auth failure) becomes
+// an honest note in the summary instead of failing the job.
+export async function runCoderabbitReview(args, baseRef, crBin = CODERABBIT.cli) {
+  if (args.dryRun) {
+    return {
+      dryRun: true,
+      files: [],
+      providers: [CODERABBIT.name],
+      rdjson: {source: {name: args.name}, diagnostics: []},
+      summary: ['(dry run — CodeRabbit CLI not invoked)'],
+      summaryHeader: {
+        marker: 'coderabbit-cli-review:summary',
+        title: '🤖 CodeRabbit CLI review (advisory)',
+      },
+    };
+  }
+  // CR_BIN may be a bare path (`~/.local/bin/cr`) or a command with args
+  // (e.g. `node /tmp/fake-cr.mjs` in tests) — split on spaces for the latter.
+  const [bin, ...crBinArgs] = crBin.trim().split(/\s+/);
+  const crArgs = [...crBinArgs, 'review', '--agent', '--base', `origin/${baseRef}`];
+  if (CODERABBIT.key) crArgs.push('--api-key', CODERABBIT.key);
+  const proc = spawnSync(bin, crArgs, {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (proc.error) {
+    const body = [
+      '<!-- coderabbit-cli-review:summary -->',
+      '## 🤖 CodeRabbit CLI review (advisory)',
+      '',
+      `⚠️ Could not run \`${CODERABBIT.cli}\` — ${proc.error.message} (skipped).`,
+      '',
+      '> Advisory only — never blocks the merge. CodeRabbit CLI quota applies.',
+    ].join('\n');
+    return {
+      dryRun: false,
+      rdjson: {source: {name: args.name}, diagnostics: []},
+      summary: body,
+      totalFindings: 0,
+      summaryHeader: {marker: 'coderabbit-cli-review:summary'},
+    };
+  }
+  if (proc.status !== 0) {
+    const body = [
+      '<!-- coderabbit-cli-review:summary -->',
+      '## 🤖 CodeRabbit CLI review (advisory)',
+      '',
+      `⚠️ The CodeRabbit CLI exited with code ${proc.status} — review skipped (advisory only).`,
+      proc.stderr?.trim() ? `\`\`\`\n${proc.stderr.trim().slice(-1200)}\n\`\`\`` : '',
+      '',
+      '> Advisory only — never blocks the merge. CodeRabbit CLI quota applies.',
+    ].join('\n');
+    return {
+      dryRun: false,
+      rdjson: {source: {name: args.name}, diagnostics: []},
+      summary: body,
+      totalFindings: 0,
+      summaryHeader: {marker: 'coderabbit-cli-review:summary'},
+    };
+  }
+  const events = (proc.stdout || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(e => e !== null);
+  const {diagnostics, summary, findingsCount, errors} = parseAgentEvents(events, {
+    baseRef,
+    headRef: args.headRef,
+  });
+  const finalDiagnostics = args.summaryOnly ? [] : diagnostics.slice(0, args.maxFindings);
+  return {
+    dryRun: false,
+    rdjson: {source: {name: args.name}, diagnostics: finalDiagnostics},
+    summary,
+    totalFindings: findingsCount,
+    errors,
+    summaryHeader: {
+      marker: 'coderabbit-cli-review:summary',
+      title: '🤖 CodeRabbit CLI review (advisory)',
+    },
+  };
 }
 
 // Review a list of files with the given providers, calling requestImpl for
@@ -345,7 +457,7 @@ export async function reviewFiles({
 export async function runReview(args = parseArgs(process.argv.slice(2))) {
   if (!args.baseRef) throw new Error('BASE_REF is required (--base-ref or $BASE_REF)');
   const providers = availableProviders(args);
-  if (args.dryRun) {
+  if (args.dryRun && !providers.some(p => p.name === CODERABBIT.name)) {
     const files = changedFiles(args.baseRef, args.headRef, args.maxFiles);
     return {
       dryRun: true,
@@ -354,6 +466,11 @@ export async function runReview(args = parseArgs(process.argv.slice(2))) {
       rdjson: {source: {name: args.name}, diagnostics: []},
       summary: files.map(file => `### \`${file}\`\n(dry run — not reviewed)`),
     };
+  }
+  // CodeRabbit CLI is a separate flow (local CLI, not an HTTP provider).
+  if (providers.some(p => p.name === CODERABBIT.name)) {
+    const result = await runCoderabbitReview(args, args.baseRef);
+    return {dryRun: false, ...result};
   }
   if (providers.length === 0) {
     throw new Error('No provider keys configured. Set GROQ_API_KEY and/or OPENROUTER_API_KEY.');
@@ -377,18 +494,25 @@ export async function writeArtifacts(args, result) {
   const rdjsonPath = join(args.out, 'ai-review-rd.json');
   const summaryPath = join(args.out, 'ai-review-summary.md');
   await writeFile(rdjsonPath, `${JSON.stringify(result.rdjson)}\n`);
-  const lines = [
-    '<!-- ai-review:summary -->',
-    '## 🤖 AI review (advisory)',
-    '',
-    `Model: ${result.providers?.join(', ') || 'see per-file notes'} · findings: ${result.totalFindings ?? result.rdjson.diagnostics.length}`,
-    '',
-    ...result.summary,
-    '',
-    '> Advisory only — this review never blocks the merge. Provider free-tier limits apply.',
-    '',
-  ];
-  await writeFile(summaryPath, lines.join('\n'));
+  let body;
+  if (result.summaryHeader) {
+    // CodeRabbit CLI: the parser already emits a complete summary document
+    // (marker + title + body); write it verbatim.
+    body = result.summary;
+  } else {
+    body = [
+      '<!-- ai-review:summary -->',
+      '## 🤖 AI review (advisory)',
+      '',
+      `Model: ${result.providers?.join(', ') || 'see per-file notes'} · findings: ${result.totalFindings ?? result.rdjson.diagnostics.length}`,
+      '',
+      ...result.summary,
+      '',
+      '> Advisory only — this review never blocks the merge. Provider free-tier limits apply.',
+      '',
+    ].join('\n');
+  }
+  await writeFile(summaryPath, body);
   return {rdjsonPath, summaryPath};
 }
 
@@ -403,6 +527,8 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     console.log(
       `Dry run: ${result.files.length} file(s) would be reviewed by ${result.providers.join(', ')}`
     );
+  } else if (result.summaryHeader) {
+    console.log(`${result.totalFindings} finding(s) (${result.rdjson.diagnostics.length} posted).`);
   } else {
     console.log(
       `Reviewed ${result.summary.length} file(s); ${result.totalFindings} finding(s) (${result.rdjson.diagnostics.length} posted).`

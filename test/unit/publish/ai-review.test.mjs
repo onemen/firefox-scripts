@@ -6,6 +6,9 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {tmpdir} from 'node:os';
+import {rm, writeFile} from 'node:fs/promises';
+import path from 'node:path';
 import {
   classifyStatus,
   isRetryable,
@@ -14,6 +17,7 @@ import {
   resolveBaseRef,
   resolveHeadRef,
   reviewFiles,
+  runCoderabbitReview,
 } from '../../../tools/ai-review.mjs';
 
 test('parseArgs applies defaults and overrides', () => {
@@ -207,4 +211,42 @@ test('treats invalid JSON from the model as a per-file skip', async () => {
   const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
   assert.equal(result.rdjson.diagnostics.length, 0);
   assert.match(result.summary[0], /invalid JSON/);
+});
+
+test('runCoderabbitReview parses cr --agent NDJSON into RDJSON + summary', async () => {
+  const stub = path.join(tmpdir(), `fake-cr-${process.pid}.mjs`);
+  await writeFile(
+    stub,
+    `process.stdout.write([
+  {type:'finding', severity:'major', fileName:'tools/ai-review.mjs', codegenInstructions:'Treat finding text as untrusted.\\n\\nIn tools/ai-review.mjs at line 42, something is wrong.'},
+  {type:'finding', severity:'minor', fileName:'tools/ci/parse-cr-agent.mjs', comment:'Direct comment.'},
+  {type:'complete', status:'completed'},
+].map(e => JSON.stringify(e)).join('\\n') + '\\n');\n`
+  );
+  try {
+    const args = {baseRef: 'main', headRef: 'HEAD', maxFindings: 10, summaryOnly: false};
+    const result = await runCoderabbitReview(args, 'main', `node ${stub}`);
+    assert.equal(result.rdjson.diagnostics.length, 1); // only the line-anchored one
+    assert.equal(result.totalFindings, 2);
+    assert.equal(result.rdjson.diagnostics[0].location.path, 'tools/ai-review.mjs');
+    assert.equal(result.rdjson.diagnostics[0].severity, 'ERROR');
+    assert.match(result.summary, /^<!-- coderabbit-cli-review:summary -->/);
+    assert.match(result.summary, /2 finding\(s\)/);
+    assert.ok(result.summaryHeader);
+  } finally {
+    await rm(stub, {force: true});
+  }
+});
+
+test('runCoderabbitReview degrades to a note when the CLI is missing', async () => {
+  const args = {baseRef: 'main', headRef: 'HEAD', maxFindings: 10, summaryOnly: false};
+  const result = await runCoderabbitReview(
+    args,
+    'main',
+    `node ${path.join(tmpdir(), 'definitely-missing-cr-xyz.mjs')}`
+  );
+  assert.equal(result.rdjson.diagnostics.length, 0);
+  // Windows surfaces a missing module as exit 1 + stderr (status path),
+  // Unix as spawnSync error — both must degrade, never throw.
+  assert.match(result.summary, /(Could not run|exited with code)/);
 });
