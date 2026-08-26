@@ -52,4 +52,6 @@ runs:
         ADVISORY: ${{ inputs.advisory }}
         SKIP_GUARD: ${{ inputs.skip-guard }}
         ALWAYS_REPORT: ${{ inputs.always-report }}
-      run: ${{ github.action_path }}/verify.sh
+      # `bash <script>` (not a bare path): the exec bit is not stored for
+      # files added from Windows, so a direct run would get Permission denied.
+      run: bash ${{ github.action_path }}/verify.sh
