@@ -11,6 +11,7 @@ import {
   isRetryable,
   normalizeFinding,
   parseArgs,
+  request,
   resolveBaseRef,
   resolveHeadRef,
   reviewFiles,
@@ -60,6 +61,44 @@ test('head ref resolution falls back to HEAD for a missing branch name', () => {
 
 test('parseArgs rejects unknown flags', () => {
   assert.throws(() => parseArgs(['--nope']), /Unknown flag: --nope/);
+});
+
+test('request gives up immediately on 429, honoring no retry', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return {ok: false, status: 429, headers: new Headers({'retry-after': '60'})};
+  };
+  try {
+    const out = await request({key: 'k', endpoint: 'https://x'}, {});
+    assert.equal(out.kind, 'transient');
+    assert.equal(out.status, 429);
+    assert.equal(calls, 1, '429 must not be retried');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('request aborts promptly when the run-level signal fires', async () => {
+  const realFetch = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = async (_url, {signal}) => {
+    await new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+        once: true,
+      });
+    });
+  };
+  try {
+    const promise = request({key: 'k', endpoint: 'https://x'}, {}, controller.signal);
+    controller.abort();
+    const out = await promise;
+    assert.equal(out.kind, 'transient');
+    assert.equal(out.status, 429, 'aborted by a rate limit elsewhere');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test('classifies transient and permanent provider statuses', () => {

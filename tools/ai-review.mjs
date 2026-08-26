@@ -174,12 +174,14 @@ export function normalizeFinding(finding, file) {
 
 // Retry budget per provider request. An advisory review that hits a flaky or
 // rate-limited provider should degrade in seconds, not minutes (CI observed a
-// 6-minute run that ended with every file skipped). The retry-after header is
-// honored but capped well below the old 30s so a 429 storm cannot stall a job.
+// 6-minute run that ended with every file skipped). 429 is never retried: a
+// quota response is pointless to retry and the observed 429 windows last
+// minutes, so the first rate limit ends the file immediately. 5xx / network
+// blips get a short retry window (Retry-After honored but capped).
 const MAX_RETRY_MS = 15_000;
 const MAX_RETRY_AFTER_MS = 5_000;
 
-export async function request(provider, body) {
+export async function request(provider, body, signal) {
   let delay = 2000;
   const start = Date.now();
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -191,9 +193,17 @@ export async function request(provider, body) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(90_000),
+        signal:
+          signal ?
+            AbortSignal.any([signal, AbortSignal.timeout(90_000)])
+          : AbortSignal.timeout(90_000),
       });
       if (response.ok) return {kind: 'success', body: await response.json()};
+      if (response.status === 429) {
+        // First rate limit ends this file immediately; the run-level signal
+        // aborts anything still in flight (see reviewFiles).
+        return {kind: 'transient', status: 429};
+      }
       if (!isRetryable(response.status)) {
         let detail = '';
         try {
@@ -223,6 +233,7 @@ export async function request(provider, body) {
       await new Promise(resolve => setTimeout(resolve, wait));
       delay = Math.min(delay * 2, 16_000);
     } catch {
+      if (signal?.aborted) return {kind: 'transient', status: 429};
       if (attempt === 2 || Date.now() - start > MAX_RETRY_MS) {
         return {kind: 'transient', status: 0};
       }
@@ -319,6 +330,7 @@ export async function reviewFiles({
   const diagnostics = [];
   const summaries = [];
   let rateLimited = false;
+  const controller = new AbortController();
   const entries = files
     .map(file => ({file, diff: fileDiffs?.get(file) ?? ''}))
     .filter(({diff}) => diff && !diff.startsWith('Binary files'));
@@ -330,18 +342,24 @@ export async function reviewFiles({
     let providerName = 'none';
     let providerFailure;
     for (const provider of providers) {
-      const outcome = await requestImpl(provider, {
-        model: provider.model,
-        temperature: 0.2,
-        response_format: {type: 'json_object'},
-        messages: [
-          {role: 'system', content: DEFAULT_SYSTEM_PROMPT},
-          {
-            role: 'user',
-            content: `${REPO_CONTEXT}\n\nReview the diff of ${file}:\n\n${prompt}`,
-          },
-        ],
-      });
+      const outcome = await requestImpl(
+        provider,
+        {
+          model: provider.model,
+          temperature: 0.2,
+          response_format: {type: 'json_object'},
+          messages: [
+            {role: 'system', content: DEFAULT_SYSTEM_PROMPT},
+            {
+              role: 'user',
+              content: `${REPO_CONTEXT}\n\nReview the diff of ${file}:\n\n${prompt}`,
+            },
+          ],
+        },
+        controller.signal
+      );
+      // A rate limit on another file aborts everything still in flight.
+      if (rateLimited) return {file, skipped: true};
       if (outcome.kind === 'success') {
         result = outcome.body;
         providerName = provider.name;
@@ -351,7 +369,10 @@ export async function reviewFiles({
       if (outcome.kind === 'permanent' && outcome.status !== 404) break;
     }
     if (!result) {
-      if (providerFailure?.status === 429) rateLimited = true;
+      if (providerFailure?.status === 429) {
+        rateLimited = true;
+        controller.abort();
+      }
       return {file, failed: providerFailure};
     }
     return {file, result, providerName};
