@@ -124,6 +124,18 @@ export function resolveBaseRef(baseRef) {
   }
 }
 
+// CI checks out the PR head as a detached HEAD — the head ref name does not
+// exist as a local branch there. Fall back to HEAD when the named ref is
+// missing (matches the pre-script workflow, which always diffed ...HEAD).
+export function resolveHeadRef(headRef) {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', headRef]);
+    return headRef;
+  } catch {
+    return 'HEAD';
+  }
+}
+
 export function classifyStatus(status) {
   return status === 0 || status === 408 || status === 429 || status >= 500 ?
       'transient'
@@ -196,29 +208,17 @@ export async function request(provider, body) {
     }
   }
   return {kind: 'transient', status: 0};
-}
-
-function changedFiles(baseRef, headRef, maxFiles) {
-  return execFileSync(
-    'git',
-    ['diff', `${resolveBaseRef(baseRef)}...${headRef}`, '--name-only', '-z'],
-    {
-      encoding: 'utf8',
-    }
-  )
+}function changedFiles(baseRef, headRef, maxFiles) {
+  return execFileSync('git', ['diff', `${resolveBaseRef(baseRef)}...${resolveHeadRef(headRef)}`, '--name-only', '-z'], {
+    encoding: 'utf8',
+  })
     .split('\0')
     .filter(file => file && !file.startsWith('dist/') && !file.startsWith('docs/local_plan/'))
     .slice(0, maxFiles);
-}
-
-function fileDiff(baseRef, headRef, file) {
-  return execFileSync(
-    'git',
-    ['diff', `${resolveBaseRef(baseRef)}...${headRef}`, '--no-ext-diff', '--', file],
-    {
-      encoding: 'utf8',
-    }
-  );
+}function fileDiff(baseRef, headRef, file) {
+  return execFileSync('git', ['diff', `${resolveBaseRef(baseRef)}...${resolveHeadRef(headRef)}`, '--no-ext-diff', '--', file], {
+    encoding: 'utf8',
+  });
 }
 
 function truncateDiff(diff, maxChars) {

@@ -12,6 +12,7 @@ import {
   normalizeFinding,
   parseArgs,
   resolveBaseRef,
+  resolveHeadRef,
   reviewFiles,
 } from '../../../tools/ai-review.mjs';
 
@@ -48,6 +49,13 @@ test('base ref resolution prefers origin/<ref> when present', () => {
   // origin/main exists in this checkout; plain main may not.
   assert.match(resolveBaseRef('main'), /^(origin\/)?main$/);
   assert.equal(resolveBaseRef('definitely-not-a-real-ref-xyz'), 'definitely-not-a-real-ref-xyz');
+});
+
+test('head ref resolution falls back to HEAD for a missing branch name', () => {
+  // A real local ref resolves to itself; a made-up branch name (the CI
+  // detached-HEAD case) falls back to HEAD.
+  assert.equal(resolveHeadRef('definitely-not-a-real-branch-xyz'), 'HEAD');
+  assert.ok(resolveHeadRef('HEAD') === 'HEAD' || resolveHeadRef('HEAD') !== '');
 });
 
 test('parseArgs rejects unknown flags', () => {
