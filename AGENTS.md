@@ -226,5 +226,7 @@ Before finishing:
   **pnpm** (lockfile v9), `"type": "module"` for all `tools/` scripts.
 - **C toolchain:** MSYS2 UCRT64/mingw-w64 on Windows (`-mwindows` GUI subsystem); clang/gcc
   elsewhere; `clang-format` pinned via npm. All asset embedding is Node (`installer/embed.mjs`).
-- **No CI yet** (no `.github/workflows`); prod publish is manual from `main`. All publish scripts
-  require a clean worktree.
+- **CI** runs from `.github/workflows/` (ci.yml, e2e.yml, pages.yml, ai-review.yml). The installer +
+  updater E2E jobs and the publish gate are **path-filtered on PRs**: they skip when no changed file
+  can affect them (see `docs/DEVELOPING.md` → Continuous integration). Prod publish stays manual
+  from `main`; all publish scripts require a clean worktree.

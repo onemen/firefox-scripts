@@ -32,9 +32,11 @@ geckodriver uses by default for recent builds.
 | LibreWolf                 | Windows | `windows-latest`       | Advisory                |
 | Floorp                    | Windows | `windows-latest`       | Advisory                |
 
-**Advisory** = `continue-on-error: true` in CI. These browsers don't have stable download URLs for
-CI, so they run manually or when available. The hard gate is Firefox stable across all three OSes +
-Firefox Developer Edition on Windows.
+**Advisory** = the E2E gate reports a warning instead of failing the PR (LibreWolf / Floorp install
+from third-party download hosts — librewolf.dev's package registry, Floorp's GitHub releases — which
+can hiccup). LibreWolf's newest version is resolved from the Codeberg package registry; Floorp's
+stable `/releases/latest/download/` asset URL needs no lookup, so no manual step is required. The
+hard gate is Firefox stable across all three OSes + Firefox Developer Edition on Windows.
 
 ## What each test asserts
 

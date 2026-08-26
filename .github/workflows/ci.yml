@@ -12,6 +12,33 @@ permissions:
   contents: read
 
 jobs:
+  # ── Changed-paths filter ──────────────────────────────────────────────────
+  # Docs-only / tooling-only PRs skip the publish gate (`build`): nothing that
+  # gets packaged or built changed. `checks` and `ci-gate` always run, so the
+  # required checks never go missing. See docs/DEVELOPING.md → CI.
+  changes:
+    name: detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.filter.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            publish:
+              - 'core/**'
+              - 'config/installer.conf'
+              - 'installer/**'
+              - 'tools/publish/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yml'
+
   # Fast static gate: eslint (incl. security plugin) + prettier + clang-format
   # + the gcc -fanalyzer C analysis.  Runs on every PR and on main pushes.
   checks:
@@ -28,6 +55,8 @@ jobs:
   # the generated files, hashes and Makefile before they reach a release.
   build:
     name: publish gate — ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.publish == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -79,15 +108,23 @@ jobs:
     name: CI gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [checks, build]
+    needs: [changes, checks, build]
     steps:
       - name: Verify all CI jobs
         run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::changes job failed (${{ needs.changes.result }})"
+            exit 1
+          fi
           fail() { echo "::error::$1: $2"; exit 1; }
           ok()   { echo "$1: $2 (OK)"; }
           verify() {
             case "$2" in success) ok "$1" "$2" ;; *) fail "$1" "$2" ;; esac
           }
           verify 'checks' '${{ needs.checks.result }}'
-          verify 'build'   '${{ needs.build.result }}'
+          if [ "${{ needs.changes.outputs.publish }}" = "true" ]; then
+            verify 'build' '${{ needs.build.result }}'
+          else
+            echo 'publish gate: skipped — no publish-relevant changes (OK)'
+          fi
           echo 'All CI jobs passed'

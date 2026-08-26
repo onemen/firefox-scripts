@@ -281,6 +281,16 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
 - **Hash parity** (Windows) — `pnpm test:hash` verifies the JS and C installer hashes match, using
   the dev snapshot built by the publish gate (no second build).
 
+**PR path filtering** — the installer + updater E2E jobs (`.github/workflows/e2e.yml`) run only when
+a changed file can affect them (`core/**`, `config/installer.conf`, `installer/**`,
+`tools/publish/**`, `test/e2e/**`, `package.json`, `pnpm-lock.yaml`, the workflow/actions); the
+publish gate (`build` in `.github/workflows/ci.yml`) runs only when `core/**`,
+`config/installer.conf`, `installer/**`, `tools/publish/**`, `package.json`, `pnpm-lock.yaml`, or
+the workflow/actions changed. Docs-only / tooling-only PRs skip both, while `checks`, `ci-gate` and
+`e2e-gate` always run so the required checks keep reporting. The `browser-matrix` fork legs
+(LibreWolf, Floorp — downloaded from third-party hosts: librewolf.dev's package registry, Floorp's
+GitHub releases) are advisory: their failures warn in the gate instead of failing the PR.
+
 Run the smoke test locally (Windows, from the repo root):
 
 ```bash

@@ -147,8 +147,8 @@ export const BROWSERS = {
     choco: 'librewolf',
   },
   'floorp': {
-    // The NSIS installer (winget Ablaze.Floorp, machine scope) installs to
-    // 'C:\Program Files\Ablaze Floorp', not 'Floorp'.
+    // The NSIS installer installs to 'C:\Program Files\Ablaze Floorp', not
+    // 'Floorp'.
     win: ['Ablaze Floorp', 'floorp.exe'],
     mac: ['Floorp.app'],
     linux: ['floorp'],

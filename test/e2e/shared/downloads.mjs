@@ -36,11 +36,9 @@ import {discoverFirefoxBinary} from './browsers.mjs';
  *   into /Applications (macOS).
  * - {tarball, url} → download the official tarball and extract it; returns the
  *   binary path directly.
- * - {manager, args} → run a package manager (choco/winget/brew), then resolve the
- *   binary from the browser's known install dirs. Only used where the browser
- *   publishes no stable "latest" installer URL (forks whose release asset names
- *   embed the version). Retried 3× because third-party mirrors (e.g.
- *   librewolf.dev) 502 transiently.
+ * - {latest: {api, pick, url}, args} → resolve the newest version from a registry
+ *   API (e.g. LibreWolf's Gitea package list), build the installer URL from it,
+ *   then install — for forks that embed the version in the asset name.
  * - `manual: true` → no automated install; `page` is the official download page
  *   (informational, for the manual legs).
  *
@@ -81,29 +79,32 @@ export const DOWNLOADS = {
     manual: true,
     page: 'https://zen-browser.app/download/',
   },
+  // LibreWolf embeds the version in the download URL (Gitea generic-package
+  // registry on librewolf.dev), so resolve the newest version from the Codeberg
+  // packages API first — no package manager, no third-party mirror flakiness.
   'librewolf': {
     install: {
       win: {
-        manager: 'winget',
-        args: [
-          'install',
-          'LibreWolf.LibreWolf',
-          '--accept-package-agreements',
-          '--accept-source-agreements',
-        ],
+        latest: {
+          api: 'https://codeberg.org/api/v1/packages/librewolf',
+          // Gitea lists packages newest-first; the installer is the `generic`
+          // `librewolf` package (not `librewolf-source`).
+          pick: pkg => pkg.type === 'generic' && pkg.name === 'librewolf',
+          url: version =>
+            `https://librewolf.dev/api/packages/librewolf/generic/librewolf/${version}/librewolf-${version}-windows-x86_64-setup.exe`,
+        },
+        args: ['/S'], // NSIS silent install → Program Files\LibreWolf
       },
     },
   },
+  // Floorp keeps a stable asset name across releases, so GitHub's
+  // `/releases/latest/download/` redirect always resolves the newest installer
+  // without a version lookup.
   'floorp': {
     install: {
       win: {
-        manager: 'winget',
-        args: [
-          'install',
-          'Ablaze.Floorp',
-          '--accept-package-agreements',
-          '--accept-source-agreements',
-        ],
+        url: 'https://github.com/Floorp-Projects/Floorp/releases/latest/download/floorp-windows-x86_64.installer.exe',
+        args: ['/S'], // NSIS silent install → Program Files\Ablaze Floorp
       },
     },
   },
@@ -117,7 +118,7 @@ export function platformKey(platform = process.platform) {
 }
 
 /**
- * Resolve a browser's binary after a package-manager install, mirroring the
+ * Resolve a browser's binary after an installer run, mirroring the
  * candidate-dir search of discoverFirefoxBinary (real install dirs, never PATH
  * shims or app-execution aliases — their parent dir is not the browser's
  * GreD).
@@ -144,15 +145,16 @@ export function downloadDir() {
 }
 
 /**
- * Resolve a browser's download URL for a platform (the recipe's tarball or
- * installer URL) — used to key the CI download cache, since the URL embeds the
- * release version. Package-manager recipes have no download URL.
+ * Resolve a browser's download URL for a platform (the recipe's tarball,
+ * installer URL, or latest-resolved URL) — used to key the CI download cache,
+ * since the URL embeds the release version. `latest` recipes query their
+ * registry API, so this is async.
  *
  * @param {string} browser
  * @param {string} [platform] process.platform value (win32|darwin|linux)
- * @returns {string}
+ * @returns {Promise<string>}
  */
-export function resolveDownloadUrl(browser, platform = process.platform) {
+export async function resolveDownloadUrl(browser, platform = process.platform) {
   const key = platformKey(
     platform === 'win' ? 'win32'
     : platform === 'mac' ? 'darwin'
@@ -167,11 +169,30 @@ export function resolveDownloadUrl(browser, platform = process.platform) {
         : '')
     );
   }
-  const url = recipe.tarball || recipe.url;
-  if (!url) {
-    throw new Error(`${browser} installs via a package manager — no download URL to cache`);
+  if (recipe.latest) return resolveLatestUrl(recipe.latest);
+  return recipe.tarball || recipe.url;
+}
+
+/**
+ * Resolve the newest download URL for a `{api, pick, url}` recipe: fetch the
+ * registry list (retrying), pick the newest matching package, and build the
+ * version-embedded installer URL.
+ *
+ * @param {{
+ *   api: string;
+ *   pick: (pkg: object) => boolean;
+ *   url: (version: string) => string;
+ * }} recipe
+ * @returns {Promise<string>}
+ */
+async function resolveLatestUrl({api, pick, url}) {
+  const res = await fetchWithRetry(api, 3);
+  const packages = await res.json();
+  const latest = packages.find(pick);
+  if (!latest) {
+    throw new Error(`no matching package found at ${api}`);
   }
-  return url;
+  return url(latest.version);
 }
 
 /** Download an official Mozilla tarball and extract it; returns the binary path. */
@@ -268,30 +289,6 @@ async function installDmg(url, appName) {
   }
 }
 
-function runManager(manager, args) {
-  // Package-manager installs hit third-party mirrors that can 502 transiently
-  // (e.g. librewolf.dev). Retry the whole install so a one-off upstream hiccup
-  // does not fail CI; browsers are idempotent to reinstall.
-  let lastErr;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      // execSync goes through the platform shell, so choco.bat / winget.exe /
-      // brew work the same on every OS.
-      execSync(`${manager} ${args.join(' ')}`, {stdio: 'inherit'});
-      return;
-    } catch (err) {
-      lastErr = err;
-      console.log(`  ${manager} attempt ${attempt}/3 failed: ${err.message}`);
-      if (attempt < 3) {
-        console.log('  retrying in 15s…');
-        // execSync blocks the event loop; sleep via node so it works on pwsh.
-        execSync('node -e "setTimeout(() => {}, 15000)"', {stdio: 'inherit'});
-      }
-    }
-  }
-  throw lastErr;
-}
-
 /**
  * Install a browser for a platform and return the resolved binary path.
  *
@@ -317,6 +314,17 @@ export async function installBrowser(browser, platform = process.platform) {
     console.log(`  ${browser} installed from official tarball: ${binary}`);
     return binary;
   }
+  if (recipe.latest && recipe.args) {
+    // Version-embedded installer URL (e.g. LibreWolf) — resolve the newest
+    // version first, then install like any other official installer.
+    const url = await resolveLatestUrl(recipe.latest);
+    await installInstaller(url, browser, recipe.args);
+    const binary = resolveBinary(browser);
+    if (!binary) {
+      throw new Error(`${browser} installer ran, but no binary found in known install dirs`);
+    }
+    return binary;
+  }
   if (recipe.url && recipe.args) {
     // Official installer (e.g. NSIS silent install on Windows).
     await installInstaller(recipe.url, browser, recipe.args);
@@ -335,14 +343,7 @@ export async function installBrowser(browser, platform = process.platform) {
     }
     return binary;
   }
-  runManager(recipe.manager, recipe.args);
-  const binary = resolveBinary(browser);
-  if (!binary) {
-    throw new Error(
-      `${browser} installed via ${recipe.manager}, but no binary found in known install dirs`
-    );
-  }
-  return binary;
+  throw new Error(`${browser} has no install recipe for ${key}`);
 }
 
 async function main() {
@@ -367,7 +368,7 @@ FIREFOX_BINARY via $GITHUB_ENV. With --url, prints the download URL instead
   if (args.includes('--url')) {
     // Print the exact download URL for this platform so the workflow can key
     // the CI download cache on it (the URL embeds the release version).
-    console.log(resolveDownloadUrl(browser, normalized));
+    console.log(await resolveDownloadUrl(browser, normalized));
     return;
   }
 

@@ -31,6 +31,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Changed-paths filter ──────────────────────────────────────────────────
+  # Docs-only / tooling-only PRs skip the installer + updater E2E jobs: nothing
+  # that builds or runs them changed. `snapshot` stays (browser-matrix needs
+  # it) and the always-running `e2e-gate` still reports, so the required check
+  # never goes missing. See docs/DEVELOPING.md → Continuous integration.
+  changes:
+    name: detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      e2e: ${{ steps.filter.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            e2e:
+              - 'core/**'
+              - 'config/installer.conf'
+              - 'installer/**'
+              - 'tools/publish/**'
+              - 'test/e2e/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - '.github/workflows/e2e.yml'
+              - '.github/actions/**'
+
   # ── Dev snapshot (built ONCE per run, shared across all updater legs) ────
   # The package zips + hashes.json are OS-independent, so one ubuntu build
   # serves every updater leg. A LOCAL-mode build bakes the BUILDER's dist dir
@@ -58,6 +87,8 @@ jobs:
   # ── Installer E2E ──────────────────────────────────────────────────────────
   installer:
     name: 'installer E2E · ${{ matrix.os }}'
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -102,7 +133,8 @@ jobs:
   # Every OS leg is required; the updater must work across the supported matrix.
   updater:
     name: 'updater E2E · ${{ matrix.os }}'
-    needs: snapshot
+    needs: [changes, snapshot]
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -190,8 +222,10 @@ jobs:
           if-no-files-found: ignore
 
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
-  # LibreWolf + Floorp install via winget. Firefox Dev Edition, Waterfox, and
-  # Zen require manual install.
+  # LibreWolf + Floorp download official installers directly: LibreWolf resolves
+  # its newest version from the Codeberg package registry, Floorp uses GitHub's
+  # stable `/releases/latest/download/` asset URL. Firefox Dev Edition, Waterfox,
+  # and Zen require manual install.
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
     needs: snapshot
@@ -240,17 +274,32 @@ jobs:
     name: E2E gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [installer, helper, updater, browser-matrix]
+    needs: [changes, installer, helper, updater, browser-matrix]
     steps:
       - name: Verify all E2E jobs
         run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::changes job failed (${{ needs.changes.result }})"
+            exit 1
+          fi
           fail() { echo "::error::$1: $2"; exit 1; }
           ok()   { echo "$1: $2 (OK)"; }
           verify() {
             case "$2" in success) ok "$1" "$2" ;; *) fail "$1" "$2" ;; esac
           }
-          verify 'installer' '${{ needs.installer.result }}'
           verify 'helper' '${{ needs.helper.result }}'
-          verify 'updater' '${{ needs.updater.result }}'
-          verify 'browser-matrix' '${{ needs.browser-matrix.result }}'
+          if [ "${{ needs.changes.outputs.e2e }}" = "true" ]; then
+            verify 'installer' '${{ needs.installer.result }}'
+            verify 'updater'   '${{ needs.updater.result }}'
+          else
+            echo 'installer + updater E2E: skipped — no E2E-relevant changes (OK)'
+          fi
+          # browser-matrix is ADVISORY (fork legs download from third-party
+          # hosts — librewolf.dev's package registry, Floorp's GitHub releases —
+          # which can hiccup; see docs/e2e-matrix-plan.md). Warn, don't fail the
+          # gate.
+          case "${{ needs.browser-matrix.result }}" in
+            success) ok 'browser-matrix' '${{ needs.browser-matrix.result }}' ;;
+            *) echo "::warning::browser-matrix ${{ needs.browser-matrix.result }} (advisory)" ;;
+          esac
           echo 'All E2E jobs passed'
