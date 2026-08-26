@@ -42,9 +42,9 @@ import {discoverFirefoxBinary} from './browsers.mjs';
  * - `manual: true` → no automated install; `page` is the official download page
  *   (informational, for the manual legs).
  *
- * The E2E workflow installs only what CI needs today (firefox, librewolf,
- * floorp); the other forks are documented here so adding a leg is a one-line
- * change, and they have no stable unattended install.
+ * The E2E workflow installs what CI needs today (firefox, firefox-dev,
+ * librewolf, floorp, zen); waterfox is documented here but has no stable
+ * unattended install (no release assets — see the URL watchdog).
  */
 export const DOWNLOADS = {
   'firefox': {
@@ -68,15 +68,31 @@ export const DOWNLOADS = {
     },
   },
   'firefox-dev': {
-    manual: true,
+    install: {
+      // Same stable Mozilla "latest" redirect as Firefox stable, dev channel.
+      win: {
+        url: 'https://download.mozilla.org/?product=firefox-devedition-latest&os=win64&lang=en-US',
+        args: ['/S'], // NSIS silent install → %LOCALAPPDATA%\Firefox Developer Edition
+      },
+    },
     page: 'https://www.mozilla.org/firefox/developer/',
   },
   'waterfox': {
+    // No stable installer URL: Waterfox publishes no release assets on GitHub
+    // (site-distributed), so it stays manual. The URL watchdog tracks its
+    // version via the GitHub API.
     manual: true,
     page: 'https://www.waterfox.net/download/',
   },
+  // Zen keeps a stable asset name across releases, so GitHub's
+  // `/releases/latest/download/` redirect always resolves the newest installer.
   'zen': {
-    manual: true,
+    install: {
+      win: {
+        url: 'https://github.com/zen-browser/desktop/releases/latest/download/zen.installer.exe',
+        args: ['/S'], // NSIS silent install → %LOCALAPPDATA%\Zen Browser
+      },
+    },
     page: 'https://zen-browser.app/download/',
   },
   // LibreWolf embeds the version in the download URL (Gitea generic-package

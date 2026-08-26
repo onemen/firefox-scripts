@@ -18,25 +18,27 @@ geckodriver uses by default for recent builds.
 
 ## Matrix
 
-| Browser                   | OS      | Runner                 | Status                  |
-| ------------------------- | ------- | ---------------------- | ----------------------- |
-| Firefox stable            | Windows | `windows-latest`       | Hard gate               |
-| Firefox stable            | macOS   | `macos-latest`         | Hard gate               |
-| Firefox stable            | Linux   | `ubuntu-latest` (xvfb) | Hard gate               |
-| Firefox Developer Edition | Windows | `windows-latest`       | Hard gate               |
-| Firefox Developer Edition | macOS   | `macos-latest`         | Advisory (no brew cask) |
-| Firefox Developer Edition | Linux   | `ubuntu-latest` (xvfb) | Advisory                |
-| Waterfox                  | Windows | `windows-latest`       | Advisory                |
-| Waterfox                  | macOS   | `macos-latest`         | Advisory                |
-| Zen Browser               | Windows | `windows-latest`       | Advisory                |
-| LibreWolf                 | Windows | `windows-latest`       | Advisory                |
-| Floorp                    | Windows | `windows-latest`       | Advisory                |
+| Browser                   | OS      | Runner                 | Status                            |
+| ------------------------- | ------- | ---------------------- | --------------------------------- |
+| Firefox stable            | Windows | `windows-latest`       | Hard gate                         |
+| Firefox stable            | macOS   | `macos-latest`         | Hard gate                         |
+| Firefox stable            | Linux   | `ubuntu-latest` (xvfb) | Hard gate                         |
+| Firefox Developer Edition | Windows | `windows-latest`       | Advisory (browser-matrix leg)     |
+| Firefox Developer Edition | macOS   | `macos-latest`         | Advisory (no brew cask)           |
+| Firefox Developer Edition | Linux   | `ubuntu-latest` (xvfb) | Advisory                          |
+| Waterfox                  | Windows | `windows-latest`       | Advisory (no direct URL — manual) |
+| Waterfox                  | macOS   | `macos-latest`         | Advisory                          |
+| Zen Browser               | Windows | `windows-latest`       | Advisory (browser-matrix leg)     |
+| LibreWolf                 | Windows | `windows-latest`       | Advisory (browser-matrix leg)     |
+| Floorp                    | Windows | `windows-latest`       | Advisory (browser-matrix leg)     |
 
-**Advisory** = the E2E gate reports a warning instead of failing the PR (LibreWolf / Floorp install
-from third-party download hosts — librewolf.dev's package registry, Floorp's GitHub releases — which
-can hiccup). LibreWolf's newest version is resolved from the Codeberg package registry; Floorp's
-stable `/releases/latest/download/` asset URL needs no lookup, so no manual step is required. The
-hard gate is Firefox stable across all three OSes + Firefox Developer Edition on Windows.
+**Advisory** = the E2E gate reports a warning instead of failing the PR. The `browser-matrix` legs
+(Firefox Dev Edition, LibreWolf, Floorp, Zen) download official installers directly from third-party
+hosts — Mozilla's devedition redirect, librewolf.dev's package registry, GitHub release assets —
+which can hiccup. LibreWolf's newest version is resolved from the Codeberg package registry; Floorp
+and Zen use stable `/releases/latest/download/` asset URLs. Waterfox has no direct URL (no GitHub
+release assets), so its leg stays manual and the URL watchdog tracks its version only. The hard gate
+is Firefox stable across all three OSes.
 
 ## What each test asserts
 

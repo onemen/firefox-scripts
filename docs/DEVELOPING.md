@@ -292,9 +292,11 @@ a changed file can affect them (`core/**`, `config/installer.conf`, `installer/*
 publish gate (`build` in `.github/workflows/ci.yml`) runs only when `core/**`,
 `config/installer.conf`, `installer/**`, `tools/publish/**`, `package.json`, `pnpm-lock.yaml`, or
 the workflow/actions changed. Docs-only / tooling-only PRs skip both, while `checks`, `ci-gate` and
-`e2e-gate` always run so the required checks keep reporting. The `browser-matrix` fork legs
-(LibreWolf, Floorp — downloaded from third-party hosts: librewolf.dev's package registry, Floorp's
-GitHub releases) are advisory: their failures warn in the gate instead of failing the PR.
+`e2e-gate` always run so the required checks keep reporting. The `browser-matrix` legs (Firefox Dev
+Edition, LibreWolf, Floorp, Zen — downloaded from third-party hosts: Mozilla's redirect,
+librewolf.dev's package registry, GitHub release assets) are advisory: their failures warn in the
+gate instead of failing the PR. Waterfox has no direct download URL and stays manual (tracked by
+version only in the URL watchdog).
 
 Run the smoke test locally (Windows, from the repo root):
 

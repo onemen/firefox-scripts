@@ -222,10 +222,11 @@ jobs:
           if-no-files-found: ignore
 
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
-  # LibreWolf + Floorp download official installers directly: LibreWolf resolves
-  # its newest version from the Codeberg package registry, Floorp uses GitHub's
-  # stable `/releases/latest/download/` asset URL. Firefox Dev Edition, Waterfox,
-  # and Zen require manual install.
+  # Each browser downloads an official installer directly: LibreWolf resolves
+  # its newest version from the Codeberg package registry; Floorp and Zen use
+  # GitHub's stable `/releases/latest/download/` asset URLs; Firefox Dev Edition
+  # uses Mozilla's stable devedition redirect. Waterfox stays manual (no
+  # release assets — tracked by the URL watchdog).
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
     needs: snapshot
@@ -233,7 +234,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [librewolf, floorp]
+        browser: [librewolf, floorp, firefox-dev, zen]
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
