@@ -22,7 +22,9 @@
  *        flag a size change (binary replaced without a bump).
  *   4. ISSUES — new versions, rot, and same-version size changes open a GitHub
  *        issue, deduped per browser (the exact issue title is matched against
- *        open issues carrying the `url-watchdog` label).
+ *        open issues carrying the `url-watchdog` label). New-release issues
+ *        carry the verified SHA-256 + size — the durable ledger (search
+ *        `label:url-watchdog` for the record of any release).
  * - PR (pull_request touching the download map): stateless and always green —
  *   findings surface as ::warning:: / ::notice:: annotations, so the check can
  *   be marked required without ever blocking. No baseline, no issues, no full
@@ -216,6 +218,50 @@ export function issueTitle(kind, browser, {prevVersion, newVersion, reason} = {}
   return `[url-watchdog] ${browser} ${prevVersion} → ${newVersion}`;
 }
 
+/**
+ * Markdown body for a watchdog issue. New-release bodies carry the verified
+ * SHA-256 + size — the durable ledger record for that browser/version.
+ *
+ * @param {{
+ *   kind: string;
+ *   browser: string;
+ *   reason?: string;
+ *   prevVersion?: string;
+ *   newVersion?: string;
+ *   prevSize?: number;
+ *   newSize?: number;
+ *   size?: number;
+ *   sha256?: string;
+ * }} f
+ * @param {string} runUrl
+ */
+export function issueBody(f, runUrl = 'local') {
+  const head = `Watchdog run: ${runUrl}\n\n`;
+  if (f.kind === 'rot') {
+    return (
+      head +
+      `The ${f.browser} download chain failed:\n\n- ${f.reason}\n\n` +
+      'Check test/e2e/shared/downloads.mjs and the vendor host; E2E CI installs ' +
+      'this browser from the resolved URL.'
+    );
+  }
+  if (f.kind === 'size-change') {
+    return (
+      head +
+      `The ${f.browser} installer changed size without a version bump ` +
+      `(${f.prevSize} → ${f.newSize} bytes). The host likely replaced the binary ` +
+      '— verify it is still the official release.'
+    );
+  }
+  return (
+    head +
+    `New ${f.browser} release: ${f.prevVersion} → ${f.newVersion}.\n\n` +
+    `Verified SHA-256 (${f.size} bytes): \`${f.sha256}\`\n\n` +
+    'No action required unless E2E CI starts failing; the version-aware ' +
+    'download cache key will invalidate on the next run.'
+  );
+}
+
 /** Minimal GitHub REST helper (issues only). */
 async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   const res = await fetch(`https://api.github.com${pathname}`, {
@@ -348,6 +394,8 @@ export async function main() {
           browser,
           prevVersion: prev.version,
           newVersion: version,
+          size: verified.size,
+          sha256: verified.sha256,
         });
       } else {
         console.log('  first run — baseline recorded');
@@ -386,19 +434,7 @@ export async function main() {
       console.log(`::${level} file=tools/check-browser-downloads.mjs::${msg}`);
       continue;
     }
-    const body =
-      `Watchdog run: ${runUrl || 'local'}\n\n` +
-      (f.kind === 'rot' ?
-        `The ${f.browser} download chain failed:\n\n- ${f.reason}\n\n` +
-        'Check test/e2e/shared/downloads.mjs and the vendor host; E2E CI installs ' +
-        'this browser from the resolved URL.'
-      : f.kind === 'size-change' ?
-        `The ${f.browser} installer changed size without a version bump ` +
-        `(${f.prevSize} → ${f.newSize} bytes). The host likely replaced the binary ` +
-        '— verify it is still the official release.'
-      : `New ${f.browser} release: ${f.prevVersion} → ${f.newVersion}.\n\n` +
-        'No action required unless E2E CI starts failing; the version-aware ' +
-        'download cache key will invalidate on the next run.');
+    const body = issueBody(f, runUrl || 'local');
     if (dryRun || !token) {
       console.log(`\n${dryRun ? '[dry-run] ' : '[no GITHUB_TOKEN] '}would open: ${title}`);
       continue;

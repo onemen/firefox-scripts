@@ -280,11 +280,14 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
   token, valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`.
 - **Hash parity** (Windows) — `pnpm test:hash` verifies the JS and C installer hashes match, using
   the dev snapshot built by the publish gate (no second build).
-- **URL watchdog** (`.github/workflows/url-watchdog.yml`, weekly) — re-resolves the latest version
-  of every browser the E2E map installs (Firefox, LibreWolf, Floorp) from its vendor API and
-  verifies the download endpoint with a 1 KB ranged GET. Opens an issue on rot (404, HTML error
-  page, changed API shape) or a new release. Run manually via `workflow_dispatch`, or locally with
-  `node tools/check-browser-downloads.mjs --dry-run`.
+- **URL watchdog** (`.github/workflows/url-watchdog.yml`, weekly + on PRs touching the download map)
+  — re-resolves the latest version of every browser the E2E map installs (Firefox, Dev Edition,
+  LibreWolf, Floorp, Zen; Waterfox tracked by version only) from its vendor API and verifies the
+  download endpoint with a 1 KB ranged GET. Each new release is downloaded once, SHA-256'd and
+  recorded in the per-release watchdog issue (`label:url-watchdog`) — the durable ledger. Opens
+  issues on rot (404, HTML error page, changed API shape) and same-version binary size changes. The
+  PR mode (`--pr`) is stateless, always green, and surfaces findings as annotations. Run manually
+  via `workflow_dispatch`, or locally with `node tools/check-browser-downloads.mjs --dry-run`.
 
 **PR path filtering** — the installer + updater E2E jobs (`.github/workflows/e2e.yml`) run only when
 a changed file can affect them (`core/**`, `config/installer.conf`, `installer/**`,

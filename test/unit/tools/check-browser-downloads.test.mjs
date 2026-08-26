@@ -12,7 +12,9 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-browser-downloads.mjs')).href;
-const {compareBaseline, issueTitle, parseContentRange, sha256File} = await import(scriptUrl);
+const {compareBaseline, issueBody, issueTitle, parseContentRange, sha256File} = await import(
+  scriptUrl
+);
 
 test('compareBaseline: first run, new version, unchanged', () => {
   assert.equal(compareBaseline(null, {version: '154.0.1'}), 'first-run');
@@ -33,6 +35,23 @@ test('issueTitle: rot, new-version and size-change titles are dedup keys', () =>
     issueTitle('size-change', 'zen'),
     '[url-watchdog] zen same version, binary size changed'
   );
+});
+
+test('issueBody: new-version body carries the verified SHA-256 ledger', () => {
+  const body = issueBody(
+    {
+      kind: 'new-version',
+      browser: 'librewolf',
+      prevVersion: '154.0-2',
+      newVersion: '154.0.1-2',
+      size: 153225824,
+      sha256: 'ec27c770aa951b8f11541ce5c4fa2d15ec8d7fe613662505ce9ab00b196a100e',
+    },
+    'https://github.com/onemen/firefox-scripts/actions/runs/1'
+  );
+  assert.match(body, /Watchdog run: https:\/\/github\.com/);
+  assert.match(body, /New librewolf release: 154\.0-2 → 154\.0\.1-2/);
+  assert.match(body, /Verified SHA-256 \(153225824 bytes\): `ec27c770aa/);
 });
 
 test('parseContentRange: total size or null', () => {
