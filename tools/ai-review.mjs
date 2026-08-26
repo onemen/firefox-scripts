@@ -1,0 +1,375 @@
+// tools/ai-review.mjs — advisory AI code reviewer for PR diffs.
+//
+// Runs a model against each changed file's diff (per-file, chunked, with
+// rate-limit backoff) and writes two artifacts:
+//   - reviewdog RDJSON diagnostics (fed to `reviewdog -f=rdjson` in CI)
+//   - a markdown summary comment (posted/updated in place by the workflow)
+//
+// Designed to be driven by .github/workflows/ai-review.yml with flags, so
+// swapping models/providers or switching modes never requires editing YAML:
+//
+//   node tools/ai-review.mjs --provider groq --max-findings 10
+//
+// Flags:
+//   --provider <name>   Provider to use (default: groq). Repeatable — the
+//                       first provider with a configured key wins.
+//   --model <name>      Override the provider's default model.
+//   --base-ref <ref>    Base ref for the diff (default: $BASE_REF env).
+//   --head-ref <ref>    Head ref (default: $HEAD_REF env or HEAD).
+//   --max-findings N    Cap on total findings written to RDJSON (default 10).
+//   --max-files N       Cap on files reviewed per run (default 30).
+//   --max-diff-chars N  Per-file diff size cap for the token budget (default 8000).
+//   --summary-only      Write the summary but emit an empty diagnostics set.
+//   --dry-run           Print what would be reviewed without calling any API.
+//   --out <dir>         Output directory (default dist/review).
+//
+// The script is intentionally fail-soft: a provider failure for one file is
+// recorded in the summary and the run continues. Exit code 0 even when the
+// provider is down — this is an advisory reviewer, never a required check.
+
+import {execFileSync} from 'node:child_process';
+import {mkdir, writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+
+const PROVIDERS = {
+  groq: {
+    key: process.env.GROQ_API_KEY,
+    model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+  },
+  openrouter: {
+    key: process.env.OPENROUTER_API_KEY,
+    model: process.env.OPENROUTER_MODEL || 'openrouter/free',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+  },
+};
+
+const DEFAULT_SYSTEM_PROMPT = `You are a senior software engineer reviewing a pull request diff.
+Return ONLY a JSON object (no markdown, no code fences) with this shape:
+{"summary": "2-3 sentence overall assessment of the changes", "findings": [{"line": <int, line number in the NEW file>, "severity": "error"|"warning"|"info", "message": "what is wrong and why", "suggestion": "concrete fix (optional)"}]}
+Rules:
+- "line" must be the line number in the new (target) version of the file.
+- severity: error = bug/security/regression; warning = likely bug or footgun; info = minor.
+- Report only real problems — no style nits, no noise.
+- If the changes are fine, return {"summary": "No issues found.", "findings": []}`;
+
+export function parseArgs(argv) {
+  const args = {
+    providers: ['groq'],
+    model: null,
+    baseRef: process.env.BASE_REF,
+    headRef: process.env.HEAD_REF || 'HEAD',
+    maxFindings: 10,
+    maxFiles: 30,
+    maxDiffChars: 8000,
+    summaryOnly: false,
+    dryRun: false,
+    out: join(process.cwd(), 'dist', 'review'),
+    name: 'AI review',
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    const value = () => argv[++i];
+    switch (arg) {
+      case '--provider':
+        args.providers.push(value());
+        break;
+      case '--model':
+        args.model = value();
+        break;
+      case '--base-ref':
+        args.baseRef = value();
+        break;
+      case '--head-ref':
+        args.headRef = value();
+        break;
+      case '--max-findings':
+        args.maxFindings = Number(value());
+        break;
+      case '--max-files':
+        args.maxFiles = Number(value());
+        break;
+      case '--max-diff-chars':
+        args.maxDiffChars = Number(value());
+        break;
+      case '--summary-only':
+        args.summaryOnly = true;
+        break;
+      case '--dry-run':
+        args.dryRun = true;
+        break;
+      case '--out':
+        args.out = value();
+        break;
+      case '--name':
+        args.name = value();
+        break;
+      default:
+        throw new Error(`Unknown flag: ${arg}`);
+    }
+  }
+  return args;
+}
+
+export function classifyStatus(status) {
+  return status === 0 || status === 408 || status === 429 || status >= 500 ?
+      'transient'
+    : 'permanent';
+}
+
+export function isRetryable(status) {
+  return classifyStatus(status) === 'transient';
+}
+
+export function normalizeFinding(finding, file) {
+  const severity = String(finding?.severity || 'info').toLowerCase();
+  const line = Math.max(1, Number.parseInt(finding?.line, 10) || 1);
+  return {
+    message:
+      String(finding?.message || '') +
+      (finding?.suggestion ? `\n\nSuggestion: ${String(finding.suggestion)}` : ''),
+    severity:
+      /^(error|critical|fatal)/.test(severity) ? 'ERROR'
+      : /^warn/.test(severity) ? 'WARNING'
+      : 'INFO',
+    location: {path: file, range: {start: {line}}},
+  };
+}
+
+export async function request(provider, body) {
+  let delay = 2000;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(provider.endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${provider.key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(90_000),
+      });
+      if (response.ok) return {kind: 'success', body: await response.json()};
+      if (!isRetryable(response.status)) {
+        let detail = '';
+        try {
+          const errorBody = await response.json();
+          detail = errorBody?.error?.message || errorBody?.message || '';
+        } catch {
+          // Some provider errors have an empty or non-JSON response body.
+        }
+        return {
+          kind: 'permanent',
+          status: response.status,
+          reason:
+            response.status === 401 ?
+              'authentication failed (check the key and provider)'
+            : 'provider rejected the request',
+          detail: detail.slice(0, 300),
+        };
+      }
+      const retryAfter = Number(response.headers.get('retry-after'));
+      await new Promise(resolve =>
+        setTimeout(
+          resolve,
+          Math.min(Number.isFinite(retryAfter) ? retryAfter * 1000 : delay, 30_000)
+        )
+      );
+      delay = Math.min(delay * 2, 16_000);
+    } catch {
+      if (attempt === 2) return {kind: 'transient', status: 0};
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, 16_000);
+    }
+  }
+  return {kind: 'transient', status: 0};
+}
+
+function changedFiles(baseRef, headRef, maxFiles) {
+  return execFileSync('git', ['diff', `${baseRef}...${headRef}`, '--name-only', '-z'], {
+    encoding: 'utf8',
+  })
+    .split('\0')
+    .filter(file => file && !file.startsWith('dist/') && !file.startsWith('docs/local_plan/'))
+    .slice(0, maxFiles);
+}
+
+function fileDiff(baseRef, headRef, file) {
+  return execFileSync('git', ['diff', `${baseRef}...${headRef}`, '--no-ext-diff', '--', file], {
+    encoding: 'utf8',
+  });
+}
+
+function truncateDiff(diff, maxChars) {
+  return diff.length > maxChars ?
+      `${diff.slice(0, maxChars)}\n\n[...diff truncated at ${maxChars} chars for token budget]`
+    : diff;
+}
+
+function availableProviders(args) {
+  const seen = new Set();
+  const available = [];
+  for (const name of args.providers) {
+    const provider = PROVIDERS[name];
+    if (!provider) throw new Error(`Unknown provider: ${name}`);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if (!provider.key) continue;
+    available.push({
+      name,
+      key: provider.key,
+      model: args.model || provider.model,
+      endpoint: provider.endpoint,
+    });
+  }
+  return available;
+}
+
+// Review a list of files with the given providers, calling requestImpl for
+// each file (injectable for tests). Returns diagnostics + per-file summaries.
+export async function reviewFiles({
+  files,
+  fileDiffs,
+  providers,
+  maxDiffChars = 8000,
+  maxFindings = 10,
+  summaryOnly = false,
+  name = 'AI review',
+  requestImpl = request,
+}) {
+  const diagnostics = [];
+  const summaries = [];
+  let rateLimited = false;
+  for (const file of files) {
+    if (rateLimited) {
+      summaries.push('> Groq rate limit exhausted; remaining files were skipped.');
+      break;
+    }
+    const diff = fileDiffs?.get(file) ?? '';
+    if (!diff || diff.startsWith('Binary files')) continue;
+
+    const prompt = truncateDiff(diff, maxDiffChars);
+    let result;
+    let providerName = 'none';
+    let providerFailure;
+    for (const provider of providers) {
+      const outcome = await requestImpl(provider, {
+        model: provider.model,
+        temperature: 0.2,
+        response_format: {type: 'json_object'},
+        messages: [
+          {role: 'system', content: DEFAULT_SYSTEM_PROMPT},
+          {role: 'user', content: `Review the diff of ${file}:\n\n${prompt}`},
+        ],
+      });
+      if (outcome.kind === 'success') {
+        result = outcome.body;
+        providerName = provider.name;
+        break;
+      }
+      providerFailure = outcome;
+      if (outcome.kind === 'permanent' && outcome.status !== 404) break;
+    }
+    if (!result) {
+      const reason =
+        providerFailure?.kind === 'permanent' ?
+          `${providerFailure.reason} (HTTP ${providerFailure.status}${providerFailure.detail ? `: ${providerFailure.detail}` : ''})`
+        : 'transient providers unavailable';
+      summaries.push(`⚠️ \`${file}\` — no provider completed the review (${reason}); skipped.`);
+      if (providerFailure?.status === 429) rateLimited = true;
+      continue;
+    }
+    const content = result.choices?.[0]?.message?.content;
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      summaries.push(
+        `### \`${file}\` — ${providerName}\nModel returned invalid JSON; findings skipped.`
+      );
+      continue;
+    }
+    summaries.push(
+      `### \`${file}\` — ${providerName}\n${parsed.summary || 'No summary provided.'}`
+    );
+    for (const finding of parsed.findings || []) {
+      const normalized = normalizeFinding(finding, file);
+      if (normalized.message.trim()) diagnostics.push(normalized);
+    }
+  }
+  const finalDiagnostics = summaryOnly ? [] : diagnostics.slice(0, maxFindings);
+  return {
+    rdjson: {source: {name}, diagnostics: finalDiagnostics},
+    summary: summaries,
+    totalFindings: diagnostics.length,
+  };
+}
+
+export async function runReview(args = parseArgs(process.argv.slice(2))) {
+  if (!args.baseRef) throw new Error('BASE_REF is required (--base-ref or $BASE_REF)');
+  const providers = availableProviders(args);
+  if (args.dryRun) {
+    const files = changedFiles(args.baseRef, args.headRef, args.maxFiles);
+    return {
+      dryRun: true,
+      files,
+      providers: providers.map(p => `${p.name} (${p.model})`),
+      rdjson: {source: {name: args.name}, diagnostics: []},
+      summary: files.map(file => `### \`${file}\`\n(dry run — not reviewed)`),
+    };
+  }
+  if (providers.length === 0) {
+    throw new Error('No provider keys configured. Set GROQ_API_KEY and/or OPENROUTER_API_KEY.');
+  }
+  const files = changedFiles(args.baseRef, args.headRef, args.maxFiles);
+  const fileDiffs = new Map(files.map(file => [file, fileDiff(args.baseRef, args.headRef, file)]));
+  const result = await reviewFiles({
+    files,
+    fileDiffs,
+    providers,
+    maxDiffChars: args.maxDiffChars,
+    maxFindings: args.maxFindings,
+    summaryOnly: args.summaryOnly,
+    name: args.name,
+  });
+  return {dryRun: false, ...result};
+}
+
+export async function writeArtifacts(args, result) {
+  await mkdir(args.out, {recursive: true});
+  const rdjsonPath = join(args.out, 'ai-review-rd.json');
+  const summaryPath = join(args.out, 'ai-review-summary.md');
+  await writeFile(rdjsonPath, `${JSON.stringify(result.rdjson)}\n`);
+  const lines = [
+    '<!-- ai-review:summary -->',
+    '## 🤖 AI review (advisory)',
+    '',
+    `Model: ${result.providers?.join(', ') || 'see per-file notes'} · findings: ${result.totalFindings ?? result.rdjson.diagnostics.length}`,
+    '',
+    ...result.summary,
+    '',
+    '> Advisory only — this review never blocks the merge. Provider free-tier limits apply.',
+    '',
+  ];
+  await writeFile(summaryPath, lines.join('\n'));
+  return {rdjsonPath, summaryPath};
+}
+
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  const args = parseArgs(process.argv.slice(2));
+  console.log(
+    `AI review: providers=${args.providers.join('+')} base=${args.baseRef || '(missing)'} head=${args.headRef}`
+  );
+  const result = await runReview(args);
+  const {rdjsonPath, summaryPath} = await writeArtifacts(args, result);
+  if (result.dryRun) {
+    console.log(
+      `Dry run: ${result.files.length} file(s) would be reviewed by ${result.providers.join(', ')}`
+    );
+  } else {
+    console.log(
+      `Reviewed ${result.summary.length} file(s); ${result.totalFindings} finding(s) (${result.rdjson.diagnostics.length} posted).`
+    );
+  }
+  console.log(`Wrote ${rdjsonPath} and ${summaryPath}`);
+}

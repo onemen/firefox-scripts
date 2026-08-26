@@ -5,11 +5,10 @@
 # duplicated). Deliberately NOT a required check: if the Groq API is down or
 # the key is missing, the job is skipped and merges are unaffected.
 #
-# Model: openai/gpt-oss-120b by default (131k context, JSON mode). Alternatives
-# to consider — groq/compound, qwen/qwen3.6-27b — and current rate limits:
-# https://console.groq.com/docs/models. Free tier is ~30 RPM and ~8k tokens/min
-# on this model, so per-file diffs are capped small and 429s are retried with
-# backoff honoring Groq's Retry-After header.
+# The review logic lives in tools/ai-review.mjs (testable, flag-driven) — this
+# workflow only runs it and posts the artifacts. To swap models/providers,
+# change GROQ_MODEL or pass --provider/--model flags to the script; no YAML
+# changes needed.
 #
 # Stacked PRs: github.base_ref is the PREVIOUS PR's branch, not main. The
 # three-dot range origin/$base...HEAD isolates exactly this PR's layer.
@@ -28,27 +27,28 @@ permissions:
   contents: read
   pull-requests: write # inline review comments + summary comment
 
+env:
+  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+  GROQ_MODEL: openai/gpt-oss-120b
+  # Keep per-request size well under the free-tier TPM budget (8k tokens/min
+  # on this model): ~8k chars ≈ 2k tokens per request.
+  MAX_DIFF_CHARS: '8000'
+  MAX_FINDINGS: '10'
+  MAX_FILES: '30'
+  BASE_REF: ${{ github.base_ref }}
+  HEAD_REF: ${{ github.head_ref }}
+  # gh, reviewdog, and the script all read the runner token explicitly.
+  GH_TOKEN: ${{ github.token }}
+  GITHUB_TOKEN: ${{ github.token }}
+  REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+  # Pinned sha256 of reviewdog_0.21.0_Linux_x86_64.tar.gz (from the release's
+  # checksums.txt) — verified before extraction.
+  REVIEWDOG_SHA256: ad5ce7d5ffa52aaa7ec8710a8fa764181b6cecaab843cc791e1cce1680381569
+
 jobs:
   review:
     name: Groq AI review
     runs-on: ubuntu-latest
-    env:
-      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      GROQ_MODEL: openai/gpt-oss-120b
-      # Keep per-request size well under the free-tier TPM budget (8k
-      # tokens/min on this model): ~8k chars ≈ 2k tokens per request.
-      MAX_DIFF_CHARS: '8000'
-      MAX_FINDINGS: '10'
-      BASE_REF: ${{ github.base_ref }}
-      HEAD_REF: ${{ github.head_ref }}
-      # gh and reviewdog do not auto-read the runner token — both need it
-      # explicitly to post comments.
-      GH_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
-      # Pinned sha256 of reviewdog_0.21.0_Linux_x86_64.tar.gz (from the
-      # release's checksums.txt) — verified before extraction.
-      REVIEWDOG_SHA256: ad5ce7d5ffa52aaa7ec8710a8fa764181b6cecaab843cc791e1cce1680381569
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ env.GROQ_API_KEY != '' }}
@@ -59,186 +59,16 @@ jobs:
         if: ${{ env.GROQ_API_KEY != '' }}
         run: git fetch origin "$BASE_REF"
 
-      - name: Review changed files (per-file chunked Groq calls)
+      - name: Run AI review
         id: review
         if: ${{ env.GROQ_API_KEY != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          BASE="origin/$BASE_REF"
-
-          : > /tmp/findings.ndjson
-          : > /tmp/summary.md
-          echo '<!-- groq-ai-review:summary -->' >> /tmp/summary.md
-          echo '## 🤖 Groq AI review (advisory)' >> /tmp/summary.md
-          echo '' >> /tmp/summary.md
-          echo "Model: \`$GROQ_MODEL\` · diff: \`$BASE_REF...$HEAD_REF\`" >> /tmp/summary.md
-          echo '' >> /tmp/summary.md
-
-          total_findings=0
-          reviewed_files=0
-          rate_limited=0 # circuit breaker: once 429s exhaust a file, skip the rest
-
-          SYSTEM_PROMPT='You are a senior software engineer reviewing a pull request diff.
-          Return ONLY a JSON object (no markdown, no code fences) with this shape:
-          {"summary": "2-3 sentence overall assessment of the changes", "findings": [{"line": <int, line number in the NEW file>, "severity": "error"|"warning"|"info", "message": "what is wrong and why", "suggestion": "concrete fix (optional)"}]}
-          Rules:
-          - "line" must be the line number in the new (target) version of the file.
-          - severity: error = bug/security/regression; warning = likely bug or footgun; info = minor.
-          - Report only real problems — no style nits, no noise. At most 10 findings.
-          - If the changes are fine, return {"summary": "No issues found.", "findings": []}'
-
-          while IFS= read -r -d '' file; do
-            # Skip paths excluded in .coderabbit.yaml. Gitignored today, but
-            # keeps the workflow self-consistent if the ignore set changes.
-            case "$file" in
-              dist/*|docs/local_plan/*) continue ;;
-            esac
-
-            # Skip empty/binary diffs.
-            diff_text="$(git diff "$BASE...HEAD" --no-ext-diff -- "$file" || true)"
-            if [ -z "$diff_text" ] || printf '%s' "$diff_text" | grep -q '^Binary files'; then
-              continue
-            fi
-
-            # Bound the number of files per run (free-tier RPM safety). Count
-            # only files with an eligible text diff so excluded/binary/empty
-            # files cannot consume the cap.
-            if [ "$reviewed_files" -ge 30 ]; then
-              echo '> Reached the 30-file cap; remaining files were not reviewed.' >> /tmp/summary.md
-              break
-            fi
-            reviewed_files=$((reviewed_files + 1))
-
-            # Circuit breaker: if any file exhausted its retries with 429, the
-            # daily/minute budget is gone — stop hammering and skip the rest.
-            if [ "$rate_limited" = "1" ]; then
-              echo '> Groq rate limit exhausted; remaining files were skipped.' >> /tmp/summary.md
-              break
-            fi
-
-            # Cap per-file diff size (token budget). Truncation is flagged so
-            # the model knows the diff is partial.
-            if [ "${#diff_text}" -gt "$MAX_DIFF_CHARS" ]; then
-              diff_text="${diff_text:0:$MAX_DIFF_CHARS}"
-              trunc_note=$'\n\n[...diff truncated at '"$MAX_DIFF_CHARS"' chars for token budget]'
-              diff_text="$diff_text$trunc_note"
-            fi
-
-            # Build the payload with jq so no manual escaping is needed.
-            jq -n \
-              --arg model "$GROQ_MODEL" \
-              --arg system "$SYSTEM_PROMPT" \
-              --arg file "$file" \
-              --arg diff "$diff_text" \
-              '{model: $model, temperature: 0.2, response_format: {type: "json_object"}, messages: [{role: "system", content: $system}, {role: "user", content: ("Review the diff of " + $file + ":\n\n" + $diff)}]}' \
-              > /tmp/payload.json
-
-            # Call Groq with retry-on-rate-limit backoff; a failure must never
-            # fail the job (insurance). Free-tier TPM is easy to hit on a
-            # multi-file PR, so honor Groq's Retry-After header before retrying.
-            # --max-time bounds a hung connection (no curl default timeout);
-            # the sleep is capped at 60s so a huge Retry-After value (or a
-            # non-numeric date form) can never stall the job.
-            http_code=000
-            attempt=0
-            while [ "$http_code" != "200" ] && [ "$attempt" -lt 3 ]; do
-              attempt=$((attempt + 1))
-              http_code="$(curl -sS --connect-timeout 10 --max-time 90 \
-                -o /tmp/groq.json -D /tmp/groq.headers -w '%{http_code}' \
-                -X POST https://api.groq.com/openai/v1/chat/completions \
-                -H "Authorization: Bearer $GROQ_API_KEY" \
-                -H 'Content-Type: application/json' \
-                -d @/tmp/payload.json || true)"
-              if [ "$http_code" = "200" ]; then
-                break
-              fi
-              # Don't retry permanent failures — only 429 (rate limit),
-              # 5xx (server transient), and 000 (connection failure) are
-              # worth retrying. Permanent 4xx (400/401/403/404) mean the
-              # request is fundamentally broken — skip immediately.
-              if [ "$http_code" != "429" ] && \
-                  ! echo "$http_code" | grep -qE '^(5[0-9]{2}|000)$'; then
-                break
-              fi
-              wait_s="$(awk 'tolower($1) == "retry-after:" {gsub("\r", "", $2); print $2}' \
-                /tmp/groq.headers 2>/dev/null || true)"
-              case "$wait_s" in
-                ''|*[!0-9]*) wait_s=60 ;;
-              esac
-              [ "$wait_s" -gt 60 ] && wait_s=60
-              echo "  ($file: HTTP $http_code — retrying in ${wait_s}s)"
-              sleep "$wait_s"
-            done
-
-            if [ "$http_code" != "200" ]; then
-              echo "⚠️ \`$file\` — Groq API returned HTTP $http_code (skipped)." >> /tmp/summary.md
-              [ "$http_code" = "429" ] && rate_limited=1
-              sleep 1
-              continue
-            fi
-
-            content="$(jq -r '.choices[0].message.content // empty' /tmp/groq.json || true)"
-            if [ -z "$content" ]; then
-              echo "⚠️ \`$file\` — empty model response (skipped)." >> /tmp/summary.md
-              sleep 1
-              continue
-            fi
-
-            echo "$content" > /tmp/result.json
-            if jq -e . /tmp/result.json >/dev/null 2>&1; then
-              count="$(jq '[.findings[]?] | length' /tmp/result.json || echo 0)"
-              total_findings=$((total_findings + count))
-              jq -r '.summary // "No summary provided."' /tmp/result.json > /tmp/file_summary.txt || true
-
-              # Append this file's findings to the RDJSON accumulator.
-              jq -c --arg file "$file" '
-                [.findings[]? |
-                  select((.message // "") != "") |
-                  ((.severity // "" | ascii_downcase) as $sev |
-                  {
-                    message: (.message + (if (.suggestion // "") != "" then "\n\nSuggestion: " + .suggestion else "" end)),
-                    severity: (if ($sev | test("^(error|critical|fatal)")) then "ERROR" elif ($sev | test("^warn")) then "WARNING" else "INFO" end),
-                    location: {path: $file, range: {start: {line: ((.line | tonumber?) // 1 | if . < 1 then 1 else . end)}}}
-                  })]
-                ' /tmp/result.json >> /tmp/findings.ndjson || true
-            else
-              count=0
-              echo 'Model returned unparseable output; raw text below.' > /tmp/file_summary.txt
-              jq -r '.choices[0].message.content // ""' /tmp/groq.json >> /tmp/file_summary.txt || true
-            fi
-
-            echo "### \`$file\`" >> /tmp/summary.md
-            cat /tmp/file_summary.txt >> /tmp/summary.md
-            echo '' >> /tmp/summary.md
-            echo '' >> /tmp/summary.md
-
-            # Free tier is ~30 RPM; stay well under it.
-            sleep 1
-          done < <(git diff "$BASE...HEAD" --name-only -z | head -z -n 120)
-
-          # Assemble the RDJSON document for reviewdog (source is an object
-          # per the RDJSON schema).
-          jq -s 'if length == 0 then {source: {name: "groq-ai-review"}, diagnostics: []} else {source: {name: "groq-ai-review"}, diagnostics: (add // [])} end' \
-            /tmp/findings.ndjson > /tmp/rd.json
-
-          if [ "$total_findings" -eq 0 ]; then
-            echo 'No issues found by the AI reviewer. ✅' >> /tmp/summary.md
-          else
-            echo "**$total_findings finding(s) across the reviewed files** — see the inline comments." >> /tmp/summary.md
-          fi
-          echo '' >> /tmp/summary.md
-          echo '> Advisory only — this review never blocks the merge. Groq free-tier limits apply.' >> /tmp/summary.md
-
-          # Persist the summary body + finding count for the next step.
-          cp /tmp/summary.md /tmp/summary-final.md
-          echo "total_findings=$total_findings" >> "$GITHUB_OUTPUT"
+        run: node tools/ai-review.mjs --provider groq --name 'Groq AI review'
 
       - name: Post inline comments (reviewdog)
         if: ${{ steps.review.outcome == 'success' }}
         shell: bash
         run: |
-          if [ -s /tmp/rd.json ]; then
+          if [ -s dist/review/ai-review-rd.json ]; then
             # v0.21.0+ assets are <version>_<os>_<arch>.tar.gz (earlier versions
             # shipped a bare reviewdog_linux_amd64 binary).
             curl -sSfL https://github.com/reviewdog/reviewdog/releases/download/v0.21.0/reviewdog_0.21.0_Linux_x86_64.tar.gz -o /tmp/reviewdog.tgz
@@ -247,7 +77,7 @@ jobs:
             chmod +x /tmp/reviewdog
             # rdjson input; reviewdog filters to lines present in the PR diff
             # and updates comments in place on subsequent pushes.
-            /tmp/reviewdog -f=rdjson -name='Groq AI review' -reporter=github-pr-review < /tmp/rd.json || true
+            /tmp/reviewdog -f=rdjson -name='Groq AI review' -reporter=github-pr-review < dist/review/ai-review-rd.json || true
           fi
 
       - name: Post / update summary comment
@@ -255,13 +85,13 @@ jobs:
         shell: bash
         run: |
           comment_id="$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- groq-ai-review:summary -->"))) | .id' | head -1 || true)"
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- ai-review:summary -->"))) | .id' | head -1 || true)"
           if [ -n "$comment_id" ]; then
             # NOTE: issue-comment update/delete use /issues/comments/{id} —
             # the /issues/{n}/comments/{id} path does not exist (404).
             gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$comment_id" \
-              -F body=@/tmp/summary-final.md
+              -F body=@dist/review/ai-review-summary.md
           else
             gh api -X POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-              -F body=@/tmp/summary-final.md
+              -F body=@dist/review/ai-review-summary.md
           fi
