@@ -55,7 +55,7 @@ Rules:
 
 export function parseArgs(argv) {
   const args = {
-    providers: ['groq'],
+    providers: [],
     model: null,
     baseRef: process.env.BASE_REF,
     headRef: process.env.HEAD_REF || 'HEAD',
@@ -108,7 +108,20 @@ export function parseArgs(argv) {
         throw new Error(`Unknown flag: ${arg}`);
     }
   }
+  if (args.providers.length === 0) args.providers.push('groq');
   return args;
+}
+
+// In CI the base branch is fetched as origin/$BASE_REF (no local branch is
+// created), while local runs pass a plain ref like origin/main. Resolve to a
+// ref that actually exists in this checkout.
+export function resolveBaseRef(baseRef) {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', `origin/${baseRef}`]);
+    return `origin/${baseRef}`;
+  } catch {
+    return baseRef;
+  }
 }
 
 export function classifyStatus(status) {
@@ -186,18 +199,26 @@ export async function request(provider, body) {
 }
 
 function changedFiles(baseRef, headRef, maxFiles) {
-  return execFileSync('git', ['diff', `${baseRef}...${headRef}`, '--name-only', '-z'], {
-    encoding: 'utf8',
-  })
+  return execFileSync(
+    'git',
+    ['diff', `${resolveBaseRef(baseRef)}...${headRef}`, '--name-only', '-z'],
+    {
+      encoding: 'utf8',
+    }
+  )
     .split('\0')
     .filter(file => file && !file.startsWith('dist/') && !file.startsWith('docs/local_plan/'))
     .slice(0, maxFiles);
 }
 
 function fileDiff(baseRef, headRef, file) {
-  return execFileSync('git', ['diff', `${baseRef}...${headRef}`, '--no-ext-diff', '--', file], {
-    encoding: 'utf8',
-  });
+  return execFileSync(
+    'git',
+    ['diff', `${resolveBaseRef(baseRef)}...${headRef}`, '--no-ext-diff', '--', file],
+    {
+      encoding: 'utf8',
+    }
+  );
 }
 
 function truncateDiff(diff, maxChars) {

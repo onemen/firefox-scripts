@@ -11,6 +11,7 @@ import {
   isRetryable,
   normalizeFinding,
   parseArgs,
+  resolveBaseRef,
   reviewFiles,
 } from '../../../tools/ai-review.mjs';
 
@@ -26,7 +27,7 @@ test('parseArgs applies defaults and overrides', () => {
     '--base-ref',
     'main',
   ]);
-  assert.equal(args.providers.join('+'), 'groq+openrouter');
+  assert.deepEqual(args.providers, ['openrouter']);
   assert.equal(args.model, 'acme/model');
   assert.equal(args.maxFindings, 5);
   assert.equal(args.summaryOnly, true);
@@ -35,6 +36,18 @@ test('parseArgs applies defaults and overrides', () => {
   assert.equal(args.maxFiles, 30);
   assert.equal(args.maxDiffChars, 8000);
   assert.equal(args.dryRun, false);
+});
+
+test('parseArgs defaults to groq when no provider flag is given', () => {
+  assert.deepEqual(parseArgs([]).providers, ['groq']);
+});
+
+// In CI the base branch exists as origin/<ref>; ensure the resolve helper
+// picks the origin-prefixed ref without throwing on plain refs.
+test('base ref resolution prefers origin/<ref> when present', () => {
+  // origin/main exists in this checkout; plain main may not.
+  assert.match(resolveBaseRef('main'), /^(origin\/)?main$/);
+  assert.equal(resolveBaseRef('definitely-not-a-real-ref-xyz'), 'definitely-not-a-real-ref-xyz');
 });
 
 test('parseArgs rejects unknown flags', () => {
