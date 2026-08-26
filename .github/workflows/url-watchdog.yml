@@ -21,6 +21,9 @@ on:
   pull_request:
     paths:
       - 'test/e2e/shared/downloads.mjs'
+  # The PR check is stateless + always green, so it can safely run on the
+  # merge queue too (a required check must report on merge_group).
+  merge_group:
   schedule:
     - cron: '0 6 * * 1' # Monday 06:00 UTC — browsers release ~monthly
   workflow_dispatch:
@@ -37,7 +40,7 @@ jobs:
   # ── Weekly: baseline + issues ─────────────────────────────────────────────
   check:
     name: check browser download URLs
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,7 +78,7 @@ jobs:
   # can be added to branch protection as a required check.
   pr-check:
     name: browser download URLs (PR)
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

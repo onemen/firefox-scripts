@@ -1,0 +1,50 @@
+name: Verify gate
+description: >-
+  Shared engine for the aggregate CI/E2E branch-protection checks. Verifies the changes
+  (paths-filter) job, then the branch-conditional gated jobs (required / advisory), then the
+  no-change guards (skipped-jobs and always-report). This is the shell logic that used to live
+  inline in ci-gate and e2e-gate.
+inputs:
+  changes-result:
+    description: result of the changes (paths-filter) job — must be success
+    required: true
+  branch:
+    description: "'true' when gated work is active (the filter output), else 'false'"
+    required: true
+  branch-label:
+    description: human label for the branch, e.g. 'E2E-relevant changes'
+    required: true
+  results:
+    description: 'space-separated name:result pairs for every tracked job'
+    required: true
+  required:
+    description: 'space-separated job names that must be success when branch=true'
+    required: false
+    default: ''
+  advisory:
+    description: 'space-separated job names warned (not failed) when branch=true'
+    required: false
+    default: ''
+  skip-guard:
+    description: 'space-separated job names that must be skipped when branch=false'
+    required: false
+    default: ''
+  always-report:
+    description: 'space-separated job names that must report success when branch=false'
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Verify gate results
+      shell: bash
+      env:
+        CHANGES_RESULT: ${{ inputs.changes-result }}
+        BRANCH: ${{ inputs.branch }}
+        BRANCH_LABEL: ${{ inputs.branch-label }}
+        RESULTS: ${{ inputs.results }}
+        REQUIRED: ${{ inputs.required }}
+        ADVISORY: ${{ inputs.advisory }}
+        SKIP_GUARD: ${{ inputs.skip-guard }}
+        ALWAYS_REPORT: ${{ inputs.always-report }}
+      run: ${{ github.action_path }}/verify.sh

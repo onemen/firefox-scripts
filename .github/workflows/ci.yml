@@ -7,6 +7,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Required checks must also run on the merge-queue's temporary branch when
+  # a PR lands via the queue (Settings → merge queue) — see docs/DEVELOPING.md.
+  merge_group:
 
 permissions:
   contents: read
@@ -50,6 +53,7 @@ jobs:
       - run: pnpm format
       - run: pnpm test
       - run: pnpm check:decisions
+      - run: pnpm check:gates
 
   # Publish-path gate: `upload:local --mode=dev` rebuilds the zips and the
   # native binaries for the runner's OS.  This is what catches regressions in
@@ -114,28 +118,26 @@ jobs:
 
   # ── CI gate ──────────────────────────────────────────────────────────────
   # Single branch-protection check — only registers as success when all
-  # upstream jobs pass.  Add/remove jobs without touching branch-protection.
+  # upstream jobs pass. The verify logic (incl. the always-report guard on
+  # `build`, which has NO job-level `if:` by design) lives in the shared
+  # .github/actions/verify-gate engine, kept consistent with e2e-gate.
+  # `pnpm check:gates` enforces this needs list.
   ci-gate:
     name: CI gate
     runs-on: ubuntu-latest
     if: always()
     needs: [changes, checks, build]
     steps:
-      - name: Verify all CI jobs
-        run: |
-          if [ "${{ needs.changes.result }}" != "success" ]; then
-            echo "::error::changes job failed (${{ needs.changes.result }})"
-            exit 1
-          fi
-          fail() { echo "::error::$1: $2"; exit 1; }
-          ok()   { echo "$1: $2 (OK)"; }
-          verify() {
-            case "$2" in success) ok "$1" "$2" ;; *) fail "$1" "$2" ;; esac
-          }
-          verify 'checks' '${{ needs.checks.result }}'
-          if [ "${{ needs.changes.outputs.publish }}" = "true" ]; then
-            verify 'build' '${{ needs.build.result }}'
-          else
-            echo 'publish gate: skipped — no publish-relevant changes (OK)'
-          fi
-          echo 'All CI jobs passed'
+      - uses: ./.github/actions/verify-gate
+        with:
+          changes-result: ${{ needs.changes.result }}
+          branch: ${{ needs.changes.outputs.publish }}
+          branch-label: publish-relevant changes
+          # Literal block: prettier leaves `|` content alone, so each pair
+          # stays on its own line and no ${{ }} expression is ever split.
+          # verify.sh splits the value on whitespace, newlines included.
+          results: |-
+            checks:${{ needs.checks.result }}
+            build:${{ needs.build.result }}
+          required: checks
+          always-report: build

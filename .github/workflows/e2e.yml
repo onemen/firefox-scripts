@@ -24,6 +24,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Required checks must also run on the merge-queue's temporary branch when
+  # a PR lands via the queue (Settings → merge queue) — see docs/DEVELOPING.md.
+  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -32,10 +35,10 @@ concurrency:
 
 jobs:
   # ── Changed-paths filter ──────────────────────────────────────────────────
-  # Docs-only / tooling-only PRs skip the installer + updater E2E jobs: nothing
-  # that builds or runs them changed. `snapshot` stays (browser-matrix needs
-  # it) and the always-running `e2e-gate` still reports, so the required check
-  # never goes missing. See docs/DEVELOPING.md → Continuous integration.
+  # Docs-only / tooling-only PRs skip every E2E job (snapshot, installer,
+  # helper, updater, browser-matrix): nothing that builds or runs them changed.
+  # Only `changes` and the always-running `e2e-gate` report, so the required
+  # check never goes missing. See docs/DEVELOPING.md → Continuous integration.
   changes:
     name: detect changed paths
     runs-on: ubuntu-latest
@@ -70,6 +73,8 @@ jobs:
   # flip the package hash and break the staleness check.
   snapshot:
     name: build dev snapshot
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: $/.github/actions/setup-repo
@@ -107,6 +112,8 @@ jobs:
   # ── Helper E2E (Linux elevated-copy core) ──────────────────────────────────
   helper:
     name: 'helper E2E · ${{ matrix.os }}'
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -294,45 +301,30 @@ jobs:
 
   # ── E2E gate ─────────────────────────────────────────────────────────────
   # Single branch-protection check. Every upstream job is a hard gate, so a
-  # green aggregate check cannot hide a failed, cancelled, or skipped matrix leg.
+  # green aggregate check cannot hide a failed, cancelled, or skipped matrix
+  # leg. The verify logic (required / advisory / skip-guard) lives in the
+  # shared .github/actions/verify-gate engine, kept consistent with ci-gate.
+  # `pnpm check:gates` enforces this needs list.
   e2e-gate:
     name: E2E gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [changes, installer, helper, updater, browser-matrix]
+    needs: [changes, snapshot, installer, helper, updater, browser-matrix]
     steps:
-      - name: Verify all E2E jobs
-        run: |
-          if [ "${{ needs.changes.result }}" != "success" ]; then
-            echo "::error::changes job failed (${{ needs.changes.result }})"
-            exit 1
-          fi
-          fail() { echo "::error::$1: $2"; exit 1; }
-          ok()   { echo "$1: $2 (OK)"; }
-          verify() {
-            case "$2" in success) ok "$1" "$2" ;; *) fail "$1" "$2" ;; esac
-          }
-          verify 'helper' '${{ needs.helper.result }}'
-          if [ "${{ needs.changes.outputs.e2e }}" = "true" ]; then
-            verify 'installer' '${{ needs.installer.result }}'
-            verify 'updater'   '${{ needs.updater.result }}'
-            # browser-matrix is ADVISORY (fork legs download from third-party
-            # hosts — librewolf.dev's package registry, Floorp's GitHub
-            # releases — which can hiccup; see docs/e2e-matrix-plan.md). Warn,
-            # don't fail the gate.
-            case "${{ needs.browser-matrix.result }}" in
-              success) ok 'browser-matrix' '${{ needs.browser-matrix.result }}' ;;
-              *) echo "::warning::browser-matrix ${{ needs.browser-matrix.result }} (advisory)" ;;
-            esac
-          else
-            echo 'installer + updater E2E: skipped — no E2E-relevant changes (OK)'
-            # Guard: if browser-matrix ran despite no E2E-relevant changes, its
-            # changed-paths gate was removed — fail loudly instead of silently
-            # burning ~14 Windows runner-minutes on every docs-only PR again.
-            if [ "${{ needs.browser-matrix.result }}" != "skipped" ]; then
-              echo "::error::browser-matrix ran despite no E2E-relevant changes — changed-paths gate removed?"
-              exit 1
-            fi
-            echo 'browser-matrix: skipped — no E2E-relevant changes (OK)'
-          fi
-          echo 'All E2E jobs passed'
+      - uses: ./.github/actions/verify-gate
+        with:
+          changes-result: ${{ needs.changes.result }}
+          branch: ${{ needs.changes.outputs.e2e }}
+          branch-label: E2E-relevant changes
+          # Literal block: prettier leaves `|` content alone, so each pair
+          # stays on its own line and no ${{ }} expression is ever split.
+          # verify.sh splits the value on whitespace, newlines included.
+          results: |-
+            snapshot:${{ needs.snapshot.result }}
+            installer:${{ needs.installer.result }}
+            helper:${{ needs.helper.result }}
+            updater:${{ needs.updater.result }}
+            browser-matrix:${{ needs.browser-matrix.result }}
+          required: snapshot installer helper updater
+          advisory: browser-matrix
+          skip-guard: snapshot installer helper updater browser-matrix

@@ -28,12 +28,15 @@ releases.
 
 Docs-only PRs get fast, green CI, and a flaky third-party host can no longer block a merge. Coverage
 gaps on docs-only PRs are accepted; any PR touching the download map runs the watchdog's PR check
-and the affected legs. The fork legs no longer act as an always-on canary for upstream fork releases
+and the affected legs. Every E2E job is path-filtered — the snapshot build and the helper
+elevated-copy test joined the installer/updater/browser-matrix gates — and the two aggregate gates
+share one verify engine (`.github/actions/verify-gate`) whose contract (every job in the gate's
+`needs:`, filters in place, always-report jobs ungated) is enforced statically by
+`pnpm check:gates`. The fork legs no longer act as an always-on canary for upstream fork releases
 breaking the updater — the watchdog flags version bumps, and the next E2E-relevant PR catches a
-breakage. One caveat: a PR that branched before a gating change and is later updated from main (the
-"Update branch" button, required by strict branch protection) over-runs the full matrix once —
-GitHub's changed-files diff counts base-branch changes merged into the head, so the paths filter
-over-triggers. Rebase the PR onto main instead of merging it in to avoid the over-run; when it
-happens it is harmless (conservative direction). The download map and watchdog are test harness, not
-product — they are noted as "Not recorded" in the index, not re-ADRed. Revisit-if: a fork host
-becomes reliable enough for hard gates, or a docs-only change needs the full E2E matrix.
+breakage. PRs land via the GitHub merge queue, which rebases heads onto main automatically; the
+earlier "Update branch" caveat (a PR updated from main over-runs the matrix once, because merged-in
+base changes count as PR changes for the path filter) no longer applies to queued PRs. The download
+map and watchdog are test harness, not product — they are noted as "Not recorded" in the index, not
+re-ADRed. Revisit-if: a fork host becomes reliable enough for hard gates, or a docs-only change
+needs the full E2E matrix.
