@@ -2234,6 +2234,8 @@ static void print_help(void) {
     printf("  --log-console   Same as --verbose\n");
     printf("  --test-hash <type> <path> --manifest <file>\n");
     printf("                  Compute SHA256 hash of files in <path> for <type>\n");
+    printf("  --test-self-update <json-file> <version> <asset>\n");
+    printf("                  Unit-test check_self_update against a release JSON\n");
     printf("                  (type: \"utils\" or \"fx-folder\") using the canonical\n");
     printf("                  file list from <file> (e.g. a dist/prod-*/hashes.json)\n");
     printf("  --smoke-test    Headless mode for CI security smoke tests: run the\n");
@@ -2300,6 +2302,57 @@ static int main_impl(int argc, char *argv[]) {
                 return 1;
             }
             return (test_hash_from_manifest(type, dir_path, manifest_path) == 0) ? 0 : 1;
+        }
+        if (strcmp(argv[1], "--test-self-update") == 0) {
+            /* Unit-test harness for the self-update logic: ingest a release
+             * JSON file, then run check_self_update and print the outcome as
+             * parseable lines.  Used by installer/test/test_self_update.mjs
+             * (pnpm test:hash). */
+            if (argc < 5) {
+                fprintf(stderr,
+                        "Usage: %s --test-self-update <json-file> <current-version> <asset-name>\n",
+                        argv[0]);
+                return 2;
+            }
+            const char *json_path = argv[2];
+            const char *cur_ver = argv[3];
+            const char *asset_name = argv[4];
+            FILE *f = fopen(json_path, "rb");
+            if (!f) {
+                fprintf(stderr, "Cannot open %s\n", json_path);
+                return 2;
+            }
+            fseek(f, 0, SEEK_END);
+            long len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (len < 0) {
+                fclose(f);
+                return 2;
+            }
+            char *buf = (char *)malloc((size_t)len + 1);
+            if (!buf) {
+                fclose(f);
+                return 2;
+            }
+            size_t rd = fread(buf, 1, (size_t)len, f);
+            buf[rd] = '\0';
+            fclose(f);
+            if (ingest_self_update_json(buf, rd) != 0) {
+                free(buf);
+                fprintf(stderr, "ingest_self_update_json failed\n");
+                return 2;
+            }
+            free(buf);
+            char latest_version[64] = "";
+            char download_url[512] = "";
+            int ret = check_self_update(cur_ver,
+                                        "onemen", "firefox-scripts", asset_name,
+                                        latest_version, sizeof(latest_version),
+                                        download_url, sizeof(download_url));
+            printf("status=%d\n", ret);
+            printf("latest_version=%s\n", latest_version);
+            printf("download_url=%s\n", download_url);
+            return 0;
         }
         if (strcmp(argv[1], "--verbose") == 0 ||
             strcmp(argv[1], "--log-console") == 0) {

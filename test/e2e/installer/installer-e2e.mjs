@@ -95,13 +95,22 @@ async function httpGet(pathStr, token = '') {
 }
 
 async function httpPost(pathStr, body, token = '') {
+  return httpPostRaw(pathStr, JSON.stringify(body), token);
+}
+
+/**
+ * POST a raw string body (for the self-update release JSON, which must be
+ * passed verbatim — JSON.stringify would reorder nothing here, but the C parser
+ * is string-based, so send the exact bytes).
+ */
+async function httpPostRaw(pathStr, rawBody, token = '') {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(`${BASE}${pathStr}${tokenQuery(token)}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
+      body: rawBody,
       signal: controller.signal,
     });
     const text = await res.text();
@@ -225,6 +234,52 @@ async function runHttpLayer(counter, sessionToken) {
     {
       const res = await httpPost('/api/self-update', {}, sessionToken);
       assertAuthorized(counter, res, '/api/self-update passes the gate');
+    }
+
+    // Test 6: self-update flow — POST a release JSON, then GET reports the
+    // parsed version + matching asset URL (installer/src/self_update.c).
+    // The E2E installer is a -dev build, so INSTALLER_BINARY_NAME carries the
+    // -dev suffix; the fixture must match it.
+    console.log('\nTest 6: self-update flow');
+    {
+      const plainBase =
+        process.platform === 'win32' ? 'installer_win'
+        : process.platform === 'darwin' ? 'installer_mac'
+        : 'installer_linux';
+      const asset = `${plainBase}-dev${process.platform === 'win32' ? '.exe' : ''}`;
+      const releaseJson = JSON.stringify({
+        tag_name: 'v1.0.1',
+        assets: [
+          {name: 'helper_win-dev.exe', browser_download_url: 'https://example.invalid/helper'},
+          {name: asset, browser_download_url: 'https://example.invalid/installer-download'},
+        ],
+      });
+      const post = await httpPostRaw('/api/self-update', releaseJson, sessionToken);
+      check(
+        counter,
+        post.status === 200 && post.body.includes('"ok"'),
+        'POST release JSON → stored'
+      );
+      const got = await httpGet('/api/self-update', sessionToken);
+      let su = null;
+      try {
+        su = JSON.parse(got.body);
+      } catch {
+        /* parse error handled by the check below */
+      }
+      check(counter, Boolean(su), 'GET /api/self-update returns JSON', got.body.slice(0, 80));
+      if (su) {
+        check(counter, su.updateAvailable === true, 'update available detected');
+        // Raw tag passthrough (the UI prepends 'v', so a v-less release tag
+        // renders "v1.0.1" — see the test_self_update.mjs contract note).
+        check(counter, su.latestVersion === 'v1.0.1', `latest version parsed: ${su.latestVersion}`);
+        check(
+          counter,
+          su.downloadUrl === 'https://example.invalid/installer-download',
+          `matching asset URL extracted: ${su.downloadUrl}`
+        );
+        check(counter, su.currentVersion === '1.0.0', 'current version reported');
+      }
     }
   }
 }
