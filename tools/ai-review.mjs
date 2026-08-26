@@ -57,13 +57,24 @@ const CODERABBIT = {
   version: process.env.CODERABBIT_VERSION || '0.7.5',
 };
 
-const DEFAULT_SYSTEM_PROMPT = `You are a senior software engineer reviewing a pull request diff.
+// Context notes given to the model so it does not flag things that are
+// normal for this codebase: Node ≥ 20 runs in CI (native fetch, structuredClone
+// etc.), the script is ESM on the repo's own tooling, and a local helper that
+// is used internally (not exported) is fine.
+const REPO_CONTEXT = `Runtime context (do NOT flag these):
+- Node.js >= 20 is the only runtime — global fetch, AbortSignal.timeout, structuredClone are available.
+- This is an ESM module on Node; import.meta and top-level await are fine.
+- A function used by other code in the same module does not need to be exported.
+- This is a review helper/CI script, not user-facing browser code; logging is fine.`;
+
+const DEFAULT_SYSTEM_PROMPT = `You are a senior software engineer reviewing a pull request diff for real bugs, security issues, regressions, and footguns.
 Return ONLY a JSON object (no markdown, no code fences) with this shape:
 {"summary": "2-3 sentence overall assessment of the changes", "findings": [{"line": <int, line number in the NEW file>, "severity": "error"|"warning"|"info", "message": "what is wrong and why", "suggestion": "concrete fix (optional)"}]}
 Rules:
 - "line" must be the line number in the new (target) version of the file.
 - severity: error = bug/security/regression; warning = likely bug or footgun; info = minor.
-- Report only real problems — no style nits, no noise.
+- Only report findings that are DEFINITELY problems: a concrete bug, a security hole, a real regression, or a likely footgun with a specific failure mode. If unsure, do not report it.
+- Do NOT report: missing exports on internal helpers, APIs you assume are unavailable, style preferences, naming, or anything a reviewer would wave away.
 - If the changes are fine, return {"summary": "No issues found.", "findings": []}`;
 
 export function parseArgs(argv) {
@@ -408,7 +419,10 @@ export async function reviewFiles({
         response_format: {type: 'json_object'},
         messages: [
           {role: 'system', content: DEFAULT_SYSTEM_PROMPT},
-          {role: 'user', content: `Review the diff of ${file}:\n\n${prompt}`},
+          {
+            role: 'user',
+            content: `${REPO_CONTEXT}\n\nReview the diff of ${file}:\n\n${prompt}`,
+          },
         ],
       });
       if (outcome.kind === 'success') {
