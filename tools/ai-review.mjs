@@ -48,11 +48,11 @@ const PROVIDERS = {
 };
 
 // CodeRabbit CLI review (`cr review --agent`): a local CLI, not an HTTP
-// provider. Selected via --provider coderabbit; needs cr on PATH and/or
-// CODERABBIT_API_KEY.
+// provider. Selected via --provider coderabbit; needs cr on PATH and
+// authenticated (CI runs `cr auth login --api-key`; local users do the same
+// once). The API key is intentionally NOT passed on the command line.
 const CODERABBIT = {
   name: 'coderabbit',
-  key: process.env.CODERABBIT_API_KEY,
   cli: process.env.CR_BIN || 'cr',
   version: process.env.CODERABBIT_VERSION || '0.7.5',
 };
@@ -313,9 +313,13 @@ export async function runCoderabbitReview(args, baseRef, crBin = CODERABBIT.cli)
   }
   // CR_BIN may be a bare path (`~/.local/bin/cr`) or a command with args
   // (e.g. `node /tmp/fake-cr.mjs` in tests) — split on spaces for the latter.
+  //
+  // The API key is deliberately NOT passed on the command line (it would be
+  // visible in the process list). CI authenticates first via `cr auth login
+  // --api-key` (see ai-review.yml); local users authenticate once the same
+  // way. The script itself only needs the CLI to be authenticated.
   const [bin, ...crBinArgs] = crBin.trim().split(/\s+/);
   const crArgs = [...crBinArgs, 'review', '--agent', '--base', `origin/${baseRef}`];
-  if (CODERABBIT.key) crArgs.push('--api-key', CODERABBIT.key);
   const proc = spawnSync(bin, crArgs, {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,

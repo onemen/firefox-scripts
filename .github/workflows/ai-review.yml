@@ -126,6 +126,15 @@ jobs:
           CODERABBIT_VERSION: '0.7.5'
         run: curl -fsSL https://cli.coderabbit.ai/install.sh | sh
 
+      - name: Authenticate CodeRabbit CLI
+        if: ${{ env.CODERABBIT_API_KEY != '' }}
+        # Agentic key flow: authenticate once, then `cr review` reuses the
+        # stored key. Passing --api-key on every review would expose it in the
+        # process list.
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          cr auth login --api-key "$CODERABBIT_API_KEY"
+
       - name: Run AI review
         id: review
         if: ${{ env.CODERABBIT_API_KEY != '' }}
