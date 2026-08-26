@@ -37,10 +37,20 @@ jobs:
     if: always()
     needs: [changes, snapshot, installer]
     steps:
-      - run: echo ok
+      - uses: actions/checkout
+      - uses: ./.github/actions/verify-gate
+        with:
+          changes-result: \${{ needs.changes.result }}
+          branch: \${{ needs.changes.outputs.e2e }}
+          branch-label: E2E-relevant changes
+          results: |-
+            snapshot:\${{ needs.snapshot.result }}
+            installer:\${{ needs.installer.result }}
+          required: snapshot installer
+          skip-guard: snapshot installer
 `;
 
-test('parseJobs: collects job names, job-level needs + if, ignores step-level if', () => {
+test('parseJobs: collects job names, needs, ifs, and the verify-gate with block', () => {
   const jobs = parseJobs(FIXTURE);
   assert.deepEqual([...jobs.keys()], ['changes', 'snapshot', 'installer', 'e2e-gate']);
   // Step-level if (8-space) is NOT a job-level if.
@@ -49,6 +59,9 @@ test('parseJobs: collects job names, job-level needs + if, ignores step-level if
   assert.deepEqual(jobs.get('installer').needs, ['changes']);
   assert.deepEqual(jobs.get('e2e-gate').ifs, ['always()']);
   assert.deepEqual(jobs.get('e2e-gate').needs, ['changes', 'snapshot', 'installer']);
+  assert.deepEqual(jobs.get('e2e-gate').with.results, ['snapshot', 'installer']);
+  assert.equal(jobs.get('e2e-gate').with.required, 'snapshot installer');
+  assert.equal(jobs.get('e2e-gate').with['skip-guard'], 'snapshot installer');
 });
 
 test('checkWorkflow: a compliant workflow passes', () => {
@@ -116,4 +129,51 @@ test('checkWorkflow: gate without if: always() is flagged', () => {
     gated: ['snapshot', 'installer'],
   });
   assert.ok(errors.some(e => e.includes("must carry 'if: always()'")));
+});
+
+test('checkWorkflow: a needed job absent from verify-gate results is flagged', () => {
+  const broken = FIXTURE.replace('snapshot:${{ needs.snapshot.result }}\n', '');
+  const errors = checkWorkflow(broken, {
+    file: 'e2e.yml',
+    gate: 'e2e-gate',
+    branchKey: 'e2e',
+    gated: ['snapshot', 'installer'],
+  });
+  assert.ok(
+    errors.some(e => e.includes("needs 'snapshot'") && e.includes('results do not include it'))
+  );
+});
+
+test('checkWorkflow: an unclassified results job is flagged', () => {
+  const broken = FIXTURE.replace(
+    'required: snapshot installer\n          skip-guard: snapshot installer',
+    'required: installer\n          skip-guard: installer'
+  );
+  const errors = checkWorkflow(broken, {
+    file: 'e2e.yml',
+    gate: 'e2e-gate',
+    branchKey: 'e2e',
+    gated: ['snapshot', 'installer'],
+  });
+  assert.ok(
+    errors.some(e => e.includes("results include 'snapshot'") && e.includes('not classified'))
+  );
+});
+
+test('checkWorkflow: a classified job absent from results is flagged', () => {
+  const broken = FIXTURE.replace(
+    'skip-guard: snapshot installer',
+    'skip-guard: snapshot installer builder'
+  );
+  const errors = checkWorkflow(broken, {
+    file: 'e2e.yml',
+    gate: 'e2e-gate',
+    branchKey: 'e2e',
+    gated: ['snapshot', 'installer'],
+  });
+  assert.ok(
+    errors.some(
+      e => e.includes("classifies 'builder'") && e.includes('not in the verify-gate results')
+    )
+  );
 });

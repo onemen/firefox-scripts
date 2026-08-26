@@ -34,9 +34,10 @@ share one verify engine (`.github/actions/verify-gate`) whose contract (every jo
 `needs:`, filters in place, always-report jobs ungated) is enforced statically by
 `pnpm check:gates`. The fork legs no longer act as an always-on canary for upstream fork releases
 breaking the updater — the watchdog flags version bumps, and the next E2E-relevant PR catches a
-breakage. PRs land via the GitHub merge queue, which rebases heads onto main automatically; the
-earlier "Update branch" caveat (a PR updated from main over-runs the matrix once, because merged-in
-base changes count as PR changes for the path filter) no longer applies to queued PRs. The download
-map and watchdog are test harness, not product — they are noted as "Not recorded" in the index, not
-re-ADRed. Revisit-if: a fork host becomes reliable enough for hard gates, or a docs-only change
-needs the full E2E matrix.
+breakage.PRs land via the GitHub merge queue: each queued PR is validated in a temporary merge-group
+branch against the latest base (the final merge uses the repo's configured merge method), so the
+"Update branch" step is never used. The earlier caveat (a PR updated from main over-runs the matrix
+once, because merged-in base changes count as PR changes for the path filter) therefore no longer
+applies to queued PRs. The download map and watchdog are test harness, not product — they are noted
+as "Not recorded" in the index, not re-ADRed. Revisit-if: a fork host becomes reliable enough for
+hard gates, or a docs-only change needs the full E2E matrix.

@@ -5,7 +5,7 @@ set -euo pipefail
 
 # Optional inputs — the composite action always passes them (defaults ''),
 # but default them here so the script also runs safely outside Actions.
-: "${REQUIRED:=}" "${ADVISORY:=}" "${SKIP_GUARD:=}" "${ALWAYS_REPORT:=}"
+: "${REQUIRED:=}" "${ADVISORY:=}" "${SKIP_GUARD:=}" "${ALWAYS_REPORT:=}" "${ALWAYS_VERIFY:=}"
 
 fail() { echo "::error::$1: $2"; exit 1; }
 ok()   { echo "$1: $2 (OK)"; }
@@ -19,6 +19,11 @@ done
 lookup() { echo "${RESULT[$1]:-missing}"; }
 
 verify 'changes' "$CHANGES_RESULT"
+# Always-run jobs (e.g. the lint/format `checks`) are verified in BOTH
+# branches — a failure must not slip through when the gated branch is off.
+for name in $ALWAYS_VERIFY; do
+  verify "$name" "$(lookup "$name")"
+done
 
 if [ "$BRANCH" = "true" ]; then
   for name in $REQUIRED; do

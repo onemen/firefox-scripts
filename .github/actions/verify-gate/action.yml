@@ -21,6 +21,10 @@ inputs:
     description: 'space-separated job names that must be success when branch=true'
     required: false
     default: ''
+  always-verify:
+    description: 'space-separated job names that must be success in BOTH branches (always-run jobs)'
+    required: false
+    default: ''
   advisory:
     description: 'space-separated job names warned (not failed) when branch=true'
     required: false
@@ -44,6 +48,7 @@ runs:
         BRANCH_LABEL: ${{ inputs.branch-label }}
         RESULTS: ${{ inputs.results }}
         REQUIRED: ${{ inputs.required }}
+        ALWAYS_VERIFY: ${{ inputs.always-verify }}
         ADVISORY: ${{ inputs.advisory }}
         SKIP_GUARD: ${{ inputs.skip-guard }}
         ALWAYS_REPORT: ${{ inputs.always-report }}

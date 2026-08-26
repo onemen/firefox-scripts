@@ -36,19 +36,28 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const JOB_LINE = /^ {2}([A-Za-z0-9_-]+):\s*$/;
 const NEEDS_LINE = /^ {4}needs:\s*(.+)$/;
 const IF_LINE = /^ {4}if:\s*(.+)$/;
+const WITH_LINE = /^ {8}with:\s*$/;
+const WITH_INPUT = /^ {10}([A-Za-z0-9_-]+):\s*(.*)$/;
+const RESULTS_PAIR = /^ {12}([A-Za-z0-9_-]+):/;
 
 /**
  * Split a workflow YAML into per-job blocks. Only the top-level `jobs:` map is
  * parsed; within a job block, job-level `needs:`/`if:` lines (4-space indent)
- * are captured — step-level `if:`s live at deeper indents and are ignored.
+ * are captured — step-level `if:`s live at deeper indents and are ignored. The
+ * verify-gate `with:` block (10-space inputs, 12-space `results:` pairs) is
+ * captured per job for the wiring assertions.
  *
  * @param {string} text
- * @returns {Map<string, {ifs: string[]; needs: string[]}>}
+ * @returns {Map<
+ *   string,
+ *   {ifs: string[]; needs: string[]; with: Object<string, any>}
+ * >}
  */
 export function parseJobs(text) {
   const jobs = new Map();
   let current = null;
   let inJobs = false;
+  let withKey = null;
   for (const line of text.split('\n')) {
     if (/^jobs:\s*$/.test(line)) {
       inJobs = true;
@@ -56,13 +65,43 @@ export function parseJobs(text) {
     }
     if (!inJobs) continue;
     if (/^\S/.test(line)) break; // a top-level key after `jobs:`
+
+    // Inside a `with:` block: 12-space `results:` pairs, 10-space inputs, or
+    // an outdent that ends the block.
+    if (withKey !== null) {
+      const rl = RESULTS_PAIR.exec(line);
+      if (rl && withKey === 'results') {
+        jobs.get(current).with.results.push(rl[1]);
+        continue;
+      }
+      const wi = WITH_INPUT.exec(line);
+      if (wi) {
+        withKey = wi[1] === 'results' ? 'results' : wi[1];
+        if (withKey === 'results') jobs.get(current).with.results = [];
+        else jobs.get(current).with[wi[1]] = wi[2].trim();
+        continue;
+      }
+      withKey = null; // left the with block
+    }
+
     const m = JOB_LINE.exec(line);
     if (m) {
       current = m[1];
-      jobs.set(current, {ifs: [], needs: []});
+      jobs.set(current, {ifs: [], needs: [], with: {}});
       continue;
     }
     if (!current) continue;
+    if (WITH_LINE.test(line)) {
+      withKey = '__with__';
+      continue;
+    }
+    const wi = WITH_INPUT.exec(line);
+    if (wi) {
+      withKey = wi[1] === 'results' ? 'results' : wi[1];
+      if (withKey === 'results') jobs.get(current).with.results = [];
+      else jobs.get(current).with[wi[1]] = wi[2].trim();
+      continue;
+    }
     const n = NEEDS_LINE.exec(line);
     if (n) {
       // Both forms appear in the workflows: 'needs: changes' and
@@ -147,6 +186,42 @@ export function checkWorkflow(text, contract) {
   }
   if (!gateJob.ifs.includes('always()')) {
     errors.push(`${file}: gate '${gate}' must carry 'if: always()'`);
+  }
+
+  // verify-gate `with:` wiring: every needed job (except `changes`, which is
+  // verified through changes-result) must be in `results:`, every `results`
+  // job must be classified in one of the branch inputs, and every classified
+  // job must be in `results:`. A needed job absent from results would run
+  // verify.sh's lookup with 'missing' — wrong behavior surfaced only at
+  // runtime, so pin it statically.
+  const w = gateJob.with;
+  const splitList = v =>
+    typeof v === 'string' && v.trim() ? v.trim().split(/\s+/).filter(Boolean) : [];
+  const results = w.results || [];
+  const classified = [
+    ...splitList(w.required),
+    ...splitList(w.advisory),
+    ...splitList(w['skip-guard']),
+    ...splitList(w['always-report']),
+    ...splitList(w['always-verify']),
+  ];
+  for (const name of gateJob.needs) {
+    if (name === 'changes') continue;
+    if (!results.includes(name)) {
+      errors.push(`${file}: ${gate} needs '${name}' but its verify-gate results do not include it`);
+    }
+  }
+  for (const name of results) {
+    if (!classified.includes(name)) {
+      errors.push(
+        `${file}: ${gate} results include '${name}' but it is not classified (required/advisory/skip-guard/always-report/always-verify)`
+      );
+    }
+  }
+  for (const name of classified) {
+    if (!results.includes(name)) {
+      errors.push(`${file}: ${gate} classifies '${name}' but it is not in the verify-gate results`);
+    }
   }
   return errors;
 }
