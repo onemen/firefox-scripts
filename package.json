@@ -8,6 +8,7 @@
     "format": "node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
     "format:fix": "node tools/format-c.mjs --write && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --write",
     "test": "node --test \"test/unit/**/*.test.mjs\"",
+    "check:decisions": "node tools/check-decisions.mjs",
     "test:hash": "node installer/test/test_hash.mjs && node installer/test/test_self_update.mjs",
     "test:e2e": "node test/e2e/shared/run.mjs",
     "test:e2e:installer": "node test/e2e/shared/run.mjs --installer",

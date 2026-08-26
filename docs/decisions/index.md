@@ -14,6 +14,11 @@ A good record is half a page: context, the decision, consequences. See
 Decision records are point-in-time documents written after the fact — they describe what was
 decided, not what the code does today.
 
+**History & provenance:** the 2026 installer/updater rewrite reached `main` as a single commit
+(`854dfad`, 2026-08-21). The earlier commits cited in the records live on the pre-merge feature
+branches (`wip/*`, `buffy/*`, `main-backup`, …) and are not ancestors of `main` — their dates are
+best-effort provenance for when a decision was made, not entries in `main`'s history.
+
 ## When to add a record
 
 Write one after you have already decided not to build something the next agent or contributor will
@@ -34,33 +39,43 @@ deleting it, and list it under Historical. History stays; it is not silently del
 
 Open these before proposing a new primitive, surface, or storage home.
 
-- 0002 — Hash-based update detection; no versionInfo.json; canonical `files` list comes from the
-  manifest
-- 0003 — Hash manifest published to the gh-pages branch (CORS-enabled), not a Gist
-- 0005 — The C installer performs zero network I/O; the browser tab fetches and POSTs
-- 0007 — Updater tab UI ships as a chrome-privileged package; no remote page/iframe/postMessage
-- 0008 — Generated files untracked; regenerated on demand; hashes cover true sources
-- 0009 — Unified publish `upload`/`upload:local` with required `--mode=prod|dev`; prod gated to
-  `main`
-- 0010 — Local installer server gated by a per-run session token; no CORS
-- 0011 — Admin-rights copy via a standalone self-elevating helper; no profile cache
-- 0012 — Update notification = new tab; daily check only; no OS notification, no check-now
-- 0013 — `config/installer.conf` is the single source of truth
-- 0014 — Browser restart via `browser.sessionstore.resume_session_once` + explicit `--profile`
-- 0015 — E2E tests use Puppeteer-core + WebDriver BiDi
-- 0016 — Dedicated `chrome://firefox-scripts` namespace; not `content userchromejs`
+- [0002](./0002-hash-based-update-detection.md) — Hash-based update detection; no versionInfo.json;
+  canonical `files` list comes from the manifest
+- [0003](./0003-hash-manifest-on-gh-pages.md) — Hash manifest published to the gh-pages branch
+  (CORS-enabled), not a Gist
+- [0005](./0005-installer-zero-network-io.md) — The C installer performs zero network I/O; the
+  browser tab fetches and POSTs
+- [0007](./0007-updater-ui-ships-as-package.md) — Updater tab UI ships as a chrome-privileged
+  package; no remote page/iframe/postMessage
+- [0008](./0008-generated-files-untracked.md) — Generated files untracked; regenerated on demand;
+  hashes cover true sources
+- [0009](./0009-unified-publish-modes.md) — Unified publish `upload`/`upload:local` with required
+  `--mode=prod|dev`; prod gated to `main`
+- [0010](./0010-session-token-no-cors.md) — Local installer server gated by a per-run session token;
+  no CORS
+- [0011](./0011-admin-copy-helper.md) — Admin-rights copy via a standalone self-elevating helper; no
+  profile cache
+- [0012](./0012-new-tab-daily-notification.md) — Update notification = new tab; daily check only; no
+  OS notification, no check-now
+- [0013](./0013-installer-conf-source-of-truth.md) — `config/installer.conf` is the single source of
+  truth
+- [0014](./0014-restart-session-restore.md) — Browser restart via
+  `browser.sessionstore.resume_session_once` + explicit `--profile`
+- [0015](./0015-e2e-puppeteer-bidi.md) — E2E tests use Puppeteer-core + WebDriver BiDi
+- [0016](./0016-chrome-namespace.md) — Dedicated `chrome://firefox-scripts` namespace; not
+  `content userchromejs`
 
 ## Historical
 
 Accepted or superseded records that do not change the next proposal. History stays; it is not
 silently deleted.
 
-- 0001 — `versionInfo.json` + a GitHub Gist were the update-version mechanism — superseded by
-  [0002](./0002-hash-based-update-detection.md)
-- 0004 — Generated files committed, synced by git hooks + publish gate — superseded by
-  [0008](./0008-generated-files-untracked.md)
-- 0006 — Updater tab UI hosted as a remote page (iframe / data: / postMessage) — superseded by
-  [0007](./0007-updater-ui-ships-as-package.md)
+- [0001](./0001-versioninfo-and-gist.md) — `versionInfo.json` + a GitHub Gist were the
+  update-version mechanism — superseded by [0002](./0002-hash-based-update-detection.md)
+- [0004](./0004-commit-generated-files.md) — Generated files committed, synced by git hooks +
+  publish gate — superseded by [0008](./0008-generated-files-untracked.md)
+- [0006](./0006-hosted-remote-updater-ui.md) — Updater tab UI hosted as a remote page (iframe /
+  data: / postMessage) — superseded by [0007](./0007-updater-ui-ships-as-package.md)
 
 ## Not recorded
 

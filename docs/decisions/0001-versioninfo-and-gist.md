@@ -6,13 +6,14 @@
 ## Context
 
 The upstream firefox-scripts tree shipped `versionInfo.json` as the version source for update checks
-(`a24af78`, 2026-01-05). The 2026 installer / publish rewrite inherited it: the early publish
-pipeline published per-package hashes **and** `versionInfo.json` to a **GitHub Gist**, and the
-updater compared the manifest's `date` against the local `versionInfo.json`. Meanwhile the installer
-treated `versionInfo.json` as an obsolete file — excluded from the hash and deleted after install —
-so after a real install the file did not exist and the date-based check could never fire. A
-transitional state kept it shipping inside the zips "for an external update-checker" before it was
-removed entirely (`c943037`, 2026-08-10).
+(`a24af78`, 2026-01-05).The 2026 installer / publish rewrite inherited it: the early publish
+pipeline published per-package hashes **and** `versionInfo.json` to a **GitHub Gist** (`9b91fda`,
+2026-07-28 — `updateGistHashes` in the first `checkAndUpload.mjs`), and the updater compared the
+manifest's `date` against the local `versionInfo.json`. Meanwhile the installer treated
+`versionInfo.json` as an obsolete file — excluded from the hash and deleted after install — so after
+a real install the file did not exist and the date-based check could never fire. A transitional
+state kept it shipping inside the zips "for an external update-checker" before it was removed
+entirely (`c943037`, 2026-08-10).
 
 ## Decision
 

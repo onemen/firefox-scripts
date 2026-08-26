@@ -198,13 +198,14 @@ Installer build (Windows: MSYS2 UCRT64 `mingw32-make`): `make dist_win` / `dist_
 
 Match the change to its validation:
 
-| Change                      | Validate with                                                           |
-| --------------------------- | ----------------------------------------------------------------------- |
-| C (`installer/src/`)        | build the affected target (`make dist_win` / `dist_linux` / `dist_mac`) |
-| Hash / file list            | `pnpm test:hash`                                                        |
-| Publish helpers / hashing   | `pnpm test` (unit tests in `test/unit/`)                                |
-| Generated-file sources      | `node tools/publish/syncGeneratedFiles.mjs`                             |
-| Packaging / publish scripts | `pnpm upload:local -- --mode=prod`                                      |
+| Change                           | Validate with                                                           |
+| -------------------------------- | ----------------------------------------------------------------------- |
+| C (`installer/src/`)             | build the affected target (`make dist_win` / `dist_linux` / `dist_mac`) |
+| Hash / file list                 | `pnpm test:hash`                                                        |
+| Publish helpers / hashing        | `pnpm test` (unit tests in `test/unit/`)                                |
+| Decision log (`docs/decisions/`) | `pnpm check:decisions` (duplicate numbers + stale links)                |
+| Generated-file sources           | `node tools/publish/syncGeneratedFiles.mjs`                             |
+| Packaging / publish scripts      | `pnpm upload:local -- --mode=prod`                                      |
 
 Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test. **Do not claim tests
 passed if the required toolchain or environment was unavailable.**
