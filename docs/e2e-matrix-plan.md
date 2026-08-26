@@ -7,6 +7,9 @@
 
 ## Decision: Puppeteer-core + WebDriver BiDi
 
+> The tooling decision is recorded as ADR [0015](./decisions/0015-e2e-puppeteer-bidi.md); this
+> section keeps the original rationale verbatim.
+
 **Why not Playwright?** Playwright doesn't ship Firefox nightly/dev-edition builds — it pins
 specific revisions. We need to test against the user's actual Firefox, Waterfox, Zen, LibreWolf, and
 Floorp installs. Puppeteer-core with WebDriver BiDi connects to whatever Firefox-family build is on

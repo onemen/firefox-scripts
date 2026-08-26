@@ -27,14 +27,16 @@ Notes:
 - The zip and installer packages are attached to a GitHub **Release** (tag `RELEASE_NAME` from
   `config/installer.conf`) in the `firefox-scripts` repo. The hash manifest lives on the
   **gh-pages** branch because it is updated more often than a release and the branch is CORS-enabled
-  (the installer tab fetches it).
+  (the installer tab fetches it) — see ADR [0003](./decisions/0003-hash-manifest-on-gh-pages.md).
 - The hash manifest has one entry per package, including the **canonical file list** the installer
   hashes over:
   `{"utils": {"hash": "...", "files": ["..."], "date": "..."}, "fx-folder": {"hash": "...", "files": ["..."], "date": "..."}}`,
   plus `installer` / `helper` entries recording the binary source hashes (used by `upload.mjs`). The
-  installer has **no hardcoded file lists** — it reads `files` from this manifest (see §2.1).
+  installer has **no hardcoded file lists** — it reads `files` from this manifest (see §2.1; ADR
+  [0002](./decisions/0002-hash-based-update-detection.md)).
 - Config is driven by `config/installer.conf` → `installer/src/_config.h` (C) and
-  `tools/publish/paths.js` (JS). The single source of truth is `config/installer.conf`.
+  `tools/publish/paths.js` (JS). The single source of truth is `config/installer.conf` (ADR
+  [0013](./decisions/0013-installer-conf-source-of-truth.md)).
 
 ---
 
@@ -189,11 +191,12 @@ snapshot, produced by `upload:local`).
    - If a file is missing on disk, treat it as `""` (empty string) for the hash input (see §2.3).
 6. Compare local vs published hash to derive the status badge.
 
-The installer keeps **no hardcoded file lists**. The canonical list comes from the manifest's
-`files` array (primary) or is derived from the zips minus the obsolete files (fallback). Obsolete
-files are listed in `installer/src/obsolete_files.h` (`versionInfo.json` — legacy, no longer
-shipped); they are excluded from the hash and are **deleted after install** so the installed set
-matches the published list.
+The installer keeps **no hardcoded file lists** (ADR
+[0002](./decisions/0002-hash-based-update-detection.md)). The canonical list comes from the
+manifest's `files` array (primary) or is derived from the zips minus the obsolete files (fallback).
+Obsolete files are listed in `installer/src/obsolete_files.h` (`versionInfo.json` — legacy, no
+longer shipped); they are excluded from the hash and are **deleted after install** so the installed
+set matches the published list.
 
 **Zip layout is handled at install time.** The config package is installed with
 `extract_zip_flatten()` (`installer/src/file_utils.c`), which extracts into a temp dir, descends
@@ -299,9 +302,10 @@ xPref.sys.mjs
 
 `updater/updater-config.sys.mjs` is the generated (untracked) updater config — regenerated at
 publish time and added back to the set explicitly. `versionInfo.json` was removed from the source
-(it no longer ships) and is a legacy **obsolete file** (`installer/src/obsolete_files.h`): excluded
-from the hash, previously-installed copies are deleted after install. Local-only files (`*.local.*`,
-`*.local`) are gitignored and never shipped.
+(it no longer ships; ADR [0001](./decisions/0001-versioninfo-and-gist.md)) and is a legacy
+**obsolete file** (`installer/src/obsolete_files.h`): excluded from the hash, previously-installed
+copies are deleted after install. Local-only files (`*.local.*`, `*.local`) are gitignored and never
+shipped.
 
 ### updater-ui (`tools/publish/remote-ui`, shipped as `updater-ui.zip` → `chrome/utils/updater/ui`)
 

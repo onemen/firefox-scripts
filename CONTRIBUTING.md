@@ -10,6 +10,9 @@ in-browser updater.
   [GitHub](https://github.com/onemen/firefox-scripts/issues). Search existing issues first.
 - **Fix bugs / add features** — fork the repo, make your changes on a branch, and open a pull
   request back to `main`. Keep each PR focused on a single change and describe the reasoning.
+- **Architecture changes** — consult the decision log first (`docs/decisions/index.md`): a decision
+  already made usually covers the need. New decisions use the ADR template
+  (`docs/decisions/0000-template.md`).
 
 ## Setup
 
@@ -32,9 +35,9 @@ pnpm install
 The generated files (`installer/src/_config.h`, `installer/src/resources.h`, and
 `core/chrome/utils/updater/updater-config.sys.mjs`) are **not committed** — they are gitignored and
 regenerated on demand: the installer Makefile produces the C headers on every build, and
-`createZip.mjs` produces the updater config at publish time (see `docs/DEVELOPING.md` and
-`docs/generated-files-decision.md`). Edit the sources (`config/installer.conf`, `installer/web/*`)
-and let the tooling regenerate.
+`createZip.mjs` produces the updater config at publish time (see `docs/DEVELOPING.md` and ADR
+`docs/decisions/0008-generated-files-untracked.md`). Edit the sources (`config/installer.conf`,
+`installer/web/*`) and let the tooling regenerate.
 
 ## Verification
 

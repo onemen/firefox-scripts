@@ -1,7 +1,8 @@
 # Installer UI Tab After Browser Restart
 
 How the installer keeps its UI tab alive across the browser restart that finishes an install, and
-why it works that way.
+why it works that way. The restart strategy is recorded as ADR
+[0014](./decisions/0014-restart-session-restore.md).
 
 ## Problem
 

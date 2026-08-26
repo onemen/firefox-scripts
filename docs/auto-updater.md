@@ -4,50 +4,22 @@ Design notes for the in-browser auto-updater that keeps installed scripts and co
 to date. It ships across two packages: the scheduler in `utils.zip` and the tab UI in
 `updater-ui.zip`.
 
-## 0. Decisions (from review with author, Aug 2026)
+## 0. Decisions
 
-1. **Notification = new tab.** No OS notification: when an update is available the updater opens
-   `chrome://firefox-scripts/content/ui/updater.html` as a new tab (via `b.addTrustedTab(...)`).
-2. **Card look = installer card, UI shipped as a package.** The updater tab is a chrome-privileged
-   page shipped inside `updater-ui.zip` (`updater.html` + `updater.js` engine + `updater-ui.js`
-   client + generated `updater.css` + brand logos), installed into `chrome/utils/updater/ui` and
-   served as `chrome://firefox-scripts/content/ui/*`. The client calls the engine directly — there
-   is no remote page, no iframe and no postMessage bridge. The page renders the installer's design
-   system (`installer/web/style.css` classes: `.app-container`, `.header`, `.browser-card`,
-   `.badge-*`, `.btn-action`, `.card-progress`, `.manual-download-bar`) verbatim.
-   `tools/publish/syncGeneratedFiles.mjs` builds the updater stylesheet in-memory from
-   `installer/web/style.css` + the updater-only `tools/publish/updater.css` tail and `createZip.mjs`
-   writes it into `updater-ui.zip` (see §3.1/§3.2).
-3. **Per-package skip per update-hash.** Prefs `extensions.firefox-scripts.skippedHash.fx-folder` /
-   `skippedHash.utils` store the remote hash the user skipped; the check honors them exactly
-   (`updateNeeded = hashMismatch && skipHash !== remoteHash`) and clears them when the remote hash
-   changes or local files match. `updater-ui` has no skip toggle — it self-updates silently.
-4. **Two daily prefs, no false "checked".** `extensions.firefox-scripts.lastUpdateTabShown`
-   (YYYY-MM-DD) is set when the notification tab is OPENED, so an ignored tab does not re-open
-   within the same day. `extensions.firefox-scripts.lastScriptsCheckDate` is set ONLY by the tab UI
-   when the user makes a decision (installs, checks a "Don't show again" box, clicks "Remind me
-   Tomorrow", or restarts). Closing the tab without acting — or restarting the browser with the tab
-   left open — records nothing, so the pending update resurfaces later instead of being marked as
-   "checked".
-5. **Admin copy via standalone helper.** A small C binary (`helper_win.exe` / `helper_linux` /
-   `helper_mac`) — sources at `installer/src/helper/`, built by `installer/Makefile helper_*` — is
-   downloaded from the publish branch (`HELPER_BASE_URL` in `config/installer.conf`), unblocked
-   (`Zone.Identifier` ADS / quarantine / chmod +x), and invoked from the tab with
-   `Subprocess.sys.mjs` as `helper <src> <dst> <src> <dst> ...`. It self-elevates with a single UAC
-   prompt when the destination is not writable.
-6. **No "Check for updates now" button** — daily timer only.
-7. **Manual download option.** Users who prefer not to install automatically can download both zips
-   (`utils.zip`, `fx-folder.zip`) — the updater tab and the installer UI both show two plain links
-   ("configuration files", "utils"). Each link is a real user click; the zip is fetched and turned
-   into a same-origin blob URL (`<a download>`), so the current tab is never navigated away and no
-   new tab is opened.
-8. **Config URLs come from installer.conf.** The updater imports `updater-config.sys.mjs` —
-   auto-generated from `config/installer.conf` by `tools/publish/generateUpdaterConfig.mjs` at
-   publish time (same pattern as the C installer's Makefile-generated `_config.h`). A URL/path
-   change by the developer propagates everywhere and, because the generated file ships inside
-   `utils.zip`, changes its hash → the hash-based detector treats it as an update.
-9. **Waterfox.** Waterfox bundles the legacy-extension BootstrapLoader, so `config.js` skips only
-   the `BootstrapLoader.js` load on Waterfox; `userChrome.js` and the updater work normally.
+The design decisions behind this document are recorded as ADRs in `docs/decisions/` (see the
+[decision log index](./decisions/index.md)):
+
+| Decision (from review with author, Aug 2026)         | ADR                                                        |
+| ---------------------------------------------------- | ---------------------------------------------------------- |
+| Notification = new tab, no OS notification           | [0012](./decisions/0012-new-tab-daily-notification.md)     |
+| Card look = installer card, UI shipped as a package  | [0007](./decisions/0007-updater-ui-ships-as-package.md)    |
+| Per-package skip per update-hash                     | [0002](./decisions/0002-hash-based-update-detection.md)    |
+| Two daily prefs, no false "checked"                  | [0012](./decisions/0012-new-tab-daily-notification.md)     |
+| Admin copy via standalone helper                     | [0011](./decisions/0011-admin-copy-helper.md)              |
+| No "Check for updates now" button — daily timer only | [0012](./decisions/0012-new-tab-daily-notification.md)     |
+| Manual download via blob links                       | not recorded (UI detail — see the decision log index)      |
+| Config URLs come from installer.conf                 | [0013](./decisions/0013-installer-conf-source-of-truth.md) |
+| Waterfox skips only BootstrapLoader                  | [0002](./decisions/0002-hash-based-update-detection.md)    |
 
 ## 1. Purpose
 

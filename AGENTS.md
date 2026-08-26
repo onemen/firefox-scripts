@@ -21,7 +21,8 @@ own `AGENTS.md`, that nested file is more specific and overrides this one where 
 - Preserve upstream provenance in `core/`: files outside `updater/` come from
   xiaoxiaoflood/firefox-scripts (MPL-2.0); `updater/` is custom (MIT). Avoid unrelated changes to
   upstream-derived files.
-- Read the relevant `docs/` (and `docs/local_plan/`) before architectural or design changes.
+- Read the relevant `docs/` (and `docs/local_plan/`, plus the decision log
+  `docs/decisions/index.md`) before architectural or design changes.
 
 ## Overview
 
@@ -79,6 +80,24 @@ facts most often cause bugs:
   `lastUpdateTabShown`. `versionInfo.json` is obsolete (excluded from zips; installed copies cleaned
   by `installer/src/obsolete_files.h`).
 
+## Decision records
+
+Architecture decisions are recorded as ADRs (architecture decision records) in `docs/decisions/` —
+the **steering veto list**: open [docs/decisions/index.md](./docs/decisions/index.md) before
+proposing a new primitive, surface, storage home, or architecture change. A decision already made
+usually covers the need — see `docs/decisions/0002-hash-based-update-detection.md` for the shape
+that steers.
+
+- Template: `docs/decisions/0000-template.md` — copy it to the next unused `NNNN` with a kebab-case
+  slug; keep the record to roughly half a page (Context / Decision / Consequences).
+- One decision per record. Do not write an ADR for a layout/UI tweak, a library pick the code
+  already encodes, or because a PR shipped.
+- Supersede, don't edit: when a later record changes a decision, mark the old one
+  `superseded by NNNN` and list it under the index's Historical section. If a number collides,
+  renumber the later record — never leave duplicates.
+- Records are point-in-time documents; the design docs (`docs/DEVELOPING.md`,
+  `docs/auto-updater.md`, …) describe current behavior and link to the records.
+
 ## Key directories
 
 | Path                 | Purpose                                                                                                                           |
@@ -89,7 +108,8 @@ facts most often cause bugs:
 | `installer/web/`     | Embedded UI (`index.html`, `script.js`, `style.css`, `logos/`) → gzip-embedded into `resources.h`                                 |
 | `tools/publish/`     | Release pipeline: zips, installer/helper binaries, hashing, Pages upload, on-demand generated-file generation, `remote-ui/`       |
 | `config/`            | `installer.conf` (source of truth) + eslint/prettier configs                                                                      |
-| `docs/`              | Developer guide + design notes (auto-updater, status logic, restart UI tab, generated-files decision, future work)                |
+| `docs/`              | Developer guide + design notes (auto-updater, status logic, restart UI tab, future work)                                          |
+| `docs/decisions/`    | Architecture decision records (ADR log) — steering veto list, template, `index.md`                                                |
 
 Entry points when debugging: `core/fx-folder/config.js` (autoConfig bootstrap that starts
 everything), `core/chrome/utils/chrome.manifest` (maps `chrome://userchromejs/*`,
@@ -115,10 +135,10 @@ Because the files are not committed, the publish hashes cover their **true sourc
 artifacts: the utils hash/file list explicitly includes `updater/updater-config.sys.mjs` (it ships
 inside the zip), the updater-ui hash/file list includes `updater.css` (it ships inside
 updater-ui.zip), and the installer hash covers `installer/src` + `installer/web/*` +
-`config/installer.conf` (see `docs/generated-files-decision.md`). At the end of every `upload` run
-the generated files are **deleted from disk** (`cleanGenerated`) so the working tree matches a fresh
-clone — no localhost/dev-baked copies linger. `installer.conf` is a base value — changing it shifts
-package hashes, which is how updates propagate.
+`config/installer.conf` (see `docs/decisions/0008-generated-files-untracked.md`). At the end of
+every `upload` run the generated files are **deleted from disk** (`cleanGenerated`) so the working
+tree matches a fresh clone — no localhost/dev-baked copies linger. `installer.conf` is a base value
+— changing it shifts package hashes, which is how updates propagate.
 
 ## Local plans
 
@@ -169,6 +189,8 @@ Installer build (Windows: MSYS2 UCRT64 `mingw32-make`): `make dist_win` / `dist_
   `installer_log()` logging; vendored miniz read-only (`-DMINIZ_NO_DEFLATE_APIS`).
 - **JS formatting/lint** is enforced by prettier + eslint (configs in `config/`) — run
   `pnpm format:fix` / `pnpm lint` before finishing.
+- **Decision records** (ADR format): steering veto list in `docs/decisions/index.md`; template
+  `docs/decisions/0000-template.md`; next unused `NNNN` + kebab-case slug; supersede, don't edit.
 - **Error handling:** fail-fast with clear messages; elevation failures distinguish cancel (exit 2);
   network failures surface a banner in the UI, not a silent partial install.
 
@@ -196,7 +218,8 @@ the core smoke tests — see issue #30.)
 Before changing code:
 
 1. Identify the affected subsystem.
-2. Read the relevant `docs/` (and `docs/local_plan/`) documentation.
+2. Read the relevant `docs/` (and `docs/local_plan/`, and the decision log
+   `docs/decisions/index.md`) documentation.
 3. Check whether the affected files are generated.
 4. Make the smallest appropriate change.
 5. Regenerate generated files on demand when their sources change (make / createZip /

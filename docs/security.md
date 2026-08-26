@@ -9,7 +9,8 @@ in a browser. The primary threat is a **malicious web page open in any browser w
 is running**: the page can reach `http://127.0.0.1:<port>/...` and try to drive the installer API or
 read its responses. The updater (a privileged script inside the browser) downloads packages from the
 update server, so the secondary threat is a **compromised/malicious update source** delivering a
-tampered archive.
+tampered archive. The local-server security model is recorded as ADR
+[0010](./decisions/0010-session-token-no-cors.md).
 
 Mitigations in place:
 

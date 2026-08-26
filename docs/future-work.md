@@ -9,9 +9,11 @@ Each section links to its tracking issue under the
 
 ## 1. Updater end-to-end test list
 
-The updater UI is now a shipped package (`updater-ui.zip` → `chrome/utils/updater/ui`), updated by
-`scriptsUpdater.sys.mjs` (`ensureUpdaterUi`) before the tab opens. The E2E suite in `test/e2e/`
-(`pnpm test:e2e`) automates the installer and updater flows on CI.
+The updater UI is now a shipped package (ADR
+[0007](./decisions/0007-updater-ui-ships-as-package.md): `updater-ui.zip` →
+`chrome/utils/updater/ui`), updated by `scriptsUpdater.sys.mjs` (`ensureUpdaterUi`) before the tab
+opens. The E2E suite in `test/e2e/` (`pnpm test:e2e`) automates the installer and updater flows on
+CI.
 
 > **Note:** §1.1–§1.4 describe the desired test coverage. Many are already implemented in the E2E
 > suite on `main`; the remaining gaps are tracked as individual checklist items. §1.5 (Firefox 155
@@ -121,16 +123,18 @@ Items below shipped in v1.0 and are kept for reference:
 
 - ~~Compile + upload the installer and helper binaries~~ (shipped: `upload.mjs` builds + uploads all
   three platforms).
-- ~~The updater tab UI is published as a third package, `updater-ui.zip`~~ (shipped).
-- ~~`versionInfo.json` stopped shipping~~ (shipped; `obsolete_files.h` cleans existing copies).
+- ~~The updater tab UI is published as a third package, `updater-ui.zip`~~ (shipped; ADR
+  [0007](./decisions/0007-updater-ui-ships-as-package.md)).
+- ~~`versionInfo.json` stopped shipping~~ (shipped; `obsolete_files.h` cleans existing copies — ADR
+  [0001](./decisions/0001-versioninfo-and-gist.md)).
 - ~~Zips published to the `firefox-scripts` repo~~ (shipped: `ZIP_DOWNLOAD_REPO=firefox-scripts`).
 
 ### Generated-file consistency (resolved — nothing tracked to drift)
 
 The generated files (`updater-config.sys.mjs`, `updater.css`, `_config.h`, `resources.h`) are
 **untracked** and regenerated on demand by the Makefile / `createZip.mjs`, so the old commit-time
-sync problem is gone — there is nothing tracked that can drift (see
-`docs/generated-files-decision.md`). What a future CI job should verify instead:
+sync problem is gone — there is nothing tracked that can drift (see ADR
+[0008](./decisions/0008-generated-files-untracked.md)). What a future CI job should verify instead:
 
 - **Deterministic publish output:** run `upload:local --mode=prod` (or the generators) and fail if
   the produced snapshot (hashes, zips, manifest `files` lists) differs between runs.
@@ -164,8 +168,9 @@ sync problem is gone — there is nothing tracked that can drift (see
 > leg ([#30](https://github.com/onemen/firefox-scripts/issues/30)).
 
 Firefox 155 hardened frame-principal inheritance in system-principal chrome documents, which broke
-the previous hosted-iframe updater UI. The following probes all failed in 155 (see
-`docs/generated-files-decision.md`):
+the previous hosted-iframe updater UI (see ADRs [0006](./decisions/0006-hosted-remote-updater-ui.md)
+and [0007](./decisions/0007-updater-ui-ships-as-package.md)). The following probes all failed in
+155:
 
 1. `iframe` + `srcdoc` (attribute before/after append, and the `.srcdoc` property) → stays
    `about:blank`.
