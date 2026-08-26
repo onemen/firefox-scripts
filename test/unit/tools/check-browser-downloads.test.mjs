@@ -12,9 +12,8 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-browser-downloads.mjs')).href;
-const {compareBaseline, issueBody, issueTitle, parseContentRange, sha256File} = await import(
-  scriptUrl
-);
+const {compareBaseline, formatAge, issueBody, issueTitle, parseContentRange, sha256File} =
+  await import(scriptUrl);
 
 test('compareBaseline: first run, new version, unchanged', () => {
   assert.equal(compareBaseline(null, {version: '154.0.1'}), 'first-run');
@@ -52,6 +51,14 @@ test('issueBody: new-version body carries the verified SHA-256 ledger', () => {
   assert.match(body, /Watchdog run: https:\/\/github\.com/);
   assert.match(body, /New librewolf release: 154\.0-2 → 154\.0\.1-2/);
   assert.match(body, /Verified SHA-256 \(153225824 bytes\): `ec27c770aa/);
+});
+
+test('formatAge: human-readable baseline age, clamped at 0', () => {
+  assert.equal(formatAge(0), '0m');
+  assert.equal(formatAge(8 * 60_000), '8m');
+  assert.equal(formatAge(5 * 3_600_000 + 12 * 60_000), '5h 12m');
+  assert.equal(formatAge(3 * 86_400_000 + 2 * 3_600_000), '3d 2h');
+  assert.equal(formatAge(-5_000), '0m'); // clock skew → clamp, no negative
 });
 
 test('parseContentRange: total size or null', () => {

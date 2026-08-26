@@ -19,7 +19,9 @@
  *        downloads the installer once, hashes it and records {version, size,
  *        sha256} in the baseline (.watchdog/baseline.json, stored in the
  *        Actions cache). Same-version runs re-check only the 1 KB range, but
- *        flag a size change (binary replaced without a bump).
+ *        flag a size change (binary replaced without a bump). Each run logs the
+ *        baseline's cache-hit status and age, so a silently evicted cache is
+ *        visible instead of masquerading as a first run.
  *   4. ISSUES — new versions, rot, and same-version size changes open a GitHub
  *        issue, deduped per browser (the exact issue title is matched against
  *        open issues carrying the `url-watchdog` label). New-release issues
@@ -207,6 +209,19 @@ export function compareBaseline(prev, curr) {
 }
 
 /**
+ * Human-readable age from a millisecond span — e.g. '3d 2h', '5h 12m', '8m'.
+ * Exported for unit tests; clamped to 0 so clock skew never prints negative.
+ */
+export function formatAge(ms) {
+  const min = Math.max(0, Math.floor(ms / 60_000));
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ${min % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+/**
  * The dedup key for an issue: exact-title match against open issues carrying
  * the url-watchdog label, so a re-run never duplicates an open finding.
  */
@@ -310,8 +325,19 @@ export async function main() {
   const baselineFile = path.join(baselineDir, 'baseline.json');
 
   let baseline = {};
-  if (!prMode && fs.existsSync(baselineFile)) {
+  const baselineFound = !prMode && fs.existsSync(baselineFile);
+  if (baselineFound) {
     baseline = JSON.parse(fs.readFileSync(baselineFile, 'utf-8'));
+    // Cache-hit telemetry: an evicted/expired Actions cache would otherwise
+    // masquerade as a first run or a version bump. The cache restore preserves
+    // the file mtime, so age = time since the previous run wrote the baseline.
+    const stat = fs.statSync(baselineFile);
+    console.log(
+      `baseline: cache hit — written ${new Date(stat.mtimeMs).toISOString()} ` +
+        `(${formatAge(Date.now() - stat.mtimeMs)} ago)`
+    );
+  } else if (!prMode) {
+    console.log('baseline: cache miss — first run, re-baselining all browsers');
   }
 
   const findings = [];
