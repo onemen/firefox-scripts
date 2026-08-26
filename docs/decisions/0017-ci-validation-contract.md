@@ -14,23 +14,26 @@ under test (PR #63's LibreWolf leg).
 
 ## Decision
 
-Installer/updater E2E and the publish gate run **only when changed files can affect them**
-(`core/**`, `config/installer.conf`, `installer/**`, `tools/publish/**`, `test/e2e/**`, the package
-manifest, and the workflows/actions); the aggregate gates always run, so required checks never go
-missing. Fork-browser matrix legs are **advisory** — failures warn in the gate instead of blocking.
-The browser download map (`test/e2e/shared/downloads.mjs`) is the single source of truth for install
-recipes: direct official downloads, "latest" resolved from vendor version APIs, no package managers.
-A scheduled + PR-triggered URL watchdog (`.github/workflows/url-watchdog.yml`) keeps the map
-trustworthy between releases.
+Installer/updater E2E, the browser-matrix fork legs (same updater E2E test, other browsers) and the
+publish gate run **only when changed files can affect them** (`core/**`, `config/installer.conf`,
+`installer/**`, `tools/publish/**`, `test/e2e/**`, the package manifest, and the workflows/actions);
+the aggregate gates always run, so required checks never go missing. Fork-browser matrix legs are
+**advisory** — when they run, failures warn in the gate instead of blocking. The browser download
+map (`test/e2e/shared/downloads.mjs`) is the single source of truth for install recipes: direct
+official downloads, "latest" resolved from vendor version APIs, no package managers. A scheduled +
+PR-triggered URL watchdog (`.github/workflows/url-watchdog.yml`) keeps the map trustworthy between
+releases.
 
 ## Consequences
 
 Docs-only PRs get fast, green CI, and a flaky third-party host can no longer block a merge. Coverage
 gaps on docs-only PRs are accepted; any PR touching the download map runs the watchdog's PR check
-and the affected legs. One caveat: a PR that branched before a gating change and is later updated
-from main (the "Update branch" button, required by strict branch protection) over-runs the full
-matrix once — GitHub's changed-files diff counts base-branch changes merged into the head, so the
-paths filter over-triggers. Rebase the PR onto main instead of merging it in to avoid the over-run;
-when it happens it is harmless (conservative direction). The download map and watchdog are test
-harness, not product — they are noted as "Not recorded" in the index, not re-ADRed. Revisit-if: a
-fork host becomes reliable enough for hard gates, or a docs-only change needs the full E2E matrix.
+and the affected legs. The fork legs no longer act as an always-on canary for upstream fork releases
+breaking the updater — the watchdog flags version bumps, and the next E2E-relevant PR catches a
+breakage. One caveat: a PR that branched before a gating change and is later updated from main (the
+"Update branch" button, required by strict branch protection) over-runs the full matrix once —
+GitHub's changed-files diff counts base-branch changes merged into the head, so the paths filter
+over-triggers. Rebase the PR onto main instead of merging it in to avoid the over-run; when it
+happens it is harmless (conservative direction). The download map and watchdog are test harness, not
+product — they are noted as "Not recorded" in the index, not re-ADRed. Revisit-if: a fork host
+becomes reliable enough for hard gates, or a docs-only change needs the full E2E matrix.

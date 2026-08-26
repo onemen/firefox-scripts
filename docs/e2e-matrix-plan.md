@@ -38,10 +38,11 @@ geckodriver uses by default for recent builds.
 **Advisory** = the E2E gate reports a warning instead of failing the PR. The `browser-matrix` legs
 (Firefox Dev Edition, LibreWolf, Floorp, Zen) download official installers directly from third-party
 hosts — Mozilla's devedition redirect, librewolf.dev's package registry, GitHub release assets —
-which can hiccup. LibreWolf's newest version is resolved from the Codeberg package registry; Floorp
-and Zen use stable `/releases/latest/download/` asset URLs. Waterfox has no direct URL (no GitHub
-release assets), so its leg stays manual and the URL watchdog tracks its version only. The hard gate
-is Firefox stable across all three OSes.
+which can hiccup. The legs are path-filtered like the 3-OS jobs (same updater E2E test, so they skip
+on docs-only PRs) and remain advisory when they run. LibreWolf's newest version is resolved from the
+Codeberg package registry; Floorp and Zen use stable `/releases/latest/download/` asset URLs.
+Waterfox has no direct URL (no GitHub release assets), so its leg stays manual and the URL watchdog
+tracks its version only. The hard gate is Firefox stable across all three OSes.
 
 ## What each test asserts
 

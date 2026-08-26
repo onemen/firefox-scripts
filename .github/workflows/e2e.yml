@@ -229,7 +229,11 @@ jobs:
   # release assets — tracked by the URL watchdog).
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
-    needs: snapshot
+    # Same updater E2E test as the `updater` job, so it is gated on the same
+    # changed-paths filter (skips on docs-only / tooling-only PRs). The legs
+    # stay ADVISORY in the gate: their failures warn instead of blocking.
+    needs: [changes, snapshot]
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -312,15 +316,16 @@ jobs:
           if [ "${{ needs.changes.outputs.e2e }}" = "true" ]; then
             verify 'installer' '${{ needs.installer.result }}'
             verify 'updater'   '${{ needs.updater.result }}'
+            # browser-matrix is ADVISORY (fork legs download from third-party
+            # hosts — librewolf.dev's package registry, Floorp's GitHub
+            # releases — which can hiccup; see docs/e2e-matrix-plan.md). Warn,
+            # don't fail the gate.
+            case "${{ needs.browser-matrix.result }}" in
+              success) ok 'browser-matrix' '${{ needs.browser-matrix.result }}' ;;
+              *) echo "::warning::browser-matrix ${{ needs.browser-matrix.result }} (advisory)" ;;
+            esac
           else
             echo 'installer + updater E2E: skipped — no E2E-relevant changes (OK)'
+            echo 'browser-matrix: skipped — no E2E-relevant changes (OK)'
           fi
-          # browser-matrix is ADVISORY (fork legs download from third-party
-          # hosts — librewolf.dev's package registry, Floorp's GitHub releases —
-          # which can hiccup; see docs/e2e-matrix-plan.md). Warn, don't fail the
-          # gate.
-          case "${{ needs.browser-matrix.result }}" in
-            success) ok 'browser-matrix' '${{ needs.browser-matrix.result }}' ;;
-            *) echo "::warning::browser-matrix ${{ needs.browser-matrix.result }} (advisory)" ;;
-          esac
           echo 'All E2E jobs passed'
