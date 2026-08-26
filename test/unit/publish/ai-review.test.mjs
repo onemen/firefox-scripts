@@ -101,6 +101,29 @@ test('request aborts promptly when the run-level signal fires', async () => {
   }
 });
 
+test('request aborts during a retry wait instead of waiting out the timer', async () => {
+  const realFetch = globalThis.fetch;
+  const controller = new AbortController();
+  // Retryable 500 with a long retry-after: the request must not sleep the
+  // full capped wait once the run-level signal aborts mid-wait.
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 500,
+    headers: new Headers({'retry-after': '60'}),
+  });
+  try {
+    const start = Date.now();
+    const promise = request({key: 'k', endpoint: 'https://x'}, {}, controller.signal);
+    setTimeout(() => controller.abort(), 50);
+    const out = await promise;
+    assert.equal(out.kind, 'transient');
+    assert.equal(out.status, 429, 'abort mid-wait counts as a rate-limit stop');
+    assert.ok(Date.now() - start < 2000, 'must not wait out the 5s retry timer');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test('classifies transient and permanent provider statuses', () => {
   for (const status of [0, 408, 429, 500, 503]) {
     assert.equal(classifyStatus(status), 'transient');
@@ -244,7 +267,7 @@ test('records provider failure and stops on rate limit', async () => {
   assert.equal(result.rdjson.diagnostics.length, 0);
   assert.equal(result.summary.length, 2);
   assert.match(result.summary[0], /rate limited/);
-  assert.match(result.summary[1], /rate limit exhausted/);
+  assert.match(result.summary[1], /groq rate limit exhausted/);
 });
 
 test('reviewFiles reviews files concurrently by default', async () => {

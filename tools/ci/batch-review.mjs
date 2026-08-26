@@ -77,21 +77,34 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const value = () => argv[++i];
     switch (argv[i]) {
-      case '--pr':
-        args.prs.push(Number(value()));
+      case '--pr': {
+        const raw = value();
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n <= 0) throw new Error(`Invalid --pr: ${raw ?? ''}`);
+        args.prs.push(n);
         break;
-      case '--branch':
-        args.branches.push(value());
+      }
+      case '--branch': {
+        const v = value();
+        if (!v) throw new Error('Missing value for --branch');
+        args.branches.push(v);
         break;
+      }
       case '--open':
         args.open = true;
         break;
-      case '--since':
-        args.since = value();
+      case '--since': {
+        const v = value();
+        if (!v) throw new Error('Missing value for --since');
+        args.since = v;
         break;
-      case '--base':
-        args.base = value();
+      }
+      case '--base': {
+        const v = value();
+        if (!v) throw new Error('Missing value for --base');
+        args.base = v;
         break;
+      }
       case '--keep':
         args.keep = true;
         break;

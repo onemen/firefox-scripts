@@ -181,6 +181,23 @@ export function normalizeFinding(finding, file) {
 const MAX_RETRY_MS = 15_000;
 const MAX_RETRY_AFTER_MS = 5_000;
 
+// Resolve as soon as `signal` aborts (or after ms), so a run-level rate-limit
+// abort is not held up by a pending retry timer. A double resolve is harmless.
+function sleep(ms, signal) {
+  return new Promise(resolve => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      {once: true}
+    );
+  });
+}
+
 export async function request(provider, body, signal) {
   let delay = 2000;
   const start = Date.now();
@@ -230,14 +247,16 @@ export async function request(provider, body, signal) {
       if (attempt === 2 || Date.now() - start + wait > MAX_RETRY_MS) {
         return {kind: 'transient', status: response.status};
       }
-      await new Promise(resolve => setTimeout(resolve, wait));
+      await sleep(wait, signal);
+      if (signal?.aborted) return {kind: 'transient', status: 429};
       delay = Math.min(delay * 2, 16_000);
     } catch {
       if (signal?.aborted) return {kind: 'transient', status: 429};
       if (attempt === 2 || Date.now() - start > MAX_RETRY_MS) {
         return {kind: 'transient', status: 0};
       }
-      await new Promise(resolve => setTimeout(resolve, Math.min(delay, MAX_RETRY_MS)));
+      await sleep(Math.min(delay, MAX_RETRY_MS), signal);
+      if (signal?.aborted) return {kind: 'transient', status: 429};
       delay = Math.min(delay * 2, 16_000);
     }
   }
@@ -330,6 +349,7 @@ export async function reviewFiles({
   const diagnostics = [];
   const summaries = [];
   let rateLimited = false;
+  let rateLimitProvider = null;
   const controller = new AbortController();
   const entries = files
     .map(file => ({file, diff: fileDiffs?.get(file) ?? ''}))
@@ -366,6 +386,7 @@ export async function reviewFiles({
         break;
       }
       providerFailure = outcome;
+      if (outcome.status === 429) rateLimitProvider = provider.name;
       if (outcome.kind === 'permanent' && outcome.status !== 404) break;
     }
     if (!result) {
@@ -413,7 +434,9 @@ export async function reviewFiles({
     }
   }
   if (skipped > 0) {
-    summaries.push('> Groq rate limit exhausted; remaining files were skipped.');
+    summaries.push(
+      `> ${rateLimitProvider ?? 'Provider'} rate limit exhausted; remaining files were skipped.`
+    );
   }
   const finalDiagnostics = summaryOnly ? [] : diagnostics.slice(0, maxFindings);
   return {

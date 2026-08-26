@@ -85,6 +85,16 @@ test('parseArgs: rejects unknown flags', () => {
   assert.throws(() => parseArgs(['--nope']), /Unknown flag: --nope/);
 });
 
+test('parseArgs: rejects missing or invalid values', () => {
+  assert.throws(() => parseArgs(['--pr']), /Invalid --pr/);
+  assert.throws(() => parseArgs(['--pr', 'abc']), /Invalid --pr/);
+  assert.throws(() => parseArgs(['--pr', '0']), /Invalid --pr/);
+  assert.throws(() => parseArgs(['--pr', '-3']), /Invalid --pr/);
+  assert.throws(() => parseArgs(['--branch']), /Missing value for --branch/);
+  assert.throws(() => parseArgs(['--since']), /Missing value for --since/);
+  assert.throws(() => parseArgs(['--base']), /Missing value for --base/);
+});
+
 test('parseOpenPrBranchesOutput: splits and drops empties', () => {
   assert.deepEqual(parseOpenPrBranchesOutput('buffy/a\nbuffy/b\n'), ['buffy/a', 'buffy/b']);
   assert.deepEqual(parseOpenPrBranchesOutput('\n\n'), []);
