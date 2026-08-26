@@ -151,7 +151,9 @@ async function checkEndpoint(url) {
       await reader.read(); // first chunk (≤ 64 KB) — enough to confirm it's a download
       await reader.cancel();
     }
-    return {ok: true, total};
+    // null (not 0) when the server ignored Range and reported no total, so
+    // callers can tell "unknown" apart from a zero-byte response.
+    return {ok: true, total: total || null};
   } finally {
     // Best-effort: drain/cancel is handled above; nothing further to release.
   }
@@ -313,7 +315,10 @@ export async function main() {
   }
 
   const findings = [];
-  const next = {};
+  // Start from the loaded baseline so a browser whose check failed this run
+  // keeps its recorded {version, size, sha256} instead of being erased — a
+  // release landing during a transient outage must still reach the ledger.
+  const next = {...baseline};
   const runUrl =
     process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY ?
       `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
@@ -364,7 +369,9 @@ export async function main() {
       findings.push({kind: 'rot', browser, reason: endpoint.reason, version});
       continue; // broken chain — do not touch the baseline for this browser
     }
-    console.log(`  endpoint ok (${endpoint.total} bytes)`);
+    console.log(
+      `  endpoint ok${endpoint.total ? ` (${endpoint.total} bytes)` : ' (no size reported)'}`
+    );
 
     // PR mode: stateless, always green — surface findings as annotations.
     if (prMode) {
@@ -403,15 +410,18 @@ export async function main() {
       continue;
     }
 
-    // Same version: keep the recorded hash, flag a binary replacement.
-    next[browser] = {version, size: endpoint.total, sha256: prev.sha256 || null};
-    if (prev.size && prev.size !== endpoint.total) {
-      console.log(`  ⚠ same version, binary size changed: ${prev.size} → ${endpoint.total}`);
+    // Same version: keep the recorded hash, flag a binary replacement. A server
+    // that ignores Range reports no total — keep the recorded size in that case
+    // instead of overwriting it with 0 and raising a false size-change.
+    const total = endpoint.total || 0;
+    next[browser] = {version, size: total || prev.size || null, sha256: prev.sha256 || null};
+    if (total && prev.size && prev.size !== total) {
+      console.log(`  ⚠ same version, binary size changed: ${prev.size} → ${total}`);
       findings.push({
         kind: 'size-change',
         browser,
         prevSize: prev.size,
-        newSize: endpoint.total,
+        newSize: total,
       });
     } else {
       console.log('  unchanged');

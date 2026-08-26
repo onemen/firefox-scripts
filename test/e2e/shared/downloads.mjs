@@ -202,7 +202,9 @@ export async function resolveDownloadUrl(browser, platform = process.platform) {
  * @returns {Promise<string>}
  */
 async function resolveLatestUrl({api, pick, url}) {
-  const res = await fetchWithRetry(api, 3);
+  // Registry metadata (a small JSON list) — 15 s per attempt, not the
+  // 300 s installer-download timeout; a stalled registry must fail fast.
+  const res = await fetchWithRetry(api, 3, 15_000);
   const packages = await res.json();
   const latest = packages.find(pick);
   if (!latest) {
