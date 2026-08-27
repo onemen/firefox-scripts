@@ -1876,8 +1876,10 @@ static int launch_browser_profile(const RunningBrowser *b, const char *url) {
 
 /**
  * Open a URL in a SPECIFIC profile by launching the binary with --profile.
- * The platform launchers pass the profile and URL as arguments without adding
- * another platform-specific shell command.
+ * Firefox routes the URL to the running instance of that profile (or starts a
+ * new one), so the installer tab reliably lands in a known browser instead of
+ * whichever instance happens to claim a bare URL.  The launch is argument-array
+ * based (no shell), mirroring launch_browser_profile().
  */
 static void open_url_in_profile(const char *binary, const char *profile, const char *url) {
     if (strlen(binary) == 0 || strlen(profile) == 0) {
@@ -1902,7 +1904,18 @@ static void open_url_in_profile(const char *binary, const char *profile, const c
     log_msg("[openurl] CreateProcessW failed: %lu\n", GetLastError());
     open_browser(url, NULL);
 #else
-    open_browser(url, binary);
+    pid_t child = fork();
+    if (child == 0) {
+        setsid();
+        execl(binary, binary, "-profile", profile, "--new-tab", url, (char *)NULL);
+        _exit(1);
+    }
+    if (child > 0) {
+        log_msg("[openurl] forked PID %d for profile %s\n", child, profile);
+        return;
+    }
+    log_msg("[openurl] fork failed\n");
+    open_browser(url, NULL);
 #endif
 }
 
