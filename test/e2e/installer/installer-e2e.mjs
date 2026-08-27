@@ -305,7 +305,10 @@ async function runUiLayer(counter, opts, snapshotDir) {
   // still holding port 8777 when the UI layer throws.
   let installerProc = null;
   try {
-    browser = await launchFirefox(firefoxBin, testProfile, {headless: opts.headless});
+    browser = await launchFirefox(firefoxBin, testProfile, {
+      headless: opts.headless,
+      extraPrefsFirefox: opts.headless ? {'browser.display.background_color': '#ffffff'} : {},
+    });
 
     // 3. Start the installer (separate process, without --smoke-test)
     const bin = findInstaller(snapshotDir);

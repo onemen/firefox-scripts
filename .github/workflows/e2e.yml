@@ -121,8 +121,8 @@ jobs:
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
 
-      - name: Run installer E2E
-        run: node test/e2e/installer/installer-e2e.mjs
+      - name: Run installer E2E (HTTP + UI)
+        run: node test/e2e/installer/installer-e2e.mjs --ui --headless
 
   # ── Helper E2E (Linux elevated-copy core) ──────────────────────────────────
   helper:

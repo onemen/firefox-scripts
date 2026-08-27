@@ -177,12 +177,13 @@ async function main() {
   if (opts.installer || (!opts.installer && !opts.updater)) {
     console.log('\n--- Installer E2E ---');
     const env = {INSTALLER_BIN: cfg.installerBin};
+    if (cfg.headless) env.E2E_HEADLESS = '1';
     if (cfg.installerBrowsers.length) {
       env.E2E_INSTALLER_BROWSERS = JSON.stringify(cfg.installerBrowsers);
     }
     const pass = await runChild(
-      path.join(REPO_ROOT, 'tools', 'test', 'e2e', 'installer-e2e.mjs'),
-      commonArgs,
+      path.join(REPO_ROOT, 'test', 'e2e', 'installer', 'installer-e2e.mjs'),
+      [...commonArgs, ...(cfg.headless ? ['--headless'] : [])],
       env
     );
     ok = ok && pass;
