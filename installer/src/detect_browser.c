@@ -2668,7 +2668,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
                 // (e.g. puppeteer's) is not in profiles.ini and would
                 // otherwise resolve to nothing, sending the UI tab elsewhere.
                 char profile_path[MAX_PATH_LEN] = { 0 };
-                find_profile_from_macos_argv(pid, profile_path);
+                find_profile_from_macos_argv(pid, profile_path, sizeof(profile_path));
                 if (strlen(profile_path) == 0) {
                     find_active_profile_readonly(full_path, profile_path);
                 }
