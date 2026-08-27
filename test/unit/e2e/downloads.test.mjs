@@ -17,7 +17,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const downloadsUrl = pathToFileURL(
   path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'downloads.mjs')
 ).href;
-const {downloadDir, downloadTo, resolveDownloadUrl} = await import(downloadsUrl);
+const {DOWNLOADS, downloadDir, downloadTo, resolveDownloadUrl} = await import(downloadsUrl);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
 
@@ -37,6 +37,20 @@ test('resolveDownloadUrl: firefox-dev resolves on all 3 OSes (#35 hard gate)', a
   assert.match(win, /product=firefox-devedition-latest&os=win64/);
   assert.match(mac, /product=firefox-devedition-latest&os=osx/);
   assert.match(linux, /product=firefox-devedition-latest&os=linux64/);
+});
+
+test('dmg app names match the browser discovery registry (space-safe volumes)', async () => {
+  const browsersUrl = pathToFileURL(
+    path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'browsers.mjs')
+  ).href;
+  const {BROWSERS} = await import(browsersUrl);
+  for (const browser of ['firefox', 'firefox-dev']) {
+    const recipe = DOWNLOADS[browser]?.install?.mac;
+    assert.ok(recipe?.app, `${browser} needs a mac dmg recipe`);
+    // installDmg copies `<mount>/<app>` and discovery looks for
+    // BROWSERS[browser].mac[0] under /Applications — the two must agree.
+    assert.equal(recipe.app, BROWSERS[browser].mac[0]);
+  }
 });
 
 test('resolveDownloadUrl: accepts short platform names (win/mac)', async () => {
