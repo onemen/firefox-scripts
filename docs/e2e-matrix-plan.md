@@ -27,22 +27,21 @@ geckodriver uses by default for recent builds.
 | Firefox stable            | macOS                 | `macos-latest`         | Hard gate                         |
 | Firefox stable            | Linux                 | `ubuntu-latest` (xvfb) | Hard gate                         |
 | Firefox Developer Edition | Windows, macOS, Linux | `updater` matrix       | Hard gate (updater job leg, #35)  |
-| Firefox Developer Edition | macOS                 | `macos-latest`         | Advisory (no brew cask)           |
-| Firefox Developer Edition | Linux                 | `ubuntu-latest` (xvfb) | Advisory                          |
 | Waterfox                  | Windows               | `windows-latest`       | Advisory (no direct URL — manual) |
 | Waterfox                  | macOS                 | `macos-latest`         | Advisory                          |
 | Zen Browser               | Windows               | `windows-latest`       | Advisory (browser-matrix leg)     |
 | LibreWolf                 | Windows               | `windows-latest`       | Advisory (browser-matrix leg)     |
 | Floorp                    | Windows               | `windows-latest`       | Advisory (browser-matrix leg)     |
 
-**Advisory** = the E2E gate reports a warning instead of failing the PR. The `browser-matrix` legs
-(Firefox Dev Edition, LibreWolf, Floorp, Zen) download official installers directly from third-party
-hosts — Mozilla's devedition redirect, librewolf.dev's package registry, GitHub release assets —
-which can hiccup. The legs are path-filtered like the 3-OS jobs (same updater E2E test, so they skip
-on docs-only PRs) and remain advisory when they run. LibreWolf's newest version is resolved from the
-Codeberg package registry; Floorp and Zen use stable `/releases/latest/download/` asset URLs.
-Waterfox has no direct URL (no GitHub release assets), so its leg stays manual and the URL watchdog
-tracks its version only. The hard gate is Firefox stable across all three OSes.
+**Advisory** = the E2E gate reports a warning instead of failing the PR. The `browser-matrix` fork
+legs (LibreWolf, Floorp, Zen) download official installers directly from third-party hosts —
+librewolf.dev's package registry and GitHub release assets — which can hiccup. The legs are
+path-filtered like the main jobs (same updater E2E test, so they skip on docs-only PRs) and remain
+advisory when they run. LibreWolf's newest version is resolved from the Codeberg package registry;
+Floorp and Zen use stable `/releases/latest/download/` asset URLs. Waterfox has no direct URL (no
+GitHub release assets), so its leg stays manual and the URL watchdog tracks its version only. The
+hard gate is Firefox stable + Firefox Developer Edition across all three OSes (Dev Edition is
+first-party Mozilla — see #35).
 
 ## What each test asserts
 
