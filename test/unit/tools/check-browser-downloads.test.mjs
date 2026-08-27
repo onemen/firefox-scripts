@@ -12,13 +12,52 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-browser-downloads.mjs')).href;
-const {compareBaseline, formatAge, issueBody, issueTitle, parseContentRange, sha256File} =
-  await import(scriptUrl);
+const {
+  collectDrift,
+  compareBaseline,
+  formatAge,
+  issueBody,
+  issueTitle,
+  parseContentRange,
+  sha256File,
+} = await import(scriptUrl);
 
 test('compareBaseline: first run, new version, unchanged', () => {
   assert.equal(compareBaseline(null, {version: '154.0.1'}), 'first-run');
   assert.equal(compareBaseline({version: '153.0'}, {version: '154.0.1'}), 'new-version');
   assert.equal(compareBaseline({version: '154.0.1'}, {version: '154.0.1'}), 'ok');
+});
+
+test('collectDrift: unchanged baseline yields no drift', () => {
+  const baseline = {
+    'firefox': {version: '154.0.1'},
+    'firefox-dev': {version: '155.0b3'},
+    'librewolf': {version: '154.0-2'},
+    'floorp': {version: '12.16.2'},
+    'zen': {version: '1.0.1'},
+    'waterfox': {version: 'G9.0'},
+  };
+  const versions = Object.fromEntries(
+    Object.entries(baseline).map(([browser, entry]) => [browser, entry.version])
+  );
+  assert.deepEqual(collectDrift(baseline, versions), []);
+});
+
+test('collectDrift: a new version, a missing baseline, and a lookup failure are flagged', () => {
+  const baseline = {'firefox': {version: '153.0'}, 'firefox-dev': {version: '155.0b3'}};
+  const versions = {
+    'firefox': '154.0.1', // new version → drift
+    'firefox-dev': '155.0b3', // unchanged
+    'librewolf': '154.0-2', // not in baseline → drift
+    'floorp': '', // lookup failed → drift
+    'zen': '1.0.1', // not in baseline → drift
+    'waterfox': 'G9.0', // not in baseline → drift
+  };
+  const drift = collectDrift(baseline, versions);
+  assert.ok(drift.some(d => d.includes('firefox: 153.0 → 154.0.1')));
+  assert.ok(drift.some(d => d.includes('librewolf: not in baseline')));
+  assert.ok(drift.some(d => d.includes('floorp: version lookup failed')));
+  assert.equal(drift.length, 5);
 });
 
 test('issueTitle: rot, new-version and size-change titles are dedup keys', () => {

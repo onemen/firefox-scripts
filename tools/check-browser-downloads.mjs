@@ -4,7 +4,8 @@
  * tools/check-browser-downloads.mjs — watchdog for the E2E browser download map
  * (test/e2e/shared/downloads.mjs).
  *
- * Runs in two modes, both driven by .github/workflows/url-watchdog.yml:
+ * Runs in three modes (two driven by .github/workflows/url-watchdog.yml, one by
+ * the Pages publish pre-flight):
  *
  * - Weekly (schedule/workflow_dispatch). For each browser CI installs it:
  *
@@ -31,6 +32,10 @@
  *   findings surface as ::warning:: / ::notice:: annotations, so the check can
  *   be marked required without ever blocking. No baseline, no issues, no full
  *   downloads.
+ * - Drift (--drift, the Pages publish pre-flight): re-resolves every browser's
+ *   current version and diffs it against the last watchdog baseline. No
+ *   downloads, no issues. Exit 1 on drift so a prod publish is blocked until
+ *   the watchdog refreshes the baseline and triggers the browser-specific E2E.
  *
  * Browsers without a direct download URL (waterfox) are tracked by version
  * only: their vendor API is still polled, but there is no endpoint to verify
@@ -209,6 +214,33 @@ export function compareBaseline(prev, curr) {
 }
 
 /**
+ * Diff a baseline map (as written by the watchdog) against freshly resolved
+ * versions. Returns a list of human-readable drift strings; empty = no drift.
+ * Used by the pre-publish gate: a browser released since the last watchdog run
+ * must be validated (watchdog → browser E2E) before artifacts ship.
+ *
+ * @param {Record<string, {version: string} | undefined>} baseline
+ * @param {Record<string, string | undefined>} versions current version per
+ *   browser
+ * @returns {string[]}
+ */
+export function collectDrift(baseline, versions) {
+  const drift = [];
+  for (const browser of BROWSERS) {
+    const prev = baseline[browser];
+    const curr = versions[browser];
+    if (curr === undefined || curr === null || curr === '') {
+      drift.push(`${browser}: version lookup failed`);
+    } else if (!prev) {
+      drift.push(`${browser}: not in baseline (first run — run the watchdog first)`);
+    } else if (String(prev.version) !== String(curr)) {
+      drift.push(`${browser}: ${prev.version} → ${curr}`);
+    }
+  }
+  return drift;
+}
+
+/**
  * Human-readable age from a millisecond span — e.g. '3d 2h', '5h 12m', '8m'.
  * Exported for unit tests; clamped to 0 so clock skew never prints negative.
  */
@@ -319,10 +351,45 @@ async function openIssueIfNew(token, repo, title, body) {
 export async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const prMode = process.argv.includes('--pr');
+  const driftMode = process.argv.includes('--drift');
   const token = process.env.GITHUB_TOKEN || '';
   const repo = process.env.GITHUB_REPOSITORY || '';
   const baselineDir = process.env.BASELINE_DIR || path.join(REPO_ROOT, '.watchdog');
   const baselineFile = path.join(baselineDir, 'baseline.json');
+
+  // Pre-publish gate: re-resolve every browser's current version and compare
+  // against the last watchdog baseline. No downloads, no issues — fast. Exit 1
+  // on drift so pages.yml can block a prod publish until the watchdog refreshes
+  // the baseline (and triggers the browser-specific E2E).
+  if (driftMode) {
+    if (!fs.existsSync(baselineFile)) {
+      console.error(
+        'baseline: cache miss — no watchdog baseline found. Run the URL watchdog workflow first.'
+      );
+      process.exit(1);
+    }
+    const baseline = JSON.parse(fs.readFileSync(baselineFile, 'utf-8'));
+    const versions = {};
+    for (const browser of BROWSERS) {
+      try {
+        versions[browser] = String(await resolveVersion(browser));
+      } catch (err) {
+        console.log(`  ${browser}: version lookup failed: ${err.message}`);
+      }
+    }
+    const drift = collectDrift(baseline, versions);
+    if (drift.length > 0) {
+      console.error('Browser version drift since the last watchdog run:');
+      for (const d of drift) console.error(`  - ${d}`);
+      console.error(
+        'Run the URL watchdog workflow (refreshes the baseline and triggers the ' +
+          'browser-specific E2E), then re-dispatch publish.'
+      );
+      process.exit(1);
+    }
+    console.log('No browser version drift — baseline matches current releases.');
+    process.exit(0);
+  }
 
   let baseline = {};
   const baselineFound = !prMode && fs.existsSync(baselineFile);
