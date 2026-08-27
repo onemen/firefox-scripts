@@ -259,7 +259,12 @@ async function fetchWithRetry(url, attempts, timeoutMs = 300_000) {
     } catch (err) {
       lastErr = err;
       console.log(`  download attempt ${i}/${attempts} failed: ${err.message}`);
-      if (i < attempts) await new Promise(r => setTimeout(r, 5000));
+      if (i < attempts) {
+        // Backoff between attempts: the installer CDNs (e.g. librewolf.dev)
+        // stall occasionally, and a fresh attempt right away usually fails
+        // again. 5 s, 10 s, 15 s… — bounded, and well inside the job budget.
+        await new Promise(r => setTimeout(r, 5000 * i));
+      }
     }
   }
   throw lastErr;
@@ -291,15 +296,42 @@ export async function downloadTo(url, dest) {
     }
   }
   fs.mkdirSync(path.dirname(dest), {recursive: true});
-  const res = await fetchWithRetry(url, 3);
+  const res = await fetchWithRetry(url, 5);
   fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
   return dest;
+}
+
+/**
+ * Find a previously downloaded installer in the download dir (a prior run's
+ * cache restore) — the fallback when a fresh download is impossible. The
+ * browser-matrix legs are ADVISORY in the E2E gate, so testing an older release
+ * beats failing the leg outright (and the gate still surfaces the warning).
+ */
+function findCachedInstaller(browser) {
+  const dir = downloadDir();
+  if (!fs.existsSync(dir)) return null;
+  const prefix = `${browser}-setup`;
+  const found = fs.readdirSync(dir).find(f => f.startsWith(prefix) && f.endsWith('.exe'));
+  return found ? path.join(dir, found) : null;
 }
 
 /** Download an official installer and run it with args (e.g. NSIS `/S`). */
 async function installInstaller(url, browser, args) {
   const exe = path.join(downloadDir(), `${browser}-setup.exe`);
-  await downloadTo(url, exe);
+  try {
+    await downloadTo(url, exe);
+  } catch (err) {
+    const fallback = findCachedInstaller(browser);
+    if (fallback) {
+      console.log(
+        `  ⚠ download failed (${err.message}); reusing previously downloaded ` +
+          `installer ${path.basename(fallback)} (advisory leg — gate will warn)`
+      );
+      execSync(`"${fallback}" ${args.join(' ')}`, {stdio: 'inherit'});
+      return;
+    }
+    throw err;
+  }
   execSync(`"${exe}" ${args.join(' ')}`, {stdio: 'inherit'});
 }
 
