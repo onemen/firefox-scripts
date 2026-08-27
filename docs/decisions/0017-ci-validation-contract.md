@@ -33,7 +33,8 @@ elevated-copy test joined the installer/updater/browser-matrix gates — and the
 share one verify engine (`.github/actions/verify-gate`) whose contract (every job in the gate's
 `needs:`, filters in place, always-report jobs ungated) is enforced statically by
 `pnpm check:gates`. The fork legs no longer act as an always-on canary for upstream fork releases
-breaking the updater — the watchdog flags version bumps, and the next E2E-relevant PRcatches a breakage.
+breaking the updater — the watchdog flags version bumps, and the next E2E-relevant PRcatches a
+breakage.
 
 PRs land via the GitHub merge queue: each queued PR is validated in a temporary merge-group
 

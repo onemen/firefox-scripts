@@ -306,13 +306,13 @@ package registry, GitHub release assets) are advisory when they run: failures wa
 instead of failing the PR. Waterfox has no direct download URL and stays manual (tracked by version
 only in the URL watchdog).
 
-**Merge queue** — the workflows trigger on `merge_group` in addition to
-`pull_request`, so the required checks also run on the merge queue's temporary merge-group branch.
-Enabling the queue (Settings → General → merge queue, with branch protection requiring it) makes the
-queue keep each PR up to date with main and validate it before landing (the final merge uses the
-repo's configured merge method). Because the "Update branch" step is never used, the ADR 0017
-over-trigger caveat — main changes merged into a PR counting as PR changes for the path filters —
-does not arise for queued PRs.
+**Merge queue** — the workflows trigger on `merge_group` in addition to `pull_request`, so the
+required checks also run on the merge queue's temporary merge-group branch. Enabling the queue
+(Settings → General → merge queue, with branch protection requiring it) makes the queue keep each PR
+up to date with main and validate it before landing (the final merge uses the repo's configured
+merge method). Because the "Update branch" step is never used, the ADR 0017 over-trigger caveat —
+main changes merged into a PR counting as PR changes for the path filters — does not arise for
+queued PRs.
 
 Run the smoke test locally (Windows, from the repo root):
 
