@@ -1725,11 +1725,8 @@ static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size) 
         // honor argc so we never wander into the environment block.
         p += strlen(p) + 1;  // skip argv[0] (the executable path)
         int idx = 1;
-        // DEBUG (E2E): dump the argv so a missing profile is diagnosable.
-        fprintf(stderr, "[mac-argv] pid=%d argc=%d", (int)pid, argc);
         while (idx < argc && p < end) {
             if (*p) {
-                fprintf(stderr, " [%d]=%s", idx, p);
                 if (strcmp(p, "-profile") == 0 || strcmp(p, "--profile") == 0 ||
                     strcmp(p, "-P") == 0) {
                     const char *val = p + strlen(p) + 1;
@@ -1742,7 +1739,6 @@ static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size) 
             }
             p += strlen(p) + 1;
         }
-        fprintf(stderr, "\n");
     }
     free(buf);
 }
