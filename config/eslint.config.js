@@ -70,6 +70,9 @@ export default defineConfig([
     name: 'global-ignore',
     ignores: [
       '.github',
+      // Vendored agent skill — upstream formatting/rule style (see
+      // docs/debugging-with-rdp.md), kept out of the repo's lint+format gates.
+      '.agent',
       // Build outputs and generated artifacts (gitignored at the repo level).
       'dist/',
       'lib/',

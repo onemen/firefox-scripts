@@ -254,3 +254,5 @@ Before finishing:
   url-watchdog.yml). The installer + updater E2E jobs and the publish gate are **path-filtered on
   PRs**: they skip when no changed file can affect them (see `docs/DEVELOPING.md` → Continuous
   integration). Prod publish stays manual from `main`; all publish scripts require a clean worktree.
+- **Interactive debugging of core files:** the MIT `debugging-firefox` RDP skill is vendored under
+  `.agent/skills/` — see `docs/debugging-with-rdp.md` (never put it in the lint/format gates).
