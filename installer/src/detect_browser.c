@@ -1136,6 +1136,38 @@ static const char *TARGET_EXECUTABLES[] = {
     NULL
 };
 
+/**
+ * True if the process executable at `full_path` is one of the target browsers.
+ *
+ * Windows matches the process image name (`pe.szExeFile`); POSIX scans resolve
+ * a full path (proc_pidpath / /proc/<pid>/exe) and MUST compare its basename,
+ * not strstr on the whole path: the installer itself runs from
+ * <repo>/firefox-scripts/... and a substring match would detect it (and its
+ * empty profile) as a browser, stealing the UI tab from the real browser.
+ */
+static int is_target_executable(const char *full_path) {
+    if (!full_path || full_path[0] == '\0') return 0;
+    const char *base = strrchr(full_path, '/');
+    base = base ? base + 1 : full_path;
+#if defined(_WIN32)
+    const char *wbase = strrchr(base, '\\');
+    if (wbase) base = wbase + 1;
+    for (int i = 0; TARGET_EXECUTABLES[i] != NULL; i++) {
+        if (_stricmp(base, TARGET_EXECUTABLES[i]) == 0) return 1;
+    }
+#elif defined(__APPLE__)
+    // macOS filesystems are case-insensitive by default.
+    for (int i = 0; TARGET_EXECUTABLES[i] != NULL; i++) {
+        if (strcasecmp(base, TARGET_EXECUTABLES[i]) == 0) return 1;
+    }
+#else
+    for (int i = 0; TARGET_EXECUTABLES[i] != NULL; i++) {
+        if (strcmp(base, TARGET_EXECUTABLES[i]) == 0) return 1;
+    }
+#endif
+    return 0;
+}
+
 enum BrowserVariant identify_variant_from_path(const char *path) {
     if (strstr(path, "Zen twilight") || strstr(path, "zen-twilight") || strstr(path, "Twilight")) {
         return BROWSER_ZEN_TWILIGHT;
@@ -2539,35 +2571,33 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
             if (len != -1) {
                 full_path[len] = '\0';
 
-                for (int i = 0; TARGET_EXECUTABLES[i] != NULL; i++) {
-                    if (strstr(full_path, TARGET_EXECUTABLES[i]) != NULL) {
-                        // Detect profile BEFORE dedup check (PID-aware on Linux)
-                        char profile_path[MAX_PATH_LEN] = { 0 };
-                        find_profile_for_pid((unsigned long)pid, full_path, profile_path);
+                if (is_target_executable(full_path)) {
+                    // Detect profile BEFORE dedup check (PID-aware on Linux)
+                    char profile_path[MAX_PATH_LEN] = { 0 };
+                    find_profile_for_pid((unsigned long)pid, full_path, profile_path);
 
-                        // Dedup by (binary_path + profile_path) so different profiles are distinct
-                        if (!is_duplicate_entry(results, count, full_path, profile_path) && count < max_results) {
-                            snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", TARGET_EXECUTABLES[i]);
-                            strncpy(results[count].binary_path, full_path, MAX_PATH_LEN);
-                            strncpy(results[count].profile_path, profile_path, MAX_PATH_LEN);
-                            results[count].pid = (unsigned long)pid;
+                    // Dedup by (binary_path + profile_path) so different profiles are distinct
+                    if (!is_duplicate_entry(results, count, full_path, profile_path) && count < max_results) {
+                        snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", TARGET_EXECUTABLES[0]);
+                        strncpy(results[count].binary_path, full_path, MAX_PATH_LEN);
+                        strncpy(results[count].profile_path, profile_path, MAX_PATH_LEN);
+                        results[count].pid = (unsigned long)pid;
 
-                            resolve_browser_name(full_path, results[count].identified_browser, sizeof(results[count].identified_browser));
-                            read_application_version(full_path,
-                                                     identify_variant_from_path(full_path),
-                                                     results[count].version, sizeof(results[count].version));
+                        resolve_browser_name(full_path, results[count].identified_browser, sizeof(results[count].identified_browser));
+                        read_application_version(full_path,
+                                                 identify_variant_from_path(full_path),
+                                                 results[count].version, sizeof(results[count].version));
 
-                            if (strlen(results[count].profile_path) > 0) {
-                                char binary_dir[MAX_PATH_LEN];
-                                strncpy(binary_dir, full_path, MAX_PATH_LEN);
-                                get_parent_dir(binary_dir);
+                        if (strlen(results[count].profile_path) > 0) {
+                            char binary_dir[MAX_PATH_LEN];
+                            strncpy(binary_dir, full_path, MAX_PATH_LEN);
+                            get_parent_dir(binary_dir);
 
-                                results[count].config_installed = check_config_status(binary_dir);
-                                results[count].utils_installed = check_utils_status(results[count].profile_path);
-                            }
-
-                            count++;
+                            results[count].config_installed = check_config_status(binary_dir);
+                            results[count].utils_installed = check_utils_status(results[count].profile_path);
                         }
+
+                        count++;
                     }
                 }
             }
@@ -2589,37 +2619,36 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
             pid_t pid = procs[i].kp_proc.p_pid;
             char full_path[MAX_PATH_LEN] = { 0 };
 
-            if (proc_pidpath(pid, full_path, sizeof(full_path)) > 0) {
-                for (int j = 0; TARGET_EXECUTABLES[j] != NULL; j++) {
-                    if (strstr(full_path, TARGET_EXECUTABLES[j]) != NULL) {
-                        // Detect profile BEFORE dedup check
-                        char profile_path[MAX_PATH_LEN] = { 0 };
-                        find_active_profile_readonly(full_path, profile_path);
+            if (proc_pidpath(pid, full_path, sizeof(full_path)) > 0 &&
+                is_target_executable(full_path)) {
+                // Detect profile BEFORE dedup check
+                char profile_path[MAX_PATH_LEN] = { 0 };
+                find_active_profile_readonly(full_path, profile_path);
 
-                        // Dedup by (binary_path + profile_path) so different profiles are distinct
-                        if (!is_duplicate_entry(results, count, full_path, profile_path) && count < max_results) {
-                            snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", TARGET_EXECUTABLES[j]);
-                            strncpy(results[count].binary_path, full_path, MAX_PATH_LEN);
-                            strncpy(results[count].profile_path, profile_path, MAX_PATH_LEN);
-                            results[count].pid = (unsigned long)pid;
+                // Dedup by (binary_path + profile_path) so different profiles are distinct
+                if (!is_duplicate_entry(results, count, full_path, profile_path) && count < max_results) {
+                    snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s",
+                             TARGET_EXECUTABLES[0]);
+                    strncpy(results[count].binary_path, full_path, MAX_PATH_LEN);
+                    strncpy(results[count].profile_path, profile_path, MAX_PATH_LEN);
+                    results[count].pid = (unsigned long)pid;
 
-                            resolve_browser_name(full_path, results[count].identified_browser, sizeof(results[count].identified_browser));
-                            read_application_version(full_path,
-                                                     identify_variant_from_path(full_path),
-                                                     results[count].version, sizeof(results[count].version));
+                    resolve_browser_name(full_path, results[count].identified_browser,
+                                         sizeof(results[count].identified_browser));
+                    read_application_version(full_path,
+                                             identify_variant_from_path(full_path),
+                                             results[count].version, sizeof(results[count].version));
 
-                            if (strlen(results[count].profile_path) > 0) {
-                                char binary_dir[MAX_PATH_LEN];
-                                strncpy(binary_dir, full_path, MAX_PATH_LEN);
-                                get_parent_dir(binary_dir);
+                    if (strlen(results[count].profile_path) > 0) {
+                        char binary_dir[MAX_PATH_LEN];
+                        strncpy(binary_dir, full_path, MAX_PATH_LEN);
+                        get_parent_dir(binary_dir);
 
-                                results[count].config_installed = check_config_status(binary_dir);
-                                results[count].utils_installed = check_utils_status(results[count].profile_path);
-                            }
-
-                            count++;
-                        }
+                        results[count].config_installed = check_config_status(binary_dir);
+                        results[count].utils_installed = check_utils_status(results[count].profile_path);
                     }
+
+                    count++;
                 }
             }
         }
