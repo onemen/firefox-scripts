@@ -70,9 +70,20 @@ export const DOWNLOADS = {
   'firefox-dev': {
     install: {
       // Same stable Mozilla "latest" redirect as Firefox stable, dev channel.
+      // Required legs on ALL 3 OSes (#35): Dev Edition is first-party Mozilla,
+      // so it is hard-gated like stable, unlike the forks.
       win: {
         url: 'https://download.mozilla.org/?product=firefox-devedition-latest&os=win64&lang=en-US',
         args: ['/S'], // NSIS silent install → %LOCALAPPDATA%\Firefox Developer Edition
+      },
+      mac: {
+        url: 'https://download.mozilla.org/?product=firefox-devedition-latest&os=osx&lang=en-US',
+        app: 'Firefox Developer Edition.app', // dmg → copy into /Applications
+      },
+      // Official tarball like stable — CI never uses the Snap wrapper (BiDi).
+      linux: {
+        tarball:
+          'https://download.mozilla.org/?product=firefox-devedition-latest&os=linux64&lang=en-US',
       },
     },
     page: 'https://www.mozilla.org/firefox/developer/',
@@ -259,7 +270,10 @@ async function fetchWithRetry(url, attempts, timeoutMs = 300_000) {
 export async function downloadTo(url, dest) {
   if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
     try {
-      const head = await fetch(url, {method: 'HEAD', signal: AbortSignal.timeout(15_000)});
+      const head = await fetch(url, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(15_000),
+      });
       const expected = head.ok ? Number(head.headers.get('content-length')) : 0;
       if (expected && fs.statSync(dest).size === expected) {
         console.log(`  reusing cached ${path.basename(dest)}`);

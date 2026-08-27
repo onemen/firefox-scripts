@@ -152,16 +152,24 @@ jobs:
           rm /tmp/test_src.txt
 
   # ── Updater E2E ────────────────────────────────────────────────────────────
-  # Every OS leg is required; the updater must work across the supported matrix.
+  # Every leg is required: the updater must work on Firefox stable AND Firefox
+  # Developer Edition across the supported OS matrix (#35 — Dev Edition is
+  # first-party Mozilla, so it is hard-gated like stable, unlike the forks).
   updater:
-    name: 'updater E2E · ${{ matrix.os }}'
+    name: 'updater E2E · ${{ matrix.browser }} · ${{ matrix.os }}'
     needs: [changes, snapshot]
     if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - {browser: firefox, os: ubuntu-latest}
+          - {browser: firefox, os: macos-latest}
+          - {browser: firefox, os: windows-latest}
+          - {browser: firefox-dev, os: ubuntu-latest}
+          - {browser: firefox-dev, os: macos-latest}
+          - {browser: firefox-dev, os: windows-latest}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
@@ -178,7 +186,7 @@ jobs:
         id: ffurl
         shell: bash
         run: |
-          URL=$(node test/e2e/shared/downloads.mjs firefox --url)
+          URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
           KEY=$(node -e "console.log(require('crypto').createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "key=firefox-dl-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
@@ -189,24 +197,18 @@ jobs:
           path: ${{ env.BROWSER_DL_DIR }}
           key: ${{ steps.ffurl.outputs.key }}
 
-      # ── Linux: download Mozilla tarball (apt gives Snap wrapper; BiDi fails) ──
-      # The install script (test/e2e/shared/downloads.mjs) downloads the
-      # browser via its official recipe and exports FIREFOX_BINARY through
-      # $GITHUB_ENV.
-      - name: Install Firefox (Linux tarball)
+      # Linux needs xvfb for the BiDi run. The browser itself always comes
+      # from downloads.mjs's official recipe (apt's Snap wrapper breaks BiDi);
+      # it downloads via the official channel redirect and exports
+      # FIREFOX_BINARY through $GITHUB_ENV.
+      - name: Install Linux test prerequisites
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
-          node test/e2e/shared/downloads.mjs firefox
 
-      - name: Install Firefox (macOS)
-        if: matrix.os == 'macos-latest'
-        run: node test/e2e/shared/downloads.mjs firefox
-
-      - name: Install Firefox (Windows)
-        if: matrix.os == 'windows-latest'
-        run: node test/e2e/shared/downloads.mjs firefox
+      - name: Install ${{ matrix.browser }}
+        run: node test/e2e/shared/downloads.mjs ${{ matrix.browser }}
 
       # Restores dist/dev-<branch>-<sha>/ built once by the `snapshot` job.
       # On non-ubuntu legs the baked LOCAL_DIST_PATH differs from this
@@ -237,7 +239,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-diagnostics-${{ matrix.os }}
+          name: e2e-diagnostics-${{ matrix.browser }}-${{ matrix.os }}
           path: |
             dist/updater-e2e-*.png
             dist/installer-e2e-*.png
@@ -246,9 +248,10 @@ jobs:
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
   # Each browser downloads an official installer directly: LibreWolf resolves
   # its newest version from the Codeberg package registry; Floorp and Zen use
-  # GitHub's stable `/releases/latest/download/` asset URLs; Firefox Dev Edition
-  # uses Mozilla's stable devedition redirect. Waterfox stays manual (no
-  # release assets — tracked by the URL watchdog).
+  # GitHub's stable `/releases/latest/download/` asset URLs. Firefox Dev Edition
+  # is NOT here anymore — it is first-party Mozilla and runs as a required leg
+  # of the `updater` job above. Waterfox stays manual (no release assets —
+  # tracked by the URL watchdog).
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
     # Same updater E2E test as the `updater` job, so it is gated on the same
@@ -260,7 +263,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [librewolf, floorp, firefox-dev, zen]
+        browser: [librewolf, floorp, zen]
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 

@@ -1,6 +1,7 @@
 // test/unit/e2e/downloads.test.mjs — Unit tests for test/e2e/shared/downloads.mjs
 //
-// Tests: resolveDownloadUrl (per-platform URL resolution + error cases),
+// Tests: resolveDownloadUrl (per-platform URL resolution + error cases,
+// including the #35 firefox-dev hard-gate coverage on all 3 OSes),
 // downloadTo cache reuse (HEAD size match → reuse, mismatch/missing →
 // re-download), downloadDir (BROWSER_DL_DIR override).
 
@@ -27,6 +28,15 @@ test('resolveDownloadUrl: official installer URLs per platform', async () => {
   assert.match(win, /^https:\/\/download\.mozilla\.org\/\?product=firefox-latest&os=win64/);
   assert.match(mac, /^https:\/\/download\.mozilla\.org\/\?product=firefox-latest&os=osx/);
   assert.match(linux, /^https:\/\/download\.mozilla\.org\/\?product=firefox-latest&os=linux64/);
+});
+
+test('resolveDownloadUrl: firefox-dev resolves on all 3 OSes (#35 hard gate)', async () => {
+  const win = await resolveDownloadUrl('firefox-dev', 'win32');
+  const mac = await resolveDownloadUrl('firefox-dev', 'darwin');
+  const linux = await resolveDownloadUrl('firefox-dev', 'linux');
+  assert.match(win, /product=firefox-devedition-latest&os=win64/);
+  assert.match(mac, /product=firefox-devedition-latest&os=osx/);
+  assert.match(linux, /product=firefox-devedition-latest&os=linux64/);
 });
 
 test('resolveDownloadUrl: accepts short platform names (win/mac)', async () => {
