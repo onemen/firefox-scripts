@@ -24,6 +24,9 @@
  * - applicability: every independently filtered job is listed in the gate's
  *   `applicability:` block, so verify.sh can require it skipped when not
  *   applicable.
+ * - verify-gate-uses: the gate job invokes ./.github/actions/verify-gate exactly
+ *   once, and ONLY that step's `with:` block is parsed as gate wiring (another
+ *   action's inputs must not satisfy the contract).
  *
  * Exit code 0 = contract holds. Run via `pnpm check:gates` (part of the
  * `checks` CI job). The parser is deliberately small — the workflow files are
@@ -40,9 +43,14 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const JOB_LINE = /^ {2}([A-Za-z0-9_-]+):\s*$/;
 const NEEDS_LINE = /^ {4}needs:\s*(.+)$/;
 const IF_LINE = /^ {4}if:\s*(.+)$/;
+const STEP_LINE = /^ {6}- /;
+// `uses:` appears either inline with the step dash (`      - uses: x`) or
+// keyed under `- name:` (`        uses: x`). Strip a trailing `# comment`.
+const USES_LINE = /^(?: {6}- | {8})uses:\s*(.+)$/;
 const WITH_LINE = /^ {8}with:\s*$/;
 const WITH_INPUT = /^ {10}([A-Za-z0-9_-]+):\s*(.*)$/;
 const RESULTS_PAIR = /^ {12}([A-Za-z0-9_-]+):/;
+const VERIFY_GATE_USES = './.github/actions/verify-gate';
 
 /**
  * Split a workflow YAML into per-job blocks. Only the top-level `jobs:` map is
@@ -54,7 +62,12 @@ const RESULTS_PAIR = /^ {12}([A-Za-z0-9_-]+):/;
  * @param {string} text
  * @returns {Map<
  *   string,
- *   {ifs: string[]; needs: string[]; with: Object<string, any>}
+ *   {
+ *     ifs: string[];
+ *     needs: string[];
+ *     with: Object<string, any>;
+ *     verifyGateUses: number;
+ *   }
  * >}
  */
 export function parseJobs(text) {
@@ -62,6 +75,11 @@ export function parseJobs(text) {
   let current = null;
   let inJobs = false;
   let withKey = null;
+  // Step-level tracking: `uses:` of the current step, and whether we are
+  // inside a `with:` block that belongs to a non-verify-gate step (those are
+  // skipped — see WITH_LINE handling below).
+  let currentUses = null;
+  let skippingWith = false;
   for (const line of text.split('\n')) {
     if (/^jobs:\s*$/.test(line)) {
       inJobs = true;
@@ -69,6 +87,15 @@ export function parseJobs(text) {
     }
     if (!inJobs) continue;
     if (/^\S/.test(line)) break; // a top-level key after `jobs:`
+
+    // Inside a skipped `with:` block (a step that is NOT the verify-gate
+    // action): consume 10+-space content lines silently until we dedent back
+    // to step level — another action's inputs must never be read as gate
+    // wiring.
+    if (skippingWith) {
+      if (/^ {10,}/.test(line)) continue;
+      skippingWith = false;
+    }
 
     // Inside a `with:` block: 12-space `results:` pairs, 10-space inputs, or
     // an outdent that ends the block.
@@ -96,12 +123,25 @@ export function parseJobs(text) {
     const m = JOB_LINE.exec(line);
     if (m) {
       current = m[1];
-      jobs.set(current, {ifs: [], needs: [], with: {}});
+      jobs.set(current, {ifs: [], needs: [], with: {}, verifyGateUses: 0});
       continue;
     }
     if (!current) continue;
+    // Step boundary: step-level tracking resets — every step must re-declare
+    // its own `uses:`. (The dash line itself may carry the inline `uses:`,
+    // so fall through to USES_LINE instead of continuing.)
+    if (STEP_LINE.test(line)) currentUses = null;
+    const u = USES_LINE.exec(line);
+    if (u) {
+      currentUses = u[1].replace(/\s+#.*$/, '').trim();
+      if (currentUses === VERIFY_GATE_USES) jobs.get(current).verifyGateUses += 1;
+      continue;
+    }
     if (WITH_LINE.test(line)) {
-      withKey = '__with__';
+      // Only the verify-gate action's `with:` block is gate wiring; any other
+      // step's with-block (checkout's fetch-depth, …) is skipped wholesale.
+      if (currentUses === VERIFY_GATE_USES) withKey = '__with__';
+      else skippingWith = true;
       continue;
     }
     const wi = WITH_INPUT.exec(line);
@@ -195,6 +235,15 @@ export function checkWorkflow(text, contract) {
   }
   if (!gateJob.ifs.includes('always()')) {
     errors.push(`${file}: gate '${gate}' must carry 'if: always()'`);
+  }
+
+  // The `with:` wiring below is only meaningful for the verify-gate action.
+  // Require the gate job to invoke it exactly once, so a renamed or swapped
+  // `uses:` cannot detach the wiring from the engine it configures.
+  if ((gateJob.verifyGateUses ?? 0) !== 1) {
+    errors.push(
+      `${file}: ${gate} must use ./.github/actions/verify-gate exactly once (found ${gateJob.verifyGateUses ?? 0})`
+    );
   }
 
   // verify-gate `with:` wiring: every needed job (except `changes`, which is

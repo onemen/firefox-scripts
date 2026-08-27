@@ -169,3 +169,34 @@ test('checkWorkflow: an applicability block missing a filtered job is flagged', 
   const errors = checkWorkflow(broken, CONTRACT);
   assert.ok(errors.some(e => e.includes("applicability block is missing 'installer'")));
 });
+
+test('checkWorkflow: a gate step that no longer uses verify-gate is flagged', () => {
+  const broken = FIXTURE.replace(
+    '- uses: ./.github/actions/verify-gate',
+    '- uses: ./.github/actions/some-other-gate'
+  );
+  const errors = checkWorkflow(broken, CONTRACT);
+  assert.ok(errors.some(e => e.includes('must use ./.github/actions/verify-gate exactly once')));
+});
+
+test('parseJobs: with: blocks belonging to other actions are not collected', () => {
+  // A `with:` block on a non-verify-gate step (checkout's fetch-depth) inside
+  // the gate job must never be read as gate wiring.
+  const mixed = FIXTURE.replace(
+    '      - uses: actions/checkout\n      - uses: ./.github/actions/verify-gate',
+    '      - uses: actions/checkout\n        with:\n          fetch-depth: 0\n      - uses: ./.github/actions/verify-gate'
+  );
+  const jobs = parseJobs(mixed);
+  assert.equal(jobs.get('e2e-gate').with['fetch-depth'], undefined);
+  // The verify-gate step's own wiring is untouched by the skipped block.
+  assert.deepEqual(jobs.get('e2e-gate').with.results, ['snapshot', 'installer']);
+  assert.equal(jobs.get('e2e-gate').with.required, 'snapshot installer');
+  assert.equal(jobs.get('e2e-gate').verifyGateUses, 1);
+});
+
+test('parseJobs: counts verify-gate uses per job', () => {
+  const jobs = parseJobs(FIXTURE);
+  assert.equal(jobs.get('e2e-gate').verifyGateUses, 1);
+  assert.equal(jobs.get('changes').verifyGateUses, 0);
+  assert.equal(jobs.get('snapshot').verifyGateUses, 0);
+});
