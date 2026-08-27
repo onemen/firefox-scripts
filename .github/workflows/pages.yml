@@ -82,6 +82,23 @@ jobs:
           else
             echo "::warning::browser version drift detected (dev mode — not blocking)"
           fi
+      # Prod publishes ship to every installed browser, so the exact commit
+      # being published must have passed the E2E workflow first (every merge to
+      # main triggers it; docs-only commits run the gates as fast no-ops). A
+      # dispatch against a commit whose E2E is still running — or that never
+      # ran — is blocked with a re-dispatch hint. Dev publishes are disposable
+      # and skip this gate.
+      - name: Require a successful E2E run for this commit (prod)
+        if: inputs.mode == 'prod'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count="$(gh api "repos/${{ github.repository }}/actions/workflows/e2e.yml/runs?head_sha=${{ github.sha }}&status=success" --jq '.total_count')"
+          echo "successful E2E runs for ${{ github.sha }}: $count"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no successful E2E workflow run for commit ${{ github.sha }} — let the E2E run on main finish (or re-run it), then re-dispatch the publish."
+            exit 1
+          fi
 
   # Snapshot the hash manifest as it was BEFORE this run started. Every
   # publish job diffs its sources against this same baseline, so a source
@@ -113,6 +130,10 @@ jobs:
   publish-win:
     name: publish — windows binaries
     needs: baseline
+    # Prod publishes deploy through the `release` environment (protected-branch
+    # policy: main only). Dev publishes are disposable and bypass the
+    # environment so they can run from any branch.
+    environment: ${{ inputs.mode == 'prod' && 'release' || null }}
     runs-on: windows-latest
     steps:
       # Node + pnpm here; dependencies install AFTER the MSYS2 toolchain
@@ -146,6 +167,7 @@ jobs:
   publish-linux:
     name: publish — linux binaries
     needs: publish-win
+    environment: ${{ inputs.mode == 'prod' && 'release' || null }}
     runs-on: ubuntu-latest
     steps:
       - uses: $/.github/actions/setup-repo
@@ -165,6 +187,7 @@ jobs:
   publish-mac:
     name: publish — mac binaries
     needs: publish-linux
+    environment: ${{ inputs.mode == 'prod' && 'release' || null }}
     runs-on: macos-latest
     steps:
       - uses: $/.github/actions/setup-repo
