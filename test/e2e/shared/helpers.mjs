@@ -99,7 +99,7 @@ export async function launchFirefox(
     // be injected through this option — a caller-written user.js would be
     // silently replaced and never reach Firefox.
     extraPrefsFirefox,
-    args: ['-no-remote', '-remote-allow-system-access'],
+    args: ['-remote-allow-system-access', '--new-instance'],
   });
 }
 

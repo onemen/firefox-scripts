@@ -295,6 +295,11 @@ async function runUiLayer(counter, opts, snapshotDir) {
 
   console.log(`\nUI layer: launching Firefox (${firefoxBin})...`);
 
+  // UI assertions are numbered so CI failures identify the exact observable
+  // behavior that failed, rather than only printing a generic label.
+  const uiCheck = (ok, id, expected, detail = '') =>
+    check(counter, ok, `${id}: ${expected}`, detail);
+
   // 1. Create a fresh profile for the test browser
   const testProfile = tempDir('fxs-installer-ui');
 
@@ -313,7 +318,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
     // 3. Start the installer (separate process, without --smoke-test)
     const bin = findInstaller(snapshotDir);
     if (!bin) {
-      check(counter, false, 'installer binary found for UI layer');
+      uiCheck(false, 'UI-02', 'installer binary found for UI layer');
       return;
     }
 
@@ -328,10 +333,18 @@ async function runUiLayer(counter, opts, snapshotDir) {
       return;
     }
 
-    // 5. The installer opens its tab in the detected browser — wait for it
+    // 5. The installer opens its tab in the detected browser — wait for it.
     const deadline = Date.now() + 30_000;
+    let observedUrls = [];
     while (Date.now() < deadline) {
       const pages = await browser.pages();
+      observedUrls = pages.map(p => {
+        try {
+          return p.url();
+        } catch {
+          return '<unreadable URL>';
+        }
+      });
       page = pages.find(p => {
         try {
           return p.url().startsWith('http://127.0.0.1:') || p.url().startsWith('http://localhost:');
@@ -342,7 +355,12 @@ async function runUiLayer(counter, opts, snapshotDir) {
       if (page) break;
       await new Promise(r => setTimeout(r, 500));
     }
-    check(counter, Boolean(page), 'installer tab appeared in browser');
+    uiCheck(
+      Boolean(page),
+      'UI-04',
+      'installer tab appeared in browser (URL starts with http://127.0.0.1: or http://localhost:)',
+      page ? '' : `observed pages after 30s: ${observedUrls.join(' | ') || '(none)'}`
+    );
 
     if (page) {
       console.log(`  tab URL: ${page.url()}`);
@@ -364,7 +382,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
         30_000,
         'browser cards to render'
       );
-      check(counter, rendered, 'installer UI rendered');
+      uiCheck(rendered, 'UI-05', 'installer UI rendered');
 
       // Header visibility
       const header = await page.evaluate(() => ({
@@ -372,9 +390,9 @@ async function runUiLayer(counter, opts, snapshotDir) {
         rescan: Boolean(document.getElementById('btn-rescan')),
         exit: Boolean(document.getElementById('btn-exit')),
       }));
-      check(counter, header.title.length > 0, 'header title shown');
-      check(counter, header.rescan, 'Rescan button present');
-      check(counter, header.exit, 'Close button present');
+      uiCheck(header.title.length > 0, 'UI-06', 'header title shown');
+      uiCheck(header.rescan, 'UI-07', 'Rescan button present');
+      uiCheck(header.exit, 'UI-08', 'Close button present');
 
       // Browser cards (may be empty if no browsers detected)
       const cards = await page.evaluate(() => {
@@ -392,11 +410,11 @@ async function runUiLayer(counter, opts, snapshotDir) {
         };
       });
       if (cards.empty) {
-        check(counter, true, 'empty state shown (no browsers detected)');
+        uiCheck(true, 'UI-09', 'empty state shown (no browsers detected)');
       } else {
-        check(counter, cards.count > 0, `browser cards rendered (${cards.count})`);
+        uiCheck(cards.count > 0, 'UI-09', `browser cards rendered (${cards.count})`);
         // At least one card with a badge
-        check(counter, cards.badges.some(Boolean), 'card status badges present');
+        uiCheck(cards.badges.some(Boolean), 'UI-10', 'card status badges present');
       }
 
       // Screenshot
@@ -404,13 +422,13 @@ async function runUiLayer(counter, opts, snapshotDir) {
       fs.mkdirSync(shotDir, {recursive: true});
       const shotPath = path.join(shotDir, 'installer-e2e-screenshot.png');
       const shotOk = await screenshotPrivileged(page, shotPath);
-      if (shotOk) check(counter, true, 'installer screenshot saved');
+      if (shotOk) uiCheck(true, 'UI-11', 'installer screenshot saved');
     }
 
     return;
   } catch (err) {
     console.error(`  UI layer error: ${err.message}`);
-    check(counter, false, 'installer UI layer completed', err.message);
+    uiCheck(false, 'UI-01', 'Firefox and installer UI layer completed', err.message);
   } finally {
     // Single cleanup path: every exit (success, early return, throw) closes
     // Firefox and the detached installer before the profile is removed.
