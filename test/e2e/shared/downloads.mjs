@@ -302,10 +302,18 @@ async function installInstaller(url, browser, args) {
 async function installDmg(url, appName) {
   const dmg = path.join(downloadDir(), `${appName.replace(/\.app$/, '')}.dmg`);
   await downloadTo(url, dmg);
-  // hdiutil prints e.g. `/dev/disk4s1  Apple_HFS  /Volumes/Firefox`. Keep the
-  // device too, so cleanup can detach even when the mount-point parse fails.
+  // hdiutil prints e.g. `/dev/disk4s1  Apple_HFS  /Volumes/Firefox` — but the
+  // mount point is the LAST column and may contain spaces (the Dev Edition
+  // image mounts at `/Volumes/Firefox Developer Edition`), so a `\S+` token
+  // match truncates at the first space and the copy looks in the wrong dir.
+  // Take everything after `/Volumes/` to the end of the line instead. Keep
+  // the device too, so cleanup can detach even when this parse fails.
   const out = execSync(`hdiutil attach -nobrowse -readonly "${dmg}"`).toString();
-  const mountPoint = (out.match(/\/Volumes\/\S+/g) || []).pop();
+  const mounts = out
+    .split('\n')
+    .filter(line => line.includes('/Volumes/'))
+    .map(line => line.slice(line.indexOf('/Volumes/')).trim());
+  const mountPoint = mounts[mounts.length - 1];
   const device = (out.match(/\/dev\/disk\S+/g) || [])[0];
   try {
     if (!mountPoint) {
