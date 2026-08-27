@@ -304,7 +304,9 @@ always-report jobs carry no job-level `if:`. The `browser-matrix` legs (Firefox 
 LibreWolf, Floorp, Zen — downloaded from third-party hosts: Mozilla's redirect, librewolf.dev's
 package registry, GitHub release assets) are advisory when they run: failures warn in the gate
 instead of failing the PR. Waterfox has no direct download URL and stays manual (tracked by version
-only in the URL watchdog).**Merge queue** — the workflows trigger on `merge_group` in addition to
+only in the URL watchdog).
+
+**Merge queue** — the workflows trigger on `merge_group` in addition to
 `pull_request`, so the required checks also run on the merge queue's temporary merge-group branch.
 Enabling the queue (Settings → General → merge queue, with branch protection requiring it) makes the
 queue keep each PR up to date with main and validate it before landing (the final merge uses the
