@@ -249,8 +249,8 @@ CLI flags win over environment variables, which win over the config file.
 | helper    | ubuntu (sudo test)                       | Hard                |
 | updater   | ubuntu (Mozilla tarball), macos, windows | Hard                |
 
-See `docs/e2e-matrix-plan.md` for the planned browser × OS expansion (Dev Edition, Waterfox, Zen,
-LibreWolf, Floorp).
+See `docs/e2e-matrix-plan.md` for the planned browser × OS expansion (Waterfox, Zen, Firefox
+Nightly, LibreWolf, and Floorp). The post-v1.0 browser expansion is tracked in issue #38.
 
 ## Test: installer hash verification
 
