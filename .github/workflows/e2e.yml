@@ -331,6 +331,8 @@ jobs:
       - uses: ./.github/actions/verify-gate
         with:
           changes-result: ${{ needs.changes.result }}
+          # e2e-gate always verifies: per-job applicability decides which jobs
+          # must pass vs. must be skipped (no single branchKey anymore).
           branch: true
           branch-label: E2E-relevant changes
           applicability: |-

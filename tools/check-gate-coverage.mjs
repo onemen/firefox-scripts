@@ -15,11 +15,15 @@
  * This script parses the two workflow files and asserts the contract:
  *
  * - needs-coverage: every job (except the gate itself) is in the gate's needs.
- * - gated-if: jobs that must be path-filtered carry the filter's job-level `if:
- *   needs.changes.outputs.<key> == 'true'`.
- * - no-job-if: jobs that must always run/report (the publish gate's always-report
- *   design) carry NO job-level `if:`.
+ * - gated-if: each independently filtered job carries its expected job-level
+ *   changed-paths `if:` (the e2e workflow uses separate installer/updater/core
+ *   outputs, so a single branchKey no longer describes it).
+ * - no-job-if: jobs that must always run/report (the always-report design) carry
+ *   NO job-level `if:`.
  * - gate-if: the gate job carries `if: always()`.
+ * - applicability: every independently filtered job is listed in the gate's
+ *   `applicability:` block, so verify.sh can require it skipped when not
+ *   applicable.
  *
  * Exit code 0 = contract holds. Run via `pnpm check:gates` (part of the
  * `checks` CI job). The parser is deliberately small — the workflow files are
@@ -74,10 +78,15 @@ export function parseJobs(text) {
         jobs.get(current).with.results.push(rl[1]);
         continue;
       }
+      if (rl && withKey === 'applicability') {
+        jobs.get(current).with.applicability.push(rl[1]);
+        continue;
+      }
       const wi = WITH_INPUT.exec(line);
       if (wi) {
         withKey = wi[1] === 'results' ? 'results' : wi[1];
         if (withKey === 'results') jobs.get(current).with.results = [];
+        else if (withKey === 'applicability') jobs.get(current).with.applicability = [];
         else jobs.get(current).with[wi[1]] = wi[2].trim();
         continue;
       }
@@ -99,6 +108,7 @@ export function parseJobs(text) {
     if (wi) {
       withKey = wi[1] === 'results' ? 'results' : wi[1];
       if (withKey === 'results') jobs.get(current).with.results = [];
+      else if (withKey === 'applicability') jobs.get(current).with.applicability = [];
       else jobs.get(current).with[wi[1]] = wi[2].trim();
       continue;
     }
@@ -131,14 +141,14 @@ export function parseJobs(text) {
  * @param {{
  *   file: string;
  *   gate: string;
- *   branchKey: string;
- *   gated?: string[];
+ *   gatedIfs?: Record<string, string>;
  *   noJobIf?: string[];
+ *   applicability?: string[];
  * }} contract
  * @returns {string[]}
  */
 export function checkWorkflow(text, contract) {
-  const {file, gate, branchKey, gated = [], noJobIf = []} = contract;
+  const {file, gate, gatedIfs = {}, noJobIf = [], applicability = []} = contract;
   const errors = [];
   const jobs = parseJobs(text);
   const gateJob = jobs.get(gate);
@@ -161,15 +171,14 @@ export function checkWorkflow(text, contract) {
     }
   }
 
-  const expectIf = `needs.changes.outputs.${branchKey} == 'true'`;
-  for (const name of gated) {
+  for (const [name, expectedIf] of Object.entries(gatedIfs)) {
     const job = jobs.get(name);
     if (!job) {
       errors.push(`${file}: gated job '${name}' not found`);
       continue;
     }
-    if (!job.ifs.includes(expectIf)) {
-      errors.push(`${file}: '${name}' must carry the path-filter 'if: ${expectIf}'`);
+    if (!job.ifs.includes(expectedIf)) {
+      errors.push(`${file}: '${name}' must carry the path-filter 'if: ${expectedIf}'`);
     }
   }
   for (const name of noJobIf) {
@@ -223,6 +232,15 @@ export function checkWorkflow(text, contract) {
       errors.push(`${file}: ${gate} classifies '${name}' but it is not in the verify-gate results`);
     }
   }
+  // Every independently filtered job must be listed in the gate's
+  // `applicability:` block — otherwise verify.sh defaults it to "applies"
+  // and a filtered-out job would be verified instead of required-skipped.
+  const app = w.applicability || [];
+  for (const name of applicability) {
+    if (!app.includes(name)) {
+      errors.push(`${file}: ${gate} applicability block is missing '${name}'`);
+    }
+  }
   return errors;
 }
 
@@ -230,13 +248,22 @@ const CONTRACTS = [
   {
     file: '.github/workflows/e2e.yml',
     gate: 'e2e-gate',
-    branchKey: 'e2e',
-    gated: [],
+    // Independent filter outputs (installer/updater/core) — each gated job
+    // must carry exactly its expected changed-paths `if:` and be listed in
+    // the gate's `applicability:` block.
+    gatedIfs: {
+      'snapshot': "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'",
+      'installer': "needs.changes.outputs.installer == 'true'",
+      'helper': "needs.changes.outputs.updater == 'true'",
+      'updater': "needs.changes.outputs.updater == 'true'",
+      'browser-matrix':
+        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'",
+    },
+    applicability: ['snapshot', 'installer', 'helper', 'updater', 'browser-matrix'],
   },
   {
     file: '.github/workflows/ci.yml',
     gate: 'ci-gate',
-    branchKey: 'publish',
     noJobIf: ['build'], // always-report design — heavy steps gated, job always runs
   },
 ];
