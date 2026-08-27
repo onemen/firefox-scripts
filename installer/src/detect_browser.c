@@ -1698,6 +1698,44 @@ static bool is_duplicate_entry(RunningBrowser *results, int count,
     return false;
 }
 
+#if defined(__APPLE__)
+/**
+ * Read a process's argv on macOS (no /proc) via sysctl KERN_PROCARGS2 and
+ * extract the --profile/-P argument it was launched with, if any.  Used to
+ * find a browser's active profile when it is a temp dir (e.g. a puppeteer
+ * profile) that never appears in profiles.ini.
+ */
+static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size) {
+    out[0] = '\0';
+    int mib[3] = { CTL_KERN, KERN_PROCARGS2, pid };
+    size_t size = 0;
+    if (sysctl(mib, 3, NULL, &size, NULL, 0) < 0 || size > 4 * 1024 * 1024) return;
+    char *buf = malloc(size);
+    if (!buf) return;
+    if (sysctl(mib, 3, buf, &size, NULL, 0) == 0 && size > sizeof(int)) {
+        int argc = 0;
+        memcpy(&argc, buf, sizeof(argc));
+        // After argc: executable path, then the NUL-separated argv, then an
+        // empty string, then the environment.  Skip the executable and scan
+        // argv for -profile/-P (the value is the NEXT argument).
+        char *p = buf + sizeof(int);
+        char *end = buf + size;
+        p += strlen(p) + 1;  // skip argv[0] (the executable path)
+        for (int a = 1; a < argc && p < end && *p; a++) {
+            const char *arg = p;
+            p += strlen(p) + 1;
+            if ((strcmp(arg, "--profile") == 0 || strcmp(arg, "-P") == 0) &&
+                p < end && *p) {
+                strncpy(out, p, out_size - 1);
+                out[out_size - 1] = '\0';
+                break;
+            }
+        }
+    }
+    free(buf);
+}
+#endif
+
 #if defined(__linux__)
 /**
  * Look up a profile name in profiles.ini and return its full path.
@@ -1756,44 +1794,6 @@ static int lookup_profile_by_name(const char *base_dir, const char *profile_name
 
     return 0;
 }
-
-#if defined(__APPLE__)
-/**
- * Read a process's argv on macOS (no /proc) via sysctl KERN_PROCARGS2 and
- * extract the --profile/-P argument it was launched with, if any.  Used to
- * find a browser's active profile when it is a temp dir (e.g. a puppeteer
- * profile) that never appears in profiles.ini.
- */
-static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size) {
-    out[0] = '\0';
-    int mib[3] = { CTL_KERN, KERN_PROCARGS2, pid };
-    size_t size = 0;
-    if (sysctl(mib, 3, NULL, &size, NULL, 0) < 0 || size > 4 * 1024 * 1024) return;
-    char *buf = malloc(size);
-    if (!buf) return;
-    if (sysctl(mib, 3, buf, &size, NULL, 0) == 0 && size > sizeof(int)) {
-        int argc = 0;
-        memcpy(&argc, buf, sizeof(argc));
-        // After argc: executable path, then the NUL-separated argv, then an
-        // empty string, then the environment.  Skip the executable and scan
-        // argv for -profile/-P (the value is the NEXT argument).
-        char *p = buf + sizeof(int);
-        char *end = buf + size;
-        p += strlen(p) + 1;  // skip argv[0] (the executable path)
-        for (int a = 1; a < argc && p < end && *p; a++) {
-            const char *arg = p;
-            p += strlen(p) + 1;
-            if ((strcmp(arg, "--profile") == 0 || strcmp(arg, "-P") == 0) &&
-                p < end && *p) {
-                strncpy(out, p, out_size - 1);
-                out[out_size - 1] = '\0';
-                break;
-            }
-        }
-    }
-    free(buf);
-}
-#endif
 
 /**
  * Read /proc/<pid>/cmdline to find the profile name/path this process was launched with.
