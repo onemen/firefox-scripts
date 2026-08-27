@@ -121,19 +121,7 @@ jobs:
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
 
-      - name: Run installer E2E (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb
-          xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' node test/e2e/installer/installer-e2e.mjs --ui --headless
-
-      - name: Run installer E2E (macOS)
-        if: matrix.os == 'macos-latest'
-        run: node test/e2e/installer/installer-e2e.mjs --ui --headless
-
-      - name: Run installer E2E (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Run installer E2E (HTTP + UI)
         run: node test/e2e/installer/installer-e2e.mjs --ui --headless
 
   # ── Helper E2E (Linux elevated-copy core) ──────────────────────────────────
