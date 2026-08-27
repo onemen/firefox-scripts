@@ -25,14 +25,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "prod = latest release + gh-pages (main only) · dev = disposable dev-build-*"
+        description: 'prod = latest release + gh-pages (main only) · dev = disposable dev-build-*'
         type: choice
-        default: "dev"
+        default: 'dev'
         options:
           - dev
           - prod
       force:
-        description: "Rebuild + re-upload even when hashes are unchanged (prod only)"
+        description: 'Rebuild + re-upload even when hashes are unchanged (prod only)'
         type: boolean
         default: false
 
@@ -147,7 +147,7 @@ jobs:
       # step (make needs MSYS2, pnpm install does not care about order).
       - uses: $/.github/actions/setup-repo
         with:
-          install: "false"
+          install: 'false'
       - name: Set up MSYS2 toolchain (make + gcc)
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
