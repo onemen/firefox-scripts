@@ -300,11 +300,12 @@ them; `changes`, `checks`, `ci-gate` and `e2e-gate` always run, so the required 
 reporting. The aggregate gates share one engine — `.github/actions/verify-gate` (required / advisory
 / skip-guard / always-report checks) — and `pnpm check:gates` statically enforces the contract:
 every workflow job is listed in its gate's `needs:`, path-filter `if:`s stay in place, and
-always-report jobs carry no job-level `if:`. The `browser-matrix` legs (Firefox Dev Edition,
-LibreWolf, Floorp, Zen — downloaded from third-party hosts: Mozilla's redirect, librewolf.dev's
-package registry, GitHub release assets) are advisory when they run: failures warn in the gate
-instead of failing the PR. Waterfox has no direct download URL and stays manual (tracked by version
-only in the URL watchdog).
+always-report jobs carry no job-level `if:`. The `browser-matrix` fork legs (LibreWolf, Floorp, Zen
+— downloaded from third-party hosts: librewolf.dev's package registry and GitHub release assets) are
+advisory when they run: failures warn in the gate instead of failing the PR. Firefox Developer
+Edition is first-party Mozilla, so it runs as a required leg of the `updater` job (#35), not in the
+advisory matrix. Waterfox has no direct download URL and stays manual (tracked by version only in
+the URL watchdog).
 
 **Merge queue** — the workflows trigger on `merge_group` in addition to `pull_request`, so the
 required checks also run on the merge queue's temporary merge-group branch. Enabling the queue

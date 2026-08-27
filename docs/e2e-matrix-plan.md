@@ -21,19 +21,19 @@ geckodriver uses by default for recent builds.
 
 ## Matrix
 
-| Browser                   | OS      | Runner                 | Status                            |
-| ------------------------- | ------- | ---------------------- | --------------------------------- |
-| Firefox stable            | Windows | `windows-latest`       | Hard gate                         |
-| Firefox stable            | macOS   | `macos-latest`         | Hard gate                         |
-| Firefox stable            | Linux   | `ubuntu-latest` (xvfb) | Hard gate                         |
-| Firefox Developer Edition | Windows | `windows-latest`       | Advisory (browser-matrix leg)     |
-| Firefox Developer Edition | macOS   | `macos-latest`         | Advisory (no brew cask)           |
-| Firefox Developer Edition | Linux   | `ubuntu-latest` (xvfb) | Advisory                          |
-| Waterfox                  | Windows | `windows-latest`       | Advisory (no direct URL — manual) |
-| Waterfox                  | macOS   | `macos-latest`         | Advisory                          |
-| Zen Browser               | Windows | `windows-latest`       | Advisory (browser-matrix leg)     |
-| LibreWolf                 | Windows | `windows-latest`       | Advisory (browser-matrix leg)     |
-| Floorp                    | Windows | `windows-latest`       | Advisory (browser-matrix leg)     |
+| Browser                   | OS                    | Runner                 | Status                            |
+| ------------------------- | --------------------- | ---------------------- | --------------------------------- |
+| Firefox stable            | Windows               | `windows-latest`       | Hard gate                         |
+| Firefox stable            | macOS                 | `macos-latest`         | Hard gate                         |
+| Firefox stable            | Linux                 | `ubuntu-latest` (xvfb) | Hard gate                         |
+| Firefox Developer Edition | Windows, macOS, Linux | `updater` matrix       | Hard gate (updater job leg, #35)  |
+| Firefox Developer Edition | macOS                 | `macos-latest`         | Advisory (no brew cask)           |
+| Firefox Developer Edition | Linux                 | `ubuntu-latest` (xvfb) | Advisory                          |
+| Waterfox                  | Windows               | `windows-latest`       | Advisory (no direct URL — manual) |
+| Waterfox                  | macOS                 | `macos-latest`         | Advisory                          |
+| Zen Browser               | Windows               | `windows-latest`       | Advisory (browser-matrix leg)     |
+| LibreWolf                 | Windows               | `windows-latest`       | Advisory (browser-matrix leg)     |
+| Floorp                    | Windows               | `windows-latest`       | Advisory (browser-matrix leg)     |
 
 **Advisory** = the E2E gate reports a warning instead of failing the PR. The `browser-matrix` legs
 (Firefox Dev Edition, LibreWolf, Floorp, Zen) download official installers directly from third-party
