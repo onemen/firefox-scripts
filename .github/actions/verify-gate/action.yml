@@ -14,6 +14,10 @@ inputs:
   branch-label:
     description: human label for the branch, e.g. 'E2E-relevant changes'
     required: true
+  applicability:
+    description: 'space-separated name:true|false pairs for independently filtered jobs'
+    required: false
+    default: ''
   results:
     description: 'space-separated name:result pairs for every tracked job'
     required: true
@@ -46,6 +50,7 @@ runs:
         CHANGES_RESULT: ${{ inputs.changes-result }}
         BRANCH: ${{ inputs.branch }}
         BRANCH_LABEL: ${{ inputs.branch-label }}
+        APPLICABILITY: ${{ inputs.applicability }}
         RESULTS: ${{ inputs.results }}
         REQUIRED: ${{ inputs.required }}
         ALWAYS_VERIFY: ${{ inputs.always-verify }}

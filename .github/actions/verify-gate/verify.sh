@@ -5,7 +5,7 @@ set -euo pipefail
 
 # Optional inputs — the composite action always passes them (defaults ''),
 # but default them here so the script also runs safely outside Actions.
-: "${REQUIRED:=}" "${ADVISORY:=}" "${SKIP_GUARD:=}" "${ALWAYS_REPORT:=}" "${ALWAYS_VERIFY:=}"
+: "${REQUIRED:=}" "${ADVISORY:=}" "${SKIP_GUARD:=}" "${ALWAYS_REPORT:=}" "${ALWAYS_VERIFY:=}" "${APPLICABILITY:=}"
 
 fail() { echo "::error::$1: $2"; exit 1; }
 ok()   { echo "$1: $2 (OK)"; }
@@ -17,6 +17,11 @@ for spec in $RESULTS; do
   RESULT["${spec%%:*}"]="${spec#*:}"
 done
 lookup() { echo "${RESULT[$1]:-missing}"; }
+declare -A APPLIES
+for spec in $APPLICABILITY; do
+  APPLIES["${spec%%:*}"]="${spec#*:}"
+done
+applies() { [ "${APPLIES[$1]:-true}" = "true" ]; }
 
 verify 'changes' "$CHANGES_RESULT"
 # Always-run jobs (e.g. the lint/format `checks`) are verified in BOTH
@@ -27,10 +32,13 @@ done
 
 if [ "$BRANCH" = "true" ]; then
   for name in $REQUIRED; do
-    verify "$name" "$(lookup "$name")"
+    if applies "$name"; then
+      verify "$name" "$(lookup "$name")"
+    fi
   done
   # Advisory jobs warn instead of failing the gate (fork-browser legs).
   for name in $ADVISORY; do
+    if ! applies "$name"; then continue; fi
     r="$(lookup "$name")"
     case "$r" in
       success) ok "$name" "$r" ;;
@@ -44,6 +52,7 @@ else
   # changed-paths `if:` — fail loudly instead of silently burning
   # runner-minutes on every docs-only PR again.
   for name in $SKIP_GUARD; do
+    if applies "$name"; then continue; fi
     r="$(lookup "$name")"
     if [ "$r" != "skipped" ]; then
       echo "::error::$name ran despite no $BRANCH_LABEL (result: $r) — changed-paths gate removed?"
@@ -54,6 +63,7 @@ else
   # gained a job-level `if:` — the required check would go missing and block
   # strict branch protection. Fail loudly if that design is undone.
   for name in $ALWAYS_REPORT; do
+    if ! applies "$name"; then continue; fi
     r="$(lookup "$name")"
     if [ "$r" != "success" ]; then
       echo "::error::$name did not report success despite no $BRANCH_LABEL (result: $r) — always-report design undone?"

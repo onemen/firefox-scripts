@@ -331,8 +331,14 @@ jobs:
       - uses: ./.github/actions/verify-gate
         with:
           changes-result: ${{ needs.changes.result }}
-          branch: ${{ needs.changes.outputs.installer == 'true' || needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' }}
+          branch: true
           branch-label: E2E-relevant changes
+          applicability: |-
+            snapshot:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' }}
+            installer:${{ needs.changes.outputs.installer == 'true' }}
+            helper:${{ needs.changes.outputs.updater == 'true' }}
+            updater:${{ needs.changes.outputs.updater == 'true' }}
+            browser-matrix:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
           # verify.sh splits the value on whitespace, newlines included.

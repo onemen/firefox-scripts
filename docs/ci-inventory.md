@@ -8,7 +8,7 @@ This document is the source of truth for the workflow/job names, path filters, a
 |---|---|---|---|
 | CI / detect changed paths | Selects publish-relevant changes | PR, `main` push, merge queue | Always runs; outputs `publish` |
 | CI / lint + format | Lint, format, unit tests, decisions, gate contract | PR, `main` push, merge queue | Always runs; unit tests are intentionally unfiltered |
-| CI / publish gate — `<os>` | Package/native build gate on Windows, Linux, macOS | PR, `main` push, merge queue | Runs only when `publish` is true; aggregate status is reported by CI gate |
+| CI / publish gate — `<os>` | Package/native build gate on Windows, Linux, macOS | PR, `main` push, merge queue | Job always reports a successful no-op when `publish` is false; only expensive steps are gated |
 | CI / CI gate | Aggregate CI status | Same CI triggers | Always reports; filtered publish work is not applicable, not a failure |
 | E2E / detect changed paths | Selects independent E2E groups | PR, `main` push, merge queue, manual | Always runs; outputs `installer`, `updater`, and `core` |
 | E2E / build dev snapshot | Builds shared updater snapshot | Same E2E triggers | Runs when `updater` or `core` is true |
