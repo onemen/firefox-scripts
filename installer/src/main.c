@@ -2584,6 +2584,7 @@ static int main_impl(int argc, char *argv[]) {
             printf("[installer] no browsers detected; falling back to default browser\n");
             open_browser(g_ui_url, NULL);  // fallback to default browser
         }
+        fflush(stdout);  // long-running process: make the E2E diagnostics visible
     }
 
     printf("Press Ctrl+C to stop the installer.\n");

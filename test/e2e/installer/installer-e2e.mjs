@@ -323,9 +323,13 @@ async function runUiLayer(counter, opts, snapshotDir) {
     }
 
     installerProc = spawn(bin, [], {
-      stdio: ['ignore', 'inherit', 'inherit'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
+    // Surface the installer's own diagnostics ([installer] … detection/launch
+    // lines) in the test log so a missing tab is attributable.
+    installerProc.stdout.on('data', d => console.log(`  [installer-out] ${d}`.trimEnd()));
+    installerProc.stderr.on('data', d => console.log(`  [installer-err] ${d}`.trimEnd()));
 
     // 4. Wait for the installer server
     const ready = await waitForServer(60_000);
