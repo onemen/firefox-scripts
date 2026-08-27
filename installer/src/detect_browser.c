@@ -47,6 +47,9 @@ typedef struct {
 
 /* Forward declarations */
 static void find_active_profile_readonly(const char *binary_path, char *out_profile_path);
+#if defined(__APPLE__)
+static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size);
+#endif
 static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
                              char ***out_list, int *out_count);
 static void free_file_list(char ***list, int *count);
