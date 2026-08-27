@@ -11,3 +11,5 @@ logs
 pnpm-lock.yaml
 # build outputs (installer Makefile + publish scripts dump into dist/)
 dist
+# vendored agent skill (upstream formatting; see docs/debugging-with-rdp.md)
+.agent
