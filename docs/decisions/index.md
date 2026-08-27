@@ -15,9 +15,11 @@ Decision records are point-in-time documents written after the fact — they des
 decided, not what the code does today.
 
 **History & provenance:** the 2026 installer/updater rewrite reached `main` as a single commit
-(`854dfad`, 2026-08-21). The earlier commits cited in the records live on the pre-merge feature
-branches (`wip/*`, `buffy/*`, `main-backup`, …) and are not ancestors of `main` — their dates are
-best-effort provenance for when a decision was made, not entries in `main`'s history.
+(`854dfad`, 2026-08-21) — the public boundary of this repository's history. Dates in the records
+that predate the rewrite are best-effort provenance for when a decision was made, not entries in
+`main`'s history. The pre-merge feature branches (`wip/*`, `buffy/*`, `main-backup`, …) that hold
+those commits live only in the maintainer's local clone — they are not ancestors of `main` and
+cannot be fetched by other developers; anchor any public reference to `854dfad`.
 
 ## When to add a record
 
