@@ -1903,6 +1903,18 @@ static void open_url_in_profile(const char *binary, const char *profile, const c
     log_msg("[openurl] CreateProcessW failed: %lu\n", GetLastError());
     open_browser(url, NULL);
 #else
+#ifdef __APPLE__
+    char cmd[MAX_PATH_LEN * 2 + 256];
+    /* Launch the browser binary directly with --profile so the URL opens in
+     * the specific profile Puppeteer created. Fall back to open_browser on
+     * failure. */
+    snprintf(cmd, sizeof(cmd), "\"%s\" --profile \"%s\" \"%s\" &", binary, profile, url);
+    if (system(cmd) == 0) {
+        log_msg("[openurl] %s\n", cmd);
+        return;
+    }
+    /* Fall through to the generic open method */
+#endif
     open_browser(url, binary);
 #endif
 }
