@@ -25,19 +25,20 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "prod = latest release + gh-pages (main only) · dev = disposable dev-build-*"
+        description: 'prod = latest release + gh-pages (main only) · dev = disposable dev-build-*'
         type: choice
-        default: "dev"
+        default: 'dev'
         options:
           - dev
           - prod
       force:
-        description: "Rebuild + re-upload even when hashes are unchanged (prod only)"
+        description: 'Rebuild + re-upload even when hashes are unchanged (prod only)'
         type: boolean
         default: false
 
 permissions:
   contents: write # release assets + gh-pages pushes
+  actions: write # release-gate cache-prune step deletes stale Actions caches
 
 concurrency:
   group: pages-publish
@@ -99,6 +100,12 @@ jobs:
             echo "::error::no successful E2E workflow run for commit ${{ github.sha }} — let the E2E run on main finish (or re-run it), then re-dispatch the publish."
             exit 1
           fi
+      # Release-gate cache hygiene (#47): the same prune the weekly workflow
+      # runs, executed once more before any publish so a prod upload always
+      # starts from a lean cache (stale firefox-dl-*/node-cache-* keys would
+      # otherwise linger until Sunday).
+      - name: Prune stale Actions caches
+        run: node tools/ci/prune-caches.mjs --keep=3
 
   # Snapshot the hash manifest as it was BEFORE this run started. Every
   # publish job diffs its sources against this same baseline, so a source
@@ -140,7 +147,7 @@ jobs:
       # step (make needs MSYS2, pnpm install does not care about order).
       - uses: $/.github/actions/setup-repo
         with:
-          install: "false"
+          install: 'false'
       - name: Set up MSYS2 toolchain (make + gcc)
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
