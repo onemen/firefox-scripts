@@ -1720,27 +1720,29 @@ static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size) 
         // argv for -profile/--profile/-P (the value is the NEXT argument).
         char *p = buf + sizeof(int);
         char *end = buf + size;
+        // KERN_PROCARGS2 lays out: argc, argv[0] path string, then the argv
+        // entries (an empty string separates them) — skip empty entries and
+        // honor argc so we never wander into the environment block.
+        p += strlen(p) + 1;  // skip argv[0] (the executable path)
+        int idx = 1;
         // DEBUG (E2E): dump the argv so a missing profile is diagnosable.
         fprintf(stderr, "[mac-argv] pid=%d argc=%d", (int)pid, argc);
-        for (int d = 0; d < argc && p < end && *p; d++) {
-            fprintf(stderr, " [%d]=%s", d, p);
+        while (idx < argc && p < end) {
+            if (*p) {
+                fprintf(stderr, " [%d]=%s", idx, p);
+                if (strcmp(p, "-profile") == 0 || strcmp(p, "--profile") == 0 ||
+                    strcmp(p, "-P") == 0) {
+                    const char *val = p + strlen(p) + 1;
+                    if (val < end && *val) {
+                        strncpy(out, val, out_size - 1);
+                        out[out_size - 1] = '\0';
+                    }
+                }
+                idx++;
+            }
             p += strlen(p) + 1;
         }
         fprintf(stderr, "\n");
-        // Skip argv[0] (already printed above) and scan the rest.
-        p = buf + sizeof(int);
-        p += strlen(p) + 1;
-        for (int a = 1; a < argc && p < end && *p; a++) {
-            const char *arg = p;
-            p += strlen(p) + 1;
-            if ((strcmp(arg, "-profile") == 0 || strcmp(arg, "--profile") == 0 ||
-                 strcmp(arg, "-P") == 0) &&
-                p < end && *p) {
-                strncpy(out, p, out_size - 1);
-                out[out_size - 1] = '\0';
-                break;
-            }
-        }
     }
     free(buf);
 }
