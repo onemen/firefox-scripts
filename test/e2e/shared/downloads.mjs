@@ -221,7 +221,12 @@ async function resolveLatestUrl({api, pick, url}) {
   if (!latest) {
     throw new Error(`no matching package found at ${api}`);
   }
-  return url(latest.version);
+  // Surface the resolved version in CI: "no matching package found" and
+  // stalled-download errors are otherwise hard to attribute to the version
+  // the registry actually handed us.
+  const resolved = url(latest.version);
+  console.log(`  resolved latest ${latest.name} version ${latest.version} → ${resolved}`);
+  return resolved;
 }
 
 /** Download an official Mozilla tarball and extract it; returns the binary path. */
