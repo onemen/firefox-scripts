@@ -1717,14 +1717,24 @@ static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size) 
         memcpy(&argc, buf, sizeof(argc));
         // After argc: executable path, then the NUL-separated argv, then an
         // empty string, then the environment.  Skip the executable and scan
-        // argv for -profile/-P (the value is the NEXT argument).
+        // argv for -profile/--profile/-P (the value is the NEXT argument).
         char *p = buf + sizeof(int);
         char *end = buf + size;
-        p += strlen(p) + 1;  // skip argv[0] (the executable path)
+        // DEBUG (E2E): dump the argv so a missing profile is diagnosable.
+        fprintf(stderr, "[mac-argv] pid=%d argc=%d", (int)pid, argc);
+        for (int d = 0; d < argc && p < end && *p; d++) {
+            fprintf(stderr, " [%d]=%s", d, p);
+            p += strlen(p) + 1;
+        }
+        fprintf(stderr, "\n");
+        // Skip argv[0] (already printed above) and scan the rest.
+        p = buf + sizeof(int);
+        p += strlen(p) + 1;
         for (int a = 1; a < argc && p < end && *p; a++) {
             const char *arg = p;
             p += strlen(p) + 1;
-            if ((strcmp(arg, "--profile") == 0 || strcmp(arg, "-P") == 0) &&
+            if ((strcmp(arg, "-profile") == 0 || strcmp(arg, "--profile") == 0 ||
+                 strcmp(arg, "-P") == 0) &&
                 p < end && *p) {
                 strncpy(out, p, out_size - 1);
                 out[out_size - 1] = '\0';
