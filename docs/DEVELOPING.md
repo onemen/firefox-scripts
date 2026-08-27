@@ -396,6 +396,20 @@ export GITHUB_TOKEN_VAR=ghp_...          # GitHub token with repo scope (content
 export DEV_BUILD_ID=my-feature-1         # dev-mode only: dev-build-<id> branch id (optional)
 ```
 
+### AI review configuration
+
+The advisory GitHub Actions review uses the repository secret `GROQ_API_KEY`. Create it in
+**Repository Settings → Secrets and variables → Actions → New repository secret**; GitHub Actions
+exposes it to `.github/workflows/ai-review.yml`, which runs `tools/ai-review.mjs --provider groq`.
+The key is optional for the repository: if it is absent, the review job is skipped and does not
+block merges. `GROQ_MODEL` is configured by the workflow.
+
+For local review runs, put `GROQ_API_KEY` in the root `.env` (or export it in the shell). The script
+also supports the optional `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` variables for local
+`--provider openrouter` runs. OpenRouter is not currently configured as a GitHub Actions secret or
+used by the review workflow. Keep real keys only in `.env` or GitHub's encrypted secret store; never
+commit them or add them to `.env-example` with real values.
+
 ### Modes — `--mode=prod|dev` (REQUIRED for any real publish)
 
 See ADR [0009](./decisions/0009-unified-publish-modes.md) for the decision behind the modes.
