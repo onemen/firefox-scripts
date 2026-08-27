@@ -23,6 +23,9 @@ own `AGENTS.md`, that nested file is more specific and overrides this one where 
   upstream-derived files.
 - Read the relevant `docs/` (and `docs/local_plan/`, plus the decision log
   `docs/decisions/index.md`) before architectural or design changes.
+- Keep `docs/ci-inventory.md` synchronized when changing workflow names, triggers, path filters,
+  gates, scheduled jobs, or watchdog behavior. Keep workflow job names and required/advisory status
+  semantics accurate.
 
 ## Overview
 

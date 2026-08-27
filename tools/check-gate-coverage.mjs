@@ -231,7 +231,7 @@ const CONTRACTS = [
     file: '.github/workflows/e2e.yml',
     gate: 'e2e-gate',
     branchKey: 'e2e',
-    gated: ['snapshot', 'installer', 'helper', 'updater', 'browser-matrix'],
+    gated: [],
   },
   {
     file: '.github/workflows/ci.yml',

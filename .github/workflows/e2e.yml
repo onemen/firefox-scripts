@@ -43,7 +43,9 @@ jobs:
     name: detect changed paths
     runs-on: ubuntu-latest
     outputs:
-      e2e: ${{ steps.filter.outputs.e2e }}
+      installer: ${{ steps.filter.outputs.installer }}
+      updater: ${{ steps.filter.outputs.updater }}
+      core: ${{ steps.filter.outputs.core }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,16 +54,29 @@ jobs:
         id: filter
         with:
           filters: |
-            e2e:
-              - 'core/**'
-              - 'config/installer.conf'
+            installer:
               - 'installer/**'
-              - 'tools/publish/**'
-              - 'test/e2e/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
+              - 'test/e2e/installer/**'
               - '.github/workflows/e2e.yml'
               - '.github/actions/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+            updater:
+              - 'core/chrome/utils/updater/**'
+              - 'installer/src/helper/**'
+              - 'test/e2e/updater/**'
+              - 'test/e2e/shared/**'
+              - '.github/workflows/e2e.yml'
+              - '.github/actions/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+            core:
+              - 'core/**'
+              - 'test/e2e/core/**'
+              - '.github/workflows/e2e.yml'
+              - '.github/actions/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
 
   # ── Dev snapshot (built ONCE per run, shared across all updater legs) ────
   # The package zips + hashes.json are OS-independent, so one ubuntu build
@@ -74,7 +89,7 @@ jobs:
   snapshot:
     name: build dev snapshot
     needs: changes
-    if: needs.changes.outputs.e2e == 'true'
+    if: needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: $/.github/actions/setup-repo
@@ -93,7 +108,7 @@ jobs:
   installer:
     name: 'installer E2E · ${{ matrix.os }}'
     needs: changes
-    if: needs.changes.outputs.e2e == 'true'
+    if: needs.changes.outputs.installer == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -113,7 +128,7 @@ jobs:
   helper:
     name: 'helper E2E · ${{ matrix.os }}'
     needs: changes
-    if: needs.changes.outputs.e2e == 'true'
+    if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -141,7 +156,7 @@ jobs:
   updater:
     name: 'updater E2E · ${{ matrix.os }}'
     needs: [changes, snapshot]
-    if: needs.changes.outputs.e2e == 'true'
+    if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -240,7 +255,7 @@ jobs:
     # changed-paths filter (skips on docs-only / tooling-only PRs). The legs
     # stay ADVISORY in the gate: their failures warn instead of blocking.
     needs: [changes, snapshot]
-    if: needs.changes.outputs.e2e == 'true'
+    if: needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -316,7 +331,7 @@ jobs:
       - uses: ./.github/actions/verify-gate
         with:
           changes-result: ${{ needs.changes.result }}
-          branch: ${{ needs.changes.outputs.e2e }}
+          branch: ${{ needs.changes.outputs.installer == 'true' || needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' }}
           branch-label: E2E-relevant changes
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
