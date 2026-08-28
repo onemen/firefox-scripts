@@ -48,7 +48,8 @@ typedef struct {
 /* Forward declarations */
 static void find_active_profile_readonly(const char *binary_path, char *out_profile_path);
 #if defined(__APPLE__)
-static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size);
+static void find_profile_from_macos_argv(pid_t pid, const char *binary_path,
+                                         char *out, size_t out_size);
 #endif
 static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
                              char ***out_list, int *out_count);
@@ -1705,7 +1706,8 @@ static bool is_duplicate_entry(RunningBrowser *results, int count,
  * find a browser's active profile when it is a temp dir (e.g. a puppeteer
  * profile) that never appears in profiles.ini.
  */
-static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size) {
+static void find_profile_from_macos_argv(pid_t pid, const char *binary_path,
+                                         char *out, size_t out_size) {
     out[0] = '\0';
     int mib[3] = { CTL_KERN, KERN_PROCARGS2, pid };
     size_t size = 0;
@@ -1731,8 +1733,39 @@ static void find_profile_from_macos_argv(pid_t pid, char *out, size_t out_size) 
                     strcmp(p, "-P") == 0) {
                     const char *val = p + strlen(p) + 1;
                     if (val < end && *val) {
-                        strncpy(out, val, out_size - 1);
-                        out[out_size - 1] = '\0';
+                        if (strcmp(p, "-P") == 0) {
+                            char base_dir[MAX_PATH_LEN] = { 0 };
+                            const char *home = getenv("HOME");
+                            if (!home) {
+                                struct passwd *pw = getpwuid(getuid());
+                                if (pw) home = pw->pw_dir;
+                            }
+                            if (home) {
+                                switch (identify_variant_from_path(binary_path)) {
+                                    case BROWSER_ZEN:
+                                    case BROWSER_ZEN_TWILIGHT:
+                                        snprintf(base_dir, sizeof(base_dir), "%s/.zen", home);
+                                        break;
+                                    case BROWSER_WATERFOX:
+                                    case BROWSER_WATERFOX_BETA:
+                                        snprintf(base_dir, sizeof(base_dir), "%s/.waterfox", home);
+                                        break;
+                                    case BROWSER_LIBREWOLF:
+                                        snprintf(base_dir, sizeof(base_dir), "%s/.librewolf", home);
+                                        break;
+                                    case BROWSER_FLOORP:
+                                        snprintf(base_dir, sizeof(base_dir), "%s/.floorp", home);
+                                        break;
+                                    default:
+                                        snprintf(base_dir, sizeof(base_dir), "%s/.mozilla/firefox", home);
+                                        break;
+                                }
+                                lookup_profile_by_name(base_dir, val, out, out_size);
+                            }
+                        } else {
+                            strncpy(out, val, out_size - 1);
+                            out[out_size - 1] = '\0';
+                        }
                     }
                 }
                 idx++;
@@ -2627,7 +2660,9 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
 
                     // Dedup by (binary_path + profile_path) so different profiles are distinct
                     if (!is_duplicate_entry(results, count, full_path, profile_path) && count < max_results) {
-                        snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", TARGET_EXECUTABLES[0]);
+                        const char *exe_name = strrchr(full_path, '/');
+                        exe_name = exe_name ? exe_name + 1 : full_path;
+                        snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", exe_name);
                         strncpy(results[count].binary_path, full_path, MAX_PATH_LEN);
                         strncpy(results[count].profile_path, profile_path, MAX_PATH_LEN);
                         results[count].pid = (unsigned long)pid;
@@ -2676,15 +2711,16 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
                 // (e.g. puppeteer's) is not in profiles.ini and would
                 // otherwise resolve to nothing, sending the UI tab elsewhere.
                 char profile_path[MAX_PATH_LEN] = { 0 };
-                find_profile_from_macos_argv(pid, profile_path, sizeof(profile_path));
+                find_profile_from_macos_argv(pid, full_path, profile_path, sizeof(profile_path));
                 if (strlen(profile_path) == 0) {
                     find_active_profile_readonly(full_path, profile_path);
                 }
 
                 // Dedup by (binary_path + profile_path) so different profiles are distinct
                 if (!is_duplicate_entry(results, count, full_path, profile_path) && count < max_results) {
-                    snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s",
-                             TARGET_EXECUTABLES[0]);
+                    const char *exe_name = strrchr(full_path, '/');
+                    exe_name = exe_name ? exe_name + 1 : full_path;
+                    snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", exe_name);
                     strncpy(results[count].binary_path, full_path, MAX_PATH_LEN);
                     strncpy(results[count].profile_path, profile_path, MAX_PATH_LEN);
                     results[count].pid = (unsigned long)pid;

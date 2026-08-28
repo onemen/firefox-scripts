@@ -2556,11 +2556,16 @@ static int main_impl(int argc, char *argv[]) {
         // installer-e2e.mjs (which inherits this process's stdio) can report
         // why a tab did or did not appear in the test browser.
         printf("[installer] detected %d browser(s):\n", detected_count);
+        log_msg("[installer] detected %d browser(s):\n", detected_count);
         for (int i = 0; i < detected_count; i++) {
             printf("  [%d] %s\n      binary: %s\n      profile: %s\n", i,
                    detected_browsers[i].identified_browser,
                    detected_browsers[i].binary_path,
                    detected_browsers[i].profile_path);
+            log_msg("  [%d] %s binary: %s profile: %s\n", i,
+                    detected_browsers[i].identified_browser,
+                    detected_browsers[i].binary_path,
+                    detected_browsers[i].profile_path);
         }
         if (detected_count > 0) {
             // Prefer the most recently used browser window over the first
@@ -2570,6 +2575,8 @@ static int main_impl(int argc, char *argv[]) {
             if (ui_host_idx < 0) ui_host_idx = 0;
             printf("[installer] opening %s in browser %d (%s)\n", g_ui_url,
                    ui_host_idx, detected_browsers[ui_host_idx].identified_browser);
+            log_msg("[installer] opening %s in browser %d (%s)\n", g_ui_url,
+                    ui_host_idx, detected_browsers[ui_host_idx].identified_browser);
             // Record which profile hosts the UI tab so the restart worker can
             // reopen the UI there after a restart that kills this browser.
             if (strlen(detected_browsers[ui_host_idx].profile_path) > 0) {
@@ -2582,6 +2589,7 @@ static int main_impl(int argc, char *argv[]) {
             focus_browser_window(detected_browsers[ui_host_idx].pid);
         } else {
             printf("[installer] no browsers detected; falling back to default browser\n");
+            log_msg("[installer] no browsers detected; falling back to default browser\n");
             open_browser(g_ui_url, NULL);  // fallback to default browser
         }
         fflush(stdout);  // long-running process: make the E2E diagnostics visible

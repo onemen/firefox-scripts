@@ -334,6 +334,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
     // 4. Wait for the installer server
     const ready = await waitForServer(60_000);
     if (!ready) {
+      uiCheck(false, 'UI-03', 'installer server became ready');
       return;
     }
 
