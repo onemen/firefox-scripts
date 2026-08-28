@@ -29,7 +29,7 @@ released.
 A browser must be **running** to be detected (detection uses process scanning and lock-file
 inspection).
 
-## How to install the installer
+## How to use the installer
 
 1. **Download** the installer for your OS from the
    [releases page](https://github.com/onemen/firefox-scripts/releases):
@@ -47,6 +47,11 @@ inspection).
 
 > The install tab always opens. It is the piece that downloads the packages from the network; if
 > they cannot be reached, the tab shows a network-error banner instead of the install screen.
+
+The installer itself is a one-shot setup tool: it installs only the components you pick above and
+**does not** leave behind any other files, background processes, or scheduled tasks. After the
+install completes you can delete the downloaded executable — nothing else was installed besides the
+configuration files and scripts you chose.
 
 Prefer to install by hand? Follow the
 [manual installation guide](https://onemen.github.io/tabmixplus-docs/other/installation/).
@@ -67,9 +72,9 @@ Once installed, the scripts keep themselves current without you re-running the i
 - **Manual update.** You can always open the updater manually from the browser menu, or download the
   `utils.zip` / `fx-folder.zip` packages directly from the update tab.
 
-Updater UI scripts update automatically in the background. Configuration-file updates and browser
-restarts are applied only when you choose to install them, keeping the process predictable and under
-your control.
+Updater UI scripts update automatically, as a background service of Firefox. Configuration-file
+updates and browser restarts are applied only when you choose to install them, keeping the process
+predictable and under your control.
 
 ## Original Scripts and Core Folders
 
