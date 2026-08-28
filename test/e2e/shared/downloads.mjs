@@ -20,7 +20,7 @@
  * official download page instead; the CLI fails with a clear message.
  */
 
-import {execSync} from 'node:child_process';
+import {execSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -230,8 +230,7 @@ async function resolveLatestUrl({api, pick, url}) {
 }
 
 /** Download an official Mozilla tarball and extract it; returns the binary path. */
-async function installTarball(url, browser) {
-  const dest = process.env.PORTABLE_BROWSER_DIR || path.join(os.homedir(), 'firefox-app');
+async function installTarball(url, browser, dest = path.join(os.homedir(), 'firefox-app')) {
   const archive = path.join(downloadDir(), `firefox-${browser}.tar.xz`);
   fs.mkdirSync(dest, {recursive: true});
 
@@ -342,7 +341,7 @@ async function installPortableFirefox(url, platform) {
   fs.mkdirSync(dest, {recursive: true});
 
   if (platform === 'linux') {
-    const binary = await installTarball(url, 'firefox-portable');
+    const binary = await installTarball(url, 'firefox-portable', dest);
     return binary;
   }
 
@@ -351,7 +350,13 @@ async function installPortableFirefox(url, platform) {
     await downloadTo(url, exe);
     // NSIS /D must be the final argument and uses a custom directory instead
     // of the registered Program Files location.
-    execSync(`"${exe}" /S /D=${dest}`, {stdio: 'inherit'});
+    // Pass the destination as one argv item. Quoting the value inside the
+    // /D= argument preserves spaces in runner.temp paths for NSIS.
+    const result = spawnSync(exe, ['/S', `/D="${dest}"`], {stdio: 'inherit'});
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(`Firefox portable installer exited with code ${result.status}`);
+    }
     const binary = path.join(dest, 'firefox.exe');
     if (!fs.existsSync(binary)) throw new Error(`portable Firefox binary not found: ${binary}`);
     return binary;

@@ -203,7 +203,7 @@ jobs:
         shell: bash
         run: |
           URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
-          KEY=$(node -e "console.log(require('crypto').createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "key=firefox-dl-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
           echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
@@ -292,7 +292,7 @@ jobs:
         shell: bash
         run: |
           URL=$(node test/e2e/shared/downloads.mjs firefox --url)
-          KEY=$(node -e "console.log(require('crypto').createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
           echo "key=firefox-portable-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
           echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
 
@@ -379,7 +379,7 @@ jobs:
         shell: bash
         run: |
           URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
-          KEY=$(node -e "console.log(require('crypto').createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
           echo "key=browser-dl-${{ runner.os }}-${{ matrix.browser }}-$KEY" >> "$GITHUB_OUTPUT"
           echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
       - name: Cache ${{ matrix.browser }} installer
