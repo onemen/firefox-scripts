@@ -1168,8 +1168,21 @@ static int is_target_executable(const char *full_path) {
         if (strcasecmp(base, TARGET_EXECUTABLES[i]) == 0) return 1;
     }
 #else
+    // A running binary whose file was replaced by a package update shows up
+    // as "<path> (deleted)" in /proc/<pid>/exe; strip only that recognized
+    // suffix so the still-running browser keeps matching its basename.
+    char name[MAX_PATH_LEN];
+    size_t blen = strlen(base);
+    static const char kDeletedSuffix[] = " (deleted)";
+    const size_t dlen = sizeof(kDeletedSuffix) - 1;
+    if (blen > dlen && memcmp(base + blen - dlen, kDeletedSuffix, dlen) == 0) {
+        blen -= dlen;
+    }
+    if (blen >= sizeof(name)) blen = sizeof(name) - 1;
+    memcpy(name, base, blen);
+    name[blen] = '\0';
     for (int i = 0; TARGET_EXECUTABLES[i] != NULL; i++) {
-        if (strcmp(base, TARGET_EXECUTABLES[i]) == 0) return 1;
+        if (strcmp(name, TARGET_EXECUTABLES[i]) == 0) return 1;
     }
 #endif
     return 0;
@@ -1744,23 +1757,27 @@ static void find_profile_from_macos_argv(pid_t pid, const char *binary_path,
                                 if (pw) home = pw->pw_dir;
                             }
                             if (home) {
+                                // macOS keeps browser profiles under
+                                // ~/Library/Application Support (matching
+                                // find_active_profile_readonly() below), not
+                                // in the dot-directories Linux uses.
                                 switch (identify_variant_from_path(binary_path)) {
                                     case BROWSER_ZEN:
                                     case BROWSER_ZEN_TWILIGHT:
-                                        snprintf(base_dir, sizeof(base_dir), "%s/.zen", home);
+                                        snprintf(base_dir, sizeof(base_dir), "%s/Library/Application Support/zen", home);
                                         break;
                                     case BROWSER_WATERFOX:
                                     case BROWSER_WATERFOX_BETA:
-                                        snprintf(base_dir, sizeof(base_dir), "%s/.waterfox", home);
+                                        snprintf(base_dir, sizeof(base_dir), "%s/Library/Application Support/Waterfox", home);
                                         break;
                                     case BROWSER_LIBREWOLF:
-                                        snprintf(base_dir, sizeof(base_dir), "%s/.librewolf", home);
+                                        snprintf(base_dir, sizeof(base_dir), "%s/Library/Application Support/LibreWolf", home);
                                         break;
                                     case BROWSER_FLOORP:
-                                        snprintf(base_dir, sizeof(base_dir), "%s/.floorp", home);
+                                        snprintf(base_dir, sizeof(base_dir), "%s/Library/Application Support/Floorp", home);
                                         break;
                                     default:
-                                        snprintf(base_dir, sizeof(base_dir), "%s/.mozilla/firefox", home);
+                                        snprintf(base_dir, sizeof(base_dir), "%s/Library/Application Support/Firefox", home);
                                         break;
                                 }
                                 lookup_profile_by_name(base_dir, val, out, out_size);
