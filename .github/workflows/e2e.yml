@@ -132,7 +132,9 @@ jobs:
 
       - name: Run installer E2E (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
-        run: xvfb-run node test/e2e/installer/installer-e2e.mjs --ui --headless
+        # -a picks a free display number, avoiding collisions with the
+        # updater E2E job that also runs under xvfb-run on the same runner.
+        run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui --headless
 
       - name: Run installer E2E (macOS/Windows)
         if: ${{ !startsWith(matrix.os, 'ubuntu') }}
@@ -239,7 +241,7 @@ jobs:
       # step above) and auto-discovers the snapshot dir.
       - name: Run updater E2E (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: xvfb-run node test/e2e/updater/updater-e2e.mjs
+        run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
 
       - name: Run updater E2E (macOS)
         if: matrix.os == 'macos-latest'
