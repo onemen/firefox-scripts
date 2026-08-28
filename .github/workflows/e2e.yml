@@ -279,7 +279,9 @@ jobs:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
     steps:
-      - uses: ./.github/actions/setup-repo
+      # $/ prefix: the runner materializes the local action from the triggering
+      # commit — a ./ local action would need a checkout step first.
+      - uses: $/.github/actions/setup-repo
 
       - name: Set portable browser directory (Linux/macOS)
         if: ${{ runner.os != 'Windows' }}
