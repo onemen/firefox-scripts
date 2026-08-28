@@ -261,6 +261,89 @@ jobs:
             dist/installer-e2e-*.png
           if-no-files-found: ignore
 
+  # ── Portable Firefox Release E2E (#56) ────────────────────────────────────
+  # Firefox Release is installed into a runner-temp custom directory rather
+  # than Program Files, /Applications, or a package-managed location. The
+  # existing installer and updater tests then exercise detection, GreD
+  # discovery, installation, and updater-tab behavior against that binary.
+  portable-firefox:
+    name: 'portable Firefox E2E · ${{ matrix.os }}'
+    needs: [changes, snapshot]
+    if: needs.changes.outputs.updater == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+    steps:
+      - uses: $/.github/actions/setup-repo
+
+      - name: Set portable browser directory
+        shell: bash
+        run: |
+          echo "PORTABLE_BROWSER_DIR=${{ runner.temp }}/firefox-portable" >> "$GITHUB_ENV"
+          mkdir -p "${{ runner.temp }}/firefox-portable"
+
+      - name: Resolve Firefox Release download URL
+        id: portable-url
+        shell: bash
+        run: |
+          URL=$(node test/e2e/shared/downloads.mjs firefox --url)
+          KEY=$(node -e "console.log(require('crypto').createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          echo "key=firefox-portable-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
+
+      - name: Cache Firefox Release download
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.BROWSER_DL_DIR }}
+          key: ${{ steps.portable-url.outputs.key }}
+
+      - name: Install Firefox Release portably
+        shell: bash
+        run: node test/e2e/shared/downloads.mjs firefox
+
+      - name: Assert portable layout
+        shell: bash
+        run: |
+          case "$FIREFOX_BINARY" in
+            "$PORTABLE_BROWSER_DIR"/*) ;;
+            *) echo "::error::Firefox binary is not inside portable directory: $FIREFOX_BINARY"; exit 1 ;;
+          esac
+          test -f "$FIREFOX_BINARY"
+          echo "Portable Firefox: $FIREFOX_BINARY"
+
+      - name: Download dev snapshot
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dev-snapshot
+          path: dist/
+
+      - name: Install Linux test prerequisites
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+
+      - name: Run portable installer E2E (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui --headless
+
+      - name: Run portable installer E2E (macOS/Windows)
+        if: ${{ !startsWith(matrix.os, 'ubuntu') }}
+        run: node test/e2e/installer/installer-e2e.mjs --ui --headless
+
+      - name: Run portable updater E2E (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
+
+      - name: Run portable updater E2E (macOS/Windows)
+        if: ${{ !startsWith(matrix.os, 'ubuntu') }}
+        run: node test/e2e/updater/updater-e2e.mjs
+
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
   # Each browser downloads an official installer directly: LibreWolf resolves
   # its newest version from the Codeberg package registry; Floorp and Zen use
@@ -343,7 +426,7 @@ jobs:
     name: E2E gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [changes, snapshot, installer, helper, updater, browser-matrix]
+    needs: [changes, snapshot, installer, helper, updater, portable-firefox, browser-matrix]
     steps:
       # Local action — a fresh runner needs the repo checked out first.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -359,6 +442,7 @@ jobs:
             installer:${{ needs.changes.outputs.installer == 'true' }}
             helper:${{ needs.changes.outputs.updater == 'true' }}
             updater:${{ needs.changes.outputs.updater == 'true' }}
+            portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
             browser-matrix:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
@@ -368,7 +452,8 @@ jobs:
             installer:${{ needs.installer.result }}
             helper:${{ needs.helper.result }}
             updater:${{ needs.updater.result }}
+            portable-firefox:${{ needs.portable-firefox.result }}
             browser-matrix:${{ needs.browser-matrix.result }}
-          required: snapshot installer helper updater
+          required: snapshot installer helper updater portable-firefox
           advisory: browser-matrix
-          skip-guard: snapshot installer helper updater browser-matrix
+          skip-guard: snapshot installer helper updater portable-firefox browser-matrix
