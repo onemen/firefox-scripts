@@ -350,9 +350,13 @@ async function installPortableFirefox(url, platform) {
     await downloadTo(url, exe);
     // NSIS /D must be the final argument and uses a custom directory instead
     // of the registered Program Files location.
-    // Pass the destination as one argv item. Quoting the value inside the
-    // /D= argument preserves spaces in runner.temp paths for NSIS.
-    const result = spawnSync(exe, ['/S', `/D="${dest}"`], {stdio: 'inherit'});
+    // Run through cmd.exe so Git Bash does not rewrite the Windows path.
+    // NSIS requires /D= as the final argument; quoting the value preserves
+    // spaces in runner.temp paths while keeping the whole option one argv item.
+    const result = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${exe}" /S /D="${dest}"`], {
+      stdio: 'inherit',
+      windowsVerbatimArguments: true,
+    });
     if (result.error) throw result.error;
     if (result.status !== 0) {
       throw new Error(`Firefox portable installer exited with code ${result.status}`);
