@@ -2675,6 +2675,19 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
             if (len != -1) {
                 full_path[len] = '\0';
 
+                // A package update may have unlinked the running binary; the
+                // kernel then reports "<path> (deleted)".  Strip that suffix
+                // so the stored binary_path stays valid (it is later passed
+                // to execl() on relaunch).  is_target_executable() keeps its
+                // own stripping as a defensive fallback.
+                static const char kDeletedSuffix[] = " (deleted)";
+                const size_t dlen = sizeof(kDeletedSuffix) - 1;
+                if (len > (ssize_t)dlen &&
+                    memcmp(full_path + len - dlen, kDeletedSuffix, dlen) == 0) {
+                    len -= (ssize_t)dlen;
+                    full_path[len] = '\0';
+                }
+
                 if (is_target_executable(full_path)) {
                     // Detect profile BEFORE dedup check (PID-aware on Linux)
                     char profile_path[MAX_PATH_LEN] = { 0 };
