@@ -379,7 +379,9 @@ jobs:
           case "${{ runner.os }}" in
             Linux) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_linux-dev" >> "$GITHUB_ENV" ;;
             macOS) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_mac-dev" >> "$GITHUB_ENV" ;;
-            Windows) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_win-dev.exe" >> "$GITHUB_ENV" ;;
+            # github.workspace expands to a native Windows path (D:\a\...);
+            # $PWD would be MSYS-style (/d/a/...) which Node's fs cannot use.
+            Windows) echo "INSTALLER_BIN=${{ github.workspace }}\\dist\\installer\\installer_win-dev.exe" >> "$GITHUB_ENV" ;;
           esac
           chmod +x dist/installer/installer_* 2>/dev/null || true
 
