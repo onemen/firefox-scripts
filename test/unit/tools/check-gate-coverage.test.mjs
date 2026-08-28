@@ -200,3 +200,43 @@ test('parseJobs: counts verify-gate uses per job', () => {
   assert.equal(jobs.get('changes').verifyGateUses, 0);
   assert.equal(jobs.get('snapshot').verifyGateUses, 0);
 });
+
+// ── post-gate contract (#4): jobs that run AFTER the gate (need it) are
+// exempt from needs-coverage but pinned by their own rules.
+const WITH_POST_GATE = FIXTURE.replace(
+  '  e2e-gate:',
+  `  record-validation:\n    needs: e2e-gate\n    if: always()\n    runs-on: ubuntu-latest\n  e2e-gate:`
+);
+const POST_GATE_CONTRACT = {...CONTRACT, postGate: ['record-validation']};
+
+test('checkWorkflow: a post-gate job (needs the gate) passes needs-coverage', () => {
+  // Without the postGate exemption the recorder would be flagged as bypassing
+  // the gate (it is deliberately NOT in the gate's needs).
+  const exempt = checkWorkflow(WITH_POST_GATE, POST_GATE_CONTRACT);
+  assert.deepEqual(exempt, []);
+  const flagged = checkWorkflow(WITH_POST_GATE, CONTRACT);
+  assert.ok(flagged.some(e => e.includes('record-validation') && e.includes('bypass the gate')));
+});
+
+test('checkWorkflow: a post-gate job must exist', () => {
+  const errors = checkWorkflow(FIXTURE, POST_GATE_CONTRACT);
+  assert.ok(errors.some(e => e.includes("post-gate job 'record-validation' not found")));
+});
+
+test('checkWorkflow: a post-gate job must need the gate', () => {
+  const broken = WITH_POST_GATE.replace(
+    '  record-validation:\n    needs: e2e-gate',
+    '  record-validation:'
+  );
+  const errors = checkWorkflow(broken, POST_GATE_CONTRACT);
+  assert.ok(errors.some(e => e.includes("'record-validation' must need 'e2e-gate'")));
+});
+
+test('checkWorkflow: a post-gate job in the gate needs would be a cycle', () => {
+  const cyclic = WITH_POST_GATE.replace(
+    'needs: [changes, snapshot, installer]',
+    'needs: [changes, snapshot, installer, record-validation]'
+  );
+  const errors = checkWorkflow(cyclic, POST_GATE_CONTRACT);
+  assert.ok(errors.some(e => e.includes('record-validation') && e.includes('cycle')));
+});

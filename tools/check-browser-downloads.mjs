@@ -64,6 +64,13 @@ const RANGE_BYTES = 1024;
 /** Browsers the E2E map installs or tracks — each must resolve its version. */
 const BROWSERS = ['firefox', 'firefox-dev', 'librewolf', 'floorp', 'zen', 'waterfox'];
 
+/**
+ * Browsers whose current version must be covered by a successful E2E run before
+ * a prod publish (the hard-gated `updater` legs on all 3 OSes). Fork legs are
+ * advisory, so they stay on the watchdog-baseline check only.
+ */
+export const VALIDATED_BROWSERS = ['firefox', 'firefox-dev'];
+
 const VERSION_APIS = {
   'firefox': {
     // Mozilla product-details: the canonical "current stable version" endpoint.
@@ -107,7 +114,7 @@ async function getJson(url) {
 }
 
 /** Resolve the current release version for a browser from its vendor API. */
-async function resolveVersion(browser) {
+export async function resolveVersion(browser) {
   const {url, parse} = VERSION_APIS[browser];
   const version = parse(await getJson(url));
   if (!version) {
@@ -235,6 +242,36 @@ export function collectDrift(baseline, versions) {
       drift.push(`${browser}: not in baseline (first run — run the watchdog first)`);
     } else if (String(prev.version) !== String(curr)) {
       drift.push(`${browser}: ${prev.version} → ${curr}`);
+    }
+  }
+  return drift;
+}
+
+/**
+ * Diff the validated-versions record (written only by successful browser E2E
+ * runs, see tools/ci/record-validated-versions.mjs) against freshly resolved
+ * versions. Returns a list of human-readable drift strings; empty = the current
+ * releases are exactly what E2E validated.
+ *
+ * Unlike collectDrift, a browser missing from the record is drift even on a
+ * "first run": the prod pre-flight must never pass on an absent validation.
+ *
+ * @param {Record<string, {version: string} | undefined>} validated
+ * @param {Record<string, string | undefined>} versions current version per
+ *   browser
+ * @returns {string[]}
+ */
+export function collectValidatedDrift(validated, versions) {
+  const drift = [];
+  for (const browser of VALIDATED_BROWSERS) {
+    const entry = validated[browser];
+    const curr = versions[browser];
+    if (curr === undefined || curr === null || curr === '') {
+      drift.push(`${browser}: version lookup failed`);
+    } else if (!entry) {
+      drift.push(`${browser}: never validated — no successful E2E run recorded this version`);
+    } else if (String(entry.version) !== String(curr)) {
+      drift.push(`${browser}: E2E validated ${entry.version}, current release is ${curr}`);
     }
   }
   return drift;
@@ -388,6 +425,48 @@ export async function main() {
       process.exit(1);
     }
     console.log('No browser version drift — baseline matches current releases.');
+
+    // Second gate (#4): the watchdog baseline can be refreshed without any
+    // test run, so a prod publish additionally requires the hard-gate
+    // browsers' CURRENT versions to be covered by the validated-versions
+    // record — written only by successful browser-specific E2E runs.
+    if (process.argv.includes('--require-validated')) {
+      // VALIDATED_DIR: where the publish pre-flight restored the E2E-written
+      // record (kept separate from the watchdog baseline's BASELINE_DIR).
+      const validatedDir = process.env.VALIDATED_DIR || baselineDir;
+      const validatedFile = path.join(validatedDir, 'validated.json');
+      if (!fs.existsSync(validatedFile)) {
+        console.error(
+          'validation: no validated-versions record found — dispatch the E2E ' +
+            'workflow on main (it records validated browser versions on success), ' +
+            'then re-dispatch publish.'
+        );
+        process.exit(1);
+      }
+      const validated = JSON.parse(fs.readFileSync(validatedFile, 'utf-8'));
+      const versionsNow = {};
+      for (const browser of VALIDATED_BROWSERS) {
+        try {
+          versionsNow[browser] = String(await resolveVersion(browser));
+        } catch (err) {
+          console.log(`  ${browser}: version lookup failed: ${err.message}`);
+        }
+      }
+      const validatedDrift = collectValidatedDrift(validated, versionsNow);
+      if (validatedDrift.length > 0) {
+        console.error('Browser versions not covered by a successful E2E run:');
+        for (const d of validatedDrift) console.error(`  - ${d}`);
+        console.error(
+          'Dispatch the E2E workflow on main (re-records validated versions on ' +
+            'success), then re-dispatch publish.'
+        );
+        process.exit(1);
+      }
+      console.log(
+        'Validated-versions record matches current releases ' +
+          `(recorded ${validated.recordedAt || 'unknown'}).`
+      );
+    }
     process.exit(0);
   }
 

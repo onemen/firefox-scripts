@@ -14,12 +14,14 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-browser-downloads.mjs')).href;
 const {
   collectDrift,
+  collectValidatedDrift,
   compareBaseline,
   formatAge,
   issueBody,
   issueTitle,
   parseContentRange,
   sha256File,
+  VALIDATED_BROWSERS,
 } = await import(scriptUrl);
 
 test('compareBaseline: first run, new version, unchanged', () => {
@@ -41,6 +43,38 @@ test('collectDrift: unchanged baseline yields no drift', () => {
     Object.entries(baseline).map(([browser, entry]) => [browser, entry.version])
   );
   assert.deepEqual(collectDrift(baseline, versions), []);
+});
+
+test('VALIDATED_BROWSERS: exactly the hard-gate browser legs', () => {
+  assert.deepEqual(VALIDATED_BROWSERS, ['firefox', 'firefox-dev']);
+});
+
+test('collectValidatedDrift: matching record yields no drift', () => {
+  const validated = {
+    browsers: {'firefox': {version: '154.0.1'}, 'firefox-dev': {version: '155.0b3'}},
+  };
+  const versions = {'firefox': '154.0.1', 'firefox-dev': '155.0b3'};
+  assert.deepEqual(collectValidatedDrift(validated.browsers, versions), []);
+});
+
+test('collectValidatedDrift: a new release, a missing record, and a lookup failure are flagged', () => {
+  const validated = {firefox: {version: '153.0'}};
+  const versions = {
+    'firefox': '154.0.1', // validated 153.0 → drift
+    'firefox-dev': '155.0b3', // never validated → drift (even though current)
+  };
+  const drift = collectValidatedDrift(validated, versions);
+  assert.ok(
+    drift.some(d => d.includes('firefox: E2E validated 153.0, current release is 154.0.1'))
+  );
+  assert.ok(drift.some(d => d.includes('firefox-dev: never validated')));
+  assert.equal(drift.length, 2);
+});
+
+test('collectValidatedDrift: version lookup failure is flagged', () => {
+  const validated = {'firefox': {version: '154.0.1'}, 'firefox-dev': {version: '155.0b3'}};
+  const drift = collectValidatedDrift(validated, {'firefox': '154.0.1', 'firefox-dev': ''});
+  assert.deepEqual(drift, ['firefox-dev: version lookup failed']);
 });
 
 test('collectDrift: a new version, a missing baseline, and a lookup failure are flagged', () => {

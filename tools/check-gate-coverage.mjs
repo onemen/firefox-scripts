@@ -27,6 +27,11 @@
  * - verify-gate-uses: the gate job invokes ./.github/actions/verify-gate exactly
  *   once, and ONLY that step's `with:` block is parsed as gate wiring (another
  *   action's inputs must not satisfy the contract).
+ * - post-gate: jobs declared in the contract's `postGate` list run AFTER the gate
+ *   (they `needs:` it — e.g. the E2E workflow's validated-versions recorder,
+ *   #4). They cannot bypass the gate, so they are exempt from needs-coverage,
+ *   but they must exist, must need the gate, and must not be wired into the
+ *   gate's verify-gate results (that would create a cycle).
  *
  * Exit code 0 = contract holds. Run via `pnpm check:gates` (part of the
  * `checks` CI job). The parser is deliberately small — the workflow files are
@@ -184,11 +189,12 @@ export function parseJobs(text) {
  *   gatedIfs?: Record<string, string>;
  *   noJobIf?: string[];
  *   applicability?: string[];
+ *   postGate?: string[];
  * }} contract
  * @returns {string[]}
  */
 export function checkWorkflow(text, contract) {
-  const {file, gate, gatedIfs = {}, noJobIf = [], applicability = []} = contract;
+  const {file, gate, gatedIfs = {}, noJobIf = [], applicability = [], postGate = []} = contract;
   const errors = [];
   const jobs = parseJobs(text);
   const gateJob = jobs.get(gate);
@@ -199,10 +205,28 @@ export function checkWorkflow(text, contract) {
 
   for (const name of jobs.keys()) {
     if (name === gate) continue;
+    // post-gate jobs run AFTER the gate (they need it) and are checked by
+    // their own rules below — exempting them here is the point of postGate.
+    if (postGate.includes(name)) continue;
     if (!gateJob.needs.includes(name)) {
       errors.push(
         `${file}: job '${name}' is not in ${gate}'s needs — it would bypass the gate silently`
       );
+    }
+  }
+  for (const name of postGate) {
+    const job = jobs.get(name);
+    if (!job) {
+      errors.push(`${file}: post-gate job '${name}' not found`);
+      continue;
+    }
+    if (gateJob.needs.includes(name)) {
+      errors.push(
+        `${file}: post-gate job '${name}' must not be in ${gate}'s needs (it already needs the gate — a cycle)`
+      );
+    }
+    if (!job.needs.includes(gate)) {
+      errors.push(`${file}: post-gate job '${name}' must need '${gate}'`);
     }
   }
   for (const name of gateJob.needs) {
@@ -309,6 +333,9 @@ const CONTRACTS = [
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'",
     },
     applicability: ['snapshot', 'installer', 'helper', 'updater', 'browser-matrix'],
+    // Runs after e2e-gate: records the validated browser versions (#4) only
+    // when every browser leg passed.
+    postGate: ['record-validation'],
   },
   {
     file: '.github/workflows/ci.yml',

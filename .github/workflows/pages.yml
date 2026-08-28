@@ -71,11 +71,21 @@ jobs:
           path: .watchdog
           key: url-watchdog-baseline-${{ github.run_id }}
           restore-keys: url-watchdog-baseline-
+      # Validated-versions record (#4): written only by the E2E workflow's
+      # record-validation job after all browser legs passed. Restored to its
+      # own dir so the watchdog baseline restore above can never clobber it.
+      - name: Restore validated-versions record
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .watchdog-validated
+          key: browser-validated-${{ github.run_id }}
+          restore-keys: browser-validated-
       - name: Check browser version drift
         env:
           MODE: ${{ inputs.mode }}
+          VALIDATED_DIR: ${{ github.workspace }}/.watchdog-validated
         run: |
-          if node tools/check-browser-downloads.mjs --drift; then
+          if node tools/check-browser-downloads.mjs --drift --require-validated; then
             echo "no browser version drift since the last watchdog run"
           elif [ "$MODE" = "prod" ]; then
             echo "::error::new browser version(s) since the last watchdog run — run the URL watchdog workflow (refreshes the baseline + triggers browser-specific E2E), then re-dispatch publish."
