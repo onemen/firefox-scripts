@@ -125,17 +125,17 @@ jobs:
       # server on Linux runners), so install xvfb and run under it — same as
       # the updater job below.
       - name: Install Linux test prerequisites
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
 
       - name: Run installer E2E (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         run: xvfb-run node test/e2e/installer/installer-e2e.mjs --ui --headless
 
       - name: Run installer E2E (macOS/Windows)
-        if: matrix.os != 'ubuntu-latest'
+        if: ${{ !startsWith(matrix.os, 'ubuntu') }}
         run: node test/e2e/installer/installer-e2e.mjs --ui --headless
 
   # ── Helper E2E (Linux elevated-copy core) ──────────────────────────────────

@@ -50,6 +50,9 @@ static void find_active_profile_readonly(const char *binary_path, char *out_prof
 #if defined(__APPLE__)
 static void find_profile_from_macos_argv(pid_t pid, const char *binary_path,
                                          char *out, size_t out_size);
+/* Defined below with the Linux helpers; shared by the macOS argv scan. */
+static int lookup_profile_by_name(const char *base_dir, const char *profile_name,
+                                  char *out_path, size_t out_size);
 #endif
 static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
                              char ***out_list, int *out_count);
@@ -1777,7 +1780,7 @@ static void find_profile_from_macos_argv(pid_t pid, const char *binary_path,
 }
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 /**
  * Look up a profile name in profiles.ini and return its full path.
  * Returns 0 on success, -1 if not found.
@@ -1835,7 +1838,9 @@ static int lookup_profile_by_name(const char *base_dir, const char *profile_name
 
     return 0;
 }
+#endif /* __linux__ || __APPLE__ */
 
+#if defined(__linux__)
 /**
  * Read /proc/<pid>/cmdline to find the profile name/path this process was launched with.
  * Falls back to find_active_profile_readonly() if command line doesn't specify a profile.
