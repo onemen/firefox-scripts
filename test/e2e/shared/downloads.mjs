@@ -350,10 +350,10 @@ async function installPortableFirefox(url, platform) {
     await downloadTo(url, exe);
     // NSIS /D must be the final argument and uses a custom directory instead
     // of the registered Program Files location.
-    // Run through cmd.exe so Git Bash does not rewrite the Windows path.
-    // NSIS requires /D= as the final argument; quoting the value preserves
-    // spaces in runner.temp paths while keeping the whole option one argv item.
-    const result = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${exe}" /S /D="${dest}"`], {
+    // Pass the final /D= option directly to NSIS. PowerShell launches this
+    // Node process with native Windows paths, and verbatim arguments prevent
+    // MSYS/Git Bash path rewriting when the same helper is used locally.
+    const result = spawnSync(exe, ['/S', `/D=${dest}`], {
       stdio: 'inherit',
       windowsVerbatimArguments: true,
     });
@@ -417,6 +417,13 @@ async function installDmg(url, appName) {
     if (device || mountPoint) {
       execSync(`hdiutil detach "${device || mountPoint}"`);
     }
+  }
+}
+
+/** Export the resolved browser binary for GitHub Actions callers. */
+export function exportBinaryPath(binary) {
+  if (process.env.GITHUB_ENV) {
+    fs.appendFileSync(process.env.GITHUB_ENV, `FIREFOX_BINARY=${binary}\n`);
   }
 }
 
@@ -517,9 +524,7 @@ Release into a custom directory instead of a system location. With --url, prints
 
   const binary = await installBrowser(browser, normalized);
   console.log(binary);
-  if (process.env.GITHUB_ENV) {
-    fs.appendFileSync(process.env.GITHUB_ENV, `FIREFOX_BINARY=${binary}\n`);
-  }
+  exportBinaryPath(binary);
 }
 
 // Basename (not endsWith) so modules with a similar name — e.g.

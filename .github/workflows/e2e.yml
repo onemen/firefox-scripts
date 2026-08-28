@@ -279,7 +279,7 @@ jobs:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
     steps:
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
 
       - name: Set portable browser directory (Linux/macOS)
         if: ${{ runner.os != 'Windows' }}
