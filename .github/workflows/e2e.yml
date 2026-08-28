@@ -407,6 +407,18 @@ jobs:
         if: ${{ !startsWith(matrix.os, 'ubuntu') }}
         run: node test/e2e/updater/updater-e2e.mjs
 
+      # Same failure diagnostics as the installer/updater jobs: the E2E
+      # harness leaves failure screenshots in dist/ for artifact upload.
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-portable-firefox-${{ matrix.os }}
+          path: |
+            dist/installer-e2e-*.png
+            dist/updater-e2e-*.png
+          if-no-files-found: ignore
+
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
   # Each browser downloads an official installer directly: LibreWolf resolves
   # its newest version from the Codeberg package registry; Floorp and Zen use
