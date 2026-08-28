@@ -452,7 +452,9 @@ export async function main() {
           console.log(`  ${browser}: version lookup failed: ${err.message}`);
         }
       }
-      const validatedDrift = collectValidatedDrift(validated, versionsNow);
+      // The record wraps the per-browser map under `browsers` (alongside
+      // recordedAt/runId/sha metadata) — pass only the map to the diff.
+      const validatedDrift = collectValidatedDrift(validated.browsers || {}, versionsNow);
       if (validatedDrift.length > 0) {
         console.error('Browser versions not covered by a successful E2E run:');
         for (const d of validatedDrift) console.error(`  - ${d}`);
