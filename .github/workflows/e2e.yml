@@ -281,11 +281,20 @@ jobs:
     steps:
       - uses: $/.github/actions/setup-repo
 
-      - name: Set portable browser directory
+      - name: Set portable browser directory (Linux/macOS)
+        if: ${{ runner.os != 'Windows' }}
         shell: bash
         run: |
           echo "PORTABLE_BROWSER_DIR=${{ runner.temp }}/firefox-portable" >> "$GITHUB_ENV"
           mkdir -p "${{ runner.temp }}/firefox-portable"
+
+      - name: Set portable browser directory (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'firefox-portable'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Resolve Firefox Release download URL
         id: portable-url
@@ -302,11 +311,18 @@ jobs:
           path: ${{ env.BROWSER_DL_DIR }}
           key: ${{ steps.portable-url.outputs.key }}
 
-      - name: Install Firefox Release portably
+      - name: Install Firefox Release portably (Linux/macOS)
+        if: ${{ runner.os != 'Windows' }}
         shell: bash
         run: node test/e2e/shared/downloads.mjs firefox
 
-      - name: Assert portable layout
+      - name: Install Firefox Release portably (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: node test/e2e/shared/downloads.mjs firefox
+
+      - name: Assert portable layout (Linux/macOS)
+        if: ${{ runner.os != 'Windows' }}
         shell: bash
         run: |
           case "$FIREFOX_BINARY" in
@@ -315,6 +331,18 @@ jobs:
           esac
           test -f "$FIREFOX_BINARY"
           echo "Portable Firefox: $FIREFOX_BINARY"
+
+      - name: Assert portable layout (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not $env:FIREFOX_BINARY.StartsWith($env:PORTABLE_BROWSER_DIR, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Firefox binary is not inside portable directory: $env:FIREFOX_BINARY"
+          }
+          if (-not (Test-Path -LiteralPath $env:FIREFOX_BINARY -PathType Leaf)) {
+            throw "Firefox binary not found: $env:FIREFOX_BINARY"
+          }
+          Write-Host "Portable Firefox: $env:FIREFOX_BINARY"
 
       - name: Download dev snapshot
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
