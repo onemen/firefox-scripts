@@ -29,12 +29,12 @@ try {
         );
         initScriptsUpdater(win);
       } catch (e2) {
-        console.warn('Firefox Scripts updater not available', e2);
+        logger.warn('Firefox Scripts updater not available', e2);
       }
     }
   }, 'chrome-document-loaded');
 } catch (e) {
-  console.warn('Firefox Scripts updater init failed', e);
+  logger.warn('Firefox Scripts updater init failed', e);
 }
 
 Services.obs.addObserver(doc => {
