@@ -369,11 +369,15 @@ async function installPortableFirefox(url, platform) {
   if (platform === 'darwin') {
     const dmg = path.join(downloadDir(), 'firefox-portable.dmg');
     await downloadTo(url, dmg);
+    // Same hardened parse as installDmg below: the mount point is the last
+    // column and may contain spaces, so take everything after `/Volumes/` on
+    // matching lines and keep the device for cleanup.
     const out = execSync(`hdiutil attach -nobrowse -readonly "${dmg}"`).toString();
-    const mount = out
+    const mounts = out
       .split('\n')
-      .map(line => line.slice(line.indexOf('/Volumes/')).trim())
-      .find(line => line.startsWith('/Volumes/'));
+      .filter(line => line.includes('/Volumes/'))
+      .map(line => line.slice(line.indexOf('/Volumes/')).trim());
+    const mount = mounts[mounts.length - 1];
     const device = (out.match(/\/dev\/disk\S+/g) || [])[0];
     try {
       if (!mount) throw new Error(`cannot find Firefox DMG mount point: ${out}`);
