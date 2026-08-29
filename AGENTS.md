@@ -196,6 +196,9 @@ Installer build (Windows: MSYS2 UCRT64 `mingw32-make`): `make dist_win` / `dist_
   `docs/decisions/0000-template.md`; next unused `NNNN` + kebab-case slug; supersede, don't edit.
 - **Error handling:** fail-fast with clear messages; elevation failures distinguish cancel (exit 2);
   network failures surface a banner in the UI, not a silent partial install.
+- **Text files are LF**; a local working-tree copy can linger as CRLF, so when a tool parses a
+  tracked text file, normalize `\r\n` → `\n` at read (`docs/DEVELOPING.md` → Continuous
+  integration).
 
 ## Testing & QA
 

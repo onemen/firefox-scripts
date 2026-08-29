@@ -307,6 +307,19 @@ Edition is first-party Mozilla, so it runs as a required leg of the `updater` jo
 advisory matrix. Waterfox has no direct download URL and stays manual (tracked by version only in
 the URL watchdog).
 
+**LF, CRLF and `pnpm check:gates`** — the tree is normalized to LF (`.gitattributes` has
+`* text=auto eol=lf`), so a CRLF file saved by a Windows editor is committed as LF and CI always
+checks an LF checkout. But git will not rewrite an already-CRLF working-tree copy (it deems it
+"equal after normalization" — `git checkout -- <file>` will not restore it either), so a local file
+can linger as CRLF and break the line-sensitive gates: `pnpm check:gates` reports 20+ false
+gate-contract violations and `pnpm format` flags the file. Detect with
+`file .github/workflows/*.yml` (look for "CRLF line terminators"); fix by physically rewriting the
+bytes to LF (e.g.
+`node -e "const fs=require('fs');const p='.github/workflows/e2e.yml';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace(/\r\n/g,'\n'))"`).
+The parsers `tools/check-gate-coverage.mjs`, `tools/check-decisions.mjs` and
+`tools/publish/syncGeneratedFiles.mjs` normalize `\r\n` → `\n` at read so this never false-fails;
+new tools that parse tracked text files should do the same.
+
 **Merge queue** — the workflows trigger on `merge_group` in addition to `pull_request`, so the
 required checks also run on the merge queue's temporary merge-group branch. Enabling the queue
 (Settings → General → merge queue, with branch protection requiring it) makes the queue keep each PR

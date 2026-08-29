@@ -76,6 +76,11 @@ const VERIFY_GATE_USES = './.github/actions/verify-gate';
  * >}
  */
 export function parseJobs(text) {
+  // Normalize CRLF → LF so a Windows-edited working-tree workflow file (git
+  // keeps it as CRLF locally even though it is committed/checked out as LF)
+  // cannot smuggle a trailing `\r` into an `if:` capture and false-fail the
+  // contract. Real-world trigger: e2e.yml parsed from a CRLF local copy.
+  text = text.replace(/\r\n/g, '\n');
   const jobs = new Map();
   let current = null;
   let inJobs = false;
