@@ -535,17 +535,21 @@ jobs:
 
   # ── Record validated browser versions (#4) ────────────────────────────────
   # After every hard-gate E2E leg passed, record the exact firefox /
-  # firefox-dev versions this run validated into .watchdog/validated.json
-  # (Actions cache, rotating key — same pattern as the watchdog baseline).
-  # The prod publish pre-flight requires the current releases to be covered
-  # by this record, so a watchdog baseline refresh alone cannot satisfy the
-  # drift gate: the shipped browser versions must have a passing E2E run.
+  # firefox-dev versions this run validated into .watchdog-validated/
+  # (Actions cache, rotating key — same pattern as the watchdog baseline;
+  # a dedicated dir so the publish pre-flight's baseline restore can never
+  # clobber it). The prod publish pre-flight requires the current releases
+  # to be covered by this record, so a watchdog baseline refresh alone
+  # cannot satisfy the drift gate: the shipped browser versions must have
+  # a passing E2E run.
   record-validation:
     name: record validated browser versions
     needs: [changes, e2e-gate]
+    # e2e-gate success already proves every hard-gate leg ran and passed
+    # (the gate is if: always() and reports all results), so no additional
+    # changed-paths condition: a core-only change still records validation.
     if: >-
-      needs.e2e-gate.result == 'success' && needs.changes.outputs.updater == 'true' &&
-      github.event_name != 'pull_request'
+      needs.e2e-gate.result == 'success' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -554,11 +558,11 @@ jobs:
           node-version: 24
       - name: Record validated browser versions
         env:
-          VALIDATED_DIR: .watchdog
+          VALIDATED_DIR: .watchdog-validated
         run: node tools/ci/record-validated-versions.mjs
       - name: Save validated-versions record
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: .watchdog
+          path: .watchdog-validated
           key: browser-validated-${{ github.run_id }}
           save-always: true

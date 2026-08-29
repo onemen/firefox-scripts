@@ -268,7 +268,12 @@ export function collectValidatedDrift(validated, versions) {
     const curr = versions[browser];
     if (curr === undefined || curr === null || curr === '') {
       drift.push(`${browser}: version lookup failed`);
-    } else if (!entry) {
+    } else if (
+      !entry ||
+      entry.version === undefined ||
+      entry.version === null ||
+      entry.version === ''
+    ) {
       drift.push(`${browser}: never validated — no successful E2E run recorded this version`);
     } else if (String(entry.version) !== String(curr)) {
       drift.push(`${browser}: E2E validated ${entry.version}, current release is ${curr}`);
