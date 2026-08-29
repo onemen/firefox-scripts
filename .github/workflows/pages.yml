@@ -150,7 +150,8 @@ jobs:
     # Prod publishes deploy through the `release` environment (protected-branch
     # policy: main only). Dev publishes are disposable and bypass the
     # environment so they can run from any branch.
-    environment: ${{ inputs.mode == 'prod' && 'release' || null }}
+    environment:
+      name: ${{ inputs.mode == 'prod' && 'release' || 'dev' }}
     runs-on: windows-latest
     steps:
       # Node + pnpm here; dependencies install AFTER the MSYS2 toolchain
