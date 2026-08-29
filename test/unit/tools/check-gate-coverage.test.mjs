@@ -240,3 +240,14 @@ test('checkWorkflow: a post-gate job in the gate needs would be a cycle', () => 
   const errors = checkWorkflow(cyclic, POST_GATE_CONTRACT);
   assert.ok(errors.some(e => e.includes('record-validation') && e.includes('cycle')));
 });
+
+test('checkWorkflow: a post-gate job in verify-gate results is rejected', () => {
+  const broken = WITH_POST_GATE.replace(
+    '            snapshot:${{ needs.snapshot.result }}',
+    '            snapshot:${{ needs.snapshot.result }}\n            record-validation:${{ needs.record-validation.result }}'
+  );
+  const errors = checkWorkflow(broken, POST_GATE_CONTRACT);
+  assert.ok(
+    errors.some(e => e.includes("results must not include post-gate job 'record-validation'"))
+  );
+});

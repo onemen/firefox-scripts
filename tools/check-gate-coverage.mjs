@@ -293,6 +293,11 @@ export function checkWorkflow(text, contract) {
       errors.push(`${file}: ${gate} needs '${name}' but its verify-gate results do not include it`);
     }
   }
+  for (const name of postGate) {
+    if (results.includes(name)) {
+      errors.push(`${file}: ${gate} results must not include post-gate job '${name}'`);
+    }
+  }
   for (const name of results) {
     if (!classified.includes(name)) {
       errors.push(
