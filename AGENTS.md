@@ -161,6 +161,7 @@ pnpm lint          # eslint + C format check
 pnpm format        # check: C + prettier
 pnpm format:fix    # apply both
 pnpm test          # unit tests (test/unit/, pure Node, no build)
+pnpm review:local  # local AI review of main...HEAD via tools/ai-review.mjs (ADR 0020)
 
 # hash parity JS vs C (auto-generates a prod snapshot via upload:local if needed;
 # also works against the newest dev- snapshot, so it runs after upload:local --mode=dev)
@@ -196,6 +197,9 @@ Installer build (Windows: MSYS2 UCRT64 `mingw32-make`): `make dist_win` / `dist_
   `docs/decisions/0000-template.md`; next unused `NNNN` + kebab-case slug; supersede, don't edit.
 - **Error handling:** fail-fast with clear messages; elevation failures distinguish cancel (exit 2);
   network failures surface a banner in the UI, not a silent partial install.
+- **Text files are LF**; a local working-tree copy can linger as CRLF, so when a tool parses a
+  tracked text file, normalize `\r\n` → `\n` at read (`docs/DEVELOPING.md` → Continuous
+  integration).
 
 ## Testing & QA
 
@@ -216,6 +220,21 @@ passed if the required toolchain or environment was unavailable.**
 PRs that modify `core/**` must add or extend a test where feasible; if not, the PR description must
 explain why. (The mechanical "core changed && no test changed → fail" CI gate lands together with
 the core smoke tests — see issue #30.)
+
+## AI review of PRs
+
+Per [ADR 0020](./docs/decisions/0020-local-agent-ai-review.md), AI review is a local, agent-run
+step, not a CI bot. Before opening a PR, the agent:
+
+1. Runs `pnpm review:local` locally on the PR branch (default `main...HEAD`; `--provider` /
+   `--model` override the **first-available** provider — Gemini 3.6 Flash by default).
+2. **Assesses each finding as right / wrong / useless** against the actual code (the audit
+   methodology): drop findings that are vague, unverifiable, or false positives.
+3. Posts the accepted findings as a PR review comment via `gh` (e.g. `gh pr review <n> --comment`),
+   fixing any real findings before opening the PR.
+
+This replaces the retired CI bot (`.github/workflows/ai-review.yml`, removed) — add no CI/repo AI
+secret. CodeRabbit `review:batch` remains an optional deep ~1-review/hour pass.
 
 ## Agent workflow
 
@@ -253,9 +272,9 @@ Before finishing:
   **pnpm** (lockfile v9), `"type": "module"` for all `tools/` scripts.
 - **C toolchain:** MSYS2 UCRT64/mingw-w64 on Windows (`-mwindows` GUI subsystem); clang/gcc
   elsewhere; `clang-format` pinned via npm. All asset embedding is Node (`installer/embed.mjs`).
-- **CI** runs from `.github/workflows/` (ci.yml, e2e.yml, pages.yml, ai-review.yml,
-  url-watchdog.yml). The installer + updater E2E jobs and the publish gate are **path-filtered on
-  PRs**: they skip when no changed file can affect them (see `docs/DEVELOPING.md` → Continuous
-  integration). Prod publish stays manual from `main`; all publish scripts require a clean worktree.
+- **CI** runs from `.github/workflows/` (ci.yml, e2e.yml, pages.yml, url-watchdog.yml). The
+  installer + updater E2E jobs and the publish gate are **path-filtered on PRs**: they skip when no
+  changed file can affect them (see `docs/DEVELOPING.md` → Continuous integration). Prod publish
+  stays manual from `main`; all publish scripts require a clean worktree.
 - **Interactive debugging of core files:** the MIT `debugging-firefox` RDP skill is vendored under
   `.agent/skills/` — see `docs/debugging-with-rdp.md` (never put it in the lint/format gates).

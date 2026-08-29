@@ -51,9 +51,12 @@ const ROOT = path.resolve(__dirname, '..', '..');
  * references in a value expanded against keys defined earlier (e.g.
  * ZIP_BASE_URL references RELEASE_NAME), and wrapped in the same boilerplate.
  * `.*` in sed captures a trailing CR on CRLF files; JS `(.*)$` behaves the same
- * way.
+ * way, so CRLF is normalized to LF first (below).
  */
 function configHeader(confText) {
+  // Normalize CRLF → LF so a Windows-edited installer.conf cannot bake a
+  // trailing `\r` into the generated `#define` values.
+  confText = confText.replace(/\r\n/g, '\n');
   const out = [
     '// Auto-generated from config/installer.conf. Do not edit.',
     '#ifndef BUILD_CONFIG_H',

@@ -40,8 +40,13 @@ test('parseArgs applies defaults and overrides', () => {
   assert.equal(args.dryRun, false);
 });
 
-test('parseArgs defaults to groq when no provider flag is given', () => {
-  assert.deepEqual(parseArgs([]).providers, ['groq']);
+test('parseArgs defaults providers to empty and base to main for local runs', () => {
+  // Empty providers -> availableProviders uses every configured provider that
+  // has a key, in array order (gemini first). baseRef defaults to main so a
+  // local run reviews main...HEAD without flags.
+  assert.deepEqual(parseArgs([]).providers, []);
+  assert.equal(parseArgs([]).baseRef, process.env.BASE_REF || 'main');
+  assert.equal(parseArgs([]).headRef, process.env.HEAD_REF || 'HEAD');
 });
 
 // In CI the base branch exists as origin/<ref>; ensure the resolve helper
@@ -161,7 +166,7 @@ test('normalizes severity, line, and suggestion', () => {
 });
 
 test('collects findings and summaries from provider responses', async () => {
-  const providers = [{name: 'groq', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
   const fileDiffs = new Map([
     ['a.js', 'diff a'],
     ['b.js', 'diff b'],
@@ -208,7 +213,7 @@ test('collects findings and summaries from provider responses', async () => {
 });
 
 test('caps findings via maxFindings and honors summaryOnly', async () => {
-  const providers = [{name: 'groq', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
   const fileDiffs = new Map([['a.js', 'diff a']]);
   const requestImpl = async () => ({
     kind: 'success',
@@ -250,7 +255,7 @@ test('caps findings via maxFindings and honors summaryOnly', async () => {
 });
 
 test('records provider failure and stops on rate limit', async () => {
-  const providers = [{name: 'groq', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
   const fileDiffs = new Map([
     ['a.js', 'diff a'],
     ['b.js', 'diff b'],
@@ -267,11 +272,11 @@ test('records provider failure and stops on rate limit', async () => {
   assert.equal(result.rdjson.diagnostics.length, 0);
   assert.equal(result.summary.length, 2);
   assert.match(result.summary[0], /rate limited/);
-  assert.match(result.summary[1], /groq rate limit exhausted/);
+  assert.match(result.summary[1], /test rate limit exhausted/);
 });
 
 test('reviewFiles reviews files concurrently by default', async () => {
-  const providers = [{name: 'groq', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
   const fileDiffs = new Map([
     ['a.js', 'diff a'],
     ['b.js', 'diff b'],
@@ -304,7 +309,7 @@ test('reviewFiles reviews files concurrently by default', async () => {
 });
 
 test('treats invalid JSON from the model as a per-file skip', async () => {
-  const providers = [{name: 'groq', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
   const fileDiffs = new Map([['a.js', 'diff a']]);
   const requestImpl = async () => ({
     kind: 'success',
