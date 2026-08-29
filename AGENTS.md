@@ -224,17 +224,11 @@ the core smoke tests — see issue #30.)
 ## AI review of PRs
 
 Per [ADR 0020](./docs/decisions/0020-local-agent-ai-review.md), AI review is a local, agent-run
-step, not a CI bot. Before opening a PR, the agent:
-
-1. Runs `pnpm review:local` locally on the PR branch (default `main...HEAD`; `--provider` /
-   `--model` override the **first-available** provider — Gemini 3.6 Flash by default).
-2. **Assesses each finding as right / wrong / useless** against the actual code (the audit
-   methodology): drop findings that are vague, unverifiable, or false positives.
-3. Posts the accepted findings as a PR review comment via `gh` (e.g. `gh pr review <n> --comment`),
-   fixing any real findings before opening the PR.
-
-This replaces the retired CI bot (`.github/workflows/ai-review.yml`, removed) — add no CI/repo AI
-secret. CodeRabbit `review:batch` remains an optional deep ~1-review/hour pass.
+step. When a PR is ready for review, the agent that created it runs `pnpm review:local`, assesses
+each finding right / wrong / useless, and posts the accepted ones as a PR review via
+`gh pr review <n> --comment` (never `gh pr comment`), resolving every review thread before merging
+(main requires conversation resolution). The review is not gated on CI — it can help debug failing
+checks. Add no CI/repo AI secret; CodeRabbit `review:batch` remains an optional deep pass.
 
 ## Agent workflow
 

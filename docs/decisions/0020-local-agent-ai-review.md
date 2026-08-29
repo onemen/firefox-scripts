@@ -19,9 +19,16 @@ a cloud API (Gemini 3.6 Flash through Google AI Studio, 1,500 requests/day, no c
 
 AI review is a **local, agent-run step**, not a CI bot:
 
-- The agent that opens a PR runs `pnpm review:local` (`node tools/ai-review.mjs`) on the branch it
-  just produced, then **assesses each finding** (right / wrong / useless, per the audit methodology)
-  and posts the accepted ones as a PR review comment via `gh`.
+- When a PR is ready for review, the agent that created it runs `pnpm review:local`
+  (`node tools/ai-review.mjs`) on the branch, then **assesses each finding** (right / wrong /
+  useless, per the audit methodology) and posts the accepted ones as a **PR review**:
+  `gh pr review <n> --comment -b "<text>"` (or `-F <file>`), where the text is the assessed findings
+  — a one-line header (provider/model, files, counts) plus each finding as
+  `file:line — severity — why`. Reviews have a body, not a title. `gh pr comment` (an issue comment)
+  is never used for findings — it leaves no review record, and the agent verifies the review landed
+  with `gh pr view <n> --json reviews`. `main` requires conversation resolution, so every review
+  thread (agent- or bot-created) must be resolved before merging.
+
 - The review command is **local**, but the model is a **cloud provider**: the reviewed diff is sent
   to the configured endpoint's HTTPS API (e.g. Gemini, which is hosted by Google). This is the same
   data-handling expectation as any LLM review — diff text leaves the workstation for the provider to
