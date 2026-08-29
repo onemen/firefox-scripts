@@ -72,6 +72,8 @@ Open these before proposing a new primitive, surface, or storage home.
   desktop/webview app
 - [0019](./0019-release-versioning.md) — Stable unversioned artifact names + date-stamped component
   tags + moving `latest`
+- [0020](./0020-local-agent-ai-review.md) — AI review is a local, agent-run step (the PR-opening
+  agent reviews, assesses, and posts via `gh`); CI Groq bot retired
 
 ## Historical
 
@@ -93,8 +95,7 @@ Micro-decisions deliberately left out of the log so nobody re-adds them:
   in C is out of scope) — see the `docs/DEVELOPING.md` appendix.
 - Manual package download via same-origin blob links (plain `<a download>`, no programmatic
   download) — an installer/updater UI detail.
-- AI-review tooling choices (Groq / OpenRouter / reviewdog) — process, tracked in
-  `.github/workflows/ai-review.yml`.
+
 - Browser download map mechanics (winget → direct downloads; vendor version APIs for "latest") —
   test harness, see `test/e2e/shared/downloads.mjs` and ADR 0017.
 - URL watchdog internals (weekly + PR modes, per-release SHA-256 ledger in issues, baseline in the

@@ -411,17 +411,18 @@ export DEV_BUILD_ID=my-feature-1         # dev-mode only: dev-build-<id> branch 
 
 ### AI review configuration
 
-The advisory GitHub Actions review uses the repository secret `GROQ_API_KEY`. Create it in
-**Repository Settings → Secrets and variables → Actions → New repository secret**; GitHub Actions
-exposes it to `.github/workflows/ai-review.yml`, which runs `tools/ai-review.mjs --provider groq`.
-The key is optional for the repository: if it is absent, the review job is skipped and does not
-block merges. `GROQ_MODEL` is configured by the workflow.
+AI review is a **local, agent-run step** ([ADR 0020](./decisions/0020-local-agent-ai-review.md)),
+not a CI bot. The agent that opens a PR runs `pnpm review:local` (`tools/ai-review.mjs`) and posts
+the assessed findings via `gh`. The old `.github/workflows/ai-review.yml` CI bot was **removed** —
+add no CI/repo AI key secret.
 
-For local review runs, put `GROQ_API_KEY` in the root `.env` (or export it in the shell). The script
-also supports the optional `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` variables for local
-`--provider openrouter` runs. OpenRouter is not currently configured as a GitHub Actions secret or
-used by the review workflow. Keep real keys only in `.env` or GitHub's encrypted secret store; never
-commit them or add them to `.env-example` with real values.
+Put the **`GEMINI_API_KEY`** (default provider, Gemini 3.6 Flash) in the root `.env` (untracked) or
+export it in the shell. Providers are an array of objects at the top of `tools/ai-review.mjs`; each
+entry is `{id, label, model, keyEnv, endpoint}` and the **first entry whose key is set** is used,
+with per-file fallback (OpenRouter stays as an optional backup). `--provider <id>` and
+`--model <name>` override the default. Optional `GEMINI_MODEL`, `OPENROUTER_MODEL`,
+`OPENROUTER_API_KEY` variables are supported. Keep real keys only in `.env`; never commit them or
+add them to `.env-example` with real values.
 
 ### Modes — `--mode=prod|dev` (REQUIRED for any real publish)
 

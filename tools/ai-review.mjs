@@ -8,13 +8,14 @@
 // Designed to be driven by .github/workflows/ai-review.yml with flags, so
 // swapping models/providers or switching modes never requires editing YAML:
 //
-//   node tools/ai-review.mjs --provider groq --max-findings 10
+//   node tools/ai-review.mjs --max-findings 10   (local: reviews main...HEAD with the
+//       first configured provider — gemini by default)
 //
 // Flags:
-//   --provider <name>   Provider to use (default: groq). Repeatable — the
-//                       first provider with a configured key wins.
+//   --provider <name>   Provider id (default: first configured provider with a
+//                       key — gemini). Repeatable — tried in order per file.
 //   --model <name>      Override the provider's default model.
-//   --base-ref <ref>    Base ref for the diff (default: $BASE_REF env).
+//   --base-ref <ref>    Base ref for the diff (default: $BASE_REF env or main).
 //   --head-ref <ref>    Head ref (default: $HEAD_REF env or HEAD).
 //   --max-findings N    Cap on total findings written to RDJSON (default 10).
 //   --max-files N       Cap on files reviewed per run (default 30).
@@ -31,18 +32,29 @@ import {execFileSync} from 'node:child_process';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 
-const PROVIDERS = {
-  groq: {
-    key: process.env.GROQ_API_KEY,
-    model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+// Providers/models are configured as an array of objects. Order matters: when
+// no --provider is given, the first entry that has its API key set is used,
+// with per-file fallback to the next entry. Edit this array to add/swap.
+const PROVIDERS = [
+  {
+    id: 'gemini',
+    label: 'Gemini',
+    keyEnv: 'GEMINI_API_KEY',
+    model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   },
-  openrouter: {
-    key: process.env.OPENROUTER_API_KEY,
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    keyEnv: 'OPENROUTER_API_KEY',
     model: process.env.OPENROUTER_MODEL || 'openrouter/free',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
   },
-};
+];
+
+function providerById(id) {
+  return PROVIDERS.find(p => p.id === id);
+}
 
 // Context notes given to the model so it does not flag things that are
 // normal for this codebase: Node ≥ 20 runs in CI (native fetch, structuredClone
@@ -68,7 +80,7 @@ export function parseArgs(argv) {
   const args = {
     providers: [],
     model: null,
-    baseRef: process.env.BASE_REF,
+    baseRef: process.env.BASE_REF || 'main',
     headRef: process.env.HEAD_REF || 'HEAD',
     maxFindings: 10,
     maxFiles: 30,
@@ -119,7 +131,6 @@ export function parseArgs(argv) {
         throw new Error(`Unknown flag: ${arg}`);
     }
   }
-  if (args.providers.length === 0) args.providers.push('groq');
   return args;
 }
 
@@ -297,19 +308,25 @@ function truncateDiff(diff, maxChars) {
 }
 
 function availableProviders(args) {
+  // No --provider flag -> use every configured provider that has a key, in
+  // array order (gemini first, then fallbacks). Named --provider flags are
+  // resolved in the order given.
+  const requested = args.providers.length > 0 ? args.providers : PROVIDERS.map(p => p.id);
   const seen = new Set();
   const available = [];
-  for (const name of args.providers) {
-    const provider = PROVIDERS[name];
-    if (!provider) throw new Error(`Unknown provider: ${name}`);
-    if (seen.has(name)) continue;
-    seen.add(name);
-    if (!provider.key) continue;
+  for (const id of requested) {
+    const def = providerById(id);
+    if (!def) throw new Error(`Unknown provider: ${id}`);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const key = process.env[def.keyEnv];
+    if (!key) continue;
     available.push({
-      name,
-      key: provider.key,
-      model: args.model || provider.model,
-      endpoint: provider.endpoint,
+      name: def.id,
+      label: def.label,
+      key,
+      model: args.model || def.model,
+      endpoint: def.endpoint,
     });
   }
   return available;
@@ -460,7 +477,7 @@ export async function runReview(args = parseArgs(process.argv.slice(2))) {
     };
   }
   if (providers.length === 0) {
-    throw new Error('No provider keys configured. Set GROQ_API_KEY and/or OPENROUTER_API_KEY.');
+    throw new Error('No provider keys configured. Set GEMINI_API_KEY and/or OPENROUTER_API_KEY.');
   }
   const files = changedFiles(args.baseRef, args.headRef, args.maxFiles);
   const fileDiffs = new Map(files.map(file => [file, fileDiff(args.baseRef, args.headRef, file)]));
