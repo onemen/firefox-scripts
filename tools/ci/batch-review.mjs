@@ -255,10 +255,9 @@ export async function main() {
   const tempBranch = `cr-batch-${process.pid}`;
   try {
     run('git', ['worktree', 'add', '--detach', wtree, args.base]);
-    const octopus = unique.map(ref => `'${ref}'`).join(' ');
     const mergeRes = run(
-      'bash',
-      ['-lc', `cd '${wtree}' && git merge --no-edit --no-ff -m 'cr batch review' ${octopus}`],
+      'git',
+      ['-C', wtree, 'merge', '--no-edit', '--no-ff', '-m', 'cr batch review', ...unique],
       {ignoreFail: true}
     );
     if (mergeRes.status !== 0) {
@@ -266,7 +265,7 @@ export async function main() {
       console.error(mergeRes.stderr?.trim().slice(-2000));
       process.exit(2);
     }
-    run('bash', ['-lc', `cd '${wtree}' && git switch -c '${tempBranch}'`]);
+    run('git', ['-C', wtree, 'switch', '-c', tempBranch]);
 
     const runCrReview = () => {
       const crArgs = ['review'];
