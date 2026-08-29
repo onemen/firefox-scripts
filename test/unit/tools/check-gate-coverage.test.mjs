@@ -88,6 +88,14 @@ test('checkWorkflow: a compliant workflow passes', () => {
   assert.deepEqual(errors, []);
 });
 
+test('checkWorkflow: CRLF line endings do not break the contract', () => {
+  // A Windows editor can write a workflow file as CRLF locally (git keeps it
+  // CRLF in the working tree even though it is committed as LF). The parser
+  // normalizes CRLF, so no `if:` capture carries a trailing \r.
+  const crlf = FIXTURE.replace(/\n/g, '\r\n');
+  assert.deepEqual(checkWorkflow(crlf, CONTRACT), []);
+});
+
 test('checkWorkflow: job missing from gate needs is flagged', () => {
   const broken = FIXTURE.replace(
     'needs: [changes, snapshot, installer]',

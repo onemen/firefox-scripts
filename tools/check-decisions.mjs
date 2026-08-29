@@ -38,7 +38,9 @@ if (!fs.existsSync(decisionsDir)) {
 for (const entry of fs.readdirSync(decisionsDir)) {
   if (!entry.endsWith('.md')) continue;
   const filePath = path.join(decisionsDir, entry);
-  const content = fs.readFileSync(filePath, 'utf8');
+  // Normalize CRLF so a Windows-edited .md cannot smuggle a trailing `\r`
+  // into the Status capture and false-fail the superseded-status check.
+  const content = fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
   const lines = content.split('\n');
 
   // Every file: relative links must resolve to an existing file.
@@ -101,7 +103,7 @@ if (!fs.existsSync(indexPath)) {
   console.error(`${INDEX} not found at ${indexPath} — the decision log needs its index`);
   process.exit(1);
 }
-const indexContent = fs.readFileSync(indexPath, 'utf8');
+const indexContent = fs.readFileSync(indexPath, 'utf8').replace(/\r\n/g, '\n');
 for (const record of records) {
   if (!indexContent.includes(record.file)) {
     fail(record.file, `not listed in ${INDEX} (add it to the steering or historical list)`);
