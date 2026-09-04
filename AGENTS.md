@@ -121,9 +121,28 @@ everything), `core/chrome/utils/chrome.manifest` (maps `chrome://userchromejs/*`
 `tools/publish/remote-ui/updater.js` (tab engine), `tools/publish/syncGeneratedFiles.mjs`
 (regenerate/verify the generated files).
 
+## Skills
+
+Task-scoped instruction modules an agent loads on demand when the task matches them — deep dive
+detail lives there so this file stays a checklist, not a manual. Two roots with different rules:
+
+- `.agents/skills/` — authored here + managed installs (`skills-lock.json`); tracked, and covered by
+  the lint/format gates.
+- `.agent/skills/` — vendored upstream (MIT, `debugging-firefox`); excluded from the lint/format
+  gates (see `docs/debugging-with-rdp.md`, `.prettierignore`, `eslint.config.js`).
+
+| Skill             | Load when the task involves                               |
+| ----------------- | --------------------------------------------------------- |
+| `ai-review`       | Reviewing a PR — the ADR 0020 local review step           |
+| `change-workflow` | Making code changes — subsystem, docs, validation order   |
+| `generated-files` | Regenerating or reasoning about the untracked build files |
+| `publishing`      | Releasing — `upload` / `upload:local`, prod/dev modes     |
+
+All paths are `<root>/.agents/skills/<name>/SKILL.md`.
+
 ## Generated files
 
-Three files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
+Four files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
 them; edit the source and regenerate (the installer Makefile does it on every build, createZip.mjs
 at publish time, or by hand via `node tools/publish/syncGeneratedFiles.mjs`):
 
@@ -228,7 +247,8 @@ step. When a PR is ready for review, the agent that created it runs `pnpm review
 each finding right / wrong / useless, and posts the accepted ones as a PR review via
 `gh pr review <n> --comment` (never `gh pr comment`), resolving every review thread before merging
 (main requires conversation resolution). The review is not gated on CI — it can help debug failing
-checks. Add no CI/repo AI secret; CodeRabbit `review:batch` remains an optional deep pass.
+checks. Add no CI/repo AI secret; CodeRabbit `review:batch` remains an optional deep pass. Full
+protocol: the `ai-review` skill.
 
 ## Agent workflow
 
@@ -237,11 +257,12 @@ Before changing code:
 1. Identify the affected subsystem.
 2. Read the relevant `docs/` (and `docs/local_plan/`, and the decision log
    `docs/decisions/index.md`) documentation.
-3. Check whether the affected files are generated.
-4. Make the smallest appropriate change.
-5. Regenerate generated files on demand when their sources change (make / createZip /
+3. If a skill in `.agents/skills/` matches the task (review, publishing, generated files), load it.
+4. Check whether the affected files are generated.
+5. Make the smallest appropriate change.
+6. Regenerate generated files on demand when their sources change (make / createZip /
    syncGeneratedFiles).
-6. Run the relevant validation (matrix above).
+7. Run the relevant validation (matrix above).
 
 Before finishing:
 

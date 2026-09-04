@@ -307,6 +307,24 @@ Edition is first-party Mozilla, so it runs as a required leg of the `updater` jo
 advisory matrix. Waterfox has no direct download URL and stays manual (tracked by version only in
 the URL watchdog).
 
+**Agent file-change hooks (recommended, per-workstation)** — agent clients (Codebuff, Claude Code,
+…) can run a command after each file edit and feed the output back to the agent in the same turn.
+They are client config, not repo config — nothing runs for plain git users, and CI stays the
+enforcement layer. Keep the set minimal and **read-only** (checks, not mutations); the repo's own
+generation/build steps are deliberately _not_ hook material — generated files are produced on demand
+by the Makefile and publish scripts (ADR 0008), never per-edit. A mapping that matches the Testing &
+QA matrix:
+
+| Changed file                   | Hook                      | Cost  |
+| ------------------------------ | ------------------------- | ----- |
+| `**/*.md`, `**/*.{js,mjs,cjs}` | `prettier --check <file>` | ~0.5s |
+| `docs/decisions/**`            | `pnpm check:decisions`    | <1s   |
+
+Skip in hooks: `pnpm test:hash` (may build a full snapshot), full `pnpm lint` (needs a C toolchain
+for `make analyze`), `syncGeneratedFiles.mjs` (on-demand only), anything that writes. Formatting
+drift in agent-edited files is the failure this catches: editor on-save tooling only helps when the
+editor is open — agents edit files on disk directly.
+
 **LF, CRLF and `pnpm check:gates`** — the tree is normalized to LF (`.gitattributes` has
 `* text=auto eol=lf`), so a CRLF file saved by a Windows editor is committed as LF and CI always
 checks an LF checkout. But git will not rewrite an already-CRLF working-tree copy (it deems it
