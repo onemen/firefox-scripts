@@ -5,6 +5,7 @@
   "scripts": {
     "lint": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache && node tools/format-c.mjs --check && make -C installer analyze",
     "lint:c": "node tools/format-c.mjs --check",
+    "hooks:install": "node tools/install-githooks.mjs",
     "format": "node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
     "format:fix": "node tools/format-c.mjs --write && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --write",
     "test": "node --test \"test/unit/**/*.test.mjs\"",

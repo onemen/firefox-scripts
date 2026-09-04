@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Pre-push gate: run the same checks CI runs on every PR before a push leaves
+# the machine. Opt-in — install with `pnpm hooks:install` (sets git's
+# core.hooksPath to githooks/). Remove any time with `git config --unset
+# core.hooksPath`, or bypass a single push with `git push --no-verify`.
+#
+# The gates are repo-wide (like CI), so the hook does not scope them to the
+# pushed range. Docs-only contributors without a C toolchain: `make analyze`
+# inside `pnpm lint` hard-fails without gcc — push with `--no-verify` and note
+# it in the PR description.
+
+set -u
+
+# Consume the ref list git passes on stdin (we check the whole tree, not the range).
+cat >/dev/null
+
+echo "pre-push: pnpm lint && pnpm format && pnpm test"
+
+pnpm lint || {
+  echo "pre-push: pnpm lint failed — fix or bypass with 'git push --no-verify'." >&2
+  exit 1
+}
+
+pnpm format || {
+  echo "pre-push: pnpm format failed — run 'pnpm format:fix' and amend." >&2
+  exit 1
+}
+
+pnpm test || {
+  echo "pre-push: pnpm test failed — fix or bypass with 'git push --no-verify'." >&2
+  exit 1
+}
+
+echo "pre-push: all gates passed."
+exit 0
