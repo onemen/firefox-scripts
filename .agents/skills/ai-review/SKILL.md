@@ -63,8 +63,15 @@ CI/repo AI secret exists or should be added; CodeRabbit `review:batch` is an opt
    gh pr view <n> --json reviews
    ```
 
-5. **Resolve every review thread** before merging (or as findings are fixed) — `main` requires
-   conversation resolution.
+5. **Resolve each thread as soon as its fix lands** — the fix commit is named in the thread body,
+   and one GraphQL mutation closes it (thread ids come from `gh api …/pulls/<n>/reviewThreads`):
+
+   ```bash
+   gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id=<thread-id>
+   ```
+
+   Don't hold threads open until merge — an open thread on fixed code is stale state. Anything still
+   unresolved just before merging must be resolved then; `main` requires conversation resolution.
 
 ## Judgment calibrations from the audit in ADR 0020
 

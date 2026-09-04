@@ -31,7 +31,8 @@ AI review is a **local, agent-run step**, not a CI bot:
   the user's own GitHub account, every agent-posted review comment or body begins with a one-line
   🤖 provenance marker stating it was posted by an agent (no callout blocks). The agent verifies
   the review landed with
-  `gh pr view <n> --json reviews`. `main` requires conversation resolution, so every review
+  `gh pr view <n> --json reviews` — and each thread is resolved as soon as the fix named in it
+  lands, not held open until merge. `main` requires conversation resolution, so every review
   thread (agent- or bot-created) must be resolved before merging.
 
 - The review command is **local**, but the model is a **cloud provider**: the reviewed diff is sent
