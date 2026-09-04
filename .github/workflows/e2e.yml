@@ -548,8 +548,17 @@ jobs:
     # e2e-gate success already proves every hard-gate leg ran and passed
     # (the gate is if: always() and reports all results), so no additional
     # changed-paths condition: a core-only change still records validation.
+    #
+    # `always() &&` intentionally overrides the needs-graph skip rules. The
+    # gate itself runs via if: always() and can succeed while a path-filtered
+    # sibling (installer legs) was skipped; since ~2026-08-29 a needs entry
+    # in state 'skipped' then makes THIS job skip too, even though its own
+    # condition holds (byte-identical workflow ran the job on 08-29 12:40 and
+    # 17:01, skipped ever since — GitHub-side evaluation change). With
+    # always() the gate-success comparison below still decides the outcome,
+    # so the job records only fully green runs.
     if: >-
-      needs.e2e-gate.result == 'success' && github.event_name != 'pull_request'
+      always() && needs.e2e-gate.result == 'success' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

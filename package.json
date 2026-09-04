@@ -2,9 +2,13 @@
   "name": "firefox_scripts",
   "version": "1.0.0",
   "description": "Scripts for installing legacy extension on Firefox",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "lint": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache && node tools/format-c.mjs --check && make -C installer analyze",
     "lint:c": "node tools/format-c.mjs --check",
+    "hooks:install": "node tools/install-githooks.mjs",
     "format": "node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
     "format:fix": "node tools/format-c.mjs --write && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --write",
     "test": "node --test \"test/unit/**/*.test.mjs\"",
@@ -32,11 +36,11 @@
     "@stylistic/eslint-plugin": "5.10.0",
     "archiver": "8.0.0",
     "clang-format": "1.8.0",
-    "eslint": "10.8.1",
+    "eslint": "10.9.1",
     "eslint-config-prettier": "10.1.8",
-    "eslint-plugin-mozilla": "4.4.0",
+    "eslint-plugin-mozilla": "5.0.1",
     "eslint-plugin-security": "4.0.1",
-    "globals": "17.9.0",
+    "globals": "17.11.0",
     "minimatch": "10.2.6",
     "prettier": "3.9.6",
     "prettier-plugin-jsdoc": "1.8.1",

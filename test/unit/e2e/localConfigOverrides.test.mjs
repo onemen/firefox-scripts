@@ -45,6 +45,7 @@ test('localConfigOverrides: foreign snapshot path → override prefs at local di
     assert.deepEqual(prefs, {
       [OVERRIDE + 'HASHES_URL']: `${base}/hashes.json`,
       [OVERRIDE + 'ZIP_BASE_URL']: base,
+      [OVERRIDE + 'UI_BASE_URL']: base,
       [OVERRIDE + 'HELPER_BASE_URL']: base,
     });
   } finally {

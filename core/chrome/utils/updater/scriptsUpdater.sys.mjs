@@ -38,11 +38,11 @@ const {CONFIG} = ChromeUtils.importESModule(
 
 // Test/local override prefs: a string pref
 // extensions.firefox-scripts.override.<KEY> (HASHES_URL, ZIP_BASE_URL,
-// HELPER_BASE_URL) wins over the generated CONFIG value.  This lets tests
-// point the updater at any local snapshot (e.g. one built on another OS)
-// WITHOUT touching the config file — it ships inside utils.zip and is part of
-// the hashed file set, so rewriting it would flip the package hash and break
-// the staleness check.
+// UI_BASE_URL, HELPER_BASE_URL) wins over the generated CONFIG value.  This
+// lets tests point the updater at any local snapshot (e.g. one built on
+// another OS) WITHOUT touching the config file — it ships inside utils.zip and
+// is part of the hashed file set, so rewriting it would flip the package hash
+// and break the staleness check.
 const PREF_OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
 
 function configValue(key) {
@@ -63,6 +63,20 @@ export function getHashesUrl() {
 
 export function getZipBaseUrl() {
   return configValue('ZIP_BASE_URL');
+}
+
+/**
+ * Base URL of the updater tab UI package (updater-ui.zip). It is published next
+ * to the hash manifest (gh-pages / the dev-build branch / the local snapshot
+ * dir) and is never a release asset (upload.mjs), so it must come from the
+ * manifest's own host — not ZIP_BASE_URL, which is the release URL and has no
+ * updater-ui zip in prod (issue #102).
+ */
+export function getUiBaseUrl() {
+  // Fall back to ZIP_BASE_URL only when the paired generated config predates
+  // UI_BASE_URL (never true for zips built by the same publish run) — it keeps
+  // the pre-#102 behavior instead of building an invalid URL.
+  return configValue('UI_BASE_URL') || getZipBaseUrl();
 }
 
 export function getHelperBaseUrl() {
@@ -299,7 +313,7 @@ export async function ensureUpdaterUi(info) {
 
   const tmpDir = PathUtils.join(PathUtils.tempDir, `fxs-updater-ui-${Date.now()}`);
   try {
-    const zipUrl = `${getZipBaseUrl()}/updater-ui${CONFIG.ASSET_SUFFIX || ''}.zip`;
+    const zipUrl = `${getUiBaseUrl()}/updater-ui${CONFIG.ASSET_SUFFIX || ''}.zip`;
     const zipPath = PathUtils.join(tmpDir, 'updater-ui.zip');
     await Downloads.fetch(zipUrl, zipPath);
 

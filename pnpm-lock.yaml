@@ -10,19 +10,19 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.8.1)
+        version: 10.0.1(eslint@10.9.1)
       '@eslint/markdown':
         specifier: 8.0.3
         version: 8.0.3
       '@microsoft/eslint-plugin-sdl':
         specifier: 1.1.0
-        version: 1.1.0(eslint@10.8.1)
+        version: 1.1.0(eslint@10.9.1)
       '@octokit/rest':
         specifier: 22.0.1
         version: 22.0.1
       '@stylistic/eslint-plugin':
         specifier: 5.10.0
-        version: 5.10.0(eslint@10.8.1)
+        version: 5.10.0(eslint@10.9.1)
       archiver:
         specifier: 8.0.0
         version: 8.0.0
@@ -30,20 +30,20 @@ importers:
         specifier: 1.8.0
         version: 1.8.0
       eslint:
-        specifier: 10.8.1
-        version: 10.8.1
+        specifier: 10.9.1
+        version: 10.9.1
       eslint-config-prettier:
         specifier: 10.1.8
-        version: 10.1.8(eslint@10.8.1)
+        version: 10.1.8(eslint@10.9.1)
       eslint-plugin-mozilla:
-        specifier: 4.4.0
-        version: 4.4.0(@microsoft/eslint-plugin-sdl@1.1.0(eslint@10.8.1))(eslint-plugin-jsdoc@63.3.3(eslint@10.8.1))(eslint-plugin-no-unsanitized@4.1.5(eslint@10.8.1))(eslint-plugin-promise@7.3.0(eslint@10.8.1))(eslint@10.8.1)
+        specifier: 5.0.1
+        version: 5.0.1(eslint-plugin-jsdoc@63.3.3(eslint@10.9.1))(eslint-plugin-no-unsanitized@4.1.5(eslint@10.9.1))(eslint-plugin-promise@7.3.0(eslint@10.9.1))(eslint@10.9.1)
       eslint-plugin-security:
         specifier: 4.0.1
         version: 4.0.1
       globals:
-        specifier: 17.9.0
-        version: 17.9.0
+        specifier: 17.11.0
+        version: 17.11.0
       minimatch:
         specifier: 10.2.6
         version: 10.2.6
@@ -618,20 +618,17 @@ packages:
     peerDependencies:
       eslint: ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0
 
-  eslint-plugin-mozilla@4.4.0:
-    resolution: {integrity: sha512-TrOpBjrZ8a1XUl+jdDZUmNHPpXij3HY+yibXR68ptZ89n+klFHnZLp+mHrz8mtEgESIOEcjfily9ooZmXye0Ww==}
+  eslint-plugin-mozilla@5.0.1:
+    resolution: {integrity: sha512-JD6EqZo59iwvCs61uTGGjwEHW4CJPFSzO4e4MNTZDnT+Sf47r6GufPY0m23rRCLI4ssc8ZB/0vKh+bUsSop9Kg==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@eslint-plugin-jsdoc': '*'
-      '@microsoft/eslint-plugin-sdl': ^1.0.0
       eslint: ^9.0.0 || ^10.0.0
       eslint-plugin-jsdoc: '*'
       eslint-plugin-no-unsanitized: ^4.1.0
       eslint-plugin-promise: ^7.2.1
     peerDependenciesMeta:
       '@eslint-plugin-jsdoc':
-        optional: true
-      '@microsoft/eslint-plugin-sdl':
         optional: true
 
   eslint-plugin-n@17.10.3:
@@ -684,8 +681,8 @@ packages:
     resolution: {integrity: sha512-tD40eHxA35h0PEIZNeIjkHoDR4YjjJp34biM0mDvplBe//mB+IHCqHDGV7pxF+7MklTvighcCPPZC7ynWyjdTA==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  eslint@10.8.1:
-    resolution: {integrity: sha512-wqA7W2jbsC/BnV9Iv1UZpKVFkO1AdNoSmYW8NWG4HNOBbkAMvIqDZ27pI2f07dqn583NcIC44ckjAcOXDL1QbQ==}
+  eslint@10.9.1:
+    resolution: {integrity: sha512-9VaAkDURekixUQJy0oJYl2DcN6oKMfxay7XzaGYAWQwsb6qfKf+x76R2k1L8kb1boc+FyCAaTA9GmiKaaiaF+A==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
     hasBin: true
     peerDependencies:
@@ -822,8 +819,8 @@ packages:
     resolution: {integrity: sha512-7ACyT3wmyp3I61S4fG682L0VA2RGD9otkqGJIwNUMF1SWUombIIk+af1unuDYgMm082aHYwD+mzJvv9Iu8dsgg==}
     engines: {node: '>=18'}
 
-  globals@17.9.0:
-    resolution: {integrity: sha512-m/MvAW61QVU5VDNF1Vj8axt016h8w7L5TU1e9zlab7XIttAT2YAlCwl75K1fOqvMM9apmD7lbCIRhpfkhmxhCg==}
+  globals@17.11.0:
+    resolution: {integrity: sha512-Z2I8hM+PbJDXQDq3Icgpzv+mPdwr68iZUU9d5WW4FuXfDUQfkZaZuvjMv42/5crNyw154+9+VWXbYrUgDXbxNw==}
     engines: {node: '>=18'}
 
   globalthis@1.0.4:
@@ -1524,8 +1521,8 @@ packages:
     resolution: {integrity: sha512-41wJyvKep3yT2tyPqX/4blcfybknGB4D+oETKLs7Q76UiPqRpUJK3hr1nxelyYO0PHKVzJwlu0aCeEAsGI6rpw==}
     engines: {node: '>=20'}
 
-  toml-eslint-parser@1.0.0:
-    resolution: {integrity: sha512-syGkwm4fa+uOzswyJQy6aFmmpcSBm/M0+F/iOAWfDkFuz33OnPMJkVQzaCk10WpqwzKcbaeAJWxfSGkkH8GiBw==}
+  toml-eslint-parser@1.0.3:
+    resolution: {integrity: sha512-A5F0cM6+mDleacLIEUkmfpkBbnHJFV1d2rprHU2MXNk7mlxHq2zGojA+SRvQD1RoMo9gqjZPWEaKG4v1BQ48lw==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
   type-check@0.4.0:
@@ -1664,9 +1661,9 @@ snapshots:
 
   '@es-joy/resolve.exports@1.2.0': {}
 
-  '@eslint-community/eslint-utils@4.10.1(eslint@10.8.1)':
+  '@eslint-community/eslint-utils@4.10.1(eslint@10.9.1)':
     dependencies:
-      eslint: 10.8.1
+      eslint: 10.9.1
       eslint-visitor-keys: 3.4.3
 
   '@eslint-community/regexpp@4.12.2': {}
@@ -1687,9 +1684,9 @@ snapshots:
     dependencies:
       '@types/json-schema': 7.0.15
 
-  '@eslint/js@10.0.1(eslint@10.8.1)':
+  '@eslint/js@10.0.1(eslint@10.9.1)':
     optionalDependencies:
-      eslint: 10.8.1
+      eslint: 10.9.1
 
   '@eslint/markdown@8.0.3':
     dependencies:
@@ -1730,11 +1727,11 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
-  '@microsoft/eslint-plugin-sdl@1.1.0(eslint@10.8.1)':
+  '@microsoft/eslint-plugin-sdl@1.1.0(eslint@10.9.1)':
     dependencies:
-      eslint: 10.8.1
-      eslint-plugin-n: 17.10.3(eslint@10.8.1)
-      eslint-plugin-react: 7.37.3(eslint@10.8.1)
+      eslint: 10.9.1
+      eslint-plugin-n: 17.10.3(eslint@10.9.1)
+      eslint-plugin-react: 7.37.3(eslint@10.9.1)
       eslint-plugin-security: 1.4.0
 
   '@octokit/auth-token@6.0.0': {}
@@ -1813,11 +1810,11 @@ snapshots:
 
   '@sindresorhus/base62@1.0.0': {}
 
-  '@stylistic/eslint-plugin@5.10.0(eslint@10.8.1)':
+  '@stylistic/eslint-plugin@5.10.0(eslint@10.9.1)':
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.8.1)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.9.1)
       '@typescript-eslint/types': 8.66.0
-      eslint: 10.8.1
+      eslint: 10.9.1
       eslint-visitor-keys: 4.2.1
       espree: 10.4.0
       estraverse: 5.3.0
@@ -2288,23 +2285,23 @@ snapshots:
 
   escape-string-regexp@5.0.0: {}
 
-  eslint-compat-utils@0.5.1(eslint@10.8.1):
+  eslint-compat-utils@0.5.1(eslint@10.9.1):
     dependencies:
-      eslint: 10.8.1
+      eslint: 10.9.1
       semver: 7.8.5
 
-  eslint-config-prettier@10.1.8(eslint@10.8.1):
+  eslint-config-prettier@10.1.8(eslint@10.9.1):
     dependencies:
-      eslint: 10.8.1
+      eslint: 10.9.1
 
-  eslint-plugin-es-x@7.8.0(eslint@10.8.1):
+  eslint-plugin-es-x@7.8.0(eslint@10.9.1):
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.8.1)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.9.1)
       '@eslint-community/regexpp': 4.12.2
-      eslint: 10.8.1
-      eslint-compat-utils: 0.5.1(eslint@10.8.1)
+      eslint: 10.9.1
+      eslint-compat-utils: 0.5.1(eslint@10.9.1)
 
-  eslint-plugin-jsdoc@63.3.3(eslint@10.8.1):
+  eslint-plugin-jsdoc@63.3.3(eslint@10.9.1):
     dependencies:
       '@es-joy/jsdoccomment': 0.91.0
       '@es-joy/resolve.exports': 1.2.0
@@ -2312,7 +2309,7 @@ snapshots:
       comment-parser: 1.4.7
       debug: 4.4.3
       escape-string-regexp: 4.0.0
-      eslint: 10.8.1
+      eslint: 10.9.1
       espree: 11.2.0
       esquery: 1.7.0
       html-entities: 2.6.0
@@ -2324,43 +2321,41 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-plugin-mozilla@4.4.0(@microsoft/eslint-plugin-sdl@1.1.0(eslint@10.8.1))(eslint-plugin-jsdoc@63.3.3(eslint@10.8.1))(eslint-plugin-no-unsanitized@4.1.5(eslint@10.8.1))(eslint-plugin-promise@7.3.0(eslint@10.8.1))(eslint@10.8.1):
+  eslint-plugin-mozilla@5.0.1(eslint-plugin-jsdoc@63.3.3(eslint@10.9.1))(eslint-plugin-no-unsanitized@4.1.5(eslint@10.9.1))(eslint-plugin-promise@7.3.0(eslint@10.9.1))(eslint@10.9.1):
     dependencies:
-      eslint: 10.8.1
-      eslint-plugin-jsdoc: 63.3.3(eslint@10.8.1)
-      eslint-plugin-no-unsanitized: 4.1.5(eslint@10.8.1)
-      eslint-plugin-promise: 7.3.0(eslint@10.8.1)
+      eslint: 10.9.1
+      eslint-plugin-jsdoc: 63.3.3(eslint@10.9.1)
+      eslint-plugin-no-unsanitized: 4.1.5(eslint@10.9.1)
+      eslint-plugin-promise: 7.3.0(eslint@10.9.1)
       eslint-scope: 8.4.0
       eslint-visitor-keys: 4.2.1
       espree: 10.4.0
       estraverse: 5.3.0
       htmlparser2: 10.1.0
-      toml-eslint-parser: 1.0.0
-    optionalDependencies:
-      '@microsoft/eslint-plugin-sdl': 1.1.0(eslint@10.8.1)
+      toml-eslint-parser: 1.0.3
 
-  eslint-plugin-n@17.10.3(eslint@10.8.1):
+  eslint-plugin-n@17.10.3(eslint@10.9.1):
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.8.1)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.9.1)
       enhanced-resolve: 5.24.5
-      eslint: 10.8.1
-      eslint-plugin-es-x: 7.8.0(eslint@10.8.1)
+      eslint: 10.9.1
+      eslint-plugin-es-x: 7.8.0(eslint@10.9.1)
       get-tsconfig: 4.14.1
       globals: 15.15.0
       ignore: 5.3.2
       minimatch: 9.0.9
       semver: 7.8.5
 
-  eslint-plugin-no-unsanitized@4.1.5(eslint@10.8.1):
+  eslint-plugin-no-unsanitized@4.1.5(eslint@10.9.1):
     dependencies:
-      eslint: 10.8.1
+      eslint: 10.9.1
 
-  eslint-plugin-promise@7.3.0(eslint@10.8.1):
+  eslint-plugin-promise@7.3.0(eslint@10.9.1):
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.8.1)
-      eslint: 10.8.1
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.9.1)
+      eslint: 10.9.1
 
-  eslint-plugin-react@7.37.3(eslint@10.8.1):
+  eslint-plugin-react@7.37.3(eslint@10.9.1):
     dependencies:
       array-includes: 3.1.9
       array.prototype.findlast: 1.2.5
@@ -2368,7 +2363,7 @@ snapshots:
       array.prototype.tosorted: 1.1.4
       doctrine: 2.1.0
       es-iterator-helpers: 1.4.0
-      eslint: 10.8.1
+      eslint: 10.9.1
       estraverse: 5.3.0
       hasown: 2.0.4
       jsx-ast-utils: 3.3.5
@@ -2408,9 +2403,9 @@ snapshots:
 
   eslint-visitor-keys@5.0.1: {}
 
-  eslint@10.8.1:
+  eslint@10.9.1:
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.8.1)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.9.1)
       '@eslint-community/regexpp': 4.12.2
       '@eslint/config-array': 0.23.5
       '@eslint/config-helpers': 0.7.0
@@ -2580,7 +2575,7 @@ snapshots:
 
   globals@15.15.0: {}
 
-  globals@17.9.0: {}
+  globals@17.11.0: {}
 
   globalthis@1.0.4:
     dependencies:
@@ -3584,7 +3579,7 @@ snapshots:
       '@sindresorhus/base62': 1.0.0
       reserved-identifiers: 1.2.0
 
-  toml-eslint-parser@1.0.0:
+  toml-eslint-parser@1.0.3:
     dependencies:
       eslint-visitor-keys: 5.0.1
 

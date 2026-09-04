@@ -41,6 +41,7 @@ export function localConfigOverrides(chromeUtils, snapshotDir) {
   return {
     [OVERRIDE_PREFIX + 'HASHES_URL']: `${base}/hashes.json`,
     [OVERRIDE_PREFIX + 'ZIP_BASE_URL']: base,
+    [OVERRIDE_PREFIX + 'UI_BASE_URL']: base,
     [OVERRIDE_PREFIX + 'HELPER_BASE_URL']: base,
   };
 }
