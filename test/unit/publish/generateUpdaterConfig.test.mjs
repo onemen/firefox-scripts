@@ -107,3 +107,20 @@ test('generated module: dev-local — dev suffix retained on top of file:// URLs
   assert.match(module, /file:\/\/\//);
   assert.match(module, /ASSET_SUFFIX: '-dev'/);
 });
+
+test('generated module: UI_BASE_URL points at the manifest host in every mode', () => {
+  // Prod: updater-ui.zip is Pages-only (never a release asset, upload.mjs), so
+  // the ui base is ZIP_PAGES_URL while package zips come from the release URL
+  // (issue #102: ensureUpdaterUi used to fetch it from the release and 404'd).
+  const prod = probe();
+  assert.match(prod.module, /UI_BASE_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts'/);
+  assert.equal(prod.effective.UI_BASE_URL, prod.effective.ZIP_PAGES_URL);
+  assert.notEqual(prod.effective.UI_BASE_URL, prod.effective.ZIP_BASE_URL);
+
+  // Dev/local: everything publishes to one base — UI_BASE_URL equals it.
+  const dev = probe('--mode=dev');
+  assert.equal(dev.effective.UI_BASE_URL, dev.effective.ZIP_BASE_URL);
+  const local = probe('--mode=prod', '--local');
+  assert.match(local.effective.UI_BASE_URL, /^file:\/\//);
+  assert.equal(local.effective.UI_BASE_URL, local.effective.ZIP_BASE_URL);
+});
