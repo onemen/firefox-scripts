@@ -61,6 +61,21 @@ describe('refNodeModules: linkNodeModules', () => {
     }
   });
 
+  it('accepts relative paths (resolved against cwd, not the link dir)', () => {
+    const {parent, worktree, cleanup} = makePair();
+    try {
+      fs.mkdirSync(path.join(parent, 'node_modules', 'rel-pkg'), {recursive: true});
+      // Relative forms: one correct relative to cwd, one that would resolve
+      // wrong if symlinkSync interpreted it against the link's directory.
+      const relParent = path.relative(process.cwd(), parent);
+      const link = linkNodeModules(relParent, path.relative(process.cwd(), worktree));
+      assert.ok(link, 'link created');
+      assert.ok(fs.existsSync(path.join(link, 'rel-pkg')));
+    } finally {
+      cleanup();
+    }
+  });
+
   it('returns null when the parent has no install (caller falls back or fails with guidance)', () => {
     const {parent, worktree, cleanup} = makePair();
     try {

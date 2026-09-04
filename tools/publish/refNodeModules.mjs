@@ -24,9 +24,11 @@ import path from 'path';
  * to running the package manager inside the worktree).
  */
 export function linkNodeModules(parentRoot, worktreeRoot) {
-  const from = path.join(parentRoot, 'node_modules');
+  // Resolve up front: fs.symlinkSync interprets a relative target against the
+  // link's directory, not the caller's cwd, which would silently mislink.
+  const from = path.resolve(parentRoot, 'node_modules');
+  const to = path.resolve(worktreeRoot, 'node_modules');
   if (!fs.existsSync(from)) return null;
-  const to = path.join(worktreeRoot, 'node_modules');
   fs.rmSync(to, {recursive: true, force: true});
   if (process.platform === 'win32') {
     // Junction: no admin rights, no developer mode, and removal never
@@ -40,7 +42,7 @@ export function linkNodeModules(parentRoot, worktreeRoot) {
 
 /** Remove the worktree's node_modules link (no-op when absent). */
 export function unlinkNodeModules(worktreeRoot) {
-  const to = path.join(worktreeRoot, 'node_modules');
+  const to = path.resolve(worktreeRoot, 'node_modules');
   try {
     const st = fs.lstatSync(to);
     if (st.isSymbolicLink() || st.isDirectory()) fs.rmSync(to, {recursive: true, force: true});
