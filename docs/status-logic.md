@@ -18,9 +18,14 @@ Two phases feed the same hash-based status:
 | --------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------- |
 | `fx-folder.zip` (config package)                          | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/fx-folder.zip` |
 | `utils.zip`                                               | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip`     |
+| `installer_win.exe` / `installer_linux` / `installer_mac` | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/`              |
+| `updater-ui.zip` (the update tab itself)                  | gh-pages branch      | `https://onemen.github.io/firefox-scripts/updater-ui.zip`                          |
 | `hashes.json` (hash manifest)                             | gh-pages branch      | `https://onemen.github.io/firefox-scripts/hashes.json`                             |
 | `helper_win.exe` / `helper_linux` / `helper_mac`          | gh-pages branch      | `https://onemen.github.io/firefox-scripts/helper_<platform>` (+ `.exe` on Windows) |
-| `installer_win.exe` / `installer_linux` / `installer_mac` | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/`              |
+
+The GitHub release carries exactly `fx-folder.zip`, `utils.zip` and the `installer_<os>` binaries;
+`updater-ui.zip` and the helper binaries are gh-pages-only (never release assets — the privileged
+updater fetches them from the branch, see issue #102).
 
 Notes:
 
@@ -328,7 +333,8 @@ updater tab: `updater.html` + `updater.js` (engine) + `updater-ui.js` (client) +
 brand logos, installed into `chrome/utils/updater/ui` and served as
 `chrome://firefox-scripts/content/ui/*`. It is not hash-checked by the C installer (no per-package
 status UI); the in-browser updater hashes it against this manifest entry to decide when to
-self-update.
+self-update, downloading the zip from the manifest's own host (`UI_BASE_URL` — Pages in prod; it is
+never a release asset, so not from `ZIP_BASE_URL`, issue #102).
 
 ### fx-folder (`core/fx-folder`, shipped as `fx-folder.zip`)
 

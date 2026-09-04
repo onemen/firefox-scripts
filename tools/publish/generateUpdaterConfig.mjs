@@ -116,15 +116,16 @@ export function applyInstallerLocalOverrides(config) {
  * applyUpdaterLocalOverrides — point the in-browser UPDATER (a privileged
  * chrome:// page that fetches the zips itself) at the local snapshot DIRECTORY
  * via file:// URLs. The updater runs days after the installer's HTTP server is
- * gone, so localhost URLs would be dead; reading utils.zip / hashes.json / the
- * helper straight from dist/<mode>-<branch>-<hash>/ keeps a --local install
- * self-contained and testable.
+ * gone, so localhost URLs would be dead; reading utils.zip / updater-ui.zip /
+ * hashes.json / the helper straight from dist/<mode>-<branch>-<hash>/ keeps a
+ * --local install self-contained and testable.
  */
 export function applyUpdaterLocalOverrides() {
   const base = pathToFileURL(localSnapshotDir()).href.replace(/\/$/, '');
   return {
     ZIP_BASE_URL: base,
     HASHES_URL: `${base}/hashes.json`,
+    ZIP_PAGES_URL: base,
     HELPER_BASE_URL: base,
   };
 }
@@ -144,7 +145,15 @@ export function effectiveConfig(config, {installer = false} = {}) {
       ...(installer ? applyInstallerLocalOverrides(eff) : applyUpdaterLocalOverrides()),
     };
   }
-  return eff;
+  // Where the updater tab UI package (updater-ui.zip) is published.  It ships
+  // next to the hash manifest and is NEVER a release asset (upload.mjs), so
+  // the scheduler must fetch it from the manifest's own host — ZIP_PAGES_URL
+  // (gh-pages in prod; the dev-build-<id> branch / snapshot dir in dev-local
+  // mode, where every override sets it equal to ZIP_BASE_URL) — not from
+  // ZIP_BASE_URL, the release URL (issue #102).  An explicit UI_BASE_URL wins
+  // when a config provides one.  Harmless for the C-installer variant: the
+  // config header emits only keys that exist in installer.conf.
+  return {...eff, UI_BASE_URL: eff.UI_BASE_URL || eff.ZIP_PAGES_URL || eff.ZIP_BASE_URL};
 }
 
 function generateModule(config) {
@@ -180,6 +189,11 @@ function generateModule(config) {
   const helperBase =
     eff.HELPER_BASE_URL ||
     `https://${REPO_OWNER}.github.io/${config.REPO_NAME || 'firefox-scripts'}`;
+  // The updater tab UI package (updater-ui.zip) is published next to the hash
+  // manifest (gh-pages in prod, the dev-build-<id> branch via jsDelivr in dev,
+  // the local snapshot dir in --local) and is NEVER a release asset
+  // (upload.mjs) — effectiveConfig resolves it into UI_BASE_URL.
+  const uiBase = eff.UI_BASE_URL || zipBase;
 
   return `'use strict';
 
@@ -203,6 +217,11 @@ ${urlLine('HASHES_URL', eff.HASHES_URL)}
 
   // Where package zips are published
 ${urlLine('ZIP_BASE_URL', zipBase)}
+
+  // Where the updater tab UI package (updater-ui.zip) is published — the hash
+  // manifest's own host, which always ships it next to hashes.json.  Never a
+  // release asset; ensureUpdaterUi downloads it from here.
+${urlLine('UI_BASE_URL', uiBase)}
 
   // Where the standalone elevated-copy helper binary is published
 ${urlLine('HELPER_BASE_URL', helperBase)}

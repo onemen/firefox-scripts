@@ -14,8 +14,11 @@
  * skip pref suppresses the tab entirely Scenario 6 (install-applies): click
  * btn-install and assert the packages are actually copied to disk (issue #37)
  * Scenario 7 (manual-install-upgrade): a hand-installed utils.zip brings the
- * updater — no tab with a pre-updater utils, tab after replacing it (issue
- * #53)
+ * updater — no tab with a pre-updater utils, tab after replacing it (issue #53)
+ * Scenario 8 (manual-install-no-ui): a hand-installed utils.zip ships NO ui
+ * folder (the tab UI lives in the separate updater-ui.zip); after a fresh check
+ * the scheduler self-installs the ui (ensureUpdaterUi) and the tab is visible
+ * (issue #102)
  *
  * Each scenario: fresh temp profile → seed utils + fx-folder → modify files to
  * force desired state → launch Firefox → wait for tab (or assert none) → run
@@ -27,6 +30,7 @@
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {
   REPO_ROOT,
   launchFirefox,
@@ -131,7 +135,7 @@ function parseArgs() {
       opts.scenarios = args[++i].split(',').map(s => s.trim());
     else if (args[i] === '--help') {
       console.log(
-        'Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,2,3]'
+        '        Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,2,3]'
       );
       process.exit(0);
     }
@@ -344,7 +348,7 @@ function logBakedConfig(snapshotDir) {
       return;
     }
     for (const line of fs.readFileSync(cfgPath, 'utf-8').split('\n')) {
-      if (/HASHES_URL|ZIP_BASE_URL|LOCAL_DIST_PATH|ASSET_SUFFIX/.test(line)) {
+      if (/HASHES_URL|ZIP_BASE_URL|UI_BASE_URL|LOCAL_DIST_PATH|ASSET_SUFFIX/.test(line)) {
         console.log(`  [diag] baked config: ${line.trim()}`);
       }
     }
@@ -1071,6 +1075,164 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   return seeded.profileDir;
 }
 
+/**
+ * Issue #102 — "manual install without the ui": utils.zip (release page) does
+ * NOT contain the updater ui folder — the tab UI ships in the separate
+ * updater-ui.zip and the scheduler (ensureUpdaterUi) must download + install it
+ * on the first check. A user who manually installs utils.zip only must still
+ * get a fully working updater: ui files appear under chrome/utils/updater/ui
+ * and the updater tab is visible.
+ *
+ * The prod release topology is reproduced faithfully: HASHES_URL points at the
+ * manifest host (Pages-equivalent — the snapshot dir, which always ships
+ * updater-ui.zip next to hashes.json) while ZIP_BASE_URL points at a local
+ * "release dir" that mirrors the GitHub 'latest' release — utils.zip +
+ * fx-folder.zip but NO updater-ui.zip (publish keeps it Pages-only,
+ * upload.mjs). Before the fix the ui download came from ZIP_BASE_URL (the
+ * release) and 404'd silently; after it the ui comes from the manifest's own
+ * host, which always has it.
+ *
+ * Steps: install utils.zip manually (no ui folder exists — asserted) → modify a
+ * utils file (comment appended → utils stale) → start Firefox → assert the ui
+ * folder was auto-downloaded + installed and the ui tab opened.
+ */
+
+/**
+ * Build a directory that mirrors the GitHub 'latest' release layout: the
+ * package zips and the hash manifest, but no updater-ui zip (never a release
+ * asset). Returns the dir path.
+ */
+function buildReleaseLayout(snapshotDir) {
+  const releaseDir = tempDir('fxs-release');
+  for (const name of ['utils-dev.zip', 'utils.zip', 'fx-folder-dev.zip', 'fx-folder.zip']) {
+    const src = path.join(snapshotDir, name);
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(releaseDir, name));
+  }
+  fs.copyFileSync(path.join(snapshotDir, 'hashes.json'), path.join(releaseDir, 'hashes.json'));
+  // Sanity: the layout must NOT contain the updater-ui zip — that is the
+  // released state this scenario exercises (a ui zip here would fake a fix).
+  for (const name of ['updater-ui.zip', 'updater-ui-dev.zip']) {
+    if (fs.existsSync(path.join(releaseDir, name))) {
+      throw new Error(`release layout must not contain ${name}`);
+    }
+  }
+  return releaseDir;
+}
+
+async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
+  console.log(`\n## Scenario: ${label}`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error('Firefox not found');
+
+  const seeded = seedProfile(snapshotDir, {});
+
+  // utils.zip contains no ui folder: the tab UI is a separate package
+  // (updater-ui.zip) installed under updater/ui by ensureUpdaterUi.
+  const uiDir = path.join(seeded.chromeUtils, 'updater', 'ui');
+  check(
+    counter,
+    !fs.existsSync(path.join(uiDir, 'updater.html')),
+    `utils.zip ships without the ui folder (${label})`
+  );
+
+  // Release topology: ZIP_BASE_URL (zips) points at a dir with NO
+  // updater-ui.zip — the released state this scenario must catch. The ui zip
+  // comes from the manifest's own host (generated CONFIG.UI_BASE_URL, or the
+  // cross-OS snapshot override in localConfigOverrides): that host always
+  // ships updater-ui.zip next to hashes.json.  A pre-fix scheduler fetched it
+  // from ZIP_BASE_URL (the release) and 404'd silently — exactly what this
+  // scenario fails on.
+  const releaseDir = buildReleaseLayout(snapshotDir);
+  const base = pathToFileURL(releaseDir).href.replace(/\/$/, '');
+  Object.assign(seeded.prefs, {
+    'extensions.firefox-scripts.override.ZIP_BASE_URL': base,
+    'extensions.firefox-scripts.override.HELPER_BASE_URL': base,
+  });
+
+  const greDir = findGreDir(firefoxBin);
+  const greSeed = installFxFolder(snapshotDir, greDir);
+  check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
+  if (!greSeed.ok) return seeded.profileDir;
+  appendConfigProbe(greDir);
+
+  // The user modified a utils file by hand (adding a comment): utils goes
+  // stale, so the daily check finds an update and reaches ensureUpdaterUi.
+  const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
+  fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
+
+  let page = null;
+  let browser;
+  try {
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+    });
+    attachProcessLogging(browser, label);
+    const browserReady = await waitForFirstPage(browser, 20_000);
+    check(counter, browserReady, `browser ready (${label})`);
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline && !page) {
+      try {
+        page =
+          (await browser.pages()).find(p => {
+            try {
+              return p.url().startsWith(UPDATER_URL);
+            } catch {
+              return false;
+            }
+          }) || null;
+      } catch {
+        /* browser not ready yet */
+      }
+      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
+        await new Promise(r => setTimeout(r, 2_000));
+      }
+      if (!page) await new Promise(r => setTimeout(r, 500));
+    }
+    if (page) {
+      check(counter, true, `ui tab is visible (${label})`);
+      const rendered = await waitForCondition(
+        page,
+        () => Boolean(document.getElementById('card-title')?.textContent),
+        15_000,
+        'card rendered'
+      );
+      check(counter, rendered, `card rendered (${label})`);
+    }
+  } finally {
+    try {
+      await browser?.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // ui folder was automatically downloaded and installed (disk proof —
+  // survives a BiDi-missed chrome tab; the tab-open check above needs the
+  // page handle, here the pref + extracted files carry the assertion).
+  const uiExtracted = fs.existsSync(path.join(uiDir, 'updater.html'));
+  check(
+    counter,
+    uiExtracted,
+    `ui folder auto-installed (${label})`,
+    'ensureUpdaterUi never extracted updater-ui.zip into chrome/utils/updater/ui'
+  );
+  const viaPref = greShownToday(seeded.profileDir);
+  check(
+    counter,
+    Boolean(page) || viaPref,
+    `ui tab opened (${label})`,
+    viaPref && !page ? '(verified via lastUpdateTabShown; BiDi missed the chrome tab)' : ''
+  );
+  if (!page) {
+    dumpUpdaterPrefs(seeded.profileDir);
+    dumpConsoleLog(seeded.profileDir);
+  }
+
+  rmDir(releaseDir);
+  return seeded.profileDir;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -1100,7 +1262,7 @@ async function run() {
   console.log(`  firefox: ${firefoxBin}`);
   console.log(`  GreD:    ${findGreDir(firefoxBin)}`);
 
-  const scenarios = opts.scenarios || ['1', '2', '3', '4', '5', '6', '7'];
+  const scenarios = opts.scenarios || ['1', '2', '3', '4', '5', '6', '7', '8'];
 
   const profiles = [];
 
@@ -1183,6 +1345,14 @@ async function run() {
         run: async () => {
           profiles.push(
             await runManualInstallScenario(counter, opts, snapshotDir, 'manual-install-upgrade')
+          );
+        },
+      },
+      {
+        id: '8',
+        run: async () => {
+          profiles.push(
+            await runManualInstallNoUiScenario(counter, opts, snapshotDir, 'manual-install-no-ui')
           );
         },
       },
