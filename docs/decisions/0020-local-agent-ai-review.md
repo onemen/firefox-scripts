@@ -21,12 +21,18 @@ AI review is a **local, agent-run step**, not a CI bot:
 
 - When a PR is ready for review, the agent that created it runs `pnpm review:local`
   (`node tools/ai-review.mjs`) on the branch, then **assesses each finding** (right / wrong /
-  useless, per the audit methodology) and posts the accepted ones as a **PR review**:
-  `gh pr review <n> --comment -b "<text>"` (or `-F <file>`), where the text is the assessed findings
-  — a one-line header (provider/model, files, counts) plus each finding as
-  `file:line — severity — why`. Reviews have a body, not a title. `gh pr comment` (an issue comment)
-  is never used for findings — it leaves no review record, and the agent verifies the review landed
-  with `gh pr view <n> --json reviews`. `main` requires conversation resolution, so every review
+  useless, per the audit methodology) and posts each accepted finding as its own **line-anchored
+  review thread** on the PR head commit (`gh api …/pulls/<n>/reviews` with `commit_id`, `path`,
+  `line`, `event=COMMENT`) — one thread per finding, each independently resolvable as its fix
+  lands. Fallback when anchoring is not possible: a single `gh pr review <n> --comment -b
+  "<text>"` whose body is a one-line header (provider/model, files, counts) plus each finding as
+  `file:line — severity — why`. Reviews have a body, not a title. `gh pr comment` (an issue
+  comment) is never used for findings — it leaves no review record. Because reviews post under
+  the user's own GitHub account, every agent-posted review comment or body begins with a one-line
+  🤖 provenance marker stating it was posted by an agent (no callout blocks). The agent verifies
+  the review landed with
+  `gh pr view <n> --json reviews` — and each thread is resolved as soon as the fix named in it
+  lands, not held open until merge. `main` requires conversation resolution, so every review
   thread (agent- or bot-created) must be resolved before merging.
 
 - The review command is **local**, but the model is a **cloud provider**: the reviewed diff is sent
