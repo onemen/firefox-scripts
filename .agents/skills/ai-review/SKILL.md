@@ -35,14 +35,28 @@ CI/repo AI secret exists or should be added; CodeRabbit `review:batch` is an opt
 
    Default to wrong/useless when unsure; the reviewer is advisory and fail-soft by design.
 
-3. **Post the accepted findings as a PR review** — never an issue comment:
+3. **Post each accepted finding as its own line-anchored, individually resolvable review thread** —
+   never an issue comment, and not one body-only review lumping findings together:
 
    ```bash
-   gh pr review <n> --comment -b "<header + findings>"
+   gh api "repos/{owner}/{repo}/pulls/<n>/reviews" \
+     -f commit_id="$(git rev-parse HEAD)" -f event=COMMENT \
+     -f 'comments[][path]=tools/foo.mjs' -F 'comments[][line]=42' \
+     -f 'comments[][body]=🤖 **AI review — agent-posted (ADR 0020)** — minor — <why + fix>'
    ```
 
-   Body = one-line header (provider/model, files reviewed, counts) + one line per finding
-   (`file:line — severity — why`). Reviews have a body, not a title.
+   One thread per finding, anchored to `path` + `line` on the PR head commit, so each thread is
+   independently resolvable the moment its fix lands. Fallback when anchoring is not possible (e.g.
+   a PR-wide provenance note): `gh pr review <n> --comment` with a one-line header (provider/model,
+   files, counts) + one line per finding (`file:line — severity — why`). Reviews have a body, not a
+   title.
+
+   **Agent provenance marker:** reviews post under the user's own GitHub account, so every
+   agent-posted review comment or review body starts with:
+
+   > 🤖 **Posted by an agent** as part of the ADR 0020 review protocol — not typed by the PR author.
+
+   That marker is what separates agent activity from the user's own in the timeline.
 
 4. **Verify it landed** and that it is a review, not a comment:
 

@@ -156,11 +156,13 @@ the core smoke tests — see issue #30.)
 
 Per [ADR 0020](./docs/decisions/0020-local-agent-ai-review.md), AI review is a local, agent-run
 step. When a PR is ready for review, the agent that created it runs `pnpm review:local`, assesses
-each finding right / wrong / useless, and posts the accepted ones as a PR review via
-`gh pr review <n> --comment` (never `gh pr comment`), resolving every review thread before merging
-(main requires conversation resolution). The review is not gated on CI — it can help debug failing
-checks. Add no CI/repo AI secret; CodeRabbit `review:batch` remains an optional deep pass. Full
-protocol: the `ai-review` skill.
+each finding right / wrong / useless, and posts each accepted finding as its own line-anchored,
+individually resolvable PR review thread (fallback: one `gh pr review <n> --comment` body; never
+`gh pr comment`), resolving every review thread before merging (main requires conversation
+resolution). Every agent-posted review starts with a 🤖 marker — reviews go out under the user's own
+account, and the marker is what separates agent from human activity. The review is not gated on CI —
+it can help debug failing checks. Add no CI/repo AI secret; CodeRabbit `review:batch` remains an
+optional deep pass. Full protocol: the `ai-review` skill.
 
 ## Agent workflow
 
