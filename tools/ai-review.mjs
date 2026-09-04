@@ -442,6 +442,16 @@ export async function reviewFiles({
       );
       continue;
     }
+    if (typeof parsed !== 'object' || parsed === null) {
+      // JSON.parse('null') (and '42', '"text"', …) succeeds but yields no
+      // object to read — observed live when a provider returned a bare null,
+      // which then crashed the whole run at parsed.summary. Fail soft: same
+      // per-file skip as invalid JSON.
+      summaries.push(
+        `### \`${r.file}\` — ${r.providerName}\nModel returned invalid JSON; findings skipped.`
+      );
+      continue;
+    }
     summaries.push(
       `### \`${r.file}\` — ${r.providerName}\n${parsed.summary || 'No summary provided.'}`
     );

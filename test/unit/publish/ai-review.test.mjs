@@ -319,3 +319,45 @@ test('treats invalid JSON from the model as a per-file skip', async () => {
   assert.equal(result.rdjson.diagnostics.length, 0);
   assert.match(result.summary[0], /invalid JSON/);
 });
+
+test('treats a bare null reply as a per-file skip (JSON.parse("null") succeeds)', async () => {
+  // Observed live: a provider returned content "null" once; JSON.parse turned
+  // it into null and the summary line crashed on parsed.summary, killing the
+  // whole run. Must fail soft like invalid JSON instead.
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const fileDiffs = new Map([['a.js', 'diff a']]);
+  const requestImpl = async () => ({
+    kind: 'success',
+    body: {choices: [{message: {content: 'null'}}]},
+  });
+  const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
+  assert.equal(result.rdjson.diagnostics.length, 0);
+  assert.match(result.summary[0], /invalid JSON/);
+});
+
+test('treats non-object JSON replies (numbers, strings) as per-file skips', async () => {
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const fileDiffs = new Map([
+    ['a.js', 'diff a'],
+    ['b.js', 'diff b'],
+  ]);
+  const bodies = ['42', '"just a string"'];
+  const requestImpl = async () => ({
+    kind: 'success',
+    body: {choices: [{message: {content: bodies.shift()}}]},
+  });
+  const result = await reviewFiles({files: ['a.js', 'b.js'], fileDiffs, providers, requestImpl});
+  assert.equal(result.rdjson.diagnostics.length, 0);
+  assert.equal(result.summary.length, 2);
+  assert.match(result.summary[0], /invalid JSON/);
+  assert.match(result.summary[1], /invalid JSON/);
+});
+
+test('treats missing message content as a per-file skip, not a crash', async () => {
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const fileDiffs = new Map([['a.js', 'diff a']]);
+  const requestImpl = async () => ({kind: 'success', body: {choices: [{message: {}}]}});
+  const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
+  assert.equal(result.rdjson.diagnostics.length, 0);
+  assert.match(result.summary[0], /invalid JSON/);
+});
