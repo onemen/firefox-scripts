@@ -438,7 +438,7 @@ export async function reviewFiles({
       parsed = JSON.parse(content);
     } catch {
       summaries.push(
-        `### \`${r.file}\` — ${r.providerName}\nModel returned invalid JSON; findings skipped.`
+        `### \`${r.file}\` — ${r.providerName}\nModel returned an invalid or unusable JSON reply; findings skipped.`
       );
       continue;
     }
@@ -448,7 +448,7 @@ export async function reviewFiles({
       // which then crashed the whole run at parsed.summary. Fail soft: same
       // per-file skip as invalid JSON.
       summaries.push(
-        `### \`${r.file}\` — ${r.providerName}\nModel returned invalid JSON; findings skipped.`
+        `### \`${r.file}\` — ${r.providerName}\nModel returned an invalid or unusable JSON reply; findings skipped.`
       );
       continue;
     }

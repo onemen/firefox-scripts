@@ -317,7 +317,7 @@ test('treats invalid JSON from the model as a per-file skip', async () => {
   });
   const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
   assert.equal(result.rdjson.diagnostics.length, 0);
-  assert.match(result.summary[0], /invalid JSON/);
+  assert.match(result.summary[0], /JSON reply/);
 });
 
 test('treats a bare null reply as a per-file skip (JSON.parse("null") succeeds)', async () => {
@@ -332,7 +332,7 @@ test('treats a bare null reply as a per-file skip (JSON.parse("null") succeeds)'
   });
   const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
   assert.equal(result.rdjson.diagnostics.length, 0);
-  assert.match(result.summary[0], /invalid JSON/);
+  assert.match(result.summary[0], /JSON reply/);
 });
 
 test('treats non-object JSON replies (numbers, strings) as per-file skips', async () => {
@@ -349,8 +349,8 @@ test('treats non-object JSON replies (numbers, strings) as per-file skips', asyn
   const result = await reviewFiles({files: ['a.js', 'b.js'], fileDiffs, providers, requestImpl});
   assert.equal(result.rdjson.diagnostics.length, 0);
   assert.equal(result.summary.length, 2);
-  assert.match(result.summary[0], /invalid JSON/);
-  assert.match(result.summary[1], /invalid JSON/);
+  assert.match(result.summary[0], /JSON reply/);
+  assert.match(result.summary[1], /JSON reply/);
 });
 
 test('treats missing message content as a per-file skip, not a crash', async () => {
@@ -359,5 +359,5 @@ test('treats missing message content as a per-file skip, not a crash', async () 
   const requestImpl = async () => ({kind: 'success', body: {choices: [{message: {}}]}});
   const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
   assert.equal(result.rdjson.diagnostics.length, 0);
-  assert.match(result.summary[0], /invalid JSON/);
+  assert.match(result.summary[0], /JSON reply/);
 });
