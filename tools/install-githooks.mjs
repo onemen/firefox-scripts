@@ -61,20 +61,26 @@ if (current) {
   }
 }
 
+// Validate + chmod BEFORE flipping the config: a missing hook or a failed
+// chmod must never leave git pointed at hooks that cannot run.
+const prePush = path.join(HOOKS_DIR, 'pre-push');
+if (!fs.existsSync(prePush)) {
+  console.error(`✗ ${HOOKS_DIR_REL}/pre-push not found — core.hooksPath left unchanged.`);
+  process.exit(1);
+}
+
+// Git for Windows runs hooks through bash, which ignores the executable bit;
+// on POSIX it is required, so set it there (no-op on Windows where chmod is
+// unreliable through MSYS).
+const isWindows = process.platform === 'win32';
+if (!isWindows) {
+  fs.chmodSync(prePush, 0o755);
+}
+
 git('config', 'core.hooksPath', HOOKS_DIR_REL);
 console.log(`✓ core.hooksPath set to '${HOOKS_DIR_REL}'.`);
-
-const prePush = path.join(HOOKS_DIR, 'pre-push');
-const isWindows = process.platform === 'win32';
 console.log(
   `✓ pre-push gate installed: pnpm lint && pnpm format && pnpm test` +
     (isWindows ? '' : ' (chmod +x applied)') +
     `\n  bypass: git push --no-verify | uninstall: git config --unset core.hooksPath`
 );
-
-// Git for Windows runs hooks through bash, which ignores the executable bit;
-// on POSIX it is required, so set it there (no-op on Windows where chmod is
-// unreliable through MSYS).
-if (!isWindows) {
-  fs.chmodSync(prePush, 0o755);
-}
