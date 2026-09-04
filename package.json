@@ -2,6 +2,9 @@
   "name": "firefox_scripts",
   "version": "1.0.0",
   "description": "Scripts for installing legacy extension on Firefox",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "lint": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache && node tools/format-c.mjs --check && make -C installer analyze",
     "lint:c": "node tools/format-c.mjs --check",
