@@ -46,8 +46,10 @@ dispatch, per-OS serial jobs).
    `--local` mode).
 2. Computes SHA-256 source hashes per package/binary; **rebuilds only what changed** (everything in
    `--mode=dev`/`--force`).
-3. Uploads changed artifacts as release assets (prod) and pushes them to the publish branch (Pages
-   sends `Access-Control-Allow-Origin: *`, which the installer tab needs).
+3. Uploads changed artifacts — **release assets (prod): utils/fx-folder zips + installers**; **Pages
+   branch only: updater-ui.zip (never a release asset — the updater fetches it from the branch
+   itself), helper binaries, and `hashes.json`**. Pages sends `Access-Control-Allow-Origin: *`,
+   which the installer tab needs (release-asset CDNs do not).
 4. Publishes `hashes.json` to the same branch. Generated files are regenerated during the run and
    deleted from disk at the end (`cleanGenerated`).
 
