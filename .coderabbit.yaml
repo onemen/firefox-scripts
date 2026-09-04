@@ -7,6 +7,9 @@
 # local `cr` CLI for batched combined-branch reviews). Groq (ai-review.yml)
 # covers the always-on advisory pass instead.
 reviews:
+  # No status comments (e.g. "Review skipped / looks good") while auto_review
+  # is off — keep PRs free of bot chatter; `@coderabbitai review` still works.
+  review_status: false
   auto_review:
     enabled: false
   path_filters:
