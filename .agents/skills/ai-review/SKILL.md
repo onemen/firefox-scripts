@@ -52,11 +52,10 @@ CI/repo AI secret exists or should be added; CodeRabbit `review:batch` is an opt
    title.
 
    **Agent provenance marker:** reviews post under the user's own GitHub account, so every
-   agent-posted review comment or review body starts with:
-
-   > 🤖 **Posted by an agent** as part of the ADR 0020 review protocol — not typed by the PR author.
-
-   That marker is what separates agent activity from the user's own in the timeline.
+   agent-posted review comment or review body begins with a single provenance line — one line only,
+   no callout block: `🤖` + what the comment is + which agent produced it and from what review run.
+   Example: `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`. The
+   marker is what separates agent activity from the user's own in the timeline.
 
 4. **Verify it landed** and that it is a review, not a comment:
 

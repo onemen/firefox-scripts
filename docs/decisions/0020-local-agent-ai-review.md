@@ -28,8 +28,9 @@ AI review is a **local, agent-run step**, not a CI bot:
   "<text>"` whose body is a one-line header (provider/model, files, counts) plus each finding as
   `file:line — severity — why`. Reviews have a body, not a title. `gh pr comment` (an issue
   comment) is never used for findings — it leaves no review record. Because reviews post under
-  the user's own GitHub account, every agent-posted review comment or body starts with a 🤖
-  marker stating it was posted by an agent. The agent verifies the review landed with
+  the user's own GitHub account, every agent-posted review comment or body begins with a one-line
+  🤖 provenance marker stating it was posted by an agent (no callout blocks). The agent verifies
+  the review landed with
   `gh pr view <n> --json reviews`. `main` requires conversation resolution, so every review
   thread (agent- or bot-created) must be resolved before merging.
 
