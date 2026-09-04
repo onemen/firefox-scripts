@@ -33,16 +33,13 @@ const SRC_DIR = 'src';
 const CACHE_DIR = path.join(INSTALLER_DIR, '.analyzer-cache');
 const CACHE_VERSION = 1;
 
-// Mirrors the file list the Makefile analyzed before this script took over
-// the orchestration. Vendored miniz is excluded (read-only third-party code).
-const SOURCES = [
-  'main.c',
-  'detect_browser.c',
-  'http_server.c',
-  'file_utils.c',
-  'admin_copy.c',
-  'self_update.c',
-];
+// Every top-level source in src/ — vendored miniz (src/vendor/) is excluded
+// (read-only third-party code). Derived from the directory so a new file is
+// analyzed without touching this list.
+const SOURCES = fs
+  .readdirSync(path.join(INSTALLER_DIR, SRC_DIR))
+  .filter(f => f.endsWith('.c'))
+  .sort();
 
 const BASE_ARGS = [
   '-fanalyzer',
