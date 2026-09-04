@@ -169,7 +169,8 @@ async function main() {
     if (unrunnable) {
       console.error('analyze-c failed: gcc could not be run.');
       console.error(unrunnable.output);
-      process.exit(2);
+      process.exitCode = 2;
+      return; // not exit(): the finally below must remove the temp dir
     }
 
     let total = 0;
@@ -179,7 +180,8 @@ async function main() {
         // analyzer findings or not.
         console.error(`✗ gcc failed on ${file} (exit ${code}):`);
         console.error(output || '(no output)');
-        process.exit(1);
+        process.exitCode = 1;
+        return; // not exit(): the finally below must remove the temp dir
       }
       const findings = analyzerFindings(output);
       if (findings.length) {
@@ -206,7 +208,8 @@ async function main() {
 
     if (total) {
       console.error(`\n${total} analyzer finding(s) across ${SOURCES.length} files.`);
-      process.exit(1);
+      process.exitCode = 1;
+      return; // not exit(): the finally below must remove the temp dir
     }
     const cached = hits.size ? `, ${hits.size} cached` : '';
     console.log(
