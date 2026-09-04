@@ -738,6 +738,13 @@ static int tcp_listening(int port) {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 0;
     SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    /* -fanalyzer false positive: it models a state where the handle was both
+     * created (fd leak / use) and == INVALID_SOCKET — mutually exclusive for
+     * winsock's unsigned SOCKET. The valid path is closed below, so suppress.
+     * Verify by removing this pragma and running `make analyze`. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-use-without-check"
     if (s == INVALID_SOCKET) {
         WSACleanup();
         return 0;
@@ -750,6 +757,7 @@ static int tcp_listening(int port) {
     int r = (connect(s, (struct sockaddr *)&addr, sizeof(addr)) == 0);
     closesocket(s);
     WSACleanup();
+#pragma GCC diagnostic pop
     return r;
 #else
     int s = socket(AF_INET, SOCK_STREAM, 0);

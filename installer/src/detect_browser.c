@@ -1560,8 +1560,10 @@ static void reset_waterfox_version_cache(void) {
  */
 static void json_value_after_key(const char *key_pos, const char *key,
                                  char *out, size_t out_size) {
-    out[0] = '\0';
+    /* Validate before writing: `out` was dereferenced (out[0] = '\0') after
+     * the guard, not before — flagged by gcc -fanalyzer. */
     if (!key_pos || !key || !out || out_size == 0) return;
+    out[0] = '\0';
     const char *val_start = strchr(key_pos + strlen(key), '"');
     if (!val_start) return;
     val_start++;
@@ -1831,8 +1833,13 @@ static int lookup_profile_by_name(const char *base_dir, const char *profile_name
                 is_relative = 1;
             }
         } else if (in_target && strncasecmp(line, "Path=", 5) == 0) {
-            strncpy(rel_path, line + 5, sizeof(rel_path) - 1);
-            rel_path[sizeof(rel_path) - 1] = '\0';
+            /* strlen-bounded copy: strncpy would read the whole 1023-byte
+             * range of the 512-byte source buffer (gcc -fanalyzer
+             * out-of-bounds read). */
+            size_t p_len = strlen(line + 5);
+            if (p_len >= sizeof(rel_path)) p_len = sizeof(rel_path) - 1;
+            memcpy(rel_path, line + 5, p_len);
+            rel_path[p_len] = '\0';
         } else if (in_target && strncasecmp(line, "IsRelative=", 11) == 0) {
             is_relative = atoi(line + 11);
         }
@@ -1991,7 +1998,14 @@ static bool check_compatibility_ini(const char *profile_dir, const char *binary_
         line[strcspn(line, "\r\n")] = 0;
 
         if (strncasecmp(line, "LastPlatformDir=", 16) == 0) {
-            strncpy(last_platform_dir, line + 16, sizeof(last_platform_dir) - 1);
+            /* Copy only up to the string end: strncpy would read the whole
+             * 1023-byte range of a 512-byte source buffer (gcc -fanalyzer
+             * out-of-bounds read). `line` is NUL-terminated by strcspn above
+             * and the prefix match guarantees index 16 exists. */
+            size_t pdir_len = strlen(line + 16);
+            if (pdir_len >= sizeof(last_platform_dir)) pdir_len = sizeof(last_platform_dir) - 1;
+            memcpy(last_platform_dir, line + 16, pdir_len);
+            last_platform_dir[pdir_len] = '\0';
             break;
         }
     }

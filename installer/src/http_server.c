@@ -336,6 +336,12 @@ void http_server_serve(void) {
         int client_fd = accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
 #endif
 
+        /* -fanalyzer false positive (winsock fd model): it explores a state
+         * where the handle was both created (fd leak) and == INVALID_SOCKET —
+         * mutually exclusive. Every accepted handle is closed at the loop
+         * bottom. Verify by removing this pragma and running `make analyze`. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
         if (client_fd == INVALID_SOCKET) {
             if (server_running) {
                 sleep_ms(100);
@@ -463,6 +469,7 @@ void http_server_serve(void) {
 #else
         close(client_fd);
 #endif
+#pragma GCC diagnostic pop
     }
 }
 

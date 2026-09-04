@@ -4,10 +4,12 @@
  * gcc -fanalyzer over the installer sources — parallel runner + filter.
  *
  * `make analyze` (part of `pnpm lint`) runs one gcc per source file in parallel
- * here instead of piping a single serial gcc through stdin. The per-file stderr
- * is filtered for analyzer-class diagnostics; everything else (the usual
- * -Wextra noise: missing initializers, unused parameters, …) is dropped. Kept
- * classes:
+ * here instead of piping a single serial gcc through stdin. Each file is really
+ * COMPILED (`-c`, object files in a temp dir): `-fsyntax-only` disables the
+ * `-fanalyzer` pass entirely on modern gcc, so the old gate verified syntax
+ * only while reporting itself as an analyzer. The per-file stderr is filtered
+ * for analyzer-class diagnostics; everything else (the usual -Wextra noise:
+ * missing initializers, unused parameters, …) is dropped. Kept classes:
  *
  * use-after-free / use-after-return / double-free / leak / NULL deref /
  * overflow / uninitialized use / buffer over-read or over-write
@@ -18,6 +20,8 @@
  */
 
 import {spawn} from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -35,6 +39,8 @@ const SOURCES = [
   'self_update.c',
 ];
 
+const OUT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'analyzer-'));
+
 const BASE_ARGS = [
   '-fanalyzer',
   '-Wall',
@@ -42,16 +48,37 @@ const BASE_ARGS = [
   `-I${SRC_DIR}`,
   '-DMINIZ_NO_DEFLATE_APIS',
   '-DMINIZ_NO_ZLIB_APIS',
-  '-fsyntax-only',
+  '-c',
 ];
 
 const ANALYZER_RE =
-  /(use-after-free|use-after-return|double-free|leak of|NULL dereference|'free' of|heap-use-after|over-read|over-write|buffer overflow|uninitialized|uninitialised|warning: .*too small|allocation size)/i;
+  /warning:.*(Wanalyzer|leak of|dereference of|over-read|over-write|buffer overflow|uninitialized|uninitialised|allocation size)/i;
 
-/** Spawn one gcc; resolve (never reject) with {file, code, output}. */
+/** A line that opens a gcc warning diagnostic. */
+const WARNING_RE = /^src[/\\].*warning: /;
+
+/**
+ * Keep diagnostic blocks that OPEN with an analyzer-class warning. Only the
+ * first line of a gcc diagnostic is reliably tagged — merged blocks (several
+ * warnings without a separating blank line) must be split, otherwise a plain
+ * -Wextra warning can inherit an analyzer verdict from a neighbour. Non-gcc
+ * lines (source excerpts, event traces, headers' notes) are dropped outright:
+ * the events path printed for a finding reproduces the source, and gcc exits
+ * non-zero on its own when a hard error occurs.
+ */
+function analyzerFindings(output) {
+  const findings = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (!WARNING_RE.test(line)) continue;
+    if (ANALYZER_RE.test(line)) findings.push(line);
+  }
+  return findings;
+}
+
 function runGcc(file) {
   return new Promise(resolve => {
-    const child = spawn('gcc', [...BASE_ARGS, path.join(SRC_DIR, file)], {
+    const obj = path.join(OUT_DIR, `${file}.o`);
+    const child = spawn('gcc', [...BASE_ARGS, path.join(SRC_DIR, file), `-o${obj}`], {
       cwd: INSTALLER_DIR,
     });
     let output = '';
@@ -65,27 +92,6 @@ function runGcc(file) {
       resolve({file, code, output});
     });
   });
-}
-
-/** Keep only blank-line-separated diagnostic blocks that match ANALYZER_RE. */
-function analyzerFindings(output) {
-  const findings = [];
-  let current = [];
-  const flush = () => {
-    if (current.length && current.some(line => ANALYZER_RE.test(line))) {
-      findings.push(current.join('\n'));
-    }
-    current = [];
-  };
-  for (const line of output.split(/\r?\n/)) {
-    if (/^\s*$/.test(line)) {
-      flush();
-      continue;
-    }
-    current.push(line);
-  }
-  flush();
-  return findings;
 }
 
 async function main() {
@@ -123,10 +129,16 @@ async function main() {
     console.error(`\n${total} analyzer finding(s) across ${SOURCES.length} files.`);
     process.exit(1);
   }
-  console.log(`✓ gcc -fanalyzer: no memory-safety/UB findings (${SOURCES.length} files, parallel)`);
+  console.log(
+    `✓ gcc -fanalyzer: no memory-safety/UB findings (${SOURCES.length} files, compiled, parallel)`
+  );
 }
 
-main().catch(err => {
-  console.error('analyze-c failed:', err);
-  process.exit(2);
-});
+main()
+  .catch(err => {
+    console.error('analyze-c failed:', err);
+    process.exitCode = 2;
+  })
+  .finally(() => {
+    fs.rmSync(OUT_DIR, {recursive: true, force: true});
+  });
