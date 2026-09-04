@@ -531,12 +531,12 @@ The installer Makefile and the `tools/publish/*.mjs` scripts share these paths v
 
 A `upload:local` snapshot is self-contained on disk: it writes every artifact to
 `dist/<mode>-<branch>-<hash>/`, and the generated `updater-config.sys.mjs` points the updater's
-**download/install URLs** — `HASHES_URL`, `ZIP_BASE_URL`, `HELPER_BASE_URL` — at that snapshot
-directory via `file://` URLs, so hash-checking and installing work straight from disk with no server
-and no GitHub. The C installer keeps `http://localhost:<DEFAULT_PORT>/` instead (its tab is
-HTTP-served and fetches from the installer's own local server, `CFG_LOCAL`). The updater tab UI is
-the local `updater-ui.zip` in the same snapshot: `scriptsUpdater.sys.mjs` downloads and extracts it
-into `chrome/utils/updater/ui` before opening the tab.
+**download/install URLs** — `HASHES_URL`, `ZIP_BASE_URL`, `UI_BASE_URL`, `HELPER_BASE_URL` — at that
+snapshot directory via `file://` URLs, so hash-checking and installing work straight from disk with
+no server and no GitHub. The C installer keeps `http://localhost:<DEFAULT_PORT>/` instead (its tab
+is HTTP-served and fetches from the installer's own local server, `CFG_LOCAL`). The updater tab UI
+is the local `updater-ui.zip` in the same snapshot: `scriptsUpdater.sys.mjs` downloads and extracts
+it into `chrome/utils/updater/ui` before opening the tab.
 
 1. `upload:local --mode=prod` (or `dev`) and run the snapshot's installer — it installs `utils.zip`,
    `fx-folder.zip` and `updater-ui.zip` from the local server.
@@ -558,7 +558,7 @@ Edit these files to change GitHub URLs and repository owners:
 | `installer/src/platform.h`                         | `INSTALLER_REPO_OWNER`, `INSTALLER_REPO_NAME`, `INSTALLER_ZIP_URL`, `INSTALLER_HASHES_URL`, `INSTALLER_VERSION`                                                                                                          | Installer identity                                                 |
 | `config/installer.conf`                            | `REPO_OWNER`, `REPO_NAME`, `ZIP_DOWNLOAD_REPO`, `ZIP_PAGES_URL`, `ZIP_PAGES_REPO`, `ZIP_PAGES_BRANCH`, `HASHES_URL`, `RELEASE_NAME`, `HELPER_BASE_URL`, `DEFAULT_PORT`, `ASSET_SUFFIX`                                   | URLs for zips / manifest / helpers (gh-pages) + releases           |
 | `tools/publish/paths.js`                           | `RELEASE_NAME`, `REPO_OWNER`, `REPO_NAME`, `ZIP_DOWNLOAD_REPO`, `ZIP_PAGES_REPO`, `ZIP_PAGES_BRANCH`, `PROFILE_PATH`, `REMOTE_UI_DIR`, `GITHUB_TOKEN_VAR` + `PUBLISH_MODE`, `DEV_BUILD_ID`, `DEV_BRANCH`, `ASSET_SUFFIX` | Publish settings + mode-derived dev values + updater-ui source dir |
-| `core/chrome/utils/updater/updater-config.sys.mjs` | `CONFIG.HASHES_URL`, `ZIP_BASE_URL`, `HELPER_BASE_URL`, `ASSET_SUFFIX` (generated from `config/installer.conf`; untracked, generated on demand)                                                                          | Auto-update URLs                                                   |
+| `core/chrome/utils/updater/updater-config.sys.mjs` | `CONFIG.HASHES_URL`, `ZIP_BASE_URL`, `UI_BASE_URL`, `HELPER_BASE_URL`, `ASSET_SUFFIX` (generated from `config/installer.conf`; untracked, generated on demand)                                                           | Auto-update URLs                                                   |
 
 ## Appendix: Design decisions (no further action)
 
