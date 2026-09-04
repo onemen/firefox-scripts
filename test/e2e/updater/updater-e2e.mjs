@@ -348,7 +348,7 @@ function logBakedConfig(snapshotDir) {
       return;
     }
     for (const line of fs.readFileSync(cfgPath, 'utf-8').split('\n')) {
-      if (/HASHES_URL|ZIP_BASE_URL|LOCAL_DIST_PATH|ASSET_SUFFIX/.test(line)) {
+      if (/HASHES_URL|ZIP_BASE_URL|UI_BASE_URL|LOCAL_DIST_PATH|ASSET_SUFFIX/.test(line)) {
         console.log(`  [diag] baked config: ${line.trim()}`);
       }
     }
@@ -1136,10 +1136,12 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
   );
 
   // Release topology: ZIP_BASE_URL (zips) points at a dir with NO
-  // updater-ui.zip — the released state this scenario must catch. HASHES_URL
-  // is left as seedProfile set it (this machine's snapshot): the manifest host
-  // always ships the ui zip next to hashes.json, so a correct updater can
-  // still self-heal.
+  // updater-ui.zip — the released state this scenario must catch. The ui zip
+  // comes from the manifest's own host (generated CONFIG.UI_BASE_URL, or the
+  // cross-OS snapshot override in localConfigOverrides): that host always
+  // ships updater-ui.zip next to hashes.json.  A pre-fix scheduler fetched it
+  // from ZIP_BASE_URL (the release) and 404'd silently — exactly what this
+  // scenario fails on.
   const releaseDir = buildReleaseLayout(snapshotDir);
   const base = pathToFileURL(releaseDir).href.replace(/\/$/, '');
   Object.assign(seeded.prefs, {

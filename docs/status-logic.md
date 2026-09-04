@@ -328,7 +328,8 @@ updater tab: `updater.html` + `updater.js` (engine) + `updater-ui.js` (client) +
 brand logos, installed into `chrome/utils/updater/ui` and served as
 `chrome://firefox-scripts/content/ui/*`. It is not hash-checked by the C installer (no per-package
 status UI); the in-browser updater hashes it against this manifest entry to decide when to
-self-update.
+self-update, downloading the zip from the manifest's own host (`UI_BASE_URL` — Pages in prod; it is
+never a release asset, so not from `ZIP_BASE_URL`, issue #102).
 
 ### fx-folder (`core/fx-folder`, shipped as `fx-folder.zip`)
 
