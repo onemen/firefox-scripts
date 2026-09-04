@@ -2,8 +2,20 @@
 
 ## Scope
 
-These instructions apply to the entire `firefox-scripts` repository. If a subdirectory ever adds its
-own `AGENTS.md`, that nested file is more specific and overrides this one where they conflict.
+**firefox-scripts** installs and keeps up to date the helper scripts that let Firefox-family
+browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Floorp) run legacy
+(non-WebExtension) extensions. Three parts:
+
+1. **Native C installer** (`installer/`) — detects a running browser, serves an embedded web UI over
+   `127.0.0.1:8777`, and copies two packages: **fx-folder** (`core/fx-folder/`) to the browser
+   install dir, **utils** (`core/chrome/utils/`) to `ProfD/chrome/utils/`.
+2. **In-browser updater** (`core/chrome/utils/updater/`) — daily hash-manifest check; self-updates
+   and opens the updater tab (chrome-privileged page shipped in `updater-ui.zip`).
+3. **Updater tab UI** (`tools/publish/remote-ui/` → `updater-ui.zip`) — the tab's HTML/JS/CSS and
+   logos; `scriptsUpdater.sys.mjs` (utils.zip) keeps it current before opening the tab.
+
+Architecture deep dive: `docs/DEVELOPING.md` (structure, installer/updater flow, publishing) and
+`docs/auto-updater.md`.
 
 ## Critical Rules
 
@@ -26,32 +38,6 @@ own `AGENTS.md`, that nested file is more specific and overrides this one where 
 - Keep `docs/ci-inventory.md` synchronized when changing workflow names, triggers, path filters,
   gates, scheduled jobs, or watchdog behavior. Keep workflow job names and required/advisory status
   semantics accurate.
-
-## Overview
-
-**firefox-scripts** installs and keeps up to date the helper scripts that let Firefox-family
-browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Floorp) run legacy
-(non-WebExtension) extensions. Three parts:
-
-1. **Native C installer** (`installer/`) — detects a running browser (process scan + lock-file
-   inspection), serves an embedded web UI over `127.0.0.1:8777`, and copies two packages:
-   - **fx-folder** (`core/fx-folder/`) — `config.js` + `config-prefs.js`, copied to the browser
-     install dir (`GreD`).
-   - **utils** (`core/chrome/utils/`) — userChromeJS loader, legacy-extension shim, and the
-     in-browser updater scheduler, copied to `ProfD/chrome/utils/`.
-2. **In-browser updater** (`core/chrome/utils/updater/` + `tools/publish/remote-ui/`) — a privileged
-   module that checks a published hash manifest daily, self-updates the updater tab UI, notifies on
-   new versions, and applies updates in place. The tab itself is a chrome-privileged page shipped
-   inside `updater-ui.zip` (built from `tools/publish/remote-ui/`) — no remote page, no iframe, no
-   postMessage.
-3. **Updater tab UI** (`updater-ui.zip` → `ProfD/chrome/utils/updater/ui/`) — `updater.html`,
-   `updater.js` (engine), `updater-ui.js` (client), the generated `updater.css`, and the brand
-   logos. `scriptsUpdater.sys.mjs` (utils.zip) keeps it current before opening the tab.
-
-Publishing is Node/ESM tooling in `tools/publish/` that uploads zips and installer binaries to a
-**GitHub Release** (`latest`) and the package zips + `hashes.json` + helper binaries to the
-**gh-pages** branch (Pages sends `Access-Control-Allow-Origin: *`, which the installer tab needs;
-release-asset CDNs do not).
 
 ## Architecture invariants
 
@@ -88,67 +74,31 @@ facts most often cause bugs:
 Architecture decisions are recorded as ADRs (architecture decision records) in `docs/decisions/` —
 the **steering veto list**: open [docs/decisions/index.md](./docs/decisions/index.md) before
 proposing a new primitive, surface, storage home, or architecture change. A decision already made
-usually covers the need — see `docs/decisions/0002-hash-based-update-detection.md` for the shape
-that steers.
+usually covers the need.
 
-- Template: `docs/decisions/0000-template.md` — copy it to the next unused `NNNN` with a kebab-case
+- Template: `docs/decisions/0000-template.md` — copy to the next unused `NNNN` with a kebab-case
   slug; keep the record to roughly half a page (Context / Decision / Consequences).
-- One decision per record. Do not write an ADR for a layout/UI tweak, a library pick the code
-  already encodes, or because a PR shipped.
-- Supersede, don't edit: when a later record changes a decision, mark the old one
-  `superseded by NNNN` and list it under the index's Historical section. If a number collides,
-  renumber the later record — never leave duplicates.
-- Records are point-in-time documents; the design docs (`docs/DEVELOPING.md`,
-  `docs/auto-updater.md`, …) describe current behavior and link to the records.
+- One decision per record. Supersede, don't edit: mark the old record `superseded by NNNN` and list
+  it under the index's Historical section. Validate with `pnpm check:decisions`.
 
-## Key directories
+## Skills
 
-| Path                 | Purpose                                                                                                                           |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `core/fx-folder/`    | Config package: `config.js` + `defaults/pref/config-prefs.js`                                                                     |
-| `core/chrome/utils/` | userChromeJS loader (`userChrome.js`), legacy shim (`BootstrapLoader.js`), RDF/xPref modules, `updater/`                          |
-| `installer/src/`     | C app: `main.c`, `detect_browser.c`, `http_server.c`, `admin_copy.c`, `file_utils.c`, `self_update.c`, `helper/`, `vendor/miniz/` |
-| `installer/web/`     | Embedded UI (`index.html`, `script.js`, `style.css`, `logos/`) → gzip-embedded into `resources.h`                                 |
-| `tools/publish/`     | Release pipeline: zips, installer/helper binaries, hashing, Pages upload, on-demand generated-file generation, `remote-ui/`       |
-| `config/`            | `installer.conf` (source of truth) + eslint/prettier configs                                                                      |
-| `docs/`              | Developer guide + design notes (auto-updater, status logic, restart UI tab, future work)                                          |
-| `docs/decisions/`    | Architecture decision records (ADR log) — steering veto list, template, `index.md`                                                |
+Task-scoped instruction modules an agent loads on demand when the task matches them — deep dive
+detail lives there so this file stays a checklist, not a manual. Two roots with different rules:
 
-Entry points when debugging: `core/fx-folder/config.js` (autoConfig bootstrap that starts
-everything), `core/chrome/utils/chrome.manifest` (maps `chrome://userchromejs/*`,
-`resource://userchromejs/*`, `chrome://firefox-scripts/content/*`),
-`core/chrome/utils/updater/scriptsUpdater.sys.mjs` (daily check + updater-ui self-update),
-`tools/publish/remote-ui/updater.js` (tab engine), `tools/publish/syncGeneratedFiles.mjs`
-(regenerate/verify the generated files).
+- `.agents/skills/` — authored here + managed installs (`skills-lock.json`); tracked, and covered by
+  the lint/format gates.
+- `.agent/skills/` — vendored upstream (MIT, `debugging-firefox`); excluded from the lint/format
+  gates (see `docs/debugging-with-rdp.md`, `.prettierignore`, `eslint.config.js`).
 
-## Generated files
+| Skill             | Load when the task involves                               |
+| ----------------- | --------------------------------------------------------- |
+| `ai-review`       | Reviewing a PR — the ADR 0020 local review step           |
+| `change-workflow` | Making code changes — subsystem, docs, validation order   |
+| `generated-files` | Regenerating or reasoning about the untracked build files |
+| `publishing`      | Releasing — `upload` / `upload:local`, prod/dev modes     |
 
-Three files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
-them; edit the source and regenerate (the installer Makefile does it on every build, createZip.mjs
-at publish time, or by hand via `node tools/publish/syncGeneratedFiles.mjs`):
-
-| Generated file                                     | Source(s)                                                 | Regenerated by                                            |
-| -------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------- |
-| `core/chrome/utils/updater/updater-config.sys.mjs` | `config/installer.conf` (via `generateUpdaterConfig.mjs`) | `createZip.mjs` at publish time (ships in utils.zip)      |
-| `tools/publish/remote-ui/updater.css`              | `installer/web/style.css` + `tools/publish/updater.css`   | `createZip.mjs` at publish time (ships in updater-ui.zip) |
-| `installer/src/_config.h`                          | `config/installer.conf`                                   | installer Makefile (`config` target)                      |
-| `installer/src/resources.h`                        | `installer/web/*` (via `installer/embed.mjs`)             | installer Makefile (`resources` target)                   |
-
-Because the files are not committed, the publish hashes cover their **true sources** instead of the
-artifacts: the utils hash/file list explicitly includes `updater/updater-config.sys.mjs` (it ships
-inside the zip), the updater-ui hash/file list includes `updater.css` (it ships inside
-updater-ui.zip), and the installer hash covers `installer/src` + `installer/web/*` +
-`config/installer.conf` (see `docs/decisions/0008-generated-files-untracked.md`). At the end of
-every `upload` run the generated files are **deleted from disk** (`cleanGenerated`) so the working
-tree matches a fresh clone — no localhost/dev-baked copies linger. `installer.conf` is a base value
-— changing it shifts package hashes, which is how updates propagate.
-
-## Local plans
-
-`docs/local_plan/` holds working design drafts in their **own git repository** (ignored by this
-repo). Read the relevant draft before planning work in an area; when the plan changes while you
-work, commit the update inside that repo (`git -C docs/local_plan add -A && git commit -m "…"`).
-Never commit `docs/local_plan/` content to this repository.
+All paths are `<root>/.agents/skills/<name>/SKILL.md`.
 
 ## Commands
 
@@ -157,7 +107,7 @@ files are produced on demand by the build/publish tooling.
 
 ```bash
 pnpm install
-pnpm lint          # eslint + C format check
+pnpm lint          # eslint + C format check + gcc -fanalyzer over installer/src
 pnpm format        # check: C + prettier
 pnpm format:fix    # apply both
 pnpm test          # unit tests (test/unit/, pure Node, no build)
@@ -181,25 +131,6 @@ publishes to `dev-build-<id>` (delete the branch after testing). Full walkthroug
 
 Installer build (Windows: MSYS2 UCRT64 `mingw32-make`): `make dist_win` / `dist_linux` / `dist_mac`,
 `helper_*`, `resources`, `config`, `verify`.
-
-## Conventions
-
-- **Firefox privileged modules:** `.sys.mjs` ESM via `ChromeUtils.importESModule` /
-  `defineESModuleGetters` with full `chrome://` or `resource://` specifiers. Never bare paths.
-- **Window-context legacy JS:** plain `.js` with `'use strict';` loaded via
-  `Services.scriptloader.loadSubScript`. No `innerHTML` in the updater tab (XML-parsed XHTML; toggle
-  via `hidden`).
-- **C:** clang-format LLVM base; UTF-8 paths with wide/UTF-16 conversion on Windows;
-  `installer_log()` logging; vendored miniz read-only (`-DMINIZ_NO_DEFLATE_APIS`).
-- **JS formatting/lint** is enforced by prettier + eslint (configs in `config/`) — run
-  `pnpm format:fix` / `pnpm lint` before finishing.
-- **Decision records** (ADR format): steering veto list in `docs/decisions/index.md`; template
-  `docs/decisions/0000-template.md`; next unused `NNNN` + kebab-case slug; supersede, don't edit.
-- **Error handling:** fail-fast with clear messages; elevation failures distinguish cancel (exit 2);
-  network failures surface a banner in the UI, not a silent partial install.
-- **Text files are LF**; a local working-tree copy can linger as CRLF, so when a tool parses a
-  tracked text file, normalize `\r\n` → `\n` at read (`docs/DEVELOPING.md` → Continuous
-  integration).
 
 ## Testing & QA
 
@@ -225,10 +156,15 @@ the core smoke tests — see issue #30.)
 
 Per [ADR 0020](./docs/decisions/0020-local-agent-ai-review.md), AI review is a local, agent-run
 step. When a PR is ready for review, the agent that created it runs `pnpm review:local`, assesses
-each finding right / wrong / useless, and posts the accepted ones as a PR review via
-`gh pr review <n> --comment` (never `gh pr comment`), resolving every review thread before merging
-(main requires conversation resolution). The review is not gated on CI — it can help debug failing
-checks. Add no CI/repo AI secret; CodeRabbit `review:batch` remains an optional deep pass.
+each finding right / wrong / useless, and posts each accepted finding as its own
+line-anchored,individually resolvable PR review thread (fallback: one `gh pr review <n> --comment`
+body; never `gh pr comment`), resolving each thread as its fix lands and every remaining thread
+before merging (main requires conversation resolution). Every agent-posted review begins with a
+one-line 🤖 provenance marker (e.g.
+`🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`) — reviews go out
+under the user's own account, and the marker is what separates agent from human activity. The review
+is not gated on CI — it can help debug failing checks. Add no CI/repo AI secret; CodeRabbit
+`review:batch` remains an optional deep pass. Full protocol: the `ai-review` skill.
 
 ## Agent workflow
 
@@ -237,11 +173,12 @@ Before changing code:
 1. Identify the affected subsystem.
 2. Read the relevant `docs/` (and `docs/local_plan/`, and the decision log
    `docs/decisions/index.md`) documentation.
-3. Check whether the affected files are generated.
-4. Make the smallest appropriate change.
-5. Regenerate generated files on demand when their sources change (make / createZip /
+3. If a skill in `.agents/skills/` matches the task (review, publishing, generated files), load it.
+4. Check whether the affected files are generated.
+5. Make the smallest appropriate change.
+6. Regenerate generated files on demand when their sources change (make / createZip /
    syncGeneratedFiles).
-6. Run the relevant validation (matrix above).
+7. Run the relevant validation (matrix above).
 
 Before finishing:
 
@@ -251,7 +188,7 @@ Before finishing:
 - no unrelated files were modified;
 - failed/unavailable validation is reported.
 
-### Roadmap tracking
+## Roadmap tracking
 
 - GitHub is the live tracker: the v1.0 milestone, phase issues #3 (Phase 4) / #4 (Phase 5) and the
   Post-v1.0 roadmap umbrella (#38) hold the checklists; `docs/roadmap.md` is the durable snapshot.
@@ -272,3 +209,32 @@ Before finishing:
   stays manual from `main`; all publish scripts require a clean worktree.
 - **Interactive debugging of core files:** the MIT `debugging-firefox` RDP skill is vendored under
   `.agent/skills/` — see `docs/debugging-with-rdp.md` (never put it in the lint/format gates).
+
+## Generated files
+
+Four files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
+them: `core/chrome/utils/updater/updater-config.sys.mjs`, `tools/publish/remote-ui/updater.css`,
+`installer/src/_config.h`, `installer/src/resources.h`. Edit the source and regenerate (the
+installer Makefile does it on every build, `createZip.mjs` at publish time, or by hand via
+`node tools/publish/syncGeneratedFiles.mjs`). Because they are not committed, the publish hashes
+cover their **true sources** instead of the artifacts (see
+`docs/decisions/0008-generated-files-untracked.md`); `installer.conf` is a base value — changing it
+shifts package hashes, which is how updates propagate. Full sources→artifact table and the three
+regeneration moments: the `generated-files` skill.
+
+## Conventions
+
+- **Firefox privileged modules:** `.sys.mjs` ESM via `ChromeUtils.importESModule` /
+  `defineESModuleGetters` with full `chrome://` or `resource://` specifiers. Never bare paths.
+- **Window-context legacy JS:** plain `.js` with `'use strict';` loaded via
+  `Services.scriptloader.loadSubScript`. No `innerHTML` in the updater tab (XML-parsed XHTML; toggle
+  via `hidden`).
+- **C:** clang-format LLVM base; UTF-8 paths with wide/UTF-16 conversion on Windows;
+  `installer_log()` logging; vendored miniz read-only (`-DMINIZ_NO_DEFLATE_APIS`).
+- **JS formatting/lint** is enforced by prettier + eslint (configs in `config/`) — run
+  `pnpm format:fix` / `pnpm lint` before finishing.
+- **Error handling:** fail-fast with clear messages; elevation failures distinguish cancel (exit 2);
+  network failures surface a banner in the UI, not a silent partial install.
+- **Text files are LF**; a local working-tree copy can linger as CRLF, so when a tool parses a
+  tracked text file, normalize `\r\n` → `\n` at read (`docs/DEVELOPING.md` → Continuous
+  integration).
