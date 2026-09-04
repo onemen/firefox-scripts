@@ -1,10 +1,16 @@
 import js from '@eslint/js';
 import markdown from '@eslint/markdown';
 import eslintConfigPrettier from 'eslint-config-prettier';
-import mozilla from 'eslint-plugin-mozilla';
 import security from 'eslint-plugin-security';
 import {defineConfig} from 'eslint/config';
 import globals from 'globals';
+
+// Deep-import only the two environments this repo uses instead of loading the
+// whole plugin: `eslint-plugin-mozilla`'s index eagerly imports all 58 rules,
+// none of which are enabled here. No "exports" map in the package, so deep
+// imports are supported (they are small, self-contained modules).
+import mozillaBrowserWindow from 'eslint-plugin-mozilla/lib/environments/browser-window.mjs';
+import mozillaSpecific from 'eslint-plugin-mozilla/lib/environments/specific.mjs';
 
 // Shared JS language + rule set: browser/Firefox-script globals and the repo's
 // core lint rules.  Applied to real .js files AND to JS fenced code blocks in
@@ -17,8 +23,8 @@ const jsBase = {
     globals: {
       ...globals.browser,
       ...globals.es2024,
-      ...mozilla.environments['browser-window'].globals,
-      ...mozilla.environments.specific.globals,
+      ...mozillaBrowserWindow.globals,
+      ...mozillaSpecific.globals,
       // firefox scripts globals
       BOOTSTRAP_REASONS: 'readonly',
       Blocklist: 'readonly',
