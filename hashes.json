@@ -1,6 +1,6 @@
 {
   "utils": {
-    "hash": "7b08eafaabc79809321cd218e4259d47688a343d996a234c583da9f02c29a995",
+    "hash": "bd18b4f2410227b85a25b8485c466c95e30381c60dc166279b4768db5461e275",
     "files": [
       "BootstrapLoader.js",
       "chrome.manifest",
@@ -11,7 +11,7 @@
       "userChrome.js",
       "xPref.sys.mjs"
     ],
-    "date": "2026-08-23"
+    "date": "2026-09-04"
   },
   "fx-folder": {
     "hash": "98bda80b0c4036cb4ee849fdd1844aa0e8b0cd39f930ae4ae0d593b53d69fe5f",
@@ -19,10 +19,10 @@
       "config.js",
       "defaults/pref/config-prefs.js"
     ],
-    "date": "2026-08-23"
+    "date": "2026-09-04"
   },
   "updater-ui": {
-    "hash": "7f424331ef442c4d7466e73efa20b5a301f5b0d728bacf4388a204edde53cd87",
+    "hash": "ac4a27593aa5f8b87585d251e299d29b1c6bc4589664ae651911d556a77a8b10",
     "files": [
       "logos/favicon.svg",
       "logos/firefox.png",
@@ -35,11 +35,11 @@
       "updater.html",
       "updater.js"
     ],
-    "date": "2026-08-23"
+    "date": "2026-09-04"
   },
   "installer": {
-    "hash": "5d415e049a5940dde1f2fd04e15f808195b5a5a169541c36f9e14e0570855c74",
-    "date": "2026-08-22"
+    "hash": "a8edea856467cd0348d195226f61064b9fdaf097380c1540ca28b54f0539161e",
+    "date": "2026-09-04"
   },
   "helper": {
     "hash": "a44eacb17d27ebe098e2546f555f95fa3dd43526d48362b8127e90d50fba3b55",
