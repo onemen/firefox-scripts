@@ -1796,13 +1796,19 @@ static void set_resume_session_once(const char *profile) {
         }
     } else {
         long blen = (long)strlen(buf);
-        long need = blen + 2 + (long)strlen(pref_line) + 1;
+        /* Decide the separator from the source buffer instead of reading back
+         * from new_buf after the memcpy: CI's gcc (13.x) could not relate the
+         * memcpy-written extent to the following new_buf[pos - 1] read and
+         * reported a heap over-read; buf[blen - 1] is the in-tree pattern the
+         * analyzer already proves (cf. detect_browser.c line trimming). */
+        int needs_nl = (blen == 0 || buf[blen - 1] != '\n');
+        long need = blen + (needs_nl ? 1 : 0) + (long)strlen(pref_line) + 1;
         char *new_buf = (char *)malloc((size_t)need);
         if (new_buf) {
             long pos = 0;
             memcpy(new_buf, buf, (size_t)blen);
             pos = blen;
-            if (pos == 0 || new_buf[pos - 1] != '\n') new_buf[pos++] = '\n';
+            if (needs_nl) new_buf[pos++] = '\n';
             memcpy(new_buf + pos, pref_line, strlen(pref_line));
             pos += (long)strlen(pref_line);
             new_buf[pos++] = '\n';
