@@ -1,36 +1,83 @@
 #!/usr/bin/env node
 
 /**
- * Filter gcc -fanalyzer output for real analyzer-class findings.
+ * gcc -fanalyzer over the installer sources — parallel runner + filter.
  *
- * `make analyze` pipes the compiler's stderr here. GCC emits a lot of harmless
- * -Wextra noise (missing initializers, unused parameters, etc.) on every build;
- * this script keeps only the diagnostics that indicate actual memory-safety/UB
- * classes and exits 1 if any are present:
+ * `make analyze` (part of `pnpm lint`) runs one gcc per source file in parallel
+ * here instead of piping a single serial gcc through stdin. The per-file stderr
+ * is filtered for analyzer-class diagnostics; everything else (the usual
+ * -Wextra noise: missing initializers, unused parameters, …) is dropped. Kept
+ * classes:
  *
  * use-after-free / use-after-return / double-free / leak / NULL deref /
  * overflow / uninitialized use / buffer over-read or over-write
  *
- * Usage (from installer/): make analyze Exit code: 0 when no analyzer-class
- * issues, 1 when there are.
+ * Exit codes: 0 when no analyzer-class findings and every gcc exited 0; 1 on
+ * analyzer findings or a gcc hard error (the old `gcc | node` pipe lost hard
+ * errors and reported a false green); 2 when gcc cannot be run at all.
  */
 
-import {createInterface} from 'node:readline';
+import {spawn} from 'node:child_process';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const INSTALLER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'installer');
+const SRC_DIR = 'src';
+
+// Mirrors the file list the Makefile analyzed before this script took over
+// the orchestration. Vendored miniz is excluded (read-only third-party code).
+const SOURCES = [
+  'main.c',
+  'detect_browser.c',
+  'http_server.c',
+  'file_utils.c',
+  'admin_copy.c',
+  'self_update.c',
+];
+
+const BASE_ARGS = [
+  '-fanalyzer',
+  '-Wall',
+  '-Wextra',
+  `-I${SRC_DIR}`,
+  '-DMINIZ_NO_DEFLATE_APIS',
+  '-DMINIZ_NO_ZLIB_APIS',
+  '-fsyntax-only',
+];
 
 const ANALYZER_RE =
   /(use-after-free|use-after-return|double-free|leak of|NULL dereference|'free' of|heap-use-after|over-read|over-write|buffer overflow|uninitialized|uninitialised|warning: .*too small|allocation size)/i;
 
-async function main() {
-  const rl = createInterface({input: process.stdin});
+/** Spawn one gcc; resolve (never reject) with {file, code, output}. */
+function runGcc(file) {
+  return new Promise(resolve => {
+    const child = spawn('gcc', [...BASE_ARGS, path.join(SRC_DIR, file)], {
+      cwd: INSTALLER_DIR,
+    });
+    let output = '';
+    child.stderr.on('data', chunk => {
+      output += chunk;
+    });
+    child.on('error', err => {
+      resolve({file, code: null, output: String(err)});
+    });
+    child.on('close', code => {
+      resolve({file, code, output});
+    });
+  });
+}
+
+/** Keep only blank-line-separated diagnostic blocks that match ANALYZER_RE. */
+function analyzerFindings(output) {
   const findings = [];
   let current = [];
   const flush = () => {
-    if (current.length && current.some(l => ANALYZER_RE.test(l))) {
+    if (current.length && current.some(line => ANALYZER_RE.test(line))) {
       findings.push(current.join('\n'));
     }
     current = [];
   };
-  for await (const line of rl) {
+  for (const line of output.split(/\r?\n/)) {
     if (/^\s*$/.test(line)) {
       flush();
       continue;
@@ -38,15 +85,45 @@ async function main() {
     current.push(line);
   }
   flush();
+  return findings;
+}
 
-  if (findings.length) {
-    console.error(`✗ gcc -fanalyzer found ${findings.length} potential issue(s):\n`);
-    for (const f of findings) {
-      console.error(f + '\n');
+async function main() {
+  const results = await Promise.all(SOURCES.map(runGcc));
+
+  const unrunnable = results.find(r => r.code === null);
+  if (unrunnable) {
+    console.error('analyze-c failed: gcc could not be run.');
+    console.error(unrunnable.output);
+    process.exit(2);
+  }
+
+  let total = 0;
+  for (const {file, code, output} of results) {
+    if (code !== 0) {
+      // Hard compiler error (syntax error, bad flag, …) — always a failure,
+      // analyzer findings or not.
+      console.error(`✗ gcc failed on ${file} (exit ${code}):`);
+      console.error(output || '(no output)');
+      process.exit(1);
     }
+    const findings = analyzerFindings(output);
+    if (findings.length) {
+      if (total === 0) {
+        console.error('✗ gcc -fanalyzer found potential issue(s):\n');
+      }
+      for (const f of findings) {
+        console.error(`[${file}]\n${f}\n`);
+      }
+      total += findings.length;
+    }
+  }
+
+  if (total) {
+    console.error(`\n${total} analyzer finding(s) across ${SOURCES.length} files.`);
     process.exit(1);
   }
-  console.log('✓ gcc -fanalyzer: no memory-safety/UB findings');
+  console.log(`✓ gcc -fanalyzer: no memory-safety/UB findings (${SOURCES.length} files, parallel)`);
 }
 
 main().catch(err => {

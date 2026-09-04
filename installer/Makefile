@@ -139,14 +139,15 @@ dist_win: resources config
 
 # Static analysis: gcc -fanalyzer over the installer sources (excludes the
 # vendored miniz).  Run with `make analyze` from installer/ — part of
-# `pnpm lint` (see tools/analyze-c.mjs).  Exits 0 only when no analyzer-class
-# diagnostics (use-after-free, leaks, NULL deref, overflow, uninit) are found.
+# `pnpm lint` (see tools/analyze-c.mjs).  The Node script orchestrates one gcc
+# per source file IN PARALLEL (the serial pipe was the slowest leg of
+# `pnpm lint`), filters for analyzer-class diagnostics (use-after-free,
+# leaks, NULL deref, overflow, uninit) and propagates gcc hard errors — the
+# old single-pipe form could lose them.  Exits 0 only when every gcc run
+# succeeded and no analyzer-class diagnostics are found.
 .PHONY: analyze
 analyze: resources config
-	$(CC) -fanalyzer -Wall -Wextra -I$(SRC_DIR) $(MINIZ_TRIM) -fsyntax-only \
-		$(SRC_DIR)/main.c $(SRC_DIR)/detect_browser.c $(SRC_DIR)/http_server.c \
-		$(SRC_DIR)/file_utils.c $(SRC_DIR)/admin_copy.c $(SRC_DIR)/self_update.c \
-		2>&1 | node ../tools/analyze-c.mjs
+	node ../tools/analyze-c.mjs
 
 # Linux build
 # No external libraries: zip extraction uses the vendored miniz, and all
