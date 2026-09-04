@@ -41,18 +41,24 @@ if (current === HOOKS_DIR_REL) {
 
 if (current) {
   const abs = path.isAbsolute(current) ? current : path.join(ROOT, current);
-  const stale = !fs.existsSync(abs);
-  console.log(
-    `! core.hooksPath is '${current}' (${stale ? 'stale — directory does not exist' : 'in use'})`
-  );
-  if (!stale) {
-    console.error(
-      `Refusing to overwrite a live hooksPath. Inspect it, then unset manually:\n` +
-        `  git config --unset core.hooksPath`
+  if (path.resolve(abs) === HOOKS_DIR) {
+    // Same directory written in a different form (./githooks, trailing slash,
+    // absolute path) — equivalent configuration, normalize to the bare form.
+    console.log(`! core.hooksPath is '${current}' — same directory; normalizing.`);
+  } else {
+    const stale = !fs.existsSync(abs);
+    console.log(
+      `! core.hooksPath is '${current}' (${stale ? 'stale — directory does not exist' : 'in use'})`
     );
-    process.exit(1);
+    if (!stale) {
+      console.error(
+        `Refusing to overwrite a live hooksPath. Inspect it, then unset manually:\n` +
+          `  git config --unset core.hooksPath`
+      );
+      process.exit(1);
+    }
+    console.log(`  replacing stale value with '${HOOKS_DIR_REL}'.`);
   }
-  console.log(`  replacing stale value with '${HOOKS_DIR_REL}'.`);
 }
 
 git('config', 'core.hooksPath', HOOKS_DIR_REL);
