@@ -99,6 +99,7 @@ import {
 } from './uploadUtilsZip.mjs';
 import {REF_NAME, REF_SHA} from './publishMode.mjs';
 import {assertCleanWorktree} from './gitUtils.mjs';
+import {linkNodeModules, unlinkNodeModules} from './refNodeModules.mjs';
 import {cleanGenerated} from './syncGeneratedFiles.mjs';
 
 const LOCAL = process.argv.includes('--local');
@@ -649,6 +650,19 @@ function runRefBuild(ref) {
     throw new Error(`git worktree add failed (exit ${add.status})`);
   }
 
+  // A fresh worktree has no node_modules (gitignored), but the ref's scripts
+  // re-executed below still need the dependency stack. Link the current
+  // checkout's install into the worktree instead of running a package manager
+  // there — same resolution, zero duplication, nothing installed anew. If this
+  // checkout has no install either, fail with a fix-it message (the ref build
+  // would crash on its first npm import otherwise).
+  const nmLink = linkNodeModules(REPO_ROOT, worktree);
+  if (!nmLink) {
+    throw new Error(
+      `No node_modules in this checkout — run "pnpm install" here first, then retry --ref=${ref}.`
+    );
+  }
+
   // Re-exec the worktree's own copy of this tool, so an old ref is built by
   // its own compatible publish scripts.  `--ref` is stripped (already applied);
   // the ref identity is passed via env for the snapshot/dev-branch naming.
@@ -667,6 +681,9 @@ function runRefBuild(ref) {
     });
     return res.status ?? 1;
   } finally {
+    // Unlink before removing the worktree so the deletion can never traverse
+    // into the real install.
+    unlinkNodeModules(worktree);
     const remove = spawnSync('git', ['worktree', 'remove', '--force', worktree], {
       cwd: REPO_ROOT,
       stdio: 'inherit',
