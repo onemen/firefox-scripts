@@ -45,6 +45,7 @@ export class FirefoxRdpClient {
       throw new TypeError("Firefox RDP localPort must be an integer from 0 to 65535");
     }
     Object.assign(this, { host, port, localPort, timeoutMs });
+    this.tcpAccepted = false;
     this.packets = [];
     this.waiters = [];
     this.terminalError = null;
@@ -88,6 +89,7 @@ export class FirefoxRdpClient {
     const options = { host: this.host, port: this.port, localAddress: "127.0.0.1" };
     if (this.localPort !== undefined) options.localPort = this.localPort;
     this.socket = net.createConnection(options);
+    this.socketClosed = false;
     this.socket.setKeepAlive(true, 10000);
     const decode = createPacketDecoder(packet => this.deliver(packet));
     this.socket.on("data", chunk => {
@@ -99,11 +101,23 @@ export class FirefoxRdpClient {
       }
     });
     this.socket.on("error", error => this.terminate(error));
-    this.socket.on("close", () => this.terminate(new Error("RDP socket closed")));
+    this.socket.on("close", () => {
+      this.socketClosed = true;
+      this.terminate(new Error("RDP socket closed"));
+    });
     try {
       await new Promise((resolve, reject) => {
-        this.socket.once("connect", resolve);
-        this.socket.once("error", reject);
+        const timer = setTimeout(() => reject(
+          new Error(`TCP connection timed out after ${this.timeoutMs} ms`)), this.timeoutMs);
+        this.socket.once("connect", () => {
+          clearTimeout(timer);
+          this.tcpAccepted = true;
+          resolve();
+        });
+        this.socket.once("error", error => {
+          clearTimeout(timer);
+          reject(error);
+        });
       });
       this.hello = await this.next(packet => packet.from === "root" && packet.applicationType,
         this.timeoutMs, "root greeting");
@@ -119,9 +133,12 @@ export class FirefoxRdpClient {
       if (response.error) throw new Error(`getTarget failed: ${response.message || response.error}`);
       this.consoleActor = response.process.consoleActor;
       if (!this.consoleActor) throw new Error("Firefox RDP target did not expose a console actor");
+      await this.evaluate("void 0");
       return this.hello;
     } catch (error) {
+      this.terminate(error);
       this.socket.destroy();
+      await this.close();
       throw error;
     }
   }
@@ -199,11 +216,12 @@ export class FirefoxRdpClient {
   }
 
   async close() {
-    if (!this.socket || this.socket.destroyed) return;
+    if (!this.socket || this.socketClosed) return;
     const closed = new Promise(resolve => this.socket.once("close", resolve));
-    this.socket.end();
+    if (!this.socket.destroyed) this.socket.end();
     const timer = setTimeout(() => this.socket.destroy(), 2000);
     await closed;
     clearTimeout(timer);
+    this.socketClosed = true;
   }
 }

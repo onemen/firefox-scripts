@@ -4,7 +4,7 @@ The Puppeteer-BiDi E2E harness (ADR 0015) drives web content and the updater tab
 reach **browser-chrome**: a `userChrome.js`, `BootstrapLoader.js` or `config.js` failure is
 invisible there. For that we use the **debugging-firefox** agent skill (MIT; upstream
 [117649/debugging-firefox](https://github.com/117649/debugging-firefox)), vendored at
-`.agent/skills/debugging-firefox/` — a dependency-free Node client for Firefox's classic DevTools
+`.agents/skills/debugging-firefox/` — a dependency-free Node client for Firefox's classic DevTools
 RDP (the same hook the Browser Toolbox uses), which evaluates privileged parent-process code and can
 install/reload XPIs.
 
@@ -18,27 +18,33 @@ upstream instead of the vendored copy:
 gh skill install 117649/debugging-firefox debugging-firefox
 ```
 
-Validating: the offline suite is `node .agent/skills/debugging-firefox/scripts/firefox-rdp.test.mjs`
-(21 tests, mock server only — no Firefox needed). The vendored copy is a dev tool, not shipped code;
-re-sync it deliberately when upstream moves.
+Validating: the offline suite is
+`node .agents/skills/debugging-firefox/scripts/firefox-rdp.test.mjs` (25 tests, mock server only —
+no Firefox needed). The vendored copy is a dev tool, not shipped code; re-sync it deliberately when
+upstream moves.
 
 ## Quick start — disposable instance
 
-Launch a throwaway Firefox with the RDP listener on a temp profile (nothing shared, no user data):
+Launch a throwaway Firefox on a temp profile (nothing shared, no user data), then request the RDP
+listener separately — the refreshed skill forbids cold-launching with `--start-debugger-server` and
+does not authorize `--headless`:
 
 ```bash
 PROF=$(mktemp -d)
 printf '%s\n' \
   'user_pref("devtools.debugger.remote-enabled", true);' \
   'user_pref("devtools.debugger.prompt-connection", false);' \
+  'user_pref("devtools.chrome.enabled", true);' \
   > "$PROF/user.js"
-firefox --profile "$PROF" --no-remote --start-debugger-server 6080 --headless &
+firefox --profile "$PROF" --no-remote &
+# once startup has settled, forward the flag to the running instance:
+firefox --profile "$PROF" --start-debugger-server 6080
 ```
 
-`--headless` is fine for read-only probing. Connect, run the capability gate, evaluate, close:
+Connect, run the capability gate, evaluate, close:
 
 ```js
-import {FirefoxRdpClient} from './.agent/skills/debugging-firefox/scripts/firefox-rdp.mjs';
+import {FirefoxRdpClient} from './.agents/skills/debugging-firefox/scripts/firefox-rdp.mjs';
 
 const client = new FirefoxRdpClient({port: 6080, timeoutMs: 20_000});
 await client.connect(); // gate: greeting → listProcesses → getTarget → console actor
@@ -69,7 +75,7 @@ await client.close();
 - Never attach to or mutate a pre-existing Firefox/profile; one mutation owner per instance; restore
   everything you changed.
 - Before an XPI install or any mutation, read
-  `.agent/skills/debugging-firefox/references/live-testing.md` (evidence ladder, restart rules).
+  `.agents/skills/debugging-firefox/references/live-testing.md` (evidence ladder, restart rules).
 
 ## Worked example
 

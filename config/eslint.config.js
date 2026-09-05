@@ -76,9 +76,15 @@ export default defineConfig([
     name: 'global-ignore',
     ignores: [
       '.github',
-      // Vendored agent skill — upstream formatting/rule style (see
-      // docs/debugging-with-rdp.md), kept out of the repo's lint+format gates.
-      '.agent',
+      // Third-party agent skills — upstream style, never linted (ADR 0022: gh-installed,
+      // pristine; classification via metadata.github-repo in SKILL.md). Patterns need the
+      // **/ prefix so they match regardless of the config's base directory. When the
+      // watchdog installs a new third-party skill, add it here and to .prettierignore.
+      '**/.agents/skills/cavecrew',
+      '**/.agents/skills/code-review',
+      '**/.agents/skills/debugging-firefox',
+      '**/.agents/skills/grill-me',
+      '**/.agents/skills/lavish',
       // Build outputs and generated artifacts (gitignored at the repo level).
       'dist/',
       'lib/',

@@ -13,5 +13,11 @@ pnpm-lock.yaml
 dist
 # analyze-c.mjs result cache (hash-named JSON files, gitignored like .eslintcache)
 .analyzer-cache
-# vendored agent skill (upstream formatting; see docs/debugging-with-rdp.md)
-.agent
+# third-party agent skills — kept byte-identical to upstream (ADR 0022: gh-installed,
+# pristine; classification via metadata.github-repo in SKILL.md). Patterns need the **/
+# prefix: this file lives in config/, so slashful patterns would anchor there.
+**/.agents/skills/cavecrew
+**/.agents/skills/code-review
+**/.agents/skills/debugging-firefox
+**/.agents/skills/grill-me
+**/.agents/skills/lavish

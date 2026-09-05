@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import net from "node:net";
 import test from "node:test";
 
@@ -133,6 +133,81 @@ test("validates an optional caller-selected local port", () => {
   }
 });
 
+test("distinguishes refusal before TCP acceptance", async () => {
+  const server = net.createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = server.address().port;
+  await closeServer(server);
+  const client = new FirefoxRdpClient({ port, timeoutMs: 250 });
+
+  try {
+    await assert.rejects(client.connect(), /ECONNREFUSED/);
+    assert.equal(client.tcpAccepted, false);
+  } finally {
+    await client.close();
+  }
+});
+
+test("bounds TCP establishment and waits for socket closure", async () => {
+  const originalCreateConnection = net.createConnection;
+  const socket = new EventEmitter();
+  socket.destroyed = false;
+  socket.setKeepAlive = () => {};
+  socket.destroy = () => {
+    socket.destroyed = true;
+    setImmediate(() => socket.emit("close"));
+  };
+  net.createConnection = () => socket;
+  const client = new FirefoxRdpClient({ port: 6000, timeoutMs: 20 });
+
+  try {
+    await assert.rejects(Promise.race([
+      client.connect(),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error("test guard expired")), 250)),
+    ]), /TCP connection timed out after 20 ms/);
+    assert.equal(client.tcpAccepted, false);
+    assert.equal(socket.destroyed, true);
+  } finally {
+    net.createConnection = originalCreateConnection;
+    if (!socket.destroyed) socket.destroy();
+    await client.close();
+  }
+});
+
+test("close waits when socket destruction started before close", async () => {
+  const client = new FirefoxRdpClient({ port: 6000 });
+  const socket = new EventEmitter();
+  socket.destroyed = true;
+  client.socket = socket;
+  let resolved = false;
+  const closing = client.close().then(() => { resolved = true; });
+
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(resolved, false);
+  socket.emit("close");
+  await closing;
+  assert.equal(resolved, true);
+});
+
+test("records TCP acceptance before a missing root greeting", async () => {
+  let connections = 0;
+  const server = net.createServer(() => connections++);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const client = new FirefoxRdpClient({ port: server.address().port, timeoutMs: 20 });
+
+  try {
+    await assert.rejects(client.connect(), /root greeting timed out/);
+    assert.equal(client.tcpAccepted, true);
+    assert.equal(connections, 1);
+  } finally {
+    await client.close();
+    await closeServer(server);
+  }
+});
+
 for (const capability of ["listProcesses", "getTarget", "evaluateJSAsync"]) {
   for (const sendError of [true, false]) {
     test(`${capability} ${sendError ? "protocol errors" : "timeouts"} name the capability`, async () => {
@@ -141,9 +216,7 @@ for (const capability of ["listProcesses", "getTarget", "evaluateJSAsync"]) {
 
       try {
         await assert.rejects(
-          capability === "evaluateJSAsync"
-            ? client.connect().then(() => client.evaluate("40 + 2"))
-            : client.connect(),
+          client.connect(),
           new RegExp(`${capability} ${sendError ? "failed: unsupported request" : "timed out"}`),
         );
       } finally {
@@ -210,7 +283,7 @@ test("uses one socket and serializes evaluations with competing result IDs", asy
   await client.close();
 
   assert.equal(connections, 1);
-  assert.equal(evaluation, 2);
+  assert.equal(evaluation, 3);
   assert.equal(maximumActiveEvaluations, 1);
   server.close();
   await once(server, "close");
@@ -286,7 +359,13 @@ test("reuses one socket for JSON evaluation and bounded predicate polling", asyn
 
 test("packet timeout invalidates the client before late evaluation replies", async () => {
   let evaluations = 0;
-  const { server } = await createEvaluationServer(({ send, socket }) => {
+  const { server } = await createEvaluationServer(({ packet, send, socket }) => {
+    if (packet.text === "void 0") {
+      send({ from: "console1", resultID: "preflight" });
+      send({ from: "console1", type: "evaluationResult", resultID: "preflight",
+        hasException: false, result: 0 });
+      return;
+    }
     const resultID = `evaluation${++evaluations}`;
     setTimeout(() => {
       if (socket.destroyed) return;
@@ -295,13 +374,13 @@ test("packet timeout invalidates the client before late evaluation replies", asy
         hasException: false, result: evaluations });
     }, 60);
   });
-  const client = new FirefoxRdpClient({ port: server.address().port, timeoutMs: 20 });
+  const client = new FirefoxRdpClient({ port: server.address().port, timeoutMs: 250 });
 
   try {
     await client.connect();
-    await assert.rejects(client.evaluate("first"),
+    await assert.rejects(client.evaluate("first", 20),
       /evaluateJSAsync timed out after 20 ms/);
-    await assert.rejects(client.evaluate("second"),
+    await assert.rejects(client.evaluate("second", 20),
       /evaluateJSAsync timed out after 20 ms/);
     assert.equal(evaluations, 1);
     assert.equal(client.socket.destroyed, true);
@@ -340,7 +419,7 @@ test("poll timeout includes time queued behind an earlier evaluation", async () 
     assert.match(results[0].reason.message, /queued readiness timed out after 20 ms/);
     assert.equal(results[1].status, "rejected");
     assert.match(results[1].reason.message, /queued readiness timed out after 20 ms/);
-    assert.equal(evaluations, 1);
+    assert.equal(evaluations, 2);
     assert.equal(client.socket.destroyed, true);
   } finally {
     await client.close();
