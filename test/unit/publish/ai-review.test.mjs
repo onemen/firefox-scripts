@@ -308,56 +308,6 @@ test('reviewFiles reviews files concurrently by default', async () => {
   assert.equal(result.summary.length, 3);
 });
 
-test('treats invalid JSON from the model as a per-file skip', async () => {
-  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
-  const fileDiffs = new Map([['a.js', 'diff a']]);
-  const requestImpl = async () => ({
-    kind: 'success',
-    body: {choices: [{message: {content: 'not json at all'}}]},
-  });
-  const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
-  assert.equal(result.rdjson.diagnostics.length, 0);
-  assert.match(result.summary[0], /JSON reply/);
-});
-
-test('treats a bare null reply as a per-file skip (JSON.parse("null") succeeds)', async () => {
-  // Observed live: a provider returned content "null" once; JSON.parse turned
-  // it into null and the summary line crashed on parsed.summary, killing the
-  // whole run. Must fail soft like invalid JSON instead.
-  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
-  const fileDiffs = new Map([['a.js', 'diff a']]);
-  const requestImpl = async () => ({
-    kind: 'success',
-    body: {choices: [{message: {content: 'null'}}]},
-  });
-  const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
-  assert.equal(result.rdjson.diagnostics.length, 0);
-  assert.match(result.summary[0], /JSON reply/);
-});
-
-test('treats non-object JSON replies (numbers, strings) as per-file skips', async () => {
-  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
-  const fileDiffs = new Map([
-    ['a.js', 'diff a'],
-    ['b.js', 'diff b'],
-  ]);
-  const bodies = ['42', '"just a string"'];
-  const requestImpl = async () => ({
-    kind: 'success',
-    body: {choices: [{message: {content: bodies.shift()}}]},
-  });
-  const result = await reviewFiles({files: ['a.js', 'b.js'], fileDiffs, providers, requestImpl});
-  assert.equal(result.rdjson.diagnostics.length, 0);
-  assert.equal(result.summary.length, 2);
-  assert.match(result.summary[0], /JSON reply/);
-  assert.match(result.summary[1], /JSON reply/);
-});
-
-test('treats missing message content as a per-file skip, not a crash', async () => {
-  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
-  const fileDiffs = new Map([['a.js', 'diff a']]);
-  const requestImpl = async () => ({kind: 'success', body: {choices: [{message: {}}]}});
-  const result = await reviewFiles({files: ['a.js'], fileDiffs, providers, requestImpl});
-  assert.equal(result.rdjson.diagnostics.length, 0);
-  assert.match(result.summary[0], /JSON reply/);
-});
+// Reply-shape classification (invalid JSON, bare null, non-object payloads,
+// missing content) lives in ai-review-reply-corpus.test.mjs — one table-driven
+// fixture corpus that runs every shape through the real reviewFiles.

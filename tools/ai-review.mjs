@@ -442,11 +442,11 @@ export async function reviewFiles({
       );
       continue;
     }
-    if (typeof parsed !== 'object' || parsed === null) {
-      // JSON.parse('null') (and '42', '"text"', …) succeeds but yields no
-      // object to read — observed live when a provider returned a bare null,
-      // which then crashed the whole run at parsed.summary. Fail soft: same
-      // per-file skip as invalid JSON.
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      // JSON.parse('null') (and '42', '"text"', '[]', …) parses but yields no
+      // usable review object — observed live when a provider returned a bare
+      // null, which then crashed the whole run at parsed.summary. Fail soft:
+      // same per-file skip as invalid JSON.
       summaries.push(
         `### \`${r.file}\` — ${r.providerName}\nModel returned an invalid or unusable JSON reply; findings skipped.`
       );
