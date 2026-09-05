@@ -208,16 +208,19 @@ async function notifyMetaIssue(record) {
       console.log('meta issue not found yet — validation comment deferred to the watchdog');
       return;
     }
+    // The comment endpoints are scoped under /repos/{owner}/{repo}/issues/{n}
+    // (issue comments, not repository comments) — matching the watchdog's own
+    // GitHub calls in check-browser-downloads.mjs.
     const comments = await ghJson(
       token,
-      `/repos/${meta.number}/comments?per_page=5&sort=created&direction=desc`
+      `/repos/${repo}/issues/${meta.number}/comments?per_page=5&sort=created&direction=desc`
     );
     const last = comments.find(c => c.body?.startsWith('Validated by E2E:'));
     if (last && last.body.includes(versions)) {
       console.log(`meta issue already shows ${versions} — no comment`);
       return;
     }
-    await ghJson(token, `/repos/${meta.number}/comments`, {
+    await ghJson(token, `/repos/${repo}/issues/${meta.number}/comments`, {
       method: 'POST',
       body: {body},
     });
