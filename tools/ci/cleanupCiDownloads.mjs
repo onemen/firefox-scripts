@@ -5,11 +5,12 @@
  * `ci-downloads` manual-escape release (ADR 0021).
  *
  * Called by the e2e.yml `cleanup-ci-downloads` job after a single-browser
- * manual-escape run. Deletes the asset the run consumed (matched by the
- * resolver's expected asset name for inputs.browser + inputs.version — the
- * version falls back to the newest asset's parsed version when the dispatch
- * pinned none), then deletes the release + tag when no assets remain — the
- * steady state is "the ci-downloads release does not exist".
+ * manual-escape run. Deletes the asset the run consumed — matched by the
+ * resolver's exact expected asset name for inputs.browser + inputs.version
+ * (`pnpm ci:download` always dispatches with the version pinned, so the name is
+ * deterministic; no version, no deletion — we never guess), then deletes the
+ * release + tag when no assets remain — the steady state is "the ci-downloads
+ * release does not exist".
  *
  * Never deletes an asset it cannot attribute to the dispatched browser, and
  * never touches any other release.
@@ -17,7 +18,6 @@
 
 import {execFileSync} from 'node:child_process';
 import {ciDownloadsAssetName} from '../../test/e2e/shared/browserResolver.mjs';
-import {inferBrowserVersion} from './ciDownload.mjs';
 
 function gh(args) {
   return execFileSync('gh', args, {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']});
@@ -40,16 +40,12 @@ async function main() {
   }
 
   const assets = release.assets || [];
-  // Match by the resolver's expected asset name; without a pinned version,
-  // fall back to the newest asset that parses as this browser's installer.
-  let target = version ? assets.find(a => a.name === ciDownloadsAssetName(browser, version)) : null;
-  if (!target && assets.length > 0) {
-    const candidates = assets
-      .map(a => ({...a, parsed: inferBrowserVersion(a.name)}))
-      .filter(a => a.parsed?.browser === browser)
-      .sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
-    target = candidates[0] ?? null;
-  }
+  // Match only by the resolver's exact expected asset name (browser + pinned
+  // version — ciDownload always dispatches with one). Guessing ("newest
+  // matching asset") could delete an asset the run never consumed, e.g. when
+  // the resolver answered from an official mirror before reaching ci-downloads.
+  const target =
+    version ? (assets.find(a => a.name === ciDownloadsAssetName(browser, version)) ?? null) : null;
 
   if (target) {
     console.log(`deleting consumed asset: ${target.name}`);

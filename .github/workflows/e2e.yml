@@ -35,12 +35,11 @@ on:
   workflow_dispatch:
     inputs:
       browser:
-        description:
-          'Single browser to test (librewolf|floorp|zen|waterfox); empty = default matrix'
+        description: 'Single browser to test (librewolf|floorp|zen|waterfox); all = default matrix'
         type: choice
-        default: ''
+        default: 'all'
         options:
-          - ''
+          - all
           - librewolf
           - floorp
           - zen
@@ -51,10 +50,17 @@ on:
         default: ''
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  # Manual escapes get their own group: a routine push must never cancel a
+  # deliberate single-browser run (the vendor APIs may be down — that's the
+  # whole point of the escape).
+  group:
+    e2e-${{ github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser !=
+    '' && format('escape-{0}', inputs.browser) || github.ref }}
   # A single-browser manual escape must not be cancelled by a routine push:
   # it only ever runs from workflow_dispatch, where runs are rare and deliberate.
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || inputs.browser == '' }}
+  cancel-in-progress:
+    ${{ github.event_name != 'workflow_dispatch' || inputs.browser == '' || inputs.browser == 'all'
+    }}
 
 jobs:
   # ── Changed-paths filter ──────────────────────────────────────────────────
@@ -458,7 +464,7 @@ jobs:
     needs: [changes, snapshot]
     if:
       needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
-      github.event_name == 'workflow_dispatch' && inputs.browser != ''
+      github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -467,8 +473,8 @@ jobs:
       # (or any non-dispatch event, where `inputs` is empty) = the full matrix.
       matrix:
         browser:
-          ${{ fromJSON(inputs.browser != '' && format('["{0}"]', inputs.browser) || '["librewolf",
-          "floorp", "zen", "waterfox"]') }}
+          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
+          inputs.browser) || '["librewolf", "floorp", "zen", "waterfox"]') }}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
       # Manual escape: pin the resolver to the requested version (empty input
@@ -552,7 +558,7 @@ jobs:
             helper:${{ needs.changes.outputs.updater == 'true' }}
             updater:${{ needs.changes.outputs.updater == 'true' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
-            browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != '') }}
+            browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
           # verify.sh splits the value on whitespace, newlines included.
@@ -598,7 +604,7 @@ jobs:
     # ship a firefox/firefox-dev release that no full run ever tested.
     if: >-
       always() && needs.e2e-gate.result == 'success' && github.event_name != 'pull_request' &&
-      !(github.event_name == 'workflow_dispatch' && inputs.browser != '')
+      !(github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser != 'all')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -632,8 +638,8 @@ jobs:
     # warning gate both proceed here); a CANCELLED run skips this job outright
     # (GitHub cancels pending needs-jobs), leaving the installer for the retry.
     if: >-
-      always() && github.event_name == 'workflow_dispatch' && inputs.browser != '' &&
-      needs.e2e-gate.result != 'skipped'
+      always() && github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser
+      != 'all' && needs.e2e-gate.result != 'skipped'
     runs-on: ubuntu-latest
     permissions:
       contents: write # delete the release asset + release + tag

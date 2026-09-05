@@ -188,6 +188,9 @@ const VERSION_CHAINS = {
  *   source in the chain failed
  */
 export async function resolveBrowserVersion(browser, {pin = null} = {}) {
+  // Manual escape: e2e.yml exports BROWSER_PIN_VERSION from the dispatch's
+  // `version` input (empty on ordinary runs — no effect).
+  pin ??= process.env.BROWSER_PIN_VERSION || null;
   if (pin) return {version: pin, source: 'pinned'};
   const chain = VERSION_CHAINS[browser];
   if (!chain) throw new Error(`no version chain for browser '${browser}'`);
@@ -396,17 +399,17 @@ async function downloadFile(url, dest) {
 
 /**
  * Installer sources per browser (win). Each source is tried in order; the first
- * that yields a URL wins. `ci-downloads` sits AFTER the official mirrors (an
- * uploaded current installer only matters when the vendor is down) and BEFORE
- * the cached-previous-installer fallback (upstream, fresher beats stale
- * cache).
+ * that yields a URL wins. `ci-downloads` sits AFTER the official mirrors + the
+ * bsys6 release asset and BEFORE the cached-previous-installer fallback
+ * (upstream, fresher beats stale cache).
  */
 const INSTALLER_CHAINS = {
   librewolf: {
     // ① librewolf.dev Gitea registry (version-embedded URL, current behavior)
     // ② dl.librewolf.net — the official CDN the website links (bsys6 output)
     // ③ the bsys6 release's own asset URL (redirects to ② today, kept for
-    //    zero-cost self-updating redundancy)
+    //    zero-cost self-updating redundancy) — resolved in resolveInstallerUrl
+    //    from the release object the version chain fetched
     // ④ ci-downloads (manual escape)  ⑤ cached previous installer (caller)
     sources: [
       v =>
@@ -493,7 +496,26 @@ export async function resolveInstallerUrl(browser, {version = null} = {}) {
     }
   }
 
-  // ② ci-downloads (manual escape hatch) — no vendor .sha256sum sibling;
+  // ② the bsys6 release's own asset (the release object the version chain
+  // fetched; today it redirects to dl.librewolf.net, kept for zero-cost
+  // self-updating redundancy — if bsys6 re-homes its assets, the chain
+  // follows without a code change).
+  const bsys6Asset = resolved.release?.assets?.find(
+    a =>
+      typeof a?.browser_download_url === 'string' &&
+      a.browser_download_url.endsWith(`/${chain.assetName(v)}`)
+  );
+  if (bsys6Asset && (await urlExists(bsys6Asset.browser_download_url))) {
+    const sha256Url = chain.sha256 ? chain.sha256[0](v) : null;
+    return {
+      url: bsys6Asset.browser_download_url,
+      source: 'codeberg-bsys6-asset',
+      sha256Url,
+      version: v,
+    };
+  }
+
+  // ③ ci-downloads (manual escape hatch) — no vendor .sha256sum sibling;
   // accepted unverified (maintainer trust boundary, plan §8).
   const ciUrl = await findCiDownloadsAsset(chain.assetName(v));
   if (ciUrl) {

@@ -32,6 +32,7 @@
 
 import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {CI_DOWNLOADS_TAG, ciDownloadsAssetName} from '../../test/e2e/shared/browserResolver.mjs';
 
@@ -121,7 +122,8 @@ async function main() {
     try {
       gh(['release', 'delete', CI_DOWNLOADS_TAG, '--yes', '--cleanup-tag']);
       console.log(`✓ ${CI_DOWNLOADS_TAG} release + tag deleted`);
-    } catch {
+    } catch (err) {
+      if (!/Not Found|HTTP 404/i.test(String(err.message))) throw err;
       console.log(`✓ ${CI_DOWNLOADS_TAG} release does not exist — nothing to clean`);
     }
     return;
@@ -159,7 +161,8 @@ async function main() {
   const existing = (() => {
     try {
       return gh(['release', 'view', CI_DOWNLOADS_TAG, '--json', 'assets']);
-    } catch {
+    } catch (err) {
+      if (!/Not Found|HTTP 404/i.test(String(err.message))) throw err;
       return null;
     }
   })();
@@ -182,21 +185,28 @@ async function main() {
     console.log(`${CI_DOWNLOADS_TAG} release exists — uploading with --clobber`);
   }
 
-  // ② upload the asset under the resolver's expected name
-  const tmpAsset = path.join(path.dirname(path.resolve(file)), assetName);
+  // ② upload the asset under the resolver's expected name. A renamed copy is
+  // staged in a fresh temp dir (never next to the user's file — the file may
+  // sit in a shared cache dir such as firefox-updater's .local.downloads/).
   const renamed = path.basename(file) !== assetName;
-  if (renamed) fs.copyFileSync(file, tmpAsset);
+  let tmpAsset = null;
   try {
-    gh([
-      'release',
-      'upload',
-      CI_DOWNLOADS_TAG,
-      renamed ? tmpAsset : path.resolve(file),
-      '--clobber',
-    ]);
-    console.log(`✓ uploaded ${assetName}`);
-  } finally {
-    if (renamed) fs.rmSync(tmpAsset, {force: true});
+    let uploadPath = path.resolve(file);
+    if (renamed) {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-download-'));
+      tmpAsset = path.join(tmpDir, assetName);
+      fs.copyFileSync(file, tmpAsset);
+      uploadPath = tmpAsset;
+    }
+    try {
+      gh(['release', 'upload', CI_DOWNLOADS_TAG, uploadPath, '--clobber']);
+      console.log(`✓ uploaded ${assetName}`);
+    } finally {
+      if (tmpAsset) fs.rmSync(path.dirname(tmpAsset), {recursive: true, force: true});
+    }
+  } catch (err) {
+    err.message = `upload failed: ${err.message}`;
+    throw err;
   }
 
   if (!dispatch) {
@@ -204,16 +214,11 @@ async function main() {
     return;
   }
 
-  // ③ dispatch the single-browser E2E run (CI cleans the asset afterwards)
+  // ③ dispatch the single-browser E2E run (CI cleans the asset afterwards).
+  // Always pass the version: the cleanup job matches the consumed asset by
+  // exact expected name, which only works with the pinned version.
   console.log('dispatching e2e.yml…');
-  gh([
-    'workflow',
-    'run',
-    'e2e.yml',
-    '-f',
-    `browser=${browser}`,
-    ...(versionFlag ? ['-f', `version=${version}`] : []),
-  ]);
+  gh(['workflow', 'run', 'e2e.yml', '-f', `browser=${browser}`, '-f', `version=${version}`]);
   console.log(
     `✓ dispatched: gh run watch --workflow=e2e.yml — the cleanup job deletes ` +
       `${assetName} (and the release when empty) after the leg finishes`

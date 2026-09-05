@@ -382,7 +382,7 @@ const CONTRACTS = [
       'helper': "needs.changes.outputs.updater == 'true'",
       'updater': "needs.changes.outputs.updater == 'true'",
       'browser-matrix':
-        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != ''",
+        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
     },
     applicability: ['snapshot', 'installer', 'helper', 'updater', 'browser-matrix'],
     // Runs after e2e-gate: records the validated browser versions (#4) only

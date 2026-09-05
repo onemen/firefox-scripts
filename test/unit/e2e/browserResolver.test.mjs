@@ -308,6 +308,76 @@ test('resolveInstallerUrl: LibreWolf official mirror first, then ci-downloads', 
   }
 });
 
+test('resolveInstallerUrl: bsys6 release asset before ci-downloads', async () => {
+  resetCiDownloadsProbe();
+  const {restore} = stubFetch([
+    // version chain: bsys6 answers WITH the installer in its assets
+    [
+      'repos/librewolf/bsys6/releases/latest',
+      () =>
+        okJson({
+          tag_name: '155.0-1',
+          assets: [
+            {
+              name: 'other-asset.tar.xz',
+              browser_download_url: 'https://codeberg.org/other.tar.xz',
+            },
+            {
+              name: 'librewolf-155.0-1-windows-x86_64-setup.exe',
+              browser_download_url:
+                'https://codeberg.org/librewolf/bsys6/releases/download/155.0-1/librewolf-155.0-1-windows-x86_64-setup.exe',
+            },
+          ],
+        }),
+    ],
+    // official mirrors: both 404 (HEAD)
+    ['librewolf.dev', () => ({ok: false, status: 404})],
+    ['dl.librewolf.net', () => ({ok: false, status: 404})],
+    // the bsys6 asset URL itself answers (HEAD probe)
+    [/bsys6\/releases\/download/, u => ({ok: true, status: 200, url: u})],
+    // ci-downloads must never be consulted
+    [
+      'releases/tags/ci-downloads',
+      () => {
+        throw new Error('ci-downloads must not be reached when the bsys6 asset answers');
+      },
+    ],
+  ]);
+  try {
+    const resolved = await resolveInstallerUrl('librewolf');
+    assert.match(resolved.url, /bsys6\/releases\/download.*setup\.exe$/);
+    assert.equal(resolved.source, 'codeberg-bsys6-asset');
+    assert.match(resolved.sha256Url, /dl\.librewolf\.net.*\.sha256sum$/);
+  } finally {
+    restore();
+  }
+});
+
+test('resolveBrowserVersion: BROWSER_PIN_VERSION env pins the chain', async () => {
+  const prev = process.env.BROWSER_PIN_VERSION;
+  process.env.BROWSER_PIN_VERSION = '155.0-1';
+  let consulted = false;
+  const {restore} = stubFetch([
+    [
+      'repos/librewolf/bsys6/releases/latest',
+      () => {
+        consulted = true;
+        return httpError(500);
+      },
+    ],
+  ]);
+  try {
+    const resolved = await resolveBrowserVersion('librewolf');
+    assert.equal(resolved.version, '155.0-1');
+    assert.equal(resolved.source, 'pinned');
+    assert.equal(consulted, false, 'a pin must short-circuit the chain entirely');
+  } finally {
+    if (prev === undefined) delete process.env.BROWSER_PIN_VERSION;
+    else process.env.BROWSER_PIN_VERSION = prev;
+    restore();
+  }
+});
+
 test('resolveInstallerUrl: official mirror wins and carries the sha256 sum URL', async () => {
   resetCiDownloadsProbe();
   const {restore} = stubFetch([

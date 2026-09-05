@@ -404,6 +404,15 @@ export function exportBinaryPath(binary) {
   }
 }
 
+/** resolveBinary + the same not-found guard the normal install paths apply. */
+function requireBinary(browser) {
+  const binary = resolveBinary(browser);
+  if (!binary) {
+    throw new Error(`${browser} cached installer ran, but no binary found in known install dirs`);
+  }
+  return binary;
+}
+
 /**
  * Install a browser for a platform and return the resolved binary path.
  *
@@ -456,7 +465,7 @@ export async function installBrowser(browser, platform = process.platform) {
           `${path.basename(fallback)} (advisory leg — gate will warn)`
       );
       execSync(`"${fallback}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
-      return resolveBinary(browser);
+      return requireBinary(browser);
     }
     const exe = path.join(
       downloadDir(),
@@ -472,7 +481,7 @@ export async function installBrowser(browser, platform = process.platform) {
           `installer ${path.basename(fallback)} (advisory leg — gate will warn)`
       );
       execSync(`"${fallback}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
-      return resolveBinary(browser);
+      return requireBinary(browser);
     }
     if (resolved.sha256Url) {
       console.log(`  verifying vendor sha256 for ${browser} ${resolved.version}`);
