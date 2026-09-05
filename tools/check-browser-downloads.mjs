@@ -379,7 +379,18 @@ async function openIssueIfNew(token, repo, title, body) {
   const existing = open.find(i => i.title === title);
   if (existing) {
     // Recurring failure: append a comment with the fresh run link instead of
-    // leaving the issue stale, so the notification stays actionable.
+    // leaving the issue stale, so the notification stays actionable — but no
+    // more than one comment per 24h per issue, so a hours-long vendor stall
+    // doesn't spam maintainers with a comment per run.
+    const comments = await ghApi(
+      token,
+      `/repos/${repo}/issues/${existing.number}/comments?per_page=100`
+    );
+    const last = comments.at(-1);
+    if (last && Date.now() - Date.parse(last.created_at) < 24 * 60 * 60 * 1000) {
+      console.log(`  open issue already updated <24h ago: ${title}`);
+      return;
+    }
     await ghApi(token, `/repos/${repo}/issues/${existing.number}/comments`, {
       method: 'POST',
       body: {body},

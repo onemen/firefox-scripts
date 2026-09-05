@@ -103,16 +103,18 @@ async function main() {
   const dispatch = !args.includes('--no-dispatch');
   const flag = name => {
     const i = args.indexOf(name);
-    return i !== -1 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : null;
+    if (i === -1) return null;
+    const v = args[i + 1];
+    if (v === undefined || v.startsWith('--')) {
+      console.error(`✗ ${name} given without a value`);
+      usage();
+    }
+    return v;
   };
   const browserFlag = flag('--browser');
   const versionFlag = flag('--version');
-  const file = args.find(
-    a =>
-      !a.startsWith('--') &&
-      a !== args[args.indexOf(flag('--browser'))] &&
-      a !== args[args.indexOf(flag('--version'))]
-  );
+  const excluded = new Set([browserFlag, versionFlag].filter(v => v !== null));
+  const file = args.find(a => !a.startsWith('--') && !excluded.has(a));
 
   if (clean) {
     console.log(`deleting ${CI_DOWNLOADS_TAG} release (if present)…`);

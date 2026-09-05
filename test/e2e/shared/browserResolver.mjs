@@ -26,7 +26,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /** Backoff base between attempts — 5s in CI, override for unit tests. */
-const backoffMs = () => Number(process.env.BROWSER_RESOLVER_BACKOFF_MS ?? 5000);
+const backoffMs = () => {
+  const n = Number(process.env.BROWSER_RESOLVER_BACKOFF_MS ?? 5000);
+  return Number.isFinite(n) && n >= 0 ? n : 5000;
+};
 
 /**
  * Fetch a URL and parse the body, retrying with backoff.
@@ -40,16 +43,17 @@ const backoffMs = () => Number(process.env.BROWSER_RESOLVER_BACKOFF_MS ?? 5000);
  * @returns {Promise<any>} parsed JSON body (or text when `as: 'text'`)
  */
 async function fetchWithRetry(url, {attempts = 3, timeoutMs = 30_000, as = 'json'} = {}) {
+  const total = Math.max(1, attempts);
   let lastErr;
-  for (let i = 1; i <= attempts; i++) {
+  for (let i = 1; i <= total; i++) {
     try {
       const res = await fetch(url, {signal: AbortSignal.timeout(timeoutMs)});
       if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
       return as === 'json' ? await res.json() : await res.text();
     } catch (err) {
       lastErr = err;
-      console.log(`  attempt ${i}/${attempts} failed for ${url}: ${err.message}`);
-      if (i < attempts) {
+      console.log(`  attempt ${i}/${total} failed for ${url}: ${err.message}`);
+      if (i < total) {
         await new Promise(r => setTimeout(r, backoffMs() * i));
       }
     }
@@ -192,7 +196,8 @@ export async function resolveBrowserVersion(browser, {pin = null} = {}) {
     try {
       const found = await link.fetch();
       if (found?.version) {
-        return {version: String(found.version), source: link.source, ...found};
+        const {version, ...rest} = found;
+        return {version: String(version), source: link.source, ...rest};
       }
       console.log(`  ${link.source}: no version returned — trying next source`);
     } catch (err) {

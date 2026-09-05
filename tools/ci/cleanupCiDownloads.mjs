@@ -54,6 +54,7 @@ async function main() {
   if (target) {
     console.log(`deleting consumed asset: ${target.name}`);
     gh(['release', 'delete-asset', 'ci-downloads', target.name, '--yes']);
+  } else {
     console.log(`no ${browser} asset found in ci-downloads — leaving the release untouched`);
   }
 
