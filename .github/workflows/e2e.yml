@@ -594,6 +594,27 @@ jobs:
           # lacks the execute bit — point it at the freshly built binary.
           echo "INSTALLER_BIN=$PWD/dist/installer/installer_linux-dev" >> "$GITHUB_ENV"
 
+      # Snap-environment preparation for the two E2E runs:
+      #
+      # 1. WRITABLE GreD — the tabmixplus-docs installation guide says snap
+      #    users copy config.js into /etc/firefox and "may have to create the
+      #    sub folders defaults/pref" themselves; on the runner /etc/firefox
+      #    is root-owned, so chown it to the runner user (the production
+      #    analog is the updater's admin-copy path, which stays on the manual
+      #    checklist — here we make the SEED writable so the harness can
+      #    exercise the flow it is supposed to test).
+      # 2. SNAP-ACCESSIBLE TMP — a strictly-confined snap Firefox cannot read
+      #    /tmp (karma-firefox-launcher#183), so the E2E's os.tmpdir() test
+      #    profiles are invisible to it ("Could not find profile folder").
+      #    Point TMPDIR into $HOME, which the snap's home interface allows.
+      - name: Prepare snap environment
+        if: steps.snapd.outputs.available == 'true'
+        run: |
+          sudo chown -R "$(id -un):$(id -gn)" /etc/firefox
+          mkdir -p /etc/firefox/defaults/pref
+          mkdir -p "$HOME/tmp"
+          echo "TMPDIR=$HOME/tmp" >> "$GITHUB_ENV"
+
       # Detection against the snap build (HTTP + UI layers + the test-surface
       # layer from #129): the installer must discover /snap/bin/firefox and
       # report it like any other browser.
@@ -601,11 +622,10 @@ jobs:
         if: steps.snapd.outputs.available == 'true'
         run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui --headless
 
-      # Updater flow against the snap build: tab opens, config seeds, status
-      # renders. Elevation into the snap GreD stays on the manual release
-      # checklist (future-work §2) — the harness asserts only what can run
-      # unprivileged; findGreDir() writes into /etc/firefox only when it is
-      # user-writable, else the updater's admin-copy path would apply (manual).
+      # Updater flow against the snap build: tab opens, config seeds into the
+      # (now runner-owned) /etc/firefox GreD, status renders. Elevation into
+      # a root-owned GreD stays on the manual release checklist (future-work
+      # §2) — the admin-copy path cannot be automated on hosted runners.
       - name: Run updater E2E (snap Firefox)
         if: steps.snapd.outputs.available == 'true'
         run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
