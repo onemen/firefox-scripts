@@ -22,6 +22,7 @@
     "test:e2e": "node test/e2e/shared/run.mjs",
     "test:e2e:installer": "node test/e2e/shared/run.mjs --installer",
     "test:e2e:updater": "node test/e2e/shared/run.mjs --updater",
+    "test:e2e:legacy": "node test/e2e/core/manifest-lifecycle-e2e.mjs",
     "upload": "node --env-file-if-exists=.env tools/publish/upload.mjs",
     "release:all": "node tools/publish/release.mjs --include=all",
     "release:packages": "node tools/publish/release.mjs --include=packages",

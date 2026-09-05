@@ -454,7 +454,36 @@ const BootstrapLoader = {
     tempDir.append('browser-extension-data');
     tempDir.append(addon.id);
 
+    // A killed session can leave a stale temporary manifest behind: a 0-byte
+    // chrome.manifest (crash between truncate and remove) or a
+    // chrome.manifest.<uuid> (leftover from a uuid-named temp-manifest loader
+    // variant). Registrations are re-derived from what gets autoRegister'ed
+    // this session, so leftovers are pure litter — sweep them at startup
+    // before writing the fresh manifest.
+    function sweepStaleManifests() {
+      const stale = [];
+      try {
+        const entries = tempDir.directoryEntries;
+        while (entries.hasMoreElements()) {
+          const entry = entries.getNext().QueryInterface(Ci.nsIFile);
+          if (entry.isFile() && entry.leafName.startsWith('chrome.manifest')) {
+            stale.push(entry);
+          }
+        }
+      } catch {
+        return; // dir missing — nothing to sweep
+      }
+      for (const entry of stale) {
+        try {
+          entry.remove(false);
+        } catch (e) {
+          logger.warn(`Failed to remove stale manifest ${entry.path}`, e);
+        }
+      }
+    }
+
     function createManifestTemporarily(manifestText) {
+      sweepStaleManifests();
       const tempFile = tempDir.clone();
       tempFile.append('chrome.manifest');
       tempFile.exists();
