@@ -321,7 +321,7 @@ export function formatCheck(iso, url) {
 /**
  * Status tag for the last check of a browser. `results[browser].status` is set
  * by the main loop: 'ok' | 'new-version' | 'first-run' | 'lookup-failed' |
- * 'endpoint-failed' | 'size-change'.
+ * 'endpoint-failed' | 'download-failed' | 'size-change'.
  */
 export function statusTag(status) {
   switch (status) {
@@ -335,6 +335,8 @@ export function statusTag(status) {
       return '❌ lookup failed';
     case 'endpoint-failed':
       return '⚠️ endpoint failed';
+    case 'download-failed':
+      return '⚠️ download failed';
     case 'size-change':
       return '🔄 size changed';
     default:
@@ -366,7 +368,10 @@ export function buildStatusTable({results, baseline, validated}) {
   const rows = BROWSERS.map(browser => {
     const res = results[browser] || {status: 'ok'};
     const entry = baseline[browser] || {};
-    const failed = res.status === 'lookup-failed' || res.status === 'endpoint-failed';
+    const failed =
+      res.status === 'lookup-failed' ||
+      res.status === 'endpoint-failed' ||
+      res.status === 'download-failed';
     const version = entry.version || '—';
     const sizeSha = `${formatSize(entry.size)} · ${shortSha(entry.sha256)}`;
     const lastCheck = formatCheck(entry.checkedAt, entry.checkedUrl);
@@ -879,6 +884,10 @@ export async function main() {
       );
       if (!verified.ok) {
         console.log(`  ✗ ${verified.reason}`);
+        // Mark the failure so the meta issue does not render this browser as
+        // 'ok' (buildStatusTable defaults a missing result to ok) and shows
+        // the CI-cache fallback instead.
+        results[browser] = {status: 'download-failed'};
         findings.push({kind: 'rot', browser, reason: verified.reason, version});
         continue;
       }
@@ -910,14 +919,21 @@ export async function main() {
     // that ignores Range reports no total — keep the recorded size in that case
     // instead of overwriting it with 0 and raising a false size-change.
     const total = endpoint.total || 0;
+    const sizeChanged = Boolean(total && prev.size && prev.size !== total);
     next[browser] = {
       version,
-      size: total || prev.size || null,
+      // Keep the last VERIFIED size when the served binary changed size: the
+      // new total is only observed, not verified. Persisting it would make the
+      // next run see a match, go 'ok', and auto-close the size-change issue
+      // without ever re-downloading the replacement to re-verify its SHA-256.
+      // The mismatch stays visible until the binary returns to normal or the
+      // version bumps (which re-verifies via a full download).
+      size: sizeChanged ? prev.size : total || prev.size || null,
       sha256: prev.sha256 || null,
       checkedAt: new Date().toISOString(),
       checkedUrl: runUrl,
     };
-    if (total && prev.size && prev.size !== total) {
+    if (sizeChanged) {
       console.log(`  ⚠ same version, binary size changed: ${prev.size} → ${total}`);
       results[browser] = {status: 'size-change'};
       findings.push({

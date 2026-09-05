@@ -19,9 +19,11 @@ name: E2E
 
 permissions:
   contents: read
-  # issues: write — the record-validation job comments the validated
-  # firefox/firefox-dev versions on the `[url-watchdog] status` meta issue.
-  issues: write
+  # No workflow-level issues: write — every E2E job runs build/test code from
+  # the PR, so issue-write access must be scoped to the one job that needs it
+  # (record-validation, which comments on the `[url-watchdog] status` meta
+  # issue). A job-level permissions block REPLACES this one, so that job lists
+  # its own (contents: read + issues: write) explicitly.
 
 on:
   pull_request:
@@ -609,6 +611,12 @@ jobs:
       always() && needs.e2e-gate.result == 'success' && github.event_name != 'pull_request' &&
       !(github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser != 'all')
     runs-on: ubuntu-latest
+    # Only this job touches issues (meta-issue comment). Job-level permissions
+    # REPLACE the workflow-level block, so contents: read (checkout, scripts)
+    # must be listed here as well — not just issues: write.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

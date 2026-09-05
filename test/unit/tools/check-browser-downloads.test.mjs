@@ -173,6 +173,7 @@ test('statusTag: tags each run status', () => {
   assert.equal(statusTag('first-run'), '⏳ first run');
   assert.equal(statusTag('lookup-failed'), '❌ lookup failed');
   assert.equal(statusTag('endpoint-failed'), '⚠️ endpoint failed');
+  assert.equal(statusTag('download-failed'), '⚠️ download failed');
   assert.equal(statusTag('size-change'), '🔄 size changed');
 });
 
@@ -237,6 +238,23 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
   assert.match(librewolf, /\| 154\.0\.1-2 \| 158\.2 MB · `1d9fe9…` \| \[Aug 31\]\(/);
   assert.match(librewolf, /\| ❌ lookup failed \| cached: 154\.0\.1-2 · \[Aug 31\]/);
   assert.match(librewolf, /\| — \|$/); // advisory fork → no E2E cell
+
+  // A failed full-download verification must render as failed with the
+  // CI-cache fallback, not default to 'ok' (results[browser] was unset).
+  const tableDl = buildStatusTable({
+    results: {zen: {status: 'download-failed'}},
+    baseline: {
+      zen: {
+        version: '1.21.15b',
+        size: 103432224,
+        sha256: 'd5f25e1ab86a4df8ae1db6c4f38e7b5eae9d4a22d2be0e8a8f5e0b0a6e9d6a11',
+        checkedAt: '2026-08-25T10:00:00Z',
+        checkedUrl: '',
+      },
+    },
+  });
+  const zen = tableDl.split('\n').find(l => l.startsWith('| zen '));
+  assert.match(zen, /\| ⚠️ download failed \| cached: 1\.21\.15b · Aug 25 \|/);
   const dev = lines.find(l => l.startsWith('| firefox-dev '));
   assert.match(dev, /\| 🆕 new version \|/);
   const waterfox = lines.find(l => l.startsWith('| waterfox '));
