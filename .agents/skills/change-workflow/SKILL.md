@@ -39,8 +39,9 @@ task worktrees.)
 2. **Read the relevant docs** — `docs/DEVELOPING.md` first (structure, build, tests, CI);
    `docs/auto-updater.md` / `docs/status-logic.md` for the updater; the decision log
    `docs/decisions/index.md` (steering veto list) before any architectural or design change.
-3. **Load a matching skill** from `.agents/skills/` — `ai-review` (PR review step),
-   `generated-files` (regeneration), `publishing` (releases). This workflow covers the rest.
+3. **Load a matching skill** from `.agents/skills/` — `ai-review` (ADR 0020 review step),
+   `code-review` (standards/spec diff review), `generated-files` (regeneration), `publishing`
+   (releases). Full inventory: the Skills table in AGENTS.md.
 4. **Check whether the affected files are generated** — generated files are gitignored and never
    hand-edited; edit the source and regenerate (see the `generated-files` skill).
 
@@ -78,5 +79,7 @@ explain why (CI gate tracked in issue #30).
 - generated files are regenerated on demand (Makefile / createZip / syncGeneratedFiles);
 - no `.local` files were used as authoritative sources;
 - no unrelated files were modified;
+- any AGENTS.md / skill / docs statement this change makes wrong is updated — stale instructions
+  mislead every later run;
 - failed/unavailable validation is reported;
 - when the PR is ready for review, run the ADR 0020 review step (see the `ai-review` skill).
