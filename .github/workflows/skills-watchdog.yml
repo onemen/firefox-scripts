@@ -79,3 +79,4 @@ jobs:
         run: node tools/skills-watchdog.mjs --pr
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
