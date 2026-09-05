@@ -82,6 +82,32 @@ CI/repo AI secret exists or should be added; CodeRabbit `review:batch` is an opt
 - The review is not gated on CI. It can help debug failing checks; it never blocks a merge by itself
   — the agent's assessment is the filter.
 
+## Local reviewer vs CodeRabbit — evidence from PR #123 (2026-09)
+
+Head-to-head on the same PR: local `review:local` 12 findings / 6 accepted (50%); CodeRabbit 11
+findings / 9 right + 1 partial (86%). They catch **different classes of bug** — treat them as
+complementary on CI/platform PRs:
+
+- **Local reviewer** is strongest on code-internal footguns: env coercion (NaN backoff),
+  `throw undefined`, spread overriding a coercion, arg-parsing degradation, notification-spam
+  design. Its misses were cross-file: claims about code it didn't trace ("undeclared `repo`"
+  declared 7 lines up, object-shape assumptions, ISO-timestamps-sorted-as-strings false alarm).
+- **CodeRabbit** is strongest on linter receipts (actionlint, zizmor) and **GitHub platform
+  semantics**: concurrency races, API pagination, data-loss paths (temp file written next to the
+  user's file). Its main weakness: it doesn't run anything — a live probe disproved its waterfox CDN
+  claim in one minute.
+- **Verify platform-semantics fixes before implementing.** The zizmor "scope `issues: write` to the
+  job" fix silently dropped `actions: write` (a job-level `permissions:` block REPLACES the
+  workflow-level one) and 403'd every subsequent prod publish — reverted in #125. Linter-clean is
+  not semantics-correct.
+- **Probe external endpoints live, don't reason statically** — one `node --input-type=module -e`
+  fetch settles regex-vs-reality claims (CDN hrefs) in seconds and is posted as evidence in the
+  thread.
+- **Chase "minor" findings to root cause** — investigating a dispatch-args nit uncovered
+  `BROWSER_PIN_VERSION` exported but read by nothing, a bug BOTH reviews missed until then.
+- Never merge a linter-suggested security scoping on a publish/release workflow without walking
+  every capability that job uses.
+
 ## Also know
 
 - `.github/workflows/ai-review.yml` was removed; do not re-add CI AI review.
