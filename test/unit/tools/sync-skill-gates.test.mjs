@@ -14,6 +14,7 @@ const syncUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'sync-skill-gates.mj
 const {
   classifySkills,
   renderPrettierignore,
+  findStraySkillLines,
   BEGIN_MARKER,
   END_MARKER,
   REPO_ROOT: TOOL_ROOT,
@@ -73,6 +74,73 @@ test('renderPrettierignore: normalizes CRLF in the existing file', () => {
   assert.match(out, /# base/);
 });
 
+test('findStraySkillLines: catches the 4dd6640 duplicate-list regression', () => {
+  // The exact state committed in 46e6b3c: the old static list (from 4dd6640)
+  // survived above the generated block. check must fail; fix must strip it.
+  const stale = [
+    '# third-party agent skills — kept byte-identical to upstream (ADR 0022: gh-installed,',
+    '# pristine; classification via metadata.github-repo in SKILL.md). Patterns need the',
+    '# double-star prefix: this file lives in config/, so slashful patterns would anchor there.',
+    '**/.agents/skills/cavecrew',
+    '**/.agents/skills/code-review',
+    '**/.agents/skills/debugging-firefox',
+    '**/.agents/skills/grill-me',
+    '**/.agents/skills/lavish',
+  ].join('\n');
+  const buggy = `${stale}\n${BEGIN_MARKER}\n**/.agents/skills/*\n!**/.agents/skills/ai-review\n# third-party (gh metadata): cavecrew\n${END_MARKER}\n`;
+  const stray = findStraySkillLines(buggy);
+  assert.equal(stray.length, 5);
+  assert.deepEqual(
+    stray.map(s => s.line),
+    [
+      '**/.agents/skills/cavecrew',
+      '**/.agents/skills/code-review',
+      '**/.agents/skills/debugging-firefox',
+      '**/.agents/skills/grill-me',
+      '**/.agents/skills/lavish',
+    ]
+  );
+  assert.deepEqual(
+    stray.map(s => s.number),
+    [4, 5, 6, 7, 8]
+  );
+  // fix fully heals: stale list gone, block intact, provenance comment preserved.
+  const fixed = renderPrettierignore(buggy, ['cavecrew'], ['ai-review']);
+  assert.doesNotMatch(fixed, /\*\*\/\.agents\/skills\/cavecrew/);
+  assert.match(fixed, /# third-party \(gh metadata\): cavecrew/);
+  assert.match(fixed, /# BEGIN managed:/);
+  assert.equal(findStraySkillLines(fixed).length, 0);
+});
+
+test('findStraySkillLines: prose and comments outside the block are not violations', () => {
+  const doc = [
+    '# see .agents/skills/ for skills — patterns need the double-star prefix',
+    '',
+    '  # indented comment mentioning **/.agents/skills/vendor',
+    BEGIN_MARKER,
+    '**/.agents/skills/*',
+    END_MARKER,
+    '',
+  ].join('\n');
+  assert.deepEqual(findStraySkillLines(doc), []);
+});
+
+test('findStraySkillLines: flags stray gating lines below the block too', () => {
+  const doc = [BEGIN_MARKER, '**/.agents/skills/*', END_MARKER, '**/.agents/skills/vendor'].join(
+    '\n'
+  );
+  assert.deepEqual(findStraySkillLines(doc), [{number: 4, line: '**/.agents/skills/vendor'}]);
+});
+
+test('findStraySkillLines: tolerates unbalanced markers conservatively', () => {
+  // BEGIN without END — block never valid, every gating line counts.
+  const doc = `${BEGIN_MARKER}\n**/.agents/skills/*\n**/.agents/skills/vendor\n`;
+  assert.deepEqual(findStraySkillLines(doc), [
+    {number: 2, line: '**/.agents/skills/*'},
+    {number: 3, line: '**/.agents/skills/vendor'},
+  ]);
+});
+
 test('live repo: config/.prettierignore managed block matches the skill set', () => {
   const {thirdParty, authored} = classifySkills(TOOL_ROOT);
   const current = fs.readFileSync(path.join(TOOL_ROOT, 'config', '.prettierignore'), 'utf8');
@@ -102,6 +170,15 @@ test('live repo: eslint derives the same third-party set from frontmatter', asyn
       `eslint must not ignore authored skill: ${name}`
     );
   }
+});
+
+test('live repo: no skill-gating lines outside the managed block', () => {
+  const current = fs.readFileSync(path.join(TOOL_ROOT, 'config', '.prettierignore'), 'utf8');
+  assert.deepEqual(
+    findStraySkillLines(current),
+    [],
+    'stale hand-written skill list outside the managed block — run: pnpm format:fix'
+  );
 });
 
 test('live repo: every skill dir is classified one way or the other', () => {

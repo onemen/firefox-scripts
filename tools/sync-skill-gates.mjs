@@ -25,9 +25,17 @@
  *
  * Modes:
  *
- * - (default) `--check` — exit 1 when the generated block is out of sync (used by
- *   the format scripts and CI).
- * - `--fix` — rewrite the block in place (`pnpm format:fix`).
+ * - (default) `--check` — exit 1 when the generated block is out of sync, or when
+ *   any skill-gating line sits outside the block (used by the format scripts
+ *   and CI).
+ * - `--fix` — rewrite the block in place and strip stray lines (`pnpm
+ *   format:fix`).
+ *
+ * Fail-closed against the 4dd6640 regression class: a hand-written skill list
+ * that survives beside the generated block silently re-gates vendor skills (and
+ * breaks `gh skill update` detection) — so the block is the only place allowed
+ * to gate the skills tree. `findStraySkillLines()` flags violators anywhere
+ * else in the file; `--fix` strips them.
  *
  * Note: negated patterns (`!`) work in `.prettierignore` (verified against
  * prettier 3.9), so the inverted policy is safe.
@@ -76,6 +84,50 @@ export function classifySkills(root) {
  * @param {string[]} authored
  * @returns {string}
  */
+/**
+ * A line that gates the skills tree. Inside the managed block these are
+ * generated; anywhere else they are stale hand-written leftovers. Comments and
+ * blank lines never count — prose may mention the policy freely.
+ *
+ * @param {string} line
+ * @returns {boolean}
+ */
+function isSkillGateLine(line) {
+  const t = line.trim();
+  return t !== '' && !t.startsWith('#') && t.includes('.agents/skills');
+}
+
+/**
+ * Lines outside the managed block that gate `.agents/skills` — stale
+ * hand-written entries (e.g. a static list that predated the block surviving
+ * beside it) silently re-gate vendor skills, so `--check` fails on them and
+ * `--fix` strips them.
+ *
+ * @param {string} current file content
+ * @returns {{number: number; line: string}[]} 1-based line numbers + text
+ */
+export function findStraySkillLines(current) {
+  const lines = current.replace(/\r\n/g, '\n').split('\n');
+  const beginIdx = lines.indexOf(BEGIN_MARKER);
+  const endIdx = lines.indexOf(END_MARKER);
+  const hasBlock = beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx;
+  const inBlock = i => hasBlock && i >= beginIdx && i <= endIdx;
+  return lines
+    .map((line, i) => ({number: i + 1, line}))
+    .filter(({line}, i) => !inBlock(i) && isSkillGateLine(line));
+}
+
+/**
+ * Compute the full desired `.prettierignore` content given the current file
+ * text and the skill classification. Everything outside the managed block is
+ * preserved byte-for-byte (modulo CRLF normalization) — except stray
+ * skill-gating lines, which are dropped so `--fix` fully heals the file.
+ *
+ * @param {string} current file content ('' for a fresh file)
+ * @param {string[]} thirdParty
+ * @param {string[]} authored
+ * @returns {string}
+ */
 export function renderPrettierignore(current, thirdParty, authored) {
   const block = [
     BEGIN_MARKER,
@@ -87,12 +139,17 @@ export function renderPrettierignore(current, thirdParty, authored) {
   const lines = current.replace(/\r\n/g, '\n').split('\n');
   const beginIdx = lines.indexOf(BEGIN_MARKER);
   const endIdx = lines.indexOf(END_MARKER);
-  if (beginIdx === -1 || endIdx === -1 || endIdx < beginIdx) {
-    // No (valid) managed block — append one after the existing content.
-    const base = current.replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  const hasBlock = beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx;
+  const inBlock = i => hasBlock && i >= beginIdx && i <= endIdx;
+  const kept = lines.filter((line, i) => inBlock(i) || !isSkillGateLine(line));
+  if (!hasBlock) {
+    // No (valid) managed block — append one after the surviving content.
+    const base = kept.join('\n').replace(/\n+$/, '');
     return [...(base ? [base, ''] : []), ...block, ''].join('\n');
   }
-  return [...lines.slice(0, beginIdx), ...block, ...lines.slice(endIdx + 1)].join('\n');
+  const kBegin = kept.indexOf(BEGIN_MARKER);
+  const kEnd = kept.indexOf(END_MARKER);
+  return [...kept.slice(0, kBegin), ...block, ...kept.slice(kEnd + 1)].join('\n');
 }
 
 async function main() {
@@ -100,6 +157,7 @@ async function main() {
   const {thirdParty, authored} = classifySkills(REPO_ROOT);
   const ignoreFile = path.join(REPO_ROOT, PRETTIERIGNORE_PATH);
   const current = fs.existsSync(ignoreFile) ? fs.readFileSync(ignoreFile, 'utf8') : '';
+  const stray = findStraySkillLines(current);
   const desired = renderPrettierignore(current, thirdParty, authored);
 
   if (desired === current.replace(/\r\n/g, '\n')) {
@@ -109,14 +167,24 @@ async function main() {
     return;
   }
   if (!fix) {
-    console.error('skill gates: config/.prettierignore is out of sync with .agents/skills/.');
-    console.error('Run: pnpm format:fix   (or: node tools/sync-skill-gates.mjs --fix)');
+    if (stray.length > 0) {
+      console.error(
+        `skill gates: ${PRETTIERIGNORE_PATH} gates .agents/skills outside the managed block (stale hand-written list?):`
+      );
+      for (const {number, line} of stray) console.error(`  line ${number}: ${line}`);
+    } else {
+      console.error('skill gates: config/.prettierignore is out of sync with .agents/skills/.');
+    }
+    console.error(
+      'The managed block exclusively gates .agents/skills. Run: pnpm format:fix   (or: node tools/sync-skill-gates.mjs --fix)'
+    );
     process.exitCode = 1;
     return;
   }
   fs.writeFileSync(ignoreFile, desired);
+  const strayNote = stray.length > 0 ? `, stripped ${stray.length} stray line(s)` : '';
   console.log(
-    `skill gates: .prettierignore regenerated (${thirdParty.length} third-party, ${authored.length} authored)`
+    `skill gates: .prettierignore regenerated (${thirdParty.length} third-party, ${authored.length} authored${strayNote})`
   );
 }
 
