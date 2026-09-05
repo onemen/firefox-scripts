@@ -76,6 +76,8 @@ Open these before proposing a new primitive, surface, or storage home.
   agent reviews, assesses, and posts via `gh`); CI Groq bot retired
 - [0021](./0021-tiered-publish-gating-shared-resolver.md) — Tiered publish gating + shared browser
   resolver (retry + mirror chains, fail-closed watchdog) + temporary `ci-downloads` manual escape
+- [0022](./0022-agent-skills-management.md) — Agent skills are `gh`-installed and pristine; no
+  `skills-lock.json`, no second `.agent/` root; drift = watchdog issue → reviewed PR
 
 ## Historical
 
