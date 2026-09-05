@@ -197,8 +197,8 @@ Before finishing:
 - generated files are regenerated on demand (Makefile / createZip / syncGeneratedFiles);
 - no `.local` files were used as authoritative sources;
 - no unrelated files were modified;
-- any AGENTS.md / skill / `docs/` statement this change makes wrong is updated — stale instructions
-  mislead every later run;
+- if a code change invalidates any statement in AGENTS.md, skills, or docs/, update those documents
+  in the same step. Do not leave stale instructions;
 - failed/unavailable validation is reported;
 - the task worktree is removed (`git worktree remove`; retry the empty directory if a process still
   held it).

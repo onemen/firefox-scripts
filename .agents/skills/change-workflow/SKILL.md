@@ -79,7 +79,5 @@ explain why (CI gate tracked in issue #30).
 - generated files are regenerated on demand (Makefile / createZip / syncGeneratedFiles);
 - no `.local` files were used as authoritative sources;
 - no unrelated files were modified;
-- any AGENTS.md / skill / docs statement this change makes wrong is updated — stale instructions
-  mislead every later run;
 - failed/unavailable validation is reported;
 - when the PR is ready for review, run the ADR 0020 review step (see the `ai-review` skill).
