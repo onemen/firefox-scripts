@@ -33,8 +33,8 @@ Architecture deep dive: `docs/DEVELOPING.md` (structure, installer/updater flow,
 - Preserve upstream provenance in `core/`: files outside `updater/` come from
   xiaoxiaoflood/firefox-scripts (MPL-2.0); `updater/` is custom (MIT). Avoid unrelated changes to
   upstream-derived files.
-- Read the relevant `docs/` (and `docs/local_plan/`, plus the decision log
-  `docs/decisions/index.md`) before architectural or design changes.
+- Read the relevant `docs/`, plus the decision log `docs/decisions/index.md`, before architectural
+  or design changes.
 - Keep `docs/ci-inventory.md` synchronized when changing workflow names, triggers, path filters,
   gates, scheduled jobs, or watchdog behavior. Keep workflow job names and required/advisory status
   semantics accurate.
@@ -174,8 +174,7 @@ is not gated on CI — it can help debug failing checks. Add no CI/repo AI secre
 Before changing code:
 
 1. Identify the affected subsystem.
-2. Read the relevant `docs/` (and `docs/local_plan/`, and the decision log
-   `docs/decisions/index.md`) documentation.
+2. Read the relevant `docs/`, and the decision log `docs/decisions/index.md`.
 3. If a skill in `.agents/skills/` matches the task (review, publishing, generated files), load it.
 4. Check whether the affected files are generated.
 5. Make the smallest appropriate change.
@@ -187,7 +186,6 @@ Before finishing:
 
 - generated files are regenerated on demand (Makefile / createZip / syncGeneratedFiles);
 - no `.local` files were used as authoritative sources;
-- `docs/local_plan/` changes remain in its own repository;
 - no unrelated files were modified;
 - failed/unavailable validation is reported.
 

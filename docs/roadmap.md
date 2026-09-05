@@ -16,15 +16,17 @@ Order matters: installer / updater / tests / CI first, core-file PRs last.
 - **P0-3** E2E speed: browser download map (`test/e2e/shared/downloads.mjs`) + shorter waits.
 - **P1-2** Docs restructure (developer/maintainer vs user docs) + `future-work.md` sync.
 - **P2-1** `userChrome.js` `createElement`: `toggleAttribute` for Firefox 149+ (bug 2008041).
-- **P2-2** `BootstrapLoader`: release the spin wait on load errors (#25, PR #26 — merge pending
-  approval).
+- **P2-2** `BootstrapLoader`: release the spin wait on load errors (#25, PR #26).
 - **P1-6** Test restructure: type-first layout under `test/` (PR #52).
 - **Release gate (#4)** — remove README banner, v1.0 tag, milestone close, env protection for prod
   uploads, zip-the-installer-exe decision, tag move (P0-1).
 
 Remaining Phase 4 gaps are tracked by child issues #35–#37 (Dev Edition leg, installer UI layer,
 install-applies path) and #53–#56 (manual utils install, installer self-update tests, snap legs,
-portable-install legs).
+portable-install legs). Test-infrastructure gaps absorbed from the retired `docs/local_plan`
+planning repo — installer `--port 0`/`--server-only` test flags, an `env.json` deployment manifest,
+profile/process hygiene between E2E runs — are listed in `docs/future-work.md` §6 with their
+proposed issue homes.
 
 ## Post v1.0 (umbrella #38, milestone "Post v1.0")
 
@@ -33,6 +35,10 @@ portable-install legs).
 - Core code test coverage — stub smoke tests + Nightly leg + test-required rule (#30).
 - Browser-matrix expansion — Waterfox / Zen / Nightly (#31).
 - UAC/admin-rights automation (#32), publish-pipeline automation (#33), UI/UX polish (#34).
+- Nightly E2E and nightly publish triggers — publish side needs the staging completion (STAGING
+  banner, guards, `.env-example` keys) first; see `docs/future-work.md` §3 and §6.
+- macOS universal installer binary (arm64 + x86_64) — decide; `dist_mac` currently builds
+  native-arch only (`docs/future-work.md` §6).
 - Detailed backlog: `docs/future-work.md`.
 
 ## How to update

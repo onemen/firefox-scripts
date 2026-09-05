@@ -15,8 +15,7 @@ description:
    (`installer/web/`), publish tooling (`tools/publish/`), or docs (`docs/`).
 2. **Read the relevant docs** — `docs/DEVELOPING.md` first (structure, build, tests, CI);
    `docs/auto-updater.md` / `docs/status-logic.md` for the updater; the decision log
-   `docs/decisions/index.md` (steering veto list) before any architectural or design change;
-   `docs/local_plan/` drafts when they cover the area.
+   `docs/decisions/index.md` (steering veto list) before any architectural or design change.
 3. **Load a matching skill** from `.agents/skills/` — `ai-review` (PR review step),
    `generated-files` (regeneration), `publishing` (releases). This workflow covers the rest.
 4. **Check whether the affected files are generated** — generated files are gitignored and never
@@ -55,7 +54,6 @@ explain why (CI gate tracked in issue #30).
 
 - generated files are regenerated on demand (Makefile / createZip / syncGeneratedFiles);
 - no `.local` files were used as authoritative sources;
-- `docs/local_plan/` changes remain in its own repository;
 - no unrelated files were modified;
 - failed/unavailable validation is reported;
 - when the PR is ready for review, run the ADR 0020 review step (see the `ai-review` skill).
