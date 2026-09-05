@@ -313,7 +313,7 @@ function spawnWithEnvFile(bin, args, envFile, timeoutMs = 15_000) {
       } catch {
         // not written yet (or process refused to start)
       }
-      const exited = proc.exitCode !== null || proc.killed;
+      const exited = proc.exitCode !== null || proc.signalCode !== null || proc.killed;
       if (manifest || exited || Date.now() - started > timeoutMs) {
         clearInterval(poll);
         if (!manifest) {

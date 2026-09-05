@@ -71,8 +71,9 @@ static int g_http_port = 0;
 // matters: --port 0 (ephemeral) must stay distinguishable from no --port.
 static int g_requested_port = -1;
 
-// Monotonic run id (ms since epoch) — lets the E2E harness tell two installer
-// runs apart when both write env.json manifests.
+// Run id (wall-clock ms since epoch — uniqueness across runs is all the
+// harness needs; it is NOT a monotonic clock reading) — lets the E2E harness
+// tell two installer runs apart when both write env.json manifests.
 static unsigned long long run_id_ms(void) {
 #ifdef _WIN32
     FILETIME ft;
