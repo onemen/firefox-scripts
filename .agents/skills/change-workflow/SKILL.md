@@ -9,6 +9,25 @@ description:
 
 # Making a change
 
+## Worktrees & node_modules
+
+Do task work in a fresh `git worktree add ../<parent>/worktrees/<slug> -b <branch>` (one folder per
+task, trivially deletable, out of the parent dir). A stale-husk sweep after threads exit is just
+`rmdir worktrees/*`. Remove the worktree before finishing (`git worktree remove <path>`; retry the
+empty dir later if a process still holds it as its cwd).
+
+A fresh worktree carries no install. Link the parent's via `tools/publish/refNodeModules.mjs`
+(`import` it and call `linkNodeModules(parentRoot, worktreeRoot)`; it returns null when the parent
+has no install). That is a junction/symlink to the parent's real store, so:
+
+- **safe to _run_ tools through it** (eslint, prettier, the test runner);
+- **never run pnpm-mutating commands inside the worktree** — `pnpm install` / adding a dependency
+  re-homes the parent's `.pnpm` link farm toward the worktree's virtual store, leaving the parent
+  with dangling links the moment the worktree is deleted. Install/update only in the parent
+  checkout, then re-link.
+- clean up with `unlinkNodeModules(worktreeRoot)` **before** `git worktree remove`, so removal never
+  traverses into the shared store.
+
 ## Before editing
 
 1. **Identify the affected subsystem** — installer (`installer/`), chrome scripts (`core/`), web UI

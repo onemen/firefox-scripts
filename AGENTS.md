@@ -171,6 +171,10 @@ is not gated on CI — it can help debug failing checks. Add no CI/repo AI secre
 
 ## Agent workflow
 
+**Task worktrees:** use `<workspace>/worktrees/<slug>/` (one deletable folder per task) and remove
+them before finishing (`git worktree remove`; retry the empty dir if a process still held it).
+Worktree node_modules link rules live in the `change-workflow` skill.
+
 Before changing code:
 
 1. Identify the affected subsystem.
@@ -187,7 +191,9 @@ Before finishing:
 - generated files are regenerated on demand (Makefile / createZip / syncGeneratedFiles);
 - no `.local` files were used as authoritative sources;
 - no unrelated files were modified;
-- failed/unavailable validation is reported.
+- failed/unavailable validation is reported;
+- the task worktree is removed (`git worktree remove`; retry the empty directory if a process still
+  held it).
 
 ## Roadmap tracking
 
