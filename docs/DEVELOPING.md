@@ -252,6 +252,28 @@ CLI flags win over environment variables, which win over the config file.
 See `docs/e2e-matrix-plan.md` for the planned browser × OS expansion (Waterfox, Zen, Firefox
 Nightly, LibreWolf, and Floorp). The post-v1.0 browser expansion is tracked in issue #38.
 
+### Manual escape — testing a browser CI cannot fetch (`ci-downloads`, ADR 0021)
+
+When every vendor mirror for a browser's installer is down (or a version must be tested before the
+resolver can see it), push the installer file straight to GitHub and let CI test it — the file is
+typically the one your local firefox-updater already downloaded:
+
+```bash
+pnpm ci:download -- librewolf-155.0-1-windows-x86_64-setup.exe
+# inference override when the filename is ambiguous:
+pnpm ci:download -- "Waterfox Setup 6.7.1.1.exe" --version 6.7.1.1
+```
+
+The script creates the fixed-tag **`ci-downloads`** release on demand, uploads the asset under the
+resolver's expected name, and dispatches `e2e.yml` with `browser` (+ optional `version`) — a
+single-browser updater-E2E run. CI's `cleanup-ci-downloads` job deletes the consumed asset
+afterwards and the release + tag once empty, so the steady state is "the release does not exist".
+Extra flags: `--no-dispatch` (upload only), `--clean` (delete release + tag now).
+
+A partial (single-browser) dispatch deliberately skips the validated-versions recorder — it cannot
+fabricate E2E coverage for firefox/firefox-dev, so it can never satisfy the publish gate on its own.
+`pnpm ci:download -- --clean` removes a release that was created but never consumed.
+
 ## Test: installer hash verification
 
 A cross-platform Node.js test verifies that the C installer's hash computation matches the

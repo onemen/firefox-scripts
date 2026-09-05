@@ -24,6 +24,7 @@ import {execSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {resolveInstallerUrl, verifySha256} from './browserResolver.mjs';
 import {discoverFirefoxBinary} from './browsers.mjs';
 
 /**
@@ -36,15 +37,15 @@ import {discoverFirefoxBinary} from './browsers.mjs';
  *   into /Applications (macOS).
  * - {tarball, url} → download the official tarball and extract it; returns the
  *   binary path directly.
- * - {latest: {api, pick, url}, args} → resolve the newest version from a registry
- *   API (e.g. LibreWolf's Gitea package list), build the installer URL from it,
- *   then install — for forks that embed the version in the asset name.
+ * - {resolver: true, args} → version + mirror resolved by browserResolver.mjs
+ *   (LibreWolf's bsys6-first chain, Waterfox's CDN); falls back to the
+ *   temporary `ci-downloads` release and then the cached previous installer.
  * - `manual: true` → no automated install; `page` is the official download page
  *   (informational, for the manual legs).
  *
  * The E2E workflow installs what CI needs today (firefox, firefox-dev,
- * librewolf, floorp, zen); waterfox is documented here but has no stable
- * unattended install (no release assets — see the URL watchdog).
+ * librewolf, floorp, zen, waterfox on Windows); the waterfox leg is advisory
+ * during its soak period (ADR 0021).
  */
 export const DOWNLOADS = {
   'firefox': {
@@ -89,10 +90,15 @@ export const DOWNLOADS = {
     page: 'https://www.mozilla.org/firefox/developer/',
   },
   'waterfox': {
-    // No stable installer URL: Waterfox publishes no release assets on GitHub
-    // (site-distributed), so it stays manual. The URL watchdog tracks its
-    // version via the GitHub API.
-    manual: true,
+    install: {
+      // Waterfox publishes no GitHub release assets, but its own CDN serves a
+      // versioned NSIS installer (cdn.waterfox.com/waterfox/releases/<v>/
+      // WINNT_x86_64/"Waterfox Setup <v>.exe" — pattern from the maintainer's
+      // firefox-updater). resolveInstallerUrl walks the fallback chain
+      // (CDN → ci-downloads manual escape → cached installer) and resolves
+      // the version from the GitHub tag or the CDN releases index.
+      win: {resolver: true, args: ['/S']}, // NSIS silent install → Program Files\Waterfox
+    },
     page: 'https://www.waterfox.net/download/',
   },
   // Zen keeps a stable asset name across releases, so GitHub's
@@ -106,22 +112,15 @@ export const DOWNLOADS = {
     },
     page: 'https://zen-browser.app/download/',
   },
-  // LibreWolf embeds the version in the download URL (Gitea generic-package
-  // registry on librewolf.dev), so resolve the newest version from the Codeberg
-  // packages API first — no package manager, no third-party mirror flakiness.
+  // LibreWolf embeds the version in the download URL, so the version and the
+  // mirror are resolved by browserResolver.mjs: Codeberg bsys6 releases API →
+  // Codeberg packages API for the version, then librewolf.dev →
+  // dl.librewolf.net → bsys6 asset → ci-downloads → cached installer for the
+  // download (the packages API stalled the Sep 2026 publish; bsys6 sampled
+  // ~20× faster).
   'librewolf': {
     install: {
-      win: {
-        latest: {
-          api: 'https://codeberg.org/api/v1/packages/librewolf',
-          // Gitea lists packages newest-first; the installer is the `generic`
-          // `librewolf` package (not `librewolf-source`).
-          pick: pkg => pkg.type === 'generic' && pkg.name === 'librewolf',
-          url: version =>
-            `https://librewolf.dev/api/packages/librewolf/generic/librewolf/${version}/librewolf-${version}-windows-x86_64-setup.exe`,
-        },
-        args: ['/S'], // NSIS silent install → Program Files\LibreWolf
-      },
+      win: {resolver: true, args: ['/S']}, // NSIS silent install → Program Files\LibreWolf
     },
   },
   // Floorp keeps a stable asset name across releases, so GitHub's
@@ -196,37 +195,11 @@ export async function resolveDownloadUrl(browser, platform = process.platform) {
         : '')
     );
   }
-  if (recipe.latest) return resolveLatestUrl(recipe.latest);
-  return recipe.tarball || recipe.url;
-}
-
-/**
- * Resolve the newest download URL for a `{api, pick, url}` recipe: fetch the
- * registry list (retrying), pick the newest matching package, and build the
- * version-embedded installer URL.
- *
- * @param {{
- *   api: string;
- *   pick: (pkg: object) => boolean;
- *   url: (version: string) => string;
- * }} recipe
- * @returns {Promise<string>}
- */
-async function resolveLatestUrl({api, pick, url}) {
-  // Registry metadata (a small JSON list) — 15 s per attempt, not the
-  // 300 s installer-download timeout; a stalled registry must fail fast.
-  const res = await fetchWithRetry(api, 3, 15_000);
-  const packages = await res.json();
-  const latest = packages.find(pick);
-  if (!latest) {
-    throw new Error(`no matching package found at ${api}`);
+  if (recipe.resolver) {
+    const {url} = await resolveInstallerUrl(browser);
+    return url;
   }
-  // Surface the resolved version in CI: "no matching package found" and
-  // stalled-download errors are otherwise hard to attribute to the version
-  // the registry actually handed us.
-  const resolved = url(latest.version);
-  console.log(`  resolved latest ${latest.name} version ${latest.version} → ${resolved}`);
-  return resolved;
+  return recipe.tarball || recipe.url;
 }
 
 /** Download an official Mozilla tarball and extract it; returns the binary path. */
@@ -467,11 +440,45 @@ export async function installBrowser(browser, platform = process.platform) {
     console.log(`  ${browser} installed from official tarball: ${binary}`);
     return binary;
   }
-  if (recipe.latest && recipe.args) {
-    // Version-embedded installer URL (e.g. LibreWolf) — resolve the newest
-    // version first, then install like any other official installer.
-    const url = await resolveLatestUrl(recipe.latest);
-    await installInstaller(url, browser, recipe.args);
+  if (recipe.resolver && recipe.args) {
+    // Version + mirror resolved by browserResolver.mjs (LibreWolf, Waterfox):
+    // official mirrors first, then the temporary ci-downloads release, then
+    // the cached previous installer (advisory legs warn instead of failing).
+    let resolved;
+    try {
+      resolved = await resolveInstallerUrl(browser);
+      console.log(`  ${browser} ${resolved.version} installer resolved from ${resolved.source}`);
+    } catch (err) {
+      const fallback = findCachedInstaller(browser);
+      if (!fallback) throw err;
+      console.log(
+        `  ⚠ ${err.message}; reusing previously downloaded installer ` +
+          `${path.basename(fallback)} (advisory leg — gate will warn)`
+      );
+      execSync(`"${fallback}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
+      return resolveBinary(browser);
+    }
+    const exe = path.join(
+      downloadDir(),
+      `${browser}-setup-${resolved.version}${path.extname(new URL(resolved.url).pathname) || '.exe'}`
+    );
+    try {
+      await downloadTo(resolved.url, exe);
+    } catch (err) {
+      const fallback = findCachedInstaller(browser);
+      if (!fallback) throw err;
+      console.log(
+        `  ⚠ download failed (${err.message}); reusing previously downloaded ` +
+          `installer ${path.basename(fallback)} (advisory leg — gate will warn)`
+      );
+      execSync(`"${fallback}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
+      return resolveBinary(browser);
+    }
+    if (resolved.sha256Url) {
+      console.log(`  verifying vendor sha256 for ${browser} ${resolved.version}`);
+      await verifySha256(exe, resolved.sha256Url);
+    }
+    execSync(`"${exe}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
     const binary = resolveBinary(browser);
     if (!binary) {
       throw new Error(`${browser} installer ran, but no binary found in known install dirs`);

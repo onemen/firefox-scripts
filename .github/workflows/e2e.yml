@@ -27,11 +27,34 @@ on:
   # Required checks must also run on the merge-queue's temporary branch when
   # a PR lands via the queue (Settings → merge queue) — see docs/DEVELOPING.md.
   merge_group:
+  # Manual dispatch (ADR 0021): `browser` filters the browser-matrix to one
+  # leg (the manual escape — test a browser whose installer CI cannot fetch;
+  # pair with the temporary ci-downloads release via pnpm ci:download).
+  # `version` pins the resolver so the run works with the vendor API fully
+  # down. A partial dispatch skips record-validation (see that job).
   workflow_dispatch:
+    inputs:
+      browser:
+        description:
+          'Single browser to test (librewolf|floorp|zen|waterfox); empty = default matrix'
+        type: choice
+        default: ''
+        options:
+          - ''
+          - librewolf
+          - floorp
+          - zen
+          - waterfox
+      version:
+        description: 'Pin the browser version (empty = resolve the newest)'
+        type: string
+        default: ''
 
 concurrency:
   group: e2e-${{ github.ref }}
-  cancel-in-progress: true
+  # A single-browser manual escape must not be cancelled by a routine push:
+  # it only ever runs from workflow_dispatch, where runs are rare and deliberate.
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || inputs.browser == '' }}
 
 jobs:
   # ── Changed-paths filter ──────────────────────────────────────────────────
@@ -420,35 +443,46 @@ jobs:
           if-no-files-found: ignore
 
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
-  # Each browser downloads an official installer directly: LibreWolf resolves
-  # its newest version from the Codeberg package registry; Floorp and Zen use
-  # GitHub's stable `/releases/latest/download/` asset URLs. Firefox Dev Edition
-  # is NOT here anymore — it is first-party Mozilla and runs as a required leg
-  # of the `updater` job above. Waterfox stays manual (no release assets —
-  # tracked by the URL watchdog).
+  # Each browser resolves its installer through test/e2e/shared/browserResolver.mjs:
+  # LibreWolf (Codeberg bsys6 → packages API; librewolf.dev → dl.librewolf.net
+  # → bsys6 asset → ci-downloads → cached installer), Floorp and Zen (GitHub
+  # stable latest asset URLs), Waterfox (its CDN versioned setup URL — the leg
+  # is ADVISORY during its soak period, ADR 0021). Firefox Dev Edition is NOT
+  # here — it is first-party Mozilla and runs as a required leg of the
+  # `updater` job above.
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
     # Same updater E2E test as the `updater` job, so it is gated on the same
     # changed-paths filter (skips on docs-only / tooling-only PRs). The legs
     # stay ADVISORY in the gate: their failures warn instead of blocking.
     needs: [changes, snapshot]
-    if: needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'
+    if:
+      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
+      github.event_name == 'workflow_dispatch' && inputs.browser != ''
     runs-on: windows-latest
     strategy:
       fail-fast: false
+      # Manual escape: a `browser` input collapses the matrix to that one leg
+      # (dynamic JSON matrix — the canonical fromJSON pattern). Empty input
+      # (or any non-dispatch event, where `inputs` is empty) = the full matrix.
       matrix:
-        browser: [librewolf, floorp, zen]
+        browser:
+          ${{ fromJSON(inputs.browser != '' && format('["{0}"]', inputs.browser) || '["librewolf",
+          "floorp", "zen", "waterfox"]') }}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
+      # Manual escape: pin the resolver to the requested version (empty input
+      # = resolve the newest). Pinned version + ci-downloads release works even
+      # with the vendor API fully down.
+      BROWSER_PIN_VERSION: ${{ inputs.version }}
 
     steps:
       - uses: $/.github/actions/setup-repo
 
-      # The ~100 MB LibreWolf / Floorp installers dominate the job; cache them
-      # keyed on the resolved download URL. LibreWolf's URL embeds the version,
-      # so a new release invalidates the key; Floorp's is a stable latest URL,
-      # so its key is constant — downloadTo() re-fetches when the remote size
-      # changes, and save-always re-caches the fresh file.
+      # The ~100 MB installers dominate the job; cache them keyed on the
+      # resolved download URL (embeds the version for LibreWolf/Waterfox).
+      # Floorp/Zen's stable latest URLs keep a constant key — downloadTo()
+      # re-fetches when the remote size changes, and save-always re-caches.
       - name: Resolve download URL
         id: dlurl
         shell: bash
@@ -518,7 +552,7 @@ jobs:
             helper:${{ needs.changes.outputs.updater == 'true' }}
             updater:${{ needs.changes.outputs.updater == 'true' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
-            browser-matrix:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' }}
+            browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != '') }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
           # verify.sh splits the value on whitespace, newlines included.
@@ -557,8 +591,14 @@ jobs:
     # 17:01, skipped ever since — GitHub-side evaluation change). With
     # always() the gate-success comparison below still decides the outcome,
     # so the job records only fully green runs.
+    #
+    # Partial-dispatch guard (ADR 0021): a single-browser manual escape
+    # (workflow_dispatch with `browser` set) must NOT record — it validated
+    # only one fork, and overwriting the record could let the publish gate
+    # ship a firefox/firefox-dev release that no full run ever tested.
     if: >-
-      always() && needs.e2e-gate.result == 'success' && github.event_name != 'pull_request'
+      always() && needs.e2e-gate.result == 'success' && github.event_name != 'pull_request' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.browser != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -575,3 +615,33 @@ jobs:
           path: .watchdog-validated
           key: browser-validated-${{ github.run_id }}
           save-always: true
+
+  # ── Manual-escape cleanup (ADR 0021) ─────────────────────────────────────
+  # A single-browser dispatch may consume an installer from the temporary
+  # `ci-downloads` release (created on demand by pnpm ci:download). This job
+  # deletes the consumed asset afterwards — and the release + tag once empty —
+  # so the steady state is "the ci-downloads release does not exist". Runs
+  # only for partial manual escapes, never on push/PR. A FAILED leg still
+  # cleans up (!cancelled); a CANCELLED one leaves the installer for the
+  # immediate retry.
+  cleanup-ci-downloads:
+    name: cleanup ci-downloads release
+    needs: [e2e-gate]
+    # Runs after the gate (post-gate job): a failed advisory leg still cleans
+    # up (the gate reports advisory failures without blocking, so a green or
+    # warning gate both proceed here); a CANCELLED run skips this job outright
+    # (GitHub cancels pending needs-jobs), leaving the installer for the retry.
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' && inputs.browser != '' &&
+      needs.e2e-gate.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # delete the release asset + release + tag
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Delete consumed ci-downloads asset (and release when empty)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BROWSER: ${{ inputs.browser }}
+          VERSION: ${{ inputs.version }}
+        run: node tools/ci/cleanupCiDownloads.mjs

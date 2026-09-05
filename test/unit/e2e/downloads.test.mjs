@@ -96,10 +96,45 @@ test('resolveDownloadUrl: librewolf resolves the latest version from the package
 });
 
 test('resolveDownloadUrl: manual-only browsers throw with the official page', async () => {
+  // waterfox has a win recipe now (ADR 0021), so the manual-only error only
+  // applies to its non-win platforms.
   await assert.rejects(
-    resolveDownloadUrl('waterfox', 'win32'),
+    resolveDownloadUrl('waterfox', 'linux'),
     /manual install only.*waterfox\.net/
   );
+});
+
+test('resolveDownloadUrl: waterfox resolves through the resolver chain (win, ADR 0021)', async () => {
+  // Stub fetch: GitHub tag API + CDN index. The resolver must prefer the
+  // GitHub tag and build the versioned CDN setup URL.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    const u = String(url);
+    if (u.includes('BrowserWorks/Waterfox')) {
+      return {ok: true, json: async () => ({tag_name: 'v6.7.1.1'})};
+    }
+    if (u.includes('cdn.waterfox.com')) {
+      return {
+        ok: true,
+        text: async () =>
+          '<a href="/waterfox/releases/6.6.9/">6.6.9</a><a href="/waterfox/releases/6.7.0-beta.1/">b</a><a href="/waterfox/releases/6.7.1.1/">6.7.1.1</a>',
+      };
+    }
+    if (u.startsWith('https://cdn.waterfox.com/waterfox/releases/6.7.1.1/')) {
+      return {ok: true, status: 200};
+    }
+    throw new Error(`unexpected fetch: ${u}`);
+  };
+  try {
+    const url = await resolveDownloadUrl('waterfox', 'win32');
+    assert.match(
+      url,
+      /^https:\/\/cdn\.waterfox\.com\/waterfox\/releases\/6\.7\.1\.1\/WINNT_x86_64\//
+    );
+    assert.match(url, /Waterfox%20Setup%206\.7\.1\.1\.exe$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('resolveDownloadUrl: unknown browser throws', async () => {

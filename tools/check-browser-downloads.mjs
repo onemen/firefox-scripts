@@ -51,6 +51,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {resolveBrowserVersion} from '../test/e2e/shared/browserResolver.mjs';
 import {downloadTo, resolveDownloadUrl} from '../test/e2e/shared/downloads.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -68,59 +69,28 @@ const BROWSERS = ['firefox', 'firefox-dev', 'librewolf', 'floorp', 'zen', 'water
  * Browsers whose current version must be covered by a successful E2E run before
  * a prod publish (the hard-gated `updater` legs on all 3 OSes). Fork legs are
  * advisory, so they stay on the watchdog-baseline check only.
+ *
+ * Waterfox soak (ADR 0021): its E2E leg runs advisory for its first green runs;
+ * once stable, add 'waterfox' here AND move the leg from the gate's `advisory`
+ * to `required` in e2e.yml (one line each).
  */
 export const VALIDATED_BROWSERS = ['firefox', 'firefox-dev'];
 
-const VERSION_APIS = {
-  'firefox': {
-    // Mozilla product-details: the canonical "current stable version" endpoint.
-    url: 'https://product-details.mozilla.org/1.0/firefox_versions.json',
-    parse: j => j.LATEST_FIREFOX_VERSION,
-  },
-  'firefox-dev': {
-    url: 'https://product-details.mozilla.org/1.0/firefox_versions.json',
-    parse: j => j.FIREFOX_DEVEDITION,
-  },
-  'librewolf': {
-    // Gitea package list on Codeberg, newest-first; the installer is the
-    // `generic` `librewolf` package (not `librewolf-source`).
-    url: 'https://codeberg.org/api/v1/packages/librewolf',
-    parse: packages => packages.find(p => p.type === 'generic' && p.name === 'librewolf')?.version,
-  },
-  'floorp': {
-    // Floorp moved to the Floorp-Projects org; the latest release's tag is the
-    // marketing version.
-    url: 'https://api.github.com/repos/Floorp-Projects/Floorp/releases/latest',
-    parse: release => (release.tag_name || '').replace(/^v/, ''),
-  },
-  'zen': {
-    url: 'https://api.github.com/repos/zen-browser/desktop/releases/latest',
-    parse: release => (release.tag_name || '').replace(/^v/, ''),
-  },
-  'waterfox': {
-    // Waterfox publishes no release assets on GitHub — version-only tracking
-    // (no direct download URL, so no endpoint to verify).
-    url: 'https://api.github.com/repos/BrowserWorks/Waterfox/releases/latest',
-    parse: release => (release.tag_name || '').replace(/^v/, ''),
-    manual: true,
-  },
-};
+/**
+ * Fork browsers whose version lookup may degrade to warn-and-continue in the
+ * publish pre-flight (ADR 0021): after the resolver's retry + mirror chain is
+ * exhausted, an unresolved fork lookup warns, notifies, and lets the publish
+ * proceed. Fork DRIFT (resolved but newer than the baseline) still blocks.
+ */
+export const FORK_BROWSERS = ['librewolf', 'floorp', 'zen', 'waterfox'];
 
-/** Fetch + JSON-parse a URL, bounded by a timeout. */
-async function getJson(url) {
-  const res = await fetch(url, {signal: AbortSignal.timeout(30_000)});
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
-}
-
-/** Resolve the current release version for a browser from its vendor API. */
+/**
+ * Resolve the current release version for a browser via the shared resolver
+ * (retry + mirror chains; LibreWolf bsys6-first, waterfox GitHub→CDN).
+ */
 export async function resolveVersion(browser) {
-  const {url, parse} = VERSION_APIS[browser];
-  const version = parse(await getJson(url));
-  if (!version) {
-    throw new Error(`version API for ${browser} returned no version (${url})`);
-  }
-  return String(version);
+  const {version} = await resolveBrowserVersion(browser);
+  return version;
 }
 
 /** Parse a Content-Range header ('bytes 0-1023/104857600') → total size. */
@@ -226,18 +196,26 @@ export function compareBaseline(prev, curr) {
  * Used by the pre-publish gate: a browser released since the last watchdog run
  * must be validated (watchdog → browser E2E) before artifacts ship.
  *
+ * `ignoreLookupFailureFor` (ADR 0021 warn-and-continue): fork browsers whose
+ * version could not be resolved are omitted from the blocking list — the caller
+ * surfaces them as a warning + notification instead. A fork that DID resolve
+ * but drifted still blocks, as does any hard-gate lookup failure.
+ *
  * @param {Record<string, {version: string} | undefined>} baseline
  * @param {Record<string, string | undefined>} versions current version per
  *   browser
+ * @param {{ignoreLookupFailureFor?: string[]}} [opts]
  * @returns {string[]}
  */
-export function collectDrift(baseline, versions) {
+export function collectDrift(baseline, versions, {ignoreLookupFailureFor = []} = {}) {
   const drift = [];
   for (const browser of BROWSERS) {
     const prev = baseline[browser];
     const curr = versions[browser];
     if (curr === undefined || curr === null || curr === '') {
-      drift.push(`${browser}: version lookup failed`);
+      if (!ignoreLookupFailureFor.includes(browser)) {
+        drift.push(`${browser}: version lookup failed`);
+      }
     } else if (!prev) {
       drift.push(`${browser}: not in baseline (first run — run the watchdog first)`);
     } else if (String(prev.version) !== String(curr)) {
@@ -303,6 +281,11 @@ export function issueTitle(kind, browser, {prevVersion, newVersion, reason} = {}
   if (kind === 'rot') {
     return `[url-watchdog] ${browser} download check failed: ${reason}`;
   }
+  if (kind === 'lookup-failure') {
+    // Fixed title (no error text): the dedup key must match across runs so a
+    // recurring vendor stall comments on one issue instead of spawning new ones.
+    return `[url-watchdog] ${browser} version lookup failed`;
+  }
   if (kind === 'size-change') {
     return `[url-watchdog] ${browser} same version, binary size changed`;
   }
@@ -334,6 +317,20 @@ export function issueBody(f, runUrl = 'local') {
       `The ${f.browser} download chain failed:\n\n- ${f.reason}\n\n` +
       'Check test/e2e/shared/downloads.mjs and the vendor host; E2E CI installs ' +
       'this browser from the resolved URL.'
+    );
+  }
+  if (f.kind === 'lookup-failure') {
+    return (
+      head +
+      `The ${f.browser} version lookup failed after the resolver's retry + mirror ` +
+      `chain was exhausted:\n\n- ${f.reason}\n\n` +
+      (f.context === 'drift' ?
+        'The publish pre-flight continued (fork browsers are warn-and-continue, ' +
+        'ADR 0021) — the shipped artifacts were NOT re-validated against a fresh ' +
+        `${f.browser} release. Re-run the URL watchdog when the vendor recovers.`
+      : 'The watchdog run failed WITHOUT saving a baseline (fail-closed, ADR 0021) ' +
+        '— re-run the URL watchdog workflow when the vendor recovers. E2E legs ' +
+        'fall back to their cached installer meanwhile.')
     );
   }
   if (f.kind === 'size-change') {
@@ -379,8 +376,15 @@ async function openIssueIfNew(token, repo, title, body) {
     token,
     `/repos/${repo}/issues?state=open&labels=${WATCHDOG_LABEL}&per_page=100`
   );
-  if (open.some(i => i.title === title)) {
-    console.log(`  already open: ${title}`);
+  const existing = open.find(i => i.title === title);
+  if (existing) {
+    // Recurring failure: append a comment with the fresh run link instead of
+    // leaving the issue stale, so the notification stays actionable.
+    await ghApi(token, `/repos/${repo}/issues/${existing.number}/comments`, {
+      method: 'POST',
+      body: {body},
+    });
+    console.log(`  commented on open issue: ${title}`);
     return;
   }
   await ghApi(token, `/repos/${repo}/issues`, {
@@ -388,6 +392,32 @@ async function openIssueIfNew(token, repo, title, body) {
     body: {title, body, labels: [WATCHDOG_LABEL]},
   });
   console.log(`  opened issue: ${title}`);
+}
+
+/**
+ * Notify a fork version-lookup failure (warn-and-continue path, ADR 0021):
+ * annotation first (done by the caller), then a deduped notification issue so
+ * the failure is visible after the run. Errors are swallowed — the publish must
+ * continue even if the notification itself fails.
+ */
+async function notifyLookupFailure(browser, reason, context) {
+  try {
+    const token = process.env.GITHUB_TOKEN || '';
+    const repo = process.env.GITHUB_REPOSITORY || '';
+    const runUrl =
+      process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY ?
+        `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
+      : 'local';
+    const title = issueTitle('lookup-failure', browser);
+    const body = issueBody({kind: 'lookup-failure', browser, reason, context}, runUrl);
+    if (!token || !repo || process.argv.includes('--dry-run')) {
+      console.log(`[notification skipped] would open: ${title}`);
+      return;
+    }
+    await openIssueIfNew(token, repo, title, body);
+  } catch (err) {
+    console.log(`  notification failed (non-fatal): ${err.message}`);
+  }
 }
 
 export async function main() {
@@ -412,14 +442,21 @@ export async function main() {
     }
     const baseline = JSON.parse(fs.readFileSync(baselineFile, 'utf-8'));
     const versions = {};
+    const lookupFailures = [];
     for (const browser of BROWSERS) {
       try {
         versions[browser] = String(await resolveVersion(browser));
       } catch (err) {
         console.log(`  ${browser}: version lookup failed: ${err.message}`);
+        versions[browser] = null;
+        // Fork lookups degrade to warn-and-continue (ADR 0021); hard-gate
+        // browsers keep blocking via the resulting drift entry.
+        if (FORK_BROWSERS.includes(browser)) {
+          lookupFailures.push({browser, reason: err.message});
+        }
       }
     }
-    const drift = collectDrift(baseline, versions);
+    const drift = collectDrift(baseline, versions, {ignoreLookupFailureFor: FORK_BROWSERS});
     if (drift.length > 0) {
       console.error('Browser version drift since the last watchdog run:');
       for (const d of drift) console.error(`  - ${d}`);
@@ -430,6 +467,22 @@ export async function main() {
       process.exit(1);
     }
     console.log('No browser version drift — baseline matches current releases.');
+
+    // Warn-and-continue (ADR 0021): a fork whose version still cannot be
+    // resolved after retries + mirrors must not block shipping to users. It
+    // surfaces as an annotation plus a deduped notification issue; the next
+    // successful watchdog run folds the version into the baseline.
+    for (const f of lookupFailures) {
+      console.log(
+        `::warning file=tools/check-browser-downloads.mjs::${f.browser}: version lookup failed (${f.reason}) — publish continues (fork browsers are warn-and-continue)`
+      );
+      await notifyLookupFailure(f.browser, f.reason, 'drift');
+    }
+    if (lookupFailures.length > 0) {
+      console.log(
+        `${lookupFailures.length} fork lookup failure(s) — continuing without fresh validation for them.`
+      );
+    }
 
     // Second gate (#4): the watchdog baseline can be refreshed without any
     // test run, so a prod publish additionally requires the hard-gate
@@ -455,6 +508,7 @@ export async function main() {
           versionsNow[browser] = String(await resolveVersion(browser));
         } catch (err) {
           console.log(`  ${browser}: version lookup failed: ${err.message}`);
+          versionsNow[browser] = null;
         }
       }
       // The record wraps the per-browser map under `browsers` (alongside
@@ -516,23 +570,8 @@ export async function main() {
       findings.push({kind: 'rot', browser, reason});
       continue;
     }
-
     const prev = prMode ? undefined : baseline[browser];
     const change = compareBaseline(prev, {version});
-
-    // Manual browsers (no direct download URL): version tracked only.
-    if (VERSION_APIS[browser].manual) {
-      console.log('  no direct download URL — manual install (version tracked only)');
-      if (!prMode) {
-        next[browser] = {version, manual: true};
-        if (change === 'new-version') {
-          console.log(`  new version: ${prev.version} → ${version} (no CI recipe — no action)`);
-        } else {
-          console.log(change === 'first-run' ? '  first run — baseline recorded' : '  unchanged');
-        }
-      }
-      continue;
-    }
 
     // Endpoint check (1 KB ranged GET) for every browser.
     let endpoint;
@@ -608,6 +647,21 @@ export async function main() {
   }
 
   // Persist the baseline (schedule mode only; CI's cache step picks it up).
+  // Fail-closed (ADR 0021): a browser whose lookup or endpoint check failed
+  // this run must NOT let a partial baseline be saved — the Sep 2026 incident
+  // (watchdog green with a stale LibreWolf entry) made the drift gate lie.
+  const failedBrowsers = findings.filter(f => f.kind === 'rot').map(f => f.browser);
+  if (failedBrowsers.length > 0 && !prMode && !dryRun) {
+    for (const f of findings.filter(f => f.kind === 'rot')) {
+      console.log(`::error file=tools/check-browser-downloads.mjs::${f.browser}: ${f.reason}`);
+    }
+    console.error(
+      `\nfail-closed: ${failedBrowsers.join(', ')} could not be resolved — NO baseline ` +
+        'was saved. Re-run the URL watchdog when the vendor recovers; E2E legs fall ' +
+        'back to their cached installer meanwhile.'
+    );
+    process.exit(1);
+  }
   if (!prMode && !dryRun) {
     fs.mkdirSync(baselineDir, {recursive: true});
     fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + '\n');

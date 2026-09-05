@@ -22,6 +22,7 @@
     "upload:local": "node tools/publish/upload.mjs --local",
     "dev-clean": "node --env-file-if-exists=.env tools/publish/devClean.mjs",
     "review:batch": "node tools/ci/batch-review.mjs",
+    "ci:download": "node tools/ci/ciDownload.mjs",
     "review:local": "node tools/ai-review.mjs"
   },
   "keywords": [],

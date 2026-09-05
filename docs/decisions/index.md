@@ -74,6 +74,8 @@ Open these before proposing a new primitive, surface, or storage home.
   tags + moving `latest`
 - [0020](./0020-local-agent-ai-review.md) — AI review is a local, agent-run step (the PR-opening
   agent reviews, assesses, and posts via `gh`); CI Groq bot retired
+- [0021](./0021-tiered-publish-gating-shared-resolver.md) — Tiered publish gating + shared browser
+  resolver (retry + mirror chains, fail-closed watchdog) + temporary `ci-downloads` manual escape
 
 ## Historical
 

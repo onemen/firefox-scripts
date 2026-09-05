@@ -80,7 +80,39 @@ export function parseJobs(text) {
   // keeps it as CRLF locally even though it is committed/checked out as LF)
   // cannot smuggle a trailing `\r` into an `if:` capture and false-fail the
   // contract. Real-world trigger: e2e.yml parsed from a CRLF local copy.
-  text = text.replace(/\r\n/g, '\n');
+  //
+  // Also re-fold YAML plain-scalar continuations: prettier breaks a long
+  // job-level `if:` into a bare `if:` key line plus indented continuation
+  // lines, but the contract compares against the single-line expression.
+  // Join ONLY that exact shape — a 4-space key with an empty value followed
+  // by deeper-indented non-key lines — so with-blocks / block scalars
+  // (10/12-space, keys with values) are untouched.
+  const rawLines = text.replace(/\r\n/g, '\n').split('\n');
+  const lines = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    const raw = rawLines[i];
+    const prev = lines[lines.length - 1];
+    const prevIsFoldableKey = prev !== undefined && /^ {4}[A-Za-z0-9_-]+:\s*$/.test(prev);
+    const isContinuation =
+      /^ {6,}\S/.test(raw) && !/^ {6,}[A-Za-z0-9_-]+:/.test(raw) && !/^ {6,}[-#]/.test(raw); // step dashes and comments are never scalar text
+    if (prevIsFoldableKey && isContinuation) {
+      // Fold the full continuation run (prettier may wrap a long scalar over
+      // several lines) into the key line.
+      let joined = `${prev} ${raw.trim()}`;
+      while (
+        i + 1 < rawLines.length &&
+        /^ {6,}\S/.test(rawLines[i + 1]) &&
+        !/^ {6,}[A-Za-z0-9_-]+:/.test(rawLines[i + 1]) &&
+        !/^ {6,}[-#]/.test(rawLines[i + 1])
+      ) {
+        joined += ` ${rawLines[++i].trim()}`;
+      }
+      lines[lines.length - 1] = joined;
+      continue;
+    }
+    lines.push(raw);
+  }
+  text = lines.join('\n');
   const jobs = new Map();
   let current = null;
   let inJobs = false;
@@ -178,7 +210,15 @@ export function parseJobs(text) {
       continue;
     }
     const f = IF_LINE.exec(line);
-    if (f) jobs.get(current).ifs.push(f[1]);
+    if (f) {
+      // Prettier folds a long plain-scalar `if:` into a `key:` + indented
+      // continuation (e.g. e2e.yml's browser-matrix filter). Join the indented
+      // continuation lines so the captured value is the single-line expression
+      // the contract compares against. A deeper indent would be a nested
+      // object, but job-level `if:` values are always scalars.
+      jobs.get(current).ifs.push(f[1].replace(/\s+#.*$/, '').trim());
+      continue;
+    }
   }
   return jobs;
 }
@@ -333,19 +373,22 @@ const CONTRACTS = [
     gate: 'e2e-gate',
     // Independent filter outputs (installer/updater/core) — each gated job
     // must carry exactly its expected changed-paths `if:` and be listed in
-    // the gate's `applicability:` block.
+    // the gate's `applicability:` block. browser-matrix additionally runs for
+    // a single-browser manual-escape dispatch (ADR 0021) — the combined `if:`
+    // is its contract.
     gatedIfs: {
       'snapshot': "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'",
       'installer': "needs.changes.outputs.installer == 'true'",
       'helper': "needs.changes.outputs.updater == 'true'",
       'updater': "needs.changes.outputs.updater == 'true'",
       'browser-matrix':
-        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'",
+        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != ''",
     },
     applicability: ['snapshot', 'installer', 'helper', 'updater', 'browser-matrix'],
     // Runs after e2e-gate: records the validated browser versions (#4) only
-    // when every browser leg passed.
-    postGate: ['record-validation'],
+    // when every browser leg passed, and cleans up the temporary
+    // ci-downloads release after a single-browser manual escape (ADR 0021).
+    postGate: ['record-validation', 'cleanup-ci-downloads'],
   },
   {
     file: '.github/workflows/ci.yml',
