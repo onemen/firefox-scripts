@@ -495,12 +495,16 @@ async function main() {
       JSON.stringify(afterS1)
     );
     const canonical = path.join(bedDir, 'chrome.manifest');
+    // The loader absolutizes manifest paths, so the rewritten file reads
+    // `content testext file:///…/extensions/testext@example.com/content/` —
+    // size + the package registration line prove it is the real rewrite, not
+    // an empty leftover.
+    const canonicalContent = fs.existsSync(canonical) ? fs.readFileSync(canonical, 'utf-8') : '';
     const canonicalOk =
       afterS1.length === 1 &&
       afterS1[0] === 'chrome.manifest' &&
-      fs.existsSync(canonical) &&
-      fs.statSync(canonical).size > 0 &&
-      fs.readFileSync(canonical, 'utf-8').includes('content testext content/');
+      canonicalContent.length > 0 &&
+      canonicalContent.includes('content testext ');
     check(
       counter,
       canonicalOk,
