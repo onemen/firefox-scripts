@@ -7,12 +7,6 @@ hash-based status logic is in `docs/status-logic.md`.
 Each section links to its tracking issue under the
 [Post-v1.0 umbrella (#38)](https://github.com/onemen/firefox-scripts/issues/38).
 
-> **`docs/local_plan/` retired (2026-09-05).** The nested planning repo stopped receiving updates in
-> August 2026 and is no longer used. Its unfinished items were audited against `main` and the phase
-> issues (#3, #4, #38) and are absorbed into this file (§3 note, §6) and `docs/roadmap.md`. A
-> machine-readable handoff — which issues need updates, which to open, and the recommended order —
-> is in `docs/local-plan-gap.local.md` (untracked working notes).
-
 ## 1. Updater end-to-end test list
 
 The updater UI is now a shipped package (ADR
@@ -173,12 +167,10 @@ sync problem is gone — there is nothing tracked that can drift (see ADR
 - [ ] Re-verify the `skippedHash.*` clearing logic when the remote hash changes or local files
       match.
 
-## 6. Test infrastructure (absorbed from `docs/local_plan`)
+## 6. Test infrastructure
 
-Items from the retired planning repo (`tests.plan.md`, `CI.plan.md`, `test-deployment.plan.md`)
-verified **not implemented on `main`** and **not covered** by #3 / #4 / #38 as of 2026-09-05. The
-proposed tracking home is listed per item; see `docs/local-plan-gap.local.md` for the consolidated
-issue-update / issue-creation plan.
+Test-infrastructure gaps verified **not implemented on `main`** and **not covered** by #3 / #4 / #38
+as of 2026-09-05. The proposed tracking home is listed per item.
 
 - **Installer `--port 0` / `--server-only` test flags** (C: `installer/src/main.c` + Makefile).
   `--port 0` binds an OS-ephemeral port so parallel CI jobs never collide on `DEFAULT_PORT=8777`;

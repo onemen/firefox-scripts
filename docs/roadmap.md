@@ -23,10 +23,9 @@ Order matters: installer / updater / tests / CI first, core-file PRs last.
 
 Remaining Phase 4 gaps are tracked by child issues #35–#37 (Dev Edition leg, installer UI layer,
 install-applies path) and #53–#56 (manual utils install, installer self-update tests, snap legs,
-portable-install legs). Test-infrastructure gaps absorbed from the retired `docs/local_plan`
-planning repo — installer `--port 0`/`--server-only` test flags, an `env.json` deployment manifest,
-profile/process hygiene between E2E runs — are listed in `docs/future-work.md` §6 with their
-proposed issue homes.
+portable-install legs). Additional test-infrastructure gaps — installer `--port 0`/`--server-only`
+test flags, an `env.json` deployment manifest, profile/process hygiene between E2E runs — are listed
+in `docs/future-work.md` §6 with their proposed issue homes.
 
 ## Post v1.0 (umbrella #38, milestone "Post v1.0")
 
