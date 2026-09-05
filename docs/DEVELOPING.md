@@ -312,6 +312,16 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
   instead of masquerading as a first run. The PR mode (`--pr`) is stateless, always green, and
   surfaces findings as annotations. Run manually via `workflow_dispatch`, or locally with
   `node tools/check-browser-downloads.mjs --dry-run`.
+- **Skills watchdog** (`.github/workflows/skills-watchdog.yml`, weekly + on PRs touching the
+  watchdog) — detects drift in the five third-party skills in `.agents/skills/` (ADR 0022): the
+  gh-injected frontmatter metadata is the baseline (no cache, stateless in every mode), and each
+  skill's recorded tree SHA is compared against its upstream via the GitHub API — both at the
+  recorded ref (`content-drift`, what `gh skill update` applies) and on the default branch
+  (`ref-behind`: a static tag left behind; fixed by a forced reinstall). Opens ONE rolling tracking
+  issue (`label:skills-watchdog`) with the exact update command per skill, closed automatically when
+  a later run finds everything current. Updates land as human-reviewed PRs — never pushed: upstream
+  skill text is a prompt-injection surface. PR mode (`--pr`) is stateless, always green, and
+  surfaces findings as annotations. Local run: `node tools/skills-watchdog.mjs --dry-run`.
 
 **PR path filtering** — every E2E job (`.github/workflows/e2e.yml`: the `snapshot` build, the
 installer/updater matrices, the `helper` elevated-copy test, and the `browser-matrix` fork legs) and

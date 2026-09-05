@@ -1,0 +1,81 @@
+# Skills watchdog — catch drift in third-party agent skills (ADR 0022).
+#
+# The five third-party skills in .agents/skills/ are gh-installed and pristine;
+# each carries gh-injected frontmatter metadata (github-repo/-ref/-tree-sha)
+# which IS the baseline — no Actions cache, stateless in every mode. This
+# workflow compares each skill's recorded state against its upstream via the
+# GitHub API and opens ONE rolling tracking issue when anything drifted, with
+# the exact update command per skill. Updates are never pushed: they land as
+# human-reviewed PRs (upstream skill text is a prompt-injection surface).
+#
+# Two modes (see tools/skills-watchdog.mjs):
+# - Weekly (schedule/dispatch): rolling tracking issue, deduped by title
+#   ([skills-watchdog] third-party skill drift); closed automatically when a
+#   later run finds everything current.
+# - PR (pull_request touching the watchdog itself): stateless and always
+#   green — findings surface as ::warning:: annotations, so the check can be
+#   required without ever blocking.
+#
+# Advisory by design (like the URL watchdog's fork legs): check failures are
+# findings, not CI failures.
+
+name: Skills watchdog
+
+on:
+  pull_request:
+    paths:
+      - 'tools/skills-watchdog.mjs'
+      - 'test/unit/tools/skills-watchdog.test.mjs'
+      - '.github/workflows/skills-watchdog.yml'
+  merge_group:
+  schedule:
+    - cron: '0 14 * * 1' # Monday 14:00 UTC — staggered off the URL watchdog (06:00)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: skills-watchdog
+  cancel-in-progress: false
+
+jobs:
+  # ── Weekly: rolling tracking issue ─────────────────────────────────────────
+  check:
+    name: check third-party skill drift
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Check third-party skill drift
+        run: node tools/skills-watchdog.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUN_URL:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  # ── PR: stateless drift check at review time ───────────────────────────────
+  # Runs only when the watchdog itself changed. Always green: findings become
+  # ::warning:: annotations.
+  pr-check:
+    name: third-party skill drift (PR)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Check third-party skill drift
+        run: node tools/skills-watchdog.mjs --pr
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
