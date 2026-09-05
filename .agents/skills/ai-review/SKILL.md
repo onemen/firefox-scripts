@@ -108,6 +108,25 @@ complementary on CI/platform PRs:
 - Never merge a linter-suggested security scoping on a publish/release workflow without walking
   every capability that job uses.
 
+### Second sample — PR #122 replay (2026-09, pre-fix commit `1c3e8a0`)
+
+Replayed the local reviewer against the commit **before** #122's CodeRabbit-triage fixes
+(CodeRabbit: 7 actionable, 5 accepted + fixed): **0 code findings** (rate-limit noise; 1–2 files
+skipped per pass — treat as "far fewer", not a hard zero). Directionally consistent with #123 and
+sharper:
+
+- **On tooling/workflow PRs (`.github/**`, `tools/ci|publish/**`) the local reviewer is nearly
+  blind** — its diff-hunk window can't see cross-file API semantics (`behind_by` vs `ahead_by`,
+  `state=open` vs reopened issues, `--fix` convergence). Run CodeRabbit (`@coderabbitai review`) on
+  these PRs and treat the local pass as advisory garnish, not evidence of health.
+- **Findings on pristine third-party skills (ADR 0022, `metadata.github-repo` frontmatter) are
+  auto-rejected** — the content is byte-identical to upstream and must not be edited. The replay
+  burned quota to flag upstream's own wording ("truncated sentence") — a false positive by
+  construction. Don't even relay them upstream without checking the source first.
+- **Check coverage before trusting a zero** — the summary lists provider-skipped files; a
+  zero-findings pass that skipped half the files proves nothing. (Planned tooling fix: a coverage
+  line in the summary.)
+
 ## Also know
 
 - `.github/workflows/ai-review.yml` was removed; do not re-add CI AI review.
