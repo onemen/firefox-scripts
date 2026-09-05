@@ -78,7 +78,17 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       installer: ${{ steps.filter.outputs.installer }}
-      updater: ${{ steps.filter.outputs.updater }}
+      # A FULL manual dispatch (browser input '' or 'all') means "re-validate
+      # the current releases against main" — the post-release escape that
+      # re-records the validated versions the publish gate requires (#4). The
+      # path filter sees no commit diff on dispatch, so forcing updater=true
+      # here is the SINGLE point that makes the snapshot/helper/updater/
+      # portable-firefox/browser-matrix jobs run; the e2e-gate applicability
+      # reads this same output, so the gate and the jobs stay consistent. A
+      # partial single-browser dispatch does NOT force it (ADR 0021).
+      updater:
+        ${{ steps.filter.outputs.updater == 'true' || (github.event_name == 'workflow_dispatch' &&
+        (inputs.browser == '' || inputs.browser == 'all')) }}
       core: ${{ steps.filter.outputs.core }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -284,6 +294,30 @@ jobs:
       - name: Run updater E2E (Windows)
         if: matrix.os == 'windows-latest'
         run: node test/e2e/updater/updater-e2e.mjs
+
+      # Ground truth of what THIS leg validated. Mozilla's "latest" redirects
+      # embed no version in the URL, so the tested release can only be read
+      # from the installed binary (downloads.mjs --installed-version, which
+      # falls back to application.ini). Matrix job outputs do not aggregate on
+      # GitHub (limitation #17245), so the version travels as a tiny per-leg
+      # artifact that the record-validation job downloads. These steps run
+      # only after the E2E above passed (failure stops the step chain).
+      - name: Capture installed ${{ matrix.browser }} version
+        id: instver
+        shell: bash
+        run: |
+          VER="$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --installed-version)"
+          echo "Tested ${{ matrix.browser }} $VER on ${{ matrix.os }}"
+          printf '{"browser":"%s","os":"%s","version":"%s"}\n' \
+            "${{ matrix.browser }}" "${{ matrix.os }}" "$VER" \
+            > "e2e-version-${{ matrix.browser }}-${{ matrix.os }}.json"
+
+      - name: Upload ${{ matrix.browser }} version artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-version-${{ matrix.browser }}-${{ matrix.os }}
+          path: e2e-version-${{ matrix.browser }}-${{ matrix.os }}.json
+          if-no-files-found: error
 
       - name: Upload diagnostics
         if: failure()
@@ -579,37 +613,40 @@ jobs:
           skip-guard: snapshot installer helper updater portable-firefox browser-matrix
 
   # ── Record validated browser versions (#4) ────────────────────────────────
-  # After every hard-gate E2E leg passed, record the exact firefox /
-  # firefox-dev versions this run validated into .watchdog-validated/
-  # (Actions cache, rotating key — same pattern as the watchdog baseline;
-  # a dedicated dir so the publish pre-flight's baseline restore can never
-  # clobber it). The prod publish pre-flight requires the current releases
-  # to be covered by this record, so a watchdog baseline refresh alone
-  # cannot satisfy the drift gate: the shipped browser versions must have
-  # a passing E2E run.
+  # After the updater matrix legs (firefox/firefox-dev × 3 OSes) ran and
+  # passed, record the EXACT versions those legs installed into
+  # .watchdog-validated/ (Actions cache, rotating key — same pattern as the
+  # watchdog baseline; a dedicated dir so the publish pre-flight's baseline
+  # restore can never clobber it). The prod publish pre-flight requires the
+  # current releases to be covered by this record, so a watchdog baseline
+  # refresh alone cannot satisfy the drift gate: the shipped browser versions
+  # must have a passing E2E run.
   record-validation:
     name: record validated browser versions
-    needs: [changes, e2e-gate]
-    # e2e-gate success already proves every hard-gate leg ran and passed
-    # (the gate is if: always() and reports all results), so no additional
-    # changed-paths condition: a core-only change still records validation.
-    #
+    # `updater` is needed directly because this job must prove the legs
+    # ACTUALLY RAN: needs.updater.result aggregates the whole matrix, so a
+    # 'success' means all six firefox/firefox-dev legs ran and passed. A
+    # core-only main push (updater legs path-skipped → result 'skipped') no
+    # longer records — without a test run, re-resolving live versions would
+    # claim untested releases as E2E-validated (#134 review finding 5).
+    needs: [e2e-gate, updater]
     # `always() &&` intentionally overrides the needs-graph skip rules. The
     # gate itself runs via if: always() and can succeed while a path-filtered
     # sibling (installer legs) was skipped; since ~2026-08-29 a needs entry
     # in state 'skipped' then makes THIS job skip too, even though its own
     # condition holds (byte-identical workflow ran the job on 08-29 12:40 and
     # 17:01, skipped ever since — GitHub-side evaluation change). With
-    # always() the gate-success comparison below still decides the outcome,
-    # so the job records only fully green runs.
+    # always() the result comparisons below still decide the outcome, so the
+    # job records only runs whose updater legs really validated.
     #
     # Partial-dispatch guard (ADR 0021): a single-browser manual escape
     # (workflow_dispatch with `browser` set) must NOT record — it validated
     # only one fork, and overwriting the record could let the publish gate
     # ship a firefox/firefox-dev release that no full run ever tested.
     if: >-
-      always() && needs.e2e-gate.result == 'success' && github.event_name != 'pull_request' &&
-      !(github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser != 'all')
+      always() && needs.e2e-gate.result == 'success' && needs.updater.result == 'success' &&
+      github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' &&
+      inputs.browser != '' && inputs.browser != 'all')
     runs-on: ubuntu-latest
     # Only this job touches issues (meta-issue comment). Job-level permissions
     # REPLACE the workflow-level block, so contents: read (checkout, scripts)
@@ -622,9 +659,20 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+      # The exact tested versions arrive as per-leg artifacts from the updater
+      # matrix legs (matrix outputs do not aggregate — GitHub limitation
+      # #17245, hence files). Each leg uploads e2e-version-<browser>-<os>.json;
+      # flatten them into .e2e-versions/ for the recorder.
+      - name: Download tested versions
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: e2e-version-*
+          path: .e2e-versions
+          merge-multiple: true
       - name: Record validated browser versions
         env:
           VALIDATED_DIR: .watchdog-validated
+          E2E_VERSIONS_DIR: .e2e-versions
           GITHUB_TOKEN: ${{ github.token }}
         run: node tools/ci/record-validated-versions.mjs
       - name: Save validated-versions record

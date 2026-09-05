@@ -10,7 +10,10 @@
  * the resolved binary path.
  *
  * CLI (used by e2e.yml, works locally too): node test/e2e/shared/downloads.mjs
- * <browser> [--os win|mac|linux]
+ * <browser> [--os win|mac|linux] — installs and prints the binary path. With
+ * --installed-version it instead prints the ALREADY-INSTALLED binary's version
+ * (FIREFOX_BINARY or the install dirs) — ground truth of what an E2E leg
+ * validated, since Mozilla's "latest" redirect URLs embed no version.
  *
  * On success the resolved binary path is printed to stdout and, when running
  * inside GitHub Actions ($GITHUB_ENV set), appended to $GITHUB_ENV as
@@ -404,6 +407,85 @@ export function exportBinaryPath(binary) {
   }
 }
 
+/**
+ * Parse the version token from a Firefox-family binary's `--version` output
+ * (e.g. "Mozilla Firefox 155.0.1", "Mozilla Firefox 156.0b3", "Mozilla Firefox
+ * 128.0esr"). The branded product name is preferred; the fallback is the first
+ * dotted-numeric token (some brandings phrase the line differently). Returns
+ * null when no version token is found.
+ *
+ * @param {string} output combined stdout + stderr of `<binary> --version`
+ * @returns {string | null}
+ */
+export function parseFirefoxVersion(output) {
+  const branded = output.match(/Mozilla Firefox\s+([0-9][0-9A-Za-z._-]*)/);
+  if (branded) return branded[1];
+  const token = output.match(/(?:^|\s)([0-9]+\.[0-9]+[0-9A-Za-z._-]*)/);
+  return token ? token[1] : null;
+}
+
+/**
+ * Read the `Version=` line from an installed browser's application.ini. The ini
+ * sits next to the binary on Windows/Linux (NSIS install dir, tarball dir); in
+ * a .app bundle (macOS) the binary is at Contents/MacOS/firefox and the ini at
+ * Contents/Resources/application.ini. Returns null when no candidate exists or
+ * none carries a Version.
+ *
+ * @param {string} binary absolute path to the browser binary
+ * @returns {string | null}
+ */
+function readApplicationIniVersion(binary) {
+  const candidates = [
+    path.join(path.dirname(binary), 'application.ini'),
+    path.join(path.dirname(binary), '..', 'Resources', 'application.ini'),
+  ];
+  for (const ini of candidates) {
+    try {
+      const text = fs.readFileSync(ini, 'utf8');
+      const match = text.match(/^Version\s*=\s*(\S+)\s*$/m);
+      if (match) return match[1];
+    } catch {
+      // candidate missing/unreadable — try the next layout
+    }
+  }
+  return null;
+}
+
+/**
+ * The installed browser's actual version — ground truth of what an E2E leg
+ * validated. Mozilla's "latest" redirect URLs embed no version, so the tested
+ * release can only be read from the binary itself: `<binary> --version` first,
+ * then the application.ini Version next to the binary (covers Windows
+ * GUI-subsystem builds that write no console output).
+ *
+ * @param {string} browser
+ * @returns {{
+ *   version: string;
+ *   source: '--version' | 'application.ini';
+ *   binary: string;
+ * }}
+ */
+export function readInstalledVersion(browser) {
+  const binary = process.env.FIREFOX_BINARY || resolveBinary(browser);
+  if (!binary) {
+    throw new Error(
+      `${browser}: cannot read installed version — no binary found (FIREFOX_BINARY ` +
+        'unset and no install-dir match)'
+    );
+  }
+  const res = spawnSync(binary, ['--version'], {encoding: 'utf8', timeout: 30_000});
+  if (res.error) throw res.error;
+  const output = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+  const parsed = parseFirefoxVersion(output);
+  if (parsed) return {version: parsed, source: '--version', binary};
+  const ini = readApplicationIniVersion(binary);
+  if (ini) return {version: ini, source: 'application.ini', binary};
+  throw new Error(
+    `${browser}: cannot determine installed version from ${binary} — '--version' gave ` +
+      `${JSON.stringify(output.trim()) || '(no output)'} and no application.ini Version was found`
+  );
+}
+
 /** resolveBinary + the same not-found guard the normal install paths apply. */
 function requireBinary(browser) {
   const binary = resolveBinary(browser);
@@ -519,13 +601,16 @@ async function main() {
   const args = process.argv.slice(2);
   const browser = args[0];
   if (!browser || args.includes('--help')) {
-    console.log(`Usage: node test/e2e/shared/downloads.mjs <browser> [--os win|mac|linux] [--url]
+    console.log(`Usage: node test/e2e/shared/downloads.mjs <browser> [--os win|mac|linux] [--url|--installed-version]
 
 Installs <browser> for the current OS (or --os) using its official download
 recipe, then prints the resolved binary path and, in GitHub Actions, sets
 FIREFOX_BINARY via $GITHUB_ENV. Set PORTABLE_BROWSER_DIR to install Firefox
-Release into a custom directory instead of a system location. With --url, prints the download URL instead
-(used to key the CI download cache).`);
+Release into a custom directory instead of a system location. With --url,
+prints the download URL instead (used to key the CI download cache). With
+--installed-version, prints the version of the already-installed binary
+(FIREFOX_BINARY or the install dirs) — ground truth for what an E2E leg
+validated, since the "latest" redirect URLs embed no version.`);
     process.exit(browser ? 0 : 1);
   }
   const osIndex = args.indexOf('--os');
@@ -539,6 +624,14 @@ Release into a custom directory instead of a system location. With --url, prints
     // Print the exact download URL for this platform so the workflow can key
     // the CI download cache on it (the URL embeds the release version).
     console.log(await resolveDownloadUrl(browser, normalized));
+    return;
+  }
+
+  if (args.includes('--installed-version')) {
+    // Print the version of the binary this run already installed (or found in
+    // the install dirs). The E2E updater legs use this to record exactly what
+    // they validated — Mozilla's "latest" redirect URLs carry no version.
+    console.log(readInstalledVersion(browser).version);
     return;
   }
 

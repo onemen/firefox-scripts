@@ -2,16 +2,25 @@
 
 /**
  * tools/ci/record-validated-versions.mjs — write the validated-versions record
- * (.watchdog/validated.json) after a successful browser-specific E2E run.
+ * (.watchdog-validated/validated.json) after a successful firefox/firefox-dev
+ * E2E run.
  *
  * The prod publish pre-flight (pages.yml `pre-publish`) checks browser-version
  * drift against the URL watchdog's baseline — but a baseline refresh alone can
  * satisfy that check without any test run ever seeing the new version (issue
- * #4). This script closes the gap: the E2E workflow's final job calls it only
- * after every browser leg passed, recording the exact firefox / firefox-dev
- * versions the run validated. `check-browser-downloads.mjs --drift
- * --require-validated` then blocks a prod publish until the current releases
- * are covered by this record.
+ * #4). This script closes the gap: the E2E workflow's record-validation job
+ * calls it only after the `updater` matrix legs ran and passed, recording the
+ * EXACT firefox / firefox-dev versions those legs installed.
+ * `check-browser-downloads.mjs --drift --require-validated` then blocks a prod
+ * publish until the current releases are covered by this record.
+ *
+ * The versions are NOT re-resolved here: the updater legs install Firefox via
+ * Mozilla "latest" redirect URLs that embed no version, so each leg reads the
+ * version from its installed binary and uploads it as a per-leg artifact
+ * (e2e-version-<browser>-<os>.json — matrix job outputs do not aggregate on
+ * GitHub). This script consumes those artifacts and requires all three OS legs
+ * of a browser to agree (a live re-resolve could record a release no leg ever
+ * tested — #134 review finding 5).
  *
  * Only the hard-gated browsers (firefox, firefox-dev — VALIDATED_BROWSERS in
  * check-browser-downloads.mjs) are recorded: fork legs are advisory, so they
@@ -21,10 +30,11 @@
  *
  * node tools/ci/record-validated-versions.mjs
  *
- * Env: VALIDATED_DIR (where to write; defaults to .watchdog/), GITHUB_RUN_ID,
- * GITHUB_SHA (record metadata), GITHUB_STEP_SUMMARY (optional human summary).
- * Exits 1 if a version lookup fails — a record with holes would silently weaken
- * the publish gate.
+ * Env: E2E_VERSIONS_DIR (dir where download-artifact flattened the per-leg
+ * version artifacts), VALIDATED_DIR (where to write; defaults to .watchdog/),
+ * GITHUB_RUN_ID, GITHUB_SHA (record metadata), GITHUB_STEP_SUMMARY (optional
+ * human summary). Exits 1 if the leg artifacts are missing or disagree — a
+ * record with holes would silently weaken the publish gate.
  */
 
 import fs from 'node:fs';
@@ -34,12 +44,87 @@ import {
   REPO_ROOT,
   VALIDATED_BROWSERS,
   WATCHDOG_LABEL,
-  resolveVersion,
 } from '../check-browser-downloads.mjs';
+
+/** Runner OSes of the `updater` matrix legs (e2e.yml) — the full leg set. */
+export const UPDATER_LEG_OSES = ['ubuntu-latest', 'macos-latest', 'windows-latest'];
+
+/**
+ * Read the per-leg version artifacts the e2e workflow's updater matrix legs
+ * upload — the exact versions those legs INSTALLED and validated.
+ *
+ * Enforces the agreement contract: each VALIDATED_BROWSER must have one
+ * artifact per expected OS, and all legs must report the SAME version. A hole
+ * or disagreement throws — a record with holes would silently weaken the
+ * publish pre-flight gate.
+ *
+ * @param {string} dir E2E_VERSIONS_DIR (where download-artifact flattened the
+ *   e2e-version-* artifacts)
+ * @param {string[]} [expectedOses] runner OS labels that must all be present
+ * @returns {Record<string, {version: string}>} per-browser record entries
+ */
+export function collectLegVersions(dir, expectedOses = UPDATER_LEG_OSES) {
+  if (!dir || !fs.existsSync(dir)) {
+    throw new Error(
+      `E2E_VERSIONS_DIR ${JSON.stringify(dir ?? '')} not found — the updater matrix legs ` +
+        'did not run or uploaded no version artifacts'
+    );
+  }
+  const perBrowser = {};
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.startsWith('e2e-version-') || !file.endsWith('.json')) continue;
+    let leg;
+    try {
+      leg = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+    } catch (err) {
+      throw new Error(`unreadable version artifact ${file}: ${err.message}`, {cause: err});
+    }
+    if (
+      !leg ||
+      typeof leg.browser !== 'string' ||
+      typeof leg.version !== 'string' ||
+      !leg.version
+    ) {
+      throw new Error(`malformed version artifact ${file}: expected {browser, os, version}`);
+    }
+    (perBrowser[leg.browser] ??= []).push({os: leg.os ?? '?', version: leg.version});
+  }
+  const out = {};
+  for (const browser of VALIDATED_BROWSERS) {
+    const legs = perBrowser[browser] ?? [];
+    const seenOses = legs.map(l => l.os);
+    const missing = expectedOses.filter(o => !seenOses.includes(o));
+    if (missing.length > 0) {
+      throw new Error(
+        `${browser}: missing version artifacts for ${missing.join(', ')} ` +
+          `(found: ${seenOses.join(', ') || 'none'})`
+      );
+    }
+    const distinct = [...new Set(legs.map(l => l.version))];
+    if (distinct.length !== 1) {
+      throw new Error(
+        `${browser}: OS legs disagree on the validated version — ` +
+          legs.map(l => `${l.os}=${l.version}`).join(', ')
+      );
+    }
+    out[browser] = {version: distinct[0]};
+  }
+  return out;
+}
 
 async function main() {
   const outDir = process.env.VALIDATED_DIR || path.join(REPO_ROOT, '.watchdog');
   const outFile = path.join(outDir, 'validated.json');
+
+  // The tested versions come from the legs' artifacts, never from a live
+  // re-resolve (resolving "latest" again could record a release no leg saw).
+  const versionsDir = process.env.E2E_VERSIONS_DIR;
+  const browsers = collectLegVersions(versionsDir);
+  for (const browser of VALIDATED_BROWSERS) {
+    console.log(
+      `  ${browser}: ${browsers[browser].version} (all ${UPDATER_LEG_OSES.length} OS legs agreed)`
+    );
+  }
 
   const record = {
     recordedAt: new Date().toISOString(),
@@ -49,14 +134,8 @@ async function main() {
         `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
       : null,
     sha: process.env.GITHUB_SHA || null,
-    browsers: {},
+    browsers,
   };
-
-  for (const browser of VALIDATED_BROWSERS) {
-    const version = await resolveVersion(browser);
-    record.browsers[browser] = {version};
-    console.log(`  ${browser}: ${version}`);
-  }
 
   fs.mkdirSync(outDir, {recursive: true});
   fs.writeFileSync(outFile, JSON.stringify(record, null, 2) + '\n');
@@ -70,6 +149,7 @@ async function main() {
       '| --- | --- |',
       ...VALIDATED_BROWSERS.map(b => `| ${b} | ${record.browsers[b].version} |`),
       '',
+      `Each version was installed and validated on ${UPDATER_LEG_OSES.join(', ')} — all legs agreed.`,
       `Run: ${record.runUrl || 'local'} · commit: ${record.sha || 'n/a'}`,
     ];
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
@@ -147,7 +227,13 @@ async function notifyMetaIssue(record) {
   }
 }
 
-main().catch(err => {
-  console.error(`✗ Error: ${err.message}`);
-  process.exit(1);
-});
+// Guard on basename so a unit test can import collectLegVersions without
+// tripping the CLI entry point (same pattern as check-browser-downloads.mjs).
+const isMain =
+  process.argv[1] && path.basename(process.argv[1]) === 'record-validated-versions.mjs';
+if (isMain) {
+  main().catch(err => {
+    console.error(`✗ Error: ${err.message}`);
+    process.exit(1);
+  });
+}

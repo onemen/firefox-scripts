@@ -3,7 +3,8 @@
 // Tests: resolveDownloadUrl (per-platform URL resolution + error cases,
 // including the #35 firefox-dev hard-gate coverage on all 3 OSes),
 // downloadTo cache reuse (HEAD size match → reuse, mismatch/missing →
-// re-download), downloadDir (BROWSER_DL_DIR override).
+// re-download), downloadDir (BROWSER_DL_DIR override),
+// parseFirefoxVersion (the --installed-version output parser).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +18,9 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const downloadsUrl = pathToFileURL(
   path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'downloads.mjs')
 ).href;
-const {DOWNLOADS, downloadDir, downloadTo, resolveDownloadUrl} = await import(downloadsUrl);
+const {DOWNLOADS, downloadDir, downloadTo, parseFirefoxVersion, resolveDownloadUrl} = await import(
+  downloadsUrl
+);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
 
@@ -224,4 +227,28 @@ test('downloadDir: honors BROWSER_DL_DIR, defaults to the OS temp dir', () => {
     else process.env.BROWSER_DL_DIR = prev;
   }
   assert.equal(downloadDir(), os.tmpdir());
+});
+
+// ── parseFirefoxVersion (--installed-version output) ─────────────────────
+
+test('parseFirefoxVersion: stable / dev / esr branded lines', () => {
+  assert.equal(parseFirefoxVersion('Mozilla Firefox 155.0.1\n'), '155.0.1');
+  assert.equal(parseFirefoxVersion('Mozilla Firefox 156.0b3'), '156.0b3');
+  assert.equal(parseFirefoxVersion('Mozilla Firefox 128.0esr'), '128.0esr');
+});
+
+test('parseFirefoxVersion: leading noise / extra lines do not confuse it', () => {
+  assert.equal(
+    parseFirefoxVersion('Gtk-WARNING **: cannot open display\nMozilla Firefox 155.0.1'),
+    '155.0.1'
+  );
+  assert.equal(parseFirefoxVersion('Mozilla Firefox 155.0.1\nBuildID: 20260829000000'), '155.0.1');
+});
+
+test('parseFirefoxVersion: unbranded dotted-numeric fallback, null on garbage', () => {
+  // Some brandings phrase the line without the "Mozilla Firefox" prefix.
+  assert.equal(parseFirefoxVersion('Firefox 155.0.1'), '155.0.1');
+  assert.equal(parseFirefoxVersion('Mozilla Firefox'), null);
+  assert.equal(parseFirefoxVersion(''), null);
+  assert.equal(parseFirefoxVersion('cannot open display'), null);
 });

@@ -272,7 +272,12 @@ Extra flags: `--no-dispatch` (upload only), `--clean` (delete release + tag now)
 
 A partial (single-browser) dispatch deliberately skips the validated-versions recorder — it cannot
 fabricate E2E coverage for firefox/firefox-dev, so it can never satisfy the publish gate on its own.
-`pnpm ci:download -- --clean` removes a release that was created but never consumed.
+A FULL dispatch (browser input unset or `all`) is the post-release re-validation escape: the path
+filter sees no commit diff on a dispatch, so the `changes` job forces the firefox/firefox-dev
+updater legs to run against `main`, and the recorder then records the EXACT versions those legs
+installed — read from each installed binary (`downloads.mjs --installed-version`), never re-resolved
+live. The recorder runs only when those legs actually ran and passed: a core-only push records
+nothing. `pnpm ci:download -- --clean` removes a release that was created but never consumed.
 
 ## Test: installer hash verification
 
@@ -306,11 +311,12 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
   — re-resolves the latest version of every browser the E2E map installs (Firefox, Dev Edition,
   LibreWolf, Floorp, Zen; Waterfox tracked by version only) from its vendor API and verifies the
   download endpoint with a 1 KB ranged GET. Each new release is downloaded once, SHA-256'd and
-  recorded in the per-release watchdog issue (`label:url-watchdog`) — the durable ledger. Opens
-  issues on rot (404, HTML error page, changed API shape) and same-version binary size changes. Each
-  run logs the baseline's cache-hit status and age, so a silently evicted Actions cache is visible
-  instead of masquerading as a first run. The PR mode (`--pr`) is stateless, always green, and
-  surfaces findings as annotations. Run manually via `workflow_dispatch`, or locally with
+  folded into the `[url-watchdog] status` meta issue (per-browser status table + version history —
+  the dashboard and the SHA-256 ledger in one place). Opens issues on rot (404, HTML error page,
+  changed API shape) and same-version binary size changes. Each run logs the baseline's cache-hit
+  status and age, so a silently evicted Actions cache is visible instead of masquerading as a first
+  run. The PR mode (`--pr`) is stateless, always green, and surfaces findings as annotations. Run
+  manually via `workflow_dispatch`, or locally with
   `node tools/check-browser-downloads.mjs --dry-run`.
 - **Skills watchdog** (`.github/workflows/skills-watchdog.yml`, weekly + on PRs touching the
   watchdog) — detects drift in the five third-party skills in `.agents/skills/` (ADR 0022): the
