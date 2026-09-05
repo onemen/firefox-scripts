@@ -1,9 +1,28 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+
 import js from '@eslint/js';
 import markdown from '@eslint/markdown';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import security from 'eslint-plugin-security';
 import {defineConfig} from 'eslint/config';
 import globals from 'globals';
+
+// Third-party skills (SKILL.md frontmatter `metadata.github-repo`, ADR 0022)
+// are linted never — derived here at config-load so this list cannot drift
+// from the installed skills. config/ is one level down, hence the ../ climb.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const thirdPartySkills = fs
+  .readdirSync(path.join(repoRoot, '.agents', 'skills'), {withFileTypes: true})
+  .filter(
+    entry =>
+      entry.isDirectory() &&
+      /github-repo:\s*\S/.test(
+        fs.readFileSync(path.join(repoRoot, '.agents', 'skills', entry.name, 'SKILL.md'), 'utf8')
+      )
+  )
+  .map(entry => `**/.agents/skills/${entry.name}`);
 
 // Deep-import only the two environments this repo uses instead of loading the
 // whole plugin: `eslint-plugin-mozilla`'s index eagerly imports all 58 rules,
@@ -76,15 +95,10 @@ export default defineConfig([
     name: 'global-ignore',
     ignores: [
       '.github',
-      // Third-party agent skills — upstream style, never linted (ADR 0022: gh-installed,
-      // pristine; classification via metadata.github-repo in SKILL.md). Patterns need the
-      // **/ prefix so they match regardless of the config's base directory. When the
-      // watchdog installs a new third-party skill, add it here and to .prettierignore.
-      '**/.agents/skills/cavecrew',
-      '**/.agents/skills/code-review',
-      '**/.agents/skills/debugging-firefox',
-      '**/.agents/skills/grill-me',
-      '**/.agents/skills/lavish',
+      // Third-party agent skills — upstream style, never linted (ADR 0022).
+      // Derived above from SKILL.md frontmatter; a new third-party skill is
+      // ignored automatically. (config/-anchored ignores need the **/ prefix
+      // to match at the repo root.)
       // Build outputs and generated artifacts (gitignored at the repo level).
       'dist/',
       'lib/',
@@ -93,6 +107,7 @@ export default defineConfig([
       '.vscode',
       '**/*local*/**',
       '**/*local*.*',
+      ...thirdPartySkills,
       '**/*.d.ts',
       '**/@types/**',
     ],

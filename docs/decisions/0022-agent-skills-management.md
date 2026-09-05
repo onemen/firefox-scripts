@@ -30,16 +30,19 @@ One tool, one classification, one root:
    root `skills-lock.json` is retired.
 2. **Classification is metadata, not location or naming**: a skill with `metadata.github-repo` in
    `SKILL.md` is third-party; without it, authored here. No `vendor-*` prefixes, no nested discovery
-   layouts.
-3. **Third-party skills stay pristine** — never linted, never formatted (the gates ignore them via
-   their metadata-derived paths). Authored skills are fully gated. Gates that mutate apply to things
-   we author; gates that validate apply to everything.
-4. **One root**: `.agents/skills/<skill-name>/`, flat, tracked. The `.agent/` root is retired; its
+   layouts.3. **Third-party skills stay pristine** — never linted, never formatted. The gate ignores
+   derive from the frontmatter metadata itself: eslint computes its ignore list at config-load from
+   `metadata.github-repo` (`config/eslint.config.js`), and `.prettierignore` carries a generated
+   block (`tools/sync-skill-gates.mjs`, run by the format scripts) that ignores every skill and
+   un-ignores the authored ones — so a newly installed third-party skill is ignored automatically
+   and only authored skills are ever gated. Gates that mutate apply to things we author; gates that
+   validate apply to everything.
+3. **One root**: `.agents/skills/<skill-name>/`, flat, tracked. The `.agent/` root is retired; its
    vendored skill moves under the common root (still pristine, still MIT-attributed).
-5. **Updates are `gh skill update`** — `--dry-run` in a weekly advisory CI check that opens/updates
+4. **Updates are `gh skill update`** — `--dry-run` in a weekly advisory CI check that opens/updates
    a tracking issue; locally `--all`. Drift becomes a **deliberate human-reviewed PR per batch** —
    never auto-merged: upstream skill text is a prompt-injection surface.
-6. **Scope split**: repo-shared skills are committed here; personal skills live in user scope
+5. **Scope split**: repo-shared skills are committed here; personal skills live in user scope
    (`~/.agents/skills/`), installed with the same tool, never committed.
 
 ## Consequences

@@ -21,3 +21,16 @@ dist
 **/.agents/skills/debugging-firefox
 **/.agents/skills/grill-me
 **/.agents/skills/lavish
+
+# BEGIN managed: third-party skills (generated — run pnpm format:fix)
+**/.agents/skills/*
+!**/.agents/skills/ai-review
+!**/.agents/skills/change-workflow
+!**/.agents/skills/generated-files
+!**/.agents/skills/publishing
+# third-party (gh metadata): cavecrew
+# third-party (gh metadata): code-review
+# third-party (gh metadata): debugging-firefox
+# third-party (gh metadata): grill-me
+# third-party (gh metadata): lavish
+# END managed
