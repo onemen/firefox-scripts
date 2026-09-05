@@ -172,8 +172,9 @@ is not gated on CI — it can help debug failing checks. Add no CI/repo AI secre
 ## Agent workflow
 
 **Task worktrees:** use `<workspace>/worktrees/<slug>/` (one deletable folder per task) and remove
-them before finishing (`git worktree remove`; retry the empty dir if a process still held it).
-Worktree node_modules link rules live in the `change-workflow` skill.
+them before finishing (`git worktree remove`; retry the empty dir if a process still held it). Run
+`pnpm install` in a fresh worktree; never link the parent's node_modules into it — details in the
+`change-workflow` skill.
 
 Before changing code:
 
