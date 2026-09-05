@@ -529,10 +529,13 @@ jobs:
 
       # The snap store resolves the revision at install time (no cacheable
       # URL, so no actions/cache step here); downloads.mjs wraps
-      # `snap install firefox --classic` and exports /snap/bin/firefox.
+      # `sudo snap install firefox --classic` (it elevates the snap command
+      # itself — running this recipe under sudo would strip $GITHUB_ENV and
+      # FIREFOX_BINARY would never reach the later steps) and exports
+      # /snap/bin/firefox.
       - name: Install Firefox (snap)
         if: steps.snapd.outputs.available == 'true'
-        run: sudo node test/e2e/shared/downloads.mjs firefox-snap
+        run: node test/e2e/shared/downloads.mjs firefox-snap
 
       # THE point of this leg (#55): discover the snap GreD at runtime —
       # findGreDir() maps a /snap/ binary to /etc/firefox — and verify it

@@ -536,8 +536,12 @@ export async function installBrowser(browser, platform = process.platform) {
   if (recipe.snap) {
     // Snap store install (Linux): the snap daemon handles download + install;
     // `--classic` grants the classic confinement Firefox's launcher expects.
-    // Requires root — the e2e.yml snap leg runs the step under sudo.
-    execSync('snap install firefox --classic', {stdio: 'inherit'});
+    // The snap command itself elevates via sudo (passwordless on hosted
+    // runners) — the recipe must run UNPRIVILEGED so its $GITHUB_ENV export
+    // (FIREFOX_BINARY) lands in the caller's environment; running the whole
+    // step under sudo would strip GITHUB_ENV (sudo env_reset) and the
+    // workflow's later steps would never see the binary path.
+    execSync('sudo snap install firefox --classic', {stdio: 'inherit'});
     // /snap/bin/firefox is the stable launcher path (a symlink into
     // /snap/firefox/current/...); discoverFirefoxBinary lists it as a Linux
     // fallback candidate, but resolve it here explicitly so the exported
