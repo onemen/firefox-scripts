@@ -58,7 +58,7 @@ jobs:
       # never persist the updated baseline after the first run. Restore falls
       # back to the newest entry of the previous runs via the prefix.
       - name: Restore baseline
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .watchdog
           key: url-watchdog-baseline-${{ github.run_id }}
@@ -69,7 +69,7 @@ jobs:
       # successful E2E run actually tested (the publish pre-flight already
       # restores the same cache under VALIDATED_DIR).
       - name: Restore validated-versions record
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .watchdog-validated
           key: browser-validated-${{ github.run_id }}
@@ -85,7 +85,7 @@ jobs:
       # restore step hit; the fresh key persists a version bump for the next
       # run (immutable old entries just expire after 7 days).
       - name: Save baseline
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .watchdog
           key: url-watchdog-baseline-${{ github.run_id }}
