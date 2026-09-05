@@ -581,6 +581,15 @@ jobs:
           name: dev-snapshot
           path: dist/
 
+      # Same as the portable-firefox job: the shared snapshot is built on
+      # Ubuntu but artifact upload/download drops the execute bit, so build
+      # the native installer locally (package zips stay from the snapshot).
+      - name: Build native installer
+        if: steps.snapd.outputs.available == 'true'
+        run: |
+          make -C installer dist_linux MODE=dev
+          chmod +x dist/installer/installer_linux-dev
+
       # Detection against the snap build (HTTP + UI layers + the test-surface
       # layer from #129): the installer must discover /snap/bin/firefox and
       # report it like any other browser.
