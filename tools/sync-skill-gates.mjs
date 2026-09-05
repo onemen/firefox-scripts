@@ -98,6 +98,25 @@ function isSkillGateLine(line) {
 }
 
 /**
+ * Unbalanced managed markers (orphan BEGIN or END, or duplicated pairs) — lines
+ * the renderer treats as "no valid block" but that would survive a
+ * regenerate-and-append. `--fix` must converge such a file in one run, so
+ * orphaned marker lines are stripped before the fresh block is appended.
+ *
+ * @param {string[]} lines
+ * @returns {boolean}
+ */
+function hasOrphanMarkers(lines) {
+  const begins = lines.filter(l => l === BEGIN_MARKER).length;
+  const ends = lines.filter(l => l === END_MARKER).length;
+  const firstBegin = lines.indexOf(BEGIN_MARKER);
+  const firstEnd = lines.indexOf(END_MARKER);
+  return (
+    begins !== 1 || ends !== 1 || firstBegin === -1 || firstEnd === -1 || firstEnd < firstBegin
+  );
+}
+
+/**
  * Lines outside the managed block that gate `.agents/skills` — stale
  * hand-written entries (e.g. a static list that predated the block surviving
  * beside it) silently re-gate vendor skills, so `--check` fails on them and
@@ -139,9 +158,15 @@ export function renderPrettierignore(current, thirdParty, authored) {
   const lines = current.replace(/\r\n/g, '\n').split('\n');
   const beginIdx = lines.indexOf(BEGIN_MARKER);
   const endIdx = lines.indexOf(END_MARKER);
-  const hasBlock = beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx;
+  const hasBlock =
+    beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx && !hasOrphanMarkers(lines);
   const inBlock = i => hasBlock && i >= beginIdx && i <= endIdx;
-  const kept = lines.filter((line, i) => inBlock(i) || !isSkillGateLine(line));
+  // Stray gate lines AND orphaned markers (unbalanced/duplicated pairs) are
+  // dropped, so one --fix run always converges to exactly one valid block.
+  const kept = lines.filter(
+    (line, i) =>
+      inBlock(i) || (!isSkillGateLine(line) && line !== BEGIN_MARKER && line !== END_MARKER)
+  );
   if (!hasBlock) {
     // No (valid) managed block — append one after the surviving content.
     const base = kept.join('\n').replace(/\n+$/, '');

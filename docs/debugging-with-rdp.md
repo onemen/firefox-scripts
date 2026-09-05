@@ -36,8 +36,10 @@ printf '%s\n' \
   'user_pref("devtools.debugger.prompt-connection", false);' \
   'user_pref("devtools.chrome.enabled", true);' \
   > "$PROF/user.js"
-firefox --profile "$PROF" --no-remote &
-# once startup has settled, forward the flag to the running instance:
+firefox --profile "$PROF" &
+# once startup has settled, ask the running instance to open the RDP listener
+# (same profile → Firefox forwards the flag over its remote command endpoint;
+# a --no-remote first instance would have no handler to receive it):
 firefox --profile "$PROF" --start-debugger-server 6080
 ```
 

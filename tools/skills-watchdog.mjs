@@ -199,7 +199,7 @@ export async function refToCommit(fetchJson, repo, ref) {
  *     dir: string;
  *     kind: string;
  *     reason?: string;
- *     behindBy?: number | null;
+ *     aheadBy?: number | null;
  *     localTreeSha?: string;
  *     upstreamTreeSha?: string | null;
  *   }[]
@@ -216,11 +216,14 @@ export async function collectDrift(inventory, fetchJson) {
       }
 
       // Context: recorded ref vs the default branch, and whether the skill
-      // folder itself changed there.
+      // folder itself changed there. compare/<ref>...HEAD reports ahead_by =
+      // commits HEAD has that the ref lacks (i.e. how far the ref is behind
+      // the default branch) — behind_by stays 0 for an ancestor ref, so it is
+      // the wrong field for ref-behind detection (CodeRabbit triage, PR #122).
       const cmp = await fetchJson(`/repos/${item.repo}/compare/${shortRef(item.ref)}...HEAD`).catch(
         () => null
       );
-      const behindBy = cmp ? cmp.behind_by : null;
+      const aheadBy = cmp ? cmp.ahead_by : null;
       const headTree = await fetchJson(`/repos/${item.repo}/git/trees/HEAD`);
       const upstreamAtHead = await folderTreeAt(fetchJson, item.repo, headTree.sha, item.skillPath);
       const changedOnHead = upstreamAtHead !== null && upstreamAtHead !== upstreamAtRef;
@@ -229,15 +232,15 @@ export async function collectDrift(inventory, fetchJson) {
         findings.push({
           ...item,
           kind: 'content-drift',
-          behindBy,
+          aheadBy,
           localTreeSha: item.treeSha,
           upstreamTreeSha: upstreamAtRef,
         });
-      } else if (behindBy > 0 && changedOnHead) {
+      } else if (aheadBy > 0 && changedOnHead) {
         findings.push({
           ...item,
           kind: 'ref-behind',
-          behindBy,
+          aheadBy,
           localTreeSha: item.treeSha,
           upstreamTreeSha: upstreamAtHead,
         });
@@ -283,13 +286,13 @@ export function issueBody(findings, runUrl = 'local') {
         `### ${f.skill} — content drift\n\n` +
         `- source: ${f.repo} @ \`${f.ref}\`\n` +
         `- installed tree: \`${(f.localTreeSha || '').slice(0, 12)}\` → upstream: \`${(f.upstreamTreeSha || '').slice(0, 12)}\`\n` +
-        (f.behindBy > 0 ? `- ref is ${f.behindBy} commit(s) behind the default branch\n` : '') +
+        (f.aheadBy > 0 ? `- the default branch is ${f.aheadBy} commit(s) ahead of the ref\n` : '') +
         `\n\`\`\`\n${updateCommand(f)}\n\`\`\`\n`
       );
     }
     if (f.kind === 'ref-behind') {
       return (
-        `### ${f.skill} — upstream moved (ref behind by ${f.behindBy})\n\n` +
+        `### ${f.skill} — upstream moved (default branch ${f.aheadBy} commit(s) ahead)\n\n` +
         `- source: ${f.repo} @ \`${f.ref}\` — skill folder changed on the default branch\n` +
         `- installed tree: \`${(f.localTreeSha || '').slice(0, 12)}\` → default branch: \`${(f.upstreamTreeSha || '').slice(0, 12)}\`\n\n` +
         `\`\`\`\n${updateCommand(f)}\n\`\`\`\n`
@@ -344,14 +347,16 @@ export async function ghApi(token, pathname, {method = 'GET', body} = {}) {
  * resolved. Returns the issue URL acted on, or null.
  */
 async function upsertTrackingIssue(token, repo, findings, runUrl) {
-  const open = await ghApi(
+  // state=all: a previously closed tracking issue is reused (reopened) when
+  // drift returns, instead of opening a fresh one each cycle.
+  const known = await ghApi(
     token,
-    `/repos/${repo}/issues?state=open&labels=${WATCHDOG_LABEL}&per_page=100`
+    `/repos/${repo}/issues?state=all&labels=${WATCHDOG_LABEL}&per_page=100`
   );
-  const existing = open.find(i => i.title === ISSUE_TITLE);
+  const existing = known.find(i => i.title === ISSUE_TITLE);
 
   if (!findings.length) {
-    if (existing) {
+    if (existing && existing.state === 'open') {
       await ghApi(token, `/repos/${repo}/issues/${existing.number}/comments`, {
         method: 'POST',
         body: {body: `All third-party skills current as of run ${runUrl} — closing.`},

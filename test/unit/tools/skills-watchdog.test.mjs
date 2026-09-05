@@ -110,12 +110,12 @@ test('shortRef: strips the refs/ prefix for the ref API', () => {
  * (peel tag) → `/git/trees/<sha>` walks. Trees are keyed by sha; the fake tree
  * store maps sha → entries.
  */
-function fakeApi({tagObject = null, refTarget, trees = {}, behindBy = 0, refMissing = false}) {
+function fakeApi({tagObject = null, refTarget, trees = {}, aheadBy = 0, refMissing = false}) {
   const calls = [];
   const fetchJson = async pathname => {
     calls.push(pathname);
     if (pathname.startsWith('/repos/o/r/compare/')) {
-      return {behind_by: behindBy};
+      return {ahead_by: aheadBy, behind_by: 0};
     }
     if (pathname.startsWith('/repos/o/r/git/ref/')) {
       if (refMissing) throw statusErr(404, 'Not Found');
@@ -155,14 +155,14 @@ const ITEM = {
 function standardFake({
   refFolderSha,
   headFolderSha,
-  behindBy = 0,
+  aheadBy = 0,
   refMissing = false,
   peel = false,
 }) {
   return fakeApi({
     refTarget: 'commit-at-ref',
     tagObject: peel ? 'commit-at-ref' : null,
-    behindBy,
+    aheadBy,
     refMissing,
     trees: {
       'commit-at-ref': [{path: 'skills', type: 'tree', sha: 'ref-skills'}],
@@ -195,25 +195,25 @@ test('collectDrift: rolling tag moved → content-drift', async () => {
   const api = standardFake({
     refFolderSha: 'sha-upstream',
     headFolderSha: 'sha-upstream',
-    behindBy: 3,
+    aheadBy: 3,
   });
   const findings = await collectDrift([ITEM], api);
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, 'content-drift');
   assert.equal(findings[0].upstreamTreeSha, 'sha-upstream');
-  assert.equal(findings[0].behindBy, 3);
+  assert.equal(findings[0].aheadBy, 3);
 });
 
 test('collectDrift: static tag unchanged but skill changed on HEAD → ref-behind', async () => {
   const api = standardFake({
     refFolderSha: 'sha-local-folder',
     headFolderSha: 'sha-head-folder',
-    behindBy: 9,
+    aheadBy: 9,
   });
   const findings = await collectDrift([ITEM], api);
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, 'ref-behind');
-  assert.equal(findings[0].behindBy, 9);
+  assert.equal(findings[0].aheadBy, 9);
   assert.equal(findings[0].upstreamTreeSha, 'sha-head-folder');
 });
 
@@ -221,7 +221,7 @@ test('collectDrift: static tag unchanged, folder same on HEAD → no finding', a
   const api = standardFake({
     refFolderSha: 'sha-local-folder',
     headFolderSha: 'sha-local-folder',
-    behindBy: 5,
+    aheadBy: 5,
   });
   assert.deepEqual(await collectDrift([ITEM], api), []);
 });
@@ -265,7 +265,7 @@ test('issueBody: carries the update command per skill and the injection warning'
   const api = standardFake({
     refFolderSha: 'sha-upstream',
     headFolderSha: 'sha-upstream',
-    behindBy: 2,
+    aheadBy: 2,
   });
   const body = issueBody(await collectDrift([ITEM], api), 'run-123');
   assert.match(body, /### cavecrew — content drift/);

@@ -1,6 +1,5 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 
 import js from '@eslint/js';
 import markdown from '@eslint/markdown';
@@ -12,17 +11,21 @@ import globals from 'globals';
 // Third-party skills (SKILL.md frontmatter `metadata.github-repo`, ADR 0022)
 // are linted never — derived here at config-load so this list cannot drift
 // from the installed skills. config/ is one level down, hence the ../ climb.
+// The classification reuses the watchdog's frontmatter parser (the same
+// source of truth `tools/sync-skill-gates.mjs` and the CI drift check use),
+// rather than a whole-file regex that a prose mention of "github-repo:" could
+// fool. Missing/unparseable SKILL.md → treated as authored (linted).
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const thirdPartySkills = fs
-  .readdirSync(path.join(repoRoot, '.agents', 'skills'), {withFileTypes: true})
-  .filter(
-    entry =>
-      entry.isDirectory() &&
-      /github-repo:\s*\S/.test(
-        fs.readFileSync(path.join(repoRoot, '.agents', 'skills', entry.name, 'SKILL.md'), 'utf8')
-      )
-  )
-  .map(entry => `**/.agents/skills/${entry.name}`);
+let thirdPartySkills = [];
+try {
+  const watchdogUrl = pathToFileURL(path.join(repoRoot, 'tools', 'skills-watchdog.mjs')).href;
+  const {loadInventory} = await import(watchdogUrl);
+  thirdPartySkills = loadInventory(repoRoot).map(i => `**/.agents/skills/${i.skill}`);
+} catch (err) {
+  // Config must load even if the tool tree is unavailable (rare: partial
+  // checkout). Fail open to linting everything except the known set.
+  console.error(`eslint config: skill classification unavailable (${err.message})`);
+}
 
 // Deep-import only the two environments this repo uses instead of loading the
 // whole plugin: `eslint-plugin-mozilla`'s index eagerly imports all 58 rules,

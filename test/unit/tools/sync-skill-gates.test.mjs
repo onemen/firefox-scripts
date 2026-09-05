@@ -141,6 +141,30 @@ test('findStraySkillLines: tolerates unbalanced markers conservatively', () => {
   ]);
 });
 
+test('renderPrettierignore: orphan BEGIN converges in one --fix run', () => {
+  const orphan = [BEGIN_MARKER, '**/.agents/skills/*', '!**/.agents/skills/old-authored', ''].join(
+    '\n'
+  );
+  const out = renderPrettierignore(orphan, ['vendor-b'], ['mine-a']);
+  // exactly one balanced block; the orphaned block's gating lines are gone
+  assert.equal(out.split(BEGIN_MARKER).length - 1, 1);
+  assert.equal(out.split(END_MARKER).length - 1, 1);
+  assert.doesNotMatch(out, /old-authored/);
+  assert.match(out, /!.*mine-a/);
+  assert.equal(findStraySkillLines(out).length, 0);
+  // and the healed file is stable
+  assert.equal(renderPrettierignore(out, ['vendor-b'], ['mine-a']), out);
+});
+
+test('renderPrettierignore: duplicated marker pairs collapse to one block', () => {
+  const dup = [BEGIN_MARKER, END_MARKER, 'middle-entry', BEGIN_MARKER, END_MARKER].join('\n');
+  const out = renderPrettierignore(dup, [], ['mine-a']);
+  assert.equal(out.split(BEGIN_MARKER).length - 1, 1);
+  assert.equal(out.split(END_MARKER).length - 1, 1);
+  assert.match(out, /middle-entry/);
+  assert.equal(renderPrettierignore(out, [], ['mine-a']), out);
+});
+
 test('live repo: config/.prettierignore managed block matches the skill set', () => {
   const {thirdParty, authored} = classifySkills(TOOL_ROOT);
   const current = fs.readFileSync(path.join(TOOL_ROOT, 'config', '.prettierignore'), 'utf8');
