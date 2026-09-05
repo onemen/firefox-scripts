@@ -589,6 +589,10 @@ jobs:
         run: |
           make -C installer dist_linux MODE=dev
           chmod +x dist/installer/installer_linux-dev
+          # findInstaller() prefers INSTALLER_BIN: the E2E looks in the
+          # SNAPSHOT dir (dist/dev-HEAD-<sha>/), where the artifact copy
+          # lacks the execute bit — point it at the freshly built binary.
+          echo "INSTALLER_BIN=$PWD/dist/installer/installer_linux-dev" >> "$GITHUB_ENV"
 
       # Detection against the snap build (HTTP + UI layers + the test-surface
       # layer from #129): the installer must discover /snap/bin/firefox and
