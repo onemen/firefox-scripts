@@ -547,9 +547,10 @@ jobs:
           set -euo pipefail
           BIN="$FIREFOX_BINARY"
           test -x "$BIN" || { echo "::error::snap Firefox binary missing: $BIN"; exit 1; }
-          GRED=$(node --input-type=module -e \
-            "import {findGreDir} from './test/e2e/shared/browsers.mjs';" \
-            "console.log(findGreDir(process.argv[1]))" "$BIN")
+          # One single-quoted-script string: a second quoted fragment would
+          # become argv[1] and shift $BIN to argv[2] (that bug made GRED
+          # empty in the first CI run).
+          GRED=$(node --input-type=module -e "import {findGreDir} from './test/e2e/shared/browsers.mjs'; console.log(findGreDir(process.argv[1]))" "$BIN")
           echo "binary: $BIN"
           echo "findGreDir(): $GRED"
           echo "### Snap Firefox GreD verification (#55)" >> "$GITHUB_STEP_SUMMARY"
