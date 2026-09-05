@@ -411,10 +411,12 @@ git config --unset core.hooksPath   # uninstall
   `--no-verify` (the `make analyze` leg of `pnpm lint` hard-fails without gcc) — CI still runs the
   full gate.
 - `githooks/post-checkout` self-initializes a brand-new worktree: it fires only when the checkout
-  creates one (null previous head + branch checkout, i.e. `git worktree add`), copies the untracked
-  `.env` (publish/review tokens) from the main checkout, and runs `pnpm install --prefer-offline` so
-  the worktree is immediately usable. A failure never aborts the checkout — it just leaves the
-  worktree to initialize by hand.
+  creates one (null previous head + branch checkout, i.e. `git worktree add`) and runs
+  `pnpm install --prefer-offline`, so the worktree is immediately usable. A failure never aborts the
+  checkout — it just leaves the worktree to initialize by hand. The hook is install-only and never
+  copies the main checkout's `.env`: the GitHub token lives only in the untracked root `.env`
+  (AGENTS), and duplicating it into every worktree widens its exposure — copy `.env` by hand only
+  when a token-using command (publish, AI review) must run from a worktree.
 
 Do **not** add generation steps to hooks: generated files are produced on demand by the Makefile and
 publish tooling (ADR 0008).

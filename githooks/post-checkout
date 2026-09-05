@@ -8,6 +8,12 @@
 # plain branch switch always has a non-null previous head and is untouched.
 # The hook runs after the worktree is materialized, so a failure never aborts
 # anything — it just leaves the new worktree to initialize by hand.
+#
+# Install-only by design: it deliberately does NOT copy the main checkout's
+# .env — the GitHub token lives only in the untracked root .env (AGENTS), and
+# duplicating it into every worktree widens its exposure. Copy .env by hand
+# only when a token-using command (publish, ai review) must run from a
+# worktree.
 
 set -u
 
@@ -19,17 +25,7 @@ NULL_HASH="0000000000000000000000000000000000000000"
 [ "$is_branch" -eq 1 ] || exit 0
 [ "$prev_head" = "$NULL_HASH" ] || exit 0
 
-echo "post-checkout: new worktree detected — initializing."
-
-# Main repository root: the checkout that owns this worktree's common .git dir.
-main_repo=$(git rev-parse --path-format=absolute --git-common-dir | sed 's/\/\.git$//')
-
-# .env holds publish/review tokens (untracked, gitignored) — git never carries
-# it into a worktree, so copy it from the main checkout when present.
-if [ -f "$main_repo/.env" ] && [ ! -f ".env" ]; then
-  echo "post-checkout: copying .env from the main checkout."
-  cp "$main_repo/.env" .env
-fi
+echo "post-checkout: new worktree detected — installing dependencies."
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "post-checkout: pnpm not on PATH — run 'pnpm install' here manually." >&2
