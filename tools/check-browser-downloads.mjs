@@ -23,11 +23,18 @@
  *        flag a size change (binary replaced without a bump). Each run logs the
  *        baseline's cache-hit status and age, so a silently evicted cache is
  *        visible instead of masquerading as a first run.
- *   4. ISSUES — new versions, rot, and same-version size changes open a GitHub
- *        issue, deduped per browser (the exact issue title is matched against
- *        open issues carrying the `url-watchdog` label). New-release issues
- *        carry the verified SHA-256 + size — the durable ledger (search
- *        `label:url-watchdog` for the record of any release).
+ *   4. META ISSUE — one `[url-watchdog] status` issue is kept current after every
+ *        run: a per-browser status table (last verified version, size +
+ *        SHA-256, the run that last checked it, a status tag, the CI-cache
+ *        fallback version for failed browsers, and the E2E-validated version
+ *        for the hard-gate browsers) plus a version history that only grows on
+ *        runs with real version updates — the durable SHA-256 ledger (search
+ *        `label:url-watchdog` for it).
+ *   5. ERROR ISSUES — rot and same-version size changes still open their own issue,
+ *        deduped per browser (the exact issue title is matched against open
+ *        issues carrying the `url-watchdog` label); the watchdog auto-closes
+ *        any open failure issue for a browser once a later run checks it green
+ *        again.
  * - PR (pull_request touching the download map): stateless and always green —
  *   findings surface as ::warning:: / ::notice:: annotations, so the check can
  *   be marked required without ever blocking. No baseline, no issues, no full
@@ -37,9 +44,9 @@
  *   downloads, no issues. Exit 1 on drift so a prod publish is blocked until
  *   the watchdog refreshes the baseline and triggers the browser-specific E2E.
  *
- * Browsers without a direct download URL (waterfox) are tracked by version
- * only: their vendor API is still polled, but there is no endpoint to verify
- * and no CI recipe to install.
+ * Every browser in the E2E map — including waterfox, which resolves its CDN
+ * installer since ADR 0021 — gets the full version + endpoint + SHA-256
+ * treatment.
  *
  * Requires GITHUB_TOKEN with issues: write for issue creation; without it, or
  * with --dry-run, findings are printed instead. Exit code stays 0 when findings
@@ -59,8 +66,18 @@ const __dirname = path.dirname(__filename);
 export const REPO_ROOT = path.resolve(__dirname, '..');
 
 export const WATCHDOG_LABEL = 'url-watchdog';
+/** Single status + ledger issue updated after each weekly run. */
+export const META_ISSUE_TITLE = '[url-watchdog] status';
 const MIN_BINARY_BYTES = 10_000_000; // installers are ~100 MB; smaller = wrong file
 const RANGE_BYTES = 1024;
+/** Version-history entries kept in the meta issue (oldest trimmed). */
+const HISTORY_MAX = 10;
+/**
+ * Statuses that prove a browser checked green — their failure issues
+ * auto-close.
+ */
+const OK_STATUSES = new Set(['ok', 'new-version', 'first-run']);
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** Browsers the E2E map installs or tracks — each must resolve its version. */
 const BROWSERS = ['firefox', 'firefox-dev', 'librewolf', 'floorp', 'zen', 'waterfox'];
@@ -274,6 +291,165 @@ export function formatAge(ms) {
 }
 
 /**
+ * Short UTC date for run links ('Sep 5') — the visible text; the full run URL
+ * only ever lives behind the link.
+ */
+export function formatRunDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+/** Human size in MB with one decimal ('91.7 MB'), '—' when unknown. */
+export function formatSize(bytes) {
+  if (!bytes) return '—';
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+/** First 6 chars of a SHA-256, backticked for the table. */
+export function shortSha(sha256) {
+  return sha256 ? `\`${sha256.slice(0, 6)}…\`` : '—';
+}
+
+/** A short `[Sep 5](run-url)` link, or the bare date when the URL is unknown. */
+export function formatCheck(iso, url) {
+  const date = formatRunDate(iso);
+  return url ? `[${date}](${url})` : date;
+}
+
+/**
+ * Status tag for the last check of a browser. `results[browser].status` is set
+ * by the main loop: 'ok' | 'new-version' | 'first-run' | 'lookup-failed' |
+ * 'endpoint-failed' | 'size-change'.
+ */
+export function statusTag(status) {
+  switch (status) {
+    case 'ok':
+      return '✅ up to date';
+    case 'new-version':
+      return '🆕 new version';
+    case 'first-run':
+      return '⏳ first run';
+    case 'lookup-failed':
+      return '❌ lookup failed';
+    case 'endpoint-failed':
+      return '⚠️ endpoint failed';
+    case 'size-change':
+      return '🔄 size changed';
+    default:
+      return status || '—';
+  }
+}
+
+/**
+ * E2E-validated cell for the status table: `✅ <version>` when a successful E2E
+ * run validated exactly the baseline version, `⏳ <older>` when the record shows
+ * an earlier release (current one not yet E2E-tested), `⏳ none` when there is
+ * no record, and '—' for the advisory fork browsers that the validated-versions
+ * record does not cover.
+ */
+export function validatedCell(browser, entry, validated) {
+  if (!VALIDATED_BROWSERS.includes(browser)) return '—';
+  const v = validated?.browsers?.[browser]?.version;
+  if (!v) return '⏳ none';
+  return v === entry?.version ? `✅ ${v}` : `⏳ ${v}`;
+}
+
+/**
+ * Markdown status table for the meta issue. `baseline` is the per-browser
+ * record AFTER this run — a browser that failed keeps its previous entry, which
+ * is exactly what the version-aware CI installer cache still serves (the
+ * fallback column). `validated` is the E2E record (see validatedCell).
+ */
+export function buildStatusTable({results, baseline, validated}) {
+  const rows = BROWSERS.map(browser => {
+    const res = results[browser] || {status: 'ok'};
+    const entry = baseline[browser] || {};
+    const failed = res.status === 'lookup-failed' || res.status === 'endpoint-failed';
+    const version = entry.version || '—';
+    const sizeSha = `${formatSize(entry.size)} · ${shortSha(entry.sha256)}`;
+    const lastCheck = formatCheck(entry.checkedAt, entry.checkedUrl);
+    const fallback = failed ? `cached: ${version} · ${lastCheck}` : '—';
+    const e2e = validatedCell(browser, entry, validated);
+    return `| ${browser} | ${version} | ${sizeSha} | ${lastCheck} | ${statusTag(res.status)} | ${fallback} | ${e2e} |`;
+  });
+  return [
+    '| Browser | Last verified | Size · SHA-256 | Last check | Status | Fallback (CI cache) | E2E validated |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    ...rows,
+  ].join('\n');
+}
+
+/**
+ * Append one version-history entry per run with real updates ({date, runUrl,
+ * changes: [{browser, prevVersion, newVersion, size, sha256}]}). Capped at
+ * HISTORY_MAX — the oldest entries are trimmed.
+ */
+export function updateHistory(history, entry, {max = HISTORY_MAX} = {}) {
+  const next = [...history, entry];
+  return next.length > max ? next.slice(next.length - max) : next;
+}
+
+/**
+ * Seed the version history from the current baseline (used until the first real
+ * update run persists a history entry — e.g. when the meta issue is first
+ * created mid-life). Deliberately date-free so the rendered body stays stable
+ * across no-op runs.
+ */
+export function seedHistoryFromBaseline(baseline) {
+  const changes = BROWSERS.filter(b => baseline[b]?.version).map(b => ({
+    browser: b,
+    version: baseline[b].version,
+    size: baseline[b].size,
+    sha256: baseline[b].sha256,
+  }));
+  return changes.length ? [{kind: 'baseline', changes}] : [];
+}
+
+/** Render the version-history section lines ('- [Sep 5](run) — update: …'). */
+export function renderHistory(history) {
+  return history
+    .map(h => {
+      const items = h.changes
+        .map(c => {
+          const sha = shortSha(c.sha256);
+          if (h.kind === 'baseline') {
+            return `${c.browser} ${c.version} · ${formatSize(c.size)} · ${sha}`;
+          }
+          return `${c.browser} ${c.prevVersion} → ${c.newVersion} · ${formatSize(c.size)} · ${sha}`;
+        })
+        .join(' · ');
+      const label =
+        h.kind === 'baseline' ? 'baseline' : `${formatCheck(h.date, h.runUrl)} — update`;
+      return `- ${label}: ${items}`;
+    })
+    .join('\n');
+}
+
+/**
+ * Meta-issue body: the status table + the version history. No run date in the
+ * header on purpose — the body must only change when the table or the history
+ * changes, so fully-green no-op runs do not churn the issue.
+ */ export function buildMetaIssueBody({table, history}) {
+  const historyBlock =
+    history ? `\n\n## Version history (runs with real updates)\n\n${history}\n` : '';
+  return `## Watchdog status\n\n${table}${historyBlock}`;
+}
+
+/**
+ * True when the title is a failure/size issue for `browser` — the set the
+ * watchdog auto-closes once the browser checks green again.
+ */
+export function isFailureIssueTitle(browser, title) {
+  return (
+    title.startsWith(`[url-watchdog] ${browser} download check failed:`) ||
+    title === `[url-watchdog] ${browser} version lookup failed` ||
+    title === `[url-watchdog] ${browser} same version, binary size changed`
+  );
+}
+
+/**
  * The dedup key for an issue: exact-title match against open issues carrying
  * the url-watchdog label, so a re-run never duplicates an open finding.
  */
@@ -293,8 +469,10 @@ export function issueTitle(kind, browser, {prevVersion, newVersion, reason} = {}
 }
 
 /**
- * Markdown body for a watchdog issue. New-release bodies carry the verified
- * SHA-256 + size — the durable ledger record for that browser/version.
+ * Markdown body for a watchdog issue. Used for error findings (rot,
+ * size-change, lookup-failure); the new-version branch is kept for the unit
+ * tests + API stability, but the release ledger now lives in the meta issue
+ * (buildMetaIssueBody), not in per-release issues.
  *
  * @param {{
  *   kind: string;
@@ -370,13 +548,18 @@ async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   return json;
 }
 
-/** Open a watchdog issue unless an open one with the same title already exists. */
-async function openIssueIfNew(token, repo, title, body) {
+/** Find an open url-watchdog issue by exact title (null when absent). */
+async function findOpenIssueByTitle(token, repo, title) {
   const open = await ghApi(
     token,
     `/repos/${repo}/issues?state=open&labels=${WATCHDOG_LABEL}&per_page=100`
   );
-  const existing = open.find(i => i.title === title);
+  return open.find(i => i.title === title) || null;
+}
+
+/** Open a watchdog issue unless an open one with the same title already exists. */
+async function openIssueIfNew(token, repo, title, body) {
+  const existing = await findOpenIssueByTitle(token, repo, title);
   if (existing) {
     // Recurring failure: append a comment with the fresh run link instead of
     // leaving the issue stale, so the notification stays actionable — but no
@@ -405,6 +588,57 @@ async function openIssueIfNew(token, repo, title, body) {
     body: {title, body, labels: [WATCHDOG_LABEL]},
   });
   console.log(`  opened issue: ${title}`);
+}
+
+/**
+ * Keep the single status meta issue current: create it on first sight, PATCH
+ * the body only when it actually changed (no churn on no-op runs).
+ */
+async function syncMetaIssue(token, repo, body) {
+  const existing = await findOpenIssueByTitle(token, repo, META_ISSUE_TITLE);
+  if (existing) {
+    if (existing.body === body) {
+      console.log('  meta issue unchanged — no update');
+      return;
+    }
+    await ghApi(token, `/repos/${repo}/issues/${existing.number}`, {
+      method: 'PATCH',
+      body: {body},
+    });
+    console.log(`  updated meta issue: #${existing.number}`);
+    return;
+  }
+  const created = await ghApi(token, `/repos/${repo}/issues`, {
+    method: 'POST',
+    body: {title: META_ISSUE_TITLE, body, labels: [WATCHDOG_LABEL]},
+  });
+  console.log(`  created meta issue: #${created.number}`);
+}
+
+/**
+ * Auto-close every open failure/size issue for a browser once it checks green
+ * again — a transient vendor stall must not leave a stale issue behind. A short
+ * closing comment links the resolving run.
+ */
+async function closeResolvedFailureIssues(token, repo, browser, runUrl) {
+  const open = await ghApi(
+    token,
+    `/repos/${repo}/issues?state=open&labels=${WATCHDOG_LABEL}&per_page=100`
+  );
+  const stale = open.filter(i => isFailureIssueTitle(browser, i.title));
+  for (const issue of stale) {
+    if (runUrl) {
+      await ghApi(token, `/repos/${repo}/issues/${issue.number}/comments`, {
+        method: 'POST',
+        body: {body: `Resolved by watchdog run: ${runUrl}`},
+      });
+    }
+    await ghApi(token, `/repos/${repo}/issues/${issue.number}`, {
+      method: 'PATCH',
+      body: {state: 'closed'},
+    });
+    console.log(`  closed resolved failure issue: #${issue.number} (${issue.title})`);
+  }
 }
 
 /**
@@ -561,6 +795,8 @@ export async function main() {
   }
 
   const findings = [];
+  // Per-browser status for the meta table, set in the loop below.
+  const results = {};
   // Start from the loaded baseline so a browser whose check failed this run
   // keeps its recorded {version, size, sha256} instead of being erased — a
   // release landing during a transient outage must still reach the ledger.
@@ -569,6 +805,25 @@ export async function main() {
     process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY ?
       `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
     : '';
+
+  // E2E-validated record (restored by the workflow into VALIDATED_DIR, written
+  // only by the E2E record-validation job after every hard-gate leg passed):
+  // feeds the 'E2E validated' column. Absent → '⏳ none' for the hard gates.
+  let validated = null;
+  const validatedDir = process.env.VALIDATED_DIR || '';
+  if (!prMode && validatedDir) {
+    const validatedFile = path.join(validatedDir, 'validated.json');
+    if (fs.existsSync(validatedFile)) {
+      try {
+        validated = JSON.parse(fs.readFileSync(validatedFile, 'utf-8'));
+        console.log(`validated: record from ${validated.recordedAt || 'unknown'}`);
+      } catch (err) {
+        console.log(`validated: unreadable record ignored: ${err.message}`);
+      }
+    } else {
+      console.log('validated: no record found (E2E has not recorded one yet)');
+    }
+  }
 
   for (const browser of BROWSERS) {
     console.log(`\n${browser}:`);
@@ -580,6 +835,7 @@ export async function main() {
       // The version API itself failed — that is rot in the resolution chain.
       const reason = `version lookup failed: ${err.message}`;
       console.log(`  ✗ ${reason}`);
+      results[browser] = {status: 'lookup-failed'};
       findings.push({kind: 'rot', browser, reason});
       continue;
     }
@@ -597,6 +853,7 @@ export async function main() {
     }
     if (!endpoint.ok) {
       console.log(`  ✗ ${endpoint.reason}`);
+      results[browser] = {status: 'endpoint-failed'};
       findings.push({kind: 'rot', browser, reason: endpoint.reason, version});
       continue; // broken chain — do not touch the baseline for this browser
     }
@@ -606,6 +863,7 @@ export async function main() {
 
     // PR mode: stateless, always green — surface findings as annotations.
     if (prMode) {
+      results[browser] = {status: 'ok'};
       continue;
     }
 
@@ -625,7 +883,14 @@ export async function main() {
         continue;
       }
       console.log(`  sha256 ${verified.sha256}`);
-      next[browser] = {version, size: verified.size, sha256: verified.sha256};
+      next[browser] = {
+        version,
+        size: verified.size,
+        sha256: verified.sha256,
+        checkedAt: new Date().toISOString(),
+        checkedUrl: runUrl,
+      };
+      results[browser] = {status: change === 'first-run' ? 'first-run' : 'new-version'};
       if (change === 'new-version') {
         findings.push({
           kind: 'new-version',
@@ -645,9 +910,16 @@ export async function main() {
     // that ignores Range reports no total — keep the recorded size in that case
     // instead of overwriting it with 0 and raising a false size-change.
     const total = endpoint.total || 0;
-    next[browser] = {version, size: total || prev.size || null, sha256: prev.sha256 || null};
+    next[browser] = {
+      version,
+      size: total || prev.size || null,
+      sha256: prev.sha256 || null,
+      checkedAt: new Date().toISOString(),
+      checkedUrl: runUrl,
+    };
     if (total && prev.size && prev.size !== total) {
       console.log(`  ⚠ same version, binary size changed: ${prev.size} → ${total}`);
+      results[browser] = {status: 'size-change'};
       findings.push({
         kind: 'size-change',
         browser,
@@ -655,32 +927,22 @@ export async function main() {
         newSize: total,
       });
     } else {
+      results[browser] = {status: 'ok'};
       console.log('  unchanged');
     }
   }
 
-  // Persist the baseline (schedule mode only; CI's cache step picks it up).
-  // Fail-closed (ADR 0021): a browser whose lookup or endpoint check failed
-  // this run must NOT let a partial baseline be saved — the Sep 2026 incident
-  // (watchdog green with a stale LibreWolf entry) made the drift gate lie.
-  const failedBrowsers = findings.filter(f => f.kind === 'rot').map(f => f.browser);
-  if (failedBrowsers.length > 0 && !prMode && !dryRun) {
-    for (const f of findings.filter(f => f.kind === 'rot')) {
-      console.log(`::error file=tools/check-browser-downloads.mjs::${f.browser}: ${f.reason}`);
-    }
-    console.error(
-      `\nfail-closed: ${failedBrowsers.join(', ')} could not be resolved — NO baseline ` +
-        'was saved. Re-run the URL watchdog when the vendor recovers; E2E legs fall ' +
-        'back to their cached installer meanwhile.'
-    );
-    process.exit(1);
-  }
-  if (!prMode && !dryRun) {
-    fs.mkdirSync(baselineDir, {recursive: true});
-    fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + '\n');
-  }
+  // ── GitHub surface (schedule mode only) ─────────────────────────────────
+  // Error issues first, then auto-close resolved failures, then the meta
+  // issue — all BEFORE the fail-closed exit so a failed run still updates
+  // GitHub. New-version findings no longer open their own issues: the meta
+  // issue's status table + version history carry the release ledger.
 
+  const versionFindings = findings.filter(f => f.kind === 'new-version');
+
+  // 1) Open/comment error issues (rot, size-change) — exact-title dedup.
   for (const f of findings) {
+    if (f.kind === 'new-version') continue;
     const title = issueTitle(f.kind, f.browser, f);
     if (prMode) {
       // Annotations: rot → warning, everything else → notice. Exit stays 0 so
@@ -700,6 +962,82 @@ export async function main() {
       continue;
     }
     await openIssueIfNew(token, repo, title, body);
+  }
+
+  // 2) Auto-close failure issues for browsers that checked green this run
+  //    (ok / new version / first run). A size-change finding keeps its issue
+  //    open until the binary returns to normal or the version bumps.
+  if (!prMode) {
+    for (const browser of BROWSERS) {
+      const status = (results[browser] || {}).status;
+      if (!status || !OK_STATUSES.has(status)) continue;
+      if (dryRun || !token) {
+        console.log(
+          `\n${dryRun ? '[dry-run] ' : '[no GITHUB_TOKEN] '}would close resolved failure issues for ${browser}`
+        );
+        continue;
+      }
+      if (!repo) continue;
+      await closeResolvedFailureIssues(token, repo, browser, runUrl);
+    }
+  }
+
+  // 3) Version history: one entry per run with real version updates, persisted
+  //    with the baseline (fail-closed runs skip the write, so the history stays
+  //    consistent with what the drift gate sees).
+  if (versionFindings.length > 0 && !prMode && !dryRun) {
+    next.history = updateHistory(baseline.history || [], {
+      date: new Date().toISOString(),
+      runUrl,
+      changes: versionFindings.map(f => ({
+        browser: f.browser,
+        prevVersion: f.prevVersion,
+        newVersion: f.newVersion,
+        size: f.size,
+        sha256: f.sha256,
+      })),
+    });
+  }
+
+  // 4) Meta issue: status table + version history, PATCHed only when the body
+  //    actually changed. While no update history exists yet (e.g. right after a
+  //    cache eviction) the body falls back to a date-free 'baseline' seed
+  //    derived from the baseline itself, so it stays stable across no-op runs.
+  if (!prMode) {
+    const table = buildStatusTable({results, baseline: next, validated});
+    const history = (next.history || []).length > 0 ? next.history : seedHistoryFromBaseline(next);
+    const metaBody = buildMetaIssueBody({table, history: renderHistory(history)});
+    if (dryRun || !token) {
+      console.log(
+        `\n${dryRun ? '[dry-run] ' : '[no GITHUB_TOKEN] '}meta issue would be kept current with:\n${metaBody}`
+      );
+    } else if (!repo) {
+      console.log('\nGITHUB_REPOSITORY not set — skipping meta issue update.');
+    } else {
+      await syncMetaIssue(token, repo, metaBody);
+    }
+  }
+
+  // Persist the baseline (schedule mode only; CI's cache step picks it up).
+  // Fail-closed (ADR 0021): a browser whose lookup or endpoint check failed
+  // this run must NOT let a partial baseline be saved — the Sep 2026 incident
+  // (watchdog green with a stale LibreWolf entry) made the drift gate lie. The
+  // error issues + meta update above already surfaced the failure to GitHub.
+  const failedBrowsers = findings.filter(f => f.kind === 'rot').map(f => f.browser);
+  if (failedBrowsers.length > 0 && !prMode && !dryRun) {
+    for (const f of findings.filter(f => f.kind === 'rot')) {
+      console.log(`::error file=tools/check-browser-downloads.mjs::${f.browser}: ${f.reason}`);
+    }
+    console.error(
+      `\nfail-closed: ${failedBrowsers.join(', ')} could not be resolved — NO baseline ` +
+        'was saved. Re-run the URL watchdog when the vendor recovers; E2E legs fall ' +
+        'back to their cached installer meanwhile.'
+    );
+    process.exit(1);
+  }
+  if (!prMode && !dryRun) {
+    fs.mkdirSync(baselineDir, {recursive: true});
+    fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + '\n');
   }
 
   console.log(

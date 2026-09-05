@@ -29,7 +29,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import {REPO_ROOT, VALIDATED_BROWSERS, resolveVersion} from '../check-browser-downloads.mjs';
+import {
+  META_ISSUE_TITLE,
+  REPO_ROOT,
+  VALIDATED_BROWSERS,
+  WATCHDOG_LABEL,
+  resolveVersion,
+} from '../check-browser-downloads.mjs';
 
 async function main() {
   const outDir = process.env.VALIDATED_DIR || path.join(REPO_ROOT, '.watchdog');
@@ -67,6 +73,77 @@ async function main() {
       `Run: ${record.runUrl || 'local'} · commit: ${record.sha || 'n/a'}`,
     ];
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+  }
+
+  await notifyMetaIssue(record);
+}
+
+/** Minimal GitHub REST helper (issues/comments only). */
+async function ghJson(token, pathname, {method = 'GET', body} = {}) {
+  const res = await fetch(`https://api.github.com${pathname}`, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(body ? {'Content-Type': 'application/json'} : {}),
+    },
+    ...(body ? {body: JSON.stringify(body)} : {}),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`GitHub API ${method} ${pathname}: HTTP ${res.status} ${json.message || ''}`);
+  }
+  return json;
+}
+
+/**
+ * Comment the validated firefox / firefox-dev versions on the watchdog meta
+ * issue, so the dashboard also shows hard-gate validation status. Deduped: a
+ * comment is posted only when the versions differ from the last validation
+ * comment (the run link changes every run, so the comparison is on the versions
+ * segment only). Non-fatal — a notification failure must not fail the
+ * record-validation job.
+ */
+async function notifyMetaIssue(record) {
+  const token = process.env.GITHUB_TOKEN || '';
+  const repo = process.env.GITHUB_REPOSITORY || '';
+  if (!token || !repo) {
+    console.log('meta issue notification skipped (no GITHUB_TOKEN / GITHUB_REPOSITORY)');
+    return;
+  }
+  const versions = VALIDATED_BROWSERS.map(b => `${b}=${record.browsers[b]?.version ?? '?'}`).join(
+    ' · '
+  );
+  const body = `Validated by E2E: ${versions} — [run](${record.runUrl || 'n/a'})`;
+  try {
+    const issues = await ghJson(
+      token,
+      `/repos/${repo}/issues?state=open&labels=${WATCHDOG_LABEL}&per_page=100`
+    );
+    const meta = issues.find(i => i.title === META_ISSUE_TITLE);
+    if (!meta) {
+      // The watchdog creates the meta issue on its next weekly run.
+      console.log('meta issue not found yet — validation comment deferred to the watchdog');
+      return;
+    }
+    const comments = await ghJson(
+      token,
+      `/repos/${meta.number}/comments?per_page=5&sort=created&direction=desc`
+    );
+    const last = comments.find(c => c.body?.startsWith('Validated by E2E:'));
+    if (last && last.body.includes(versions)) {
+      console.log(`meta issue already shows ${versions} — no comment`);
+      return;
+    }
+    await ghJson(token, `/repos/${meta.number}/comments`, {
+      method: 'POST',
+      body: {body},
+    });
+    console.log(`commented validated versions on meta issue #${meta.number}: ${versions}`);
+  } catch (err) {
+    console.log(`meta issue notification failed (non-fatal): ${err.message}`);
   }
 }
 

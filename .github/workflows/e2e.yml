@@ -19,6 +19,9 @@ name: E2E
 
 permissions:
   contents: read
+  # issues: write — the record-validation job comments the validated
+  # firefox/firefox-dev versions on the `[url-watchdog] status` meta issue.
+  issues: write
 
 on:
   pull_request:
@@ -614,6 +617,7 @@ jobs:
       - name: Record validated browser versions
         env:
           VALIDATED_DIR: .watchdog-validated
+          GITHUB_TOKEN: ${{ github.token }}
         run: node tools/ci/record-validated-versions.mjs
       - name: Save validated-versions record
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

@@ -6,11 +6,13 @@
 # package-registry API that changed shape. This workflow re-resolves each
 # browser's latest version and verifies its download endpoint with a 1 KB
 # ranged GET — nothing is downloaded in full except one SHA-256 pass per new
-# release — and opens an issue when something breaks or a new version is out.
+# release. One `[url-watchdog] status` meta issue keeps a per-browser status
+# table + version history (the SHA-256 ledger); rot and size changes open
+# deduped error issues that auto-close once a later run checks green again.
 #
 # Two modes (see tools/check-browser-downloads.mjs):
-# - Weekly (schedule/dispatch): version baseline in the Actions cache
-#   (.watchdog/baseline.json) + deduped issues.
+# - Weekly (schedule/dispatch): version baseline + history in the Actions cache
+#   (.watchdog/baseline.json), status meta issue, deduped error issues.
 # - PR (pull_request touching the download map): stateless and always green —
 #   findings surface as ::warning:: / ::notice:: annotations, so the check can
 #   be required without ever blocking.
@@ -62,10 +64,22 @@ jobs:
           key: url-watchdog-baseline-${{ github.run_id }}
           restore-keys: url-watchdog-baseline-
 
+      # Validated-versions record (written by E2E's record-validation job):
+      # lets the status table show which firefox / firefox-dev release a
+      # successful E2E run actually tested (the publish pre-flight already
+      # restores the same cache under VALIDATED_DIR).
+      - name: Restore validated-versions record
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .watchdog-validated
+          key: browser-validated-${{ github.run_id }}
+          restore-keys: browser-validated-
+
       - name: Check browser downloads
         run: node tools/check-browser-downloads.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          VALIDATED_DIR: .watchdog-validated
 
       # save-always: the script rewrites baseline.json every run even when the
       # restore step hit; the fresh key persists a version bump for the next

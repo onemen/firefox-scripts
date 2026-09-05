@@ -13,14 +13,26 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-browser-downloads.mjs')).href;
 const {
+  buildMetaIssueBody,
+  buildStatusTable,
   collectDrift,
   collectValidatedDrift,
   compareBaseline,
   formatAge,
+  formatCheck,
+  formatRunDate,
+  formatSize,
+  isFailureIssueTitle,
   issueBody,
   issueTitle,
   parseContentRange,
+  renderHistory,
+  seedHistoryFromBaseline,
   sha256File,
+  shortSha,
+  statusTag,
+  updateHistory,
+  validatedCell,
   VALIDATED_BROWSERS,
 } = await import(scriptUrl);
 
@@ -153,4 +165,187 @@ test('sha256File: streams a file into its SHA-256', async () => {
   } finally {
     fs.rmSync(tmp, {force: true});
   }
+});
+
+test('statusTag: tags each run status', () => {
+  assert.equal(statusTag('ok'), '✅ up to date');
+  assert.equal(statusTag('new-version'), '🆕 new version');
+  assert.equal(statusTag('first-run'), '⏳ first run');
+  assert.equal(statusTag('lookup-failed'), '❌ lookup failed');
+  assert.equal(statusTag('endpoint-failed'), '⚠️ endpoint failed');
+  assert.equal(statusTag('size-change'), '🔄 size changed');
+});
+
+test('formatRunDate: UTC short date, never the full URL', () => {
+  assert.equal(formatRunDate('2026-09-05T07:36:11Z'), 'Sep 5');
+  assert.equal(formatRunDate(null), '—');
+  assert.equal(formatRunDate('garbage'), '—');
+});
+
+test('formatCheck: short date link or bare date', () => {
+  assert.equal(
+    formatCheck('2026-09-05T07:36:11Z', 'https://github.com/o/r/actions/runs/1'),
+    '[Sep 5](https://github.com/o/r/actions/runs/1)'
+  );
+  assert.equal(formatCheck('2026-09-05T07:36:11Z', ''), 'Sep 5');
+});
+
+test('formatSize / shortSha: human units', () => {
+  assert.equal(formatSize(93298280), '89.0 MB');
+  assert.equal(formatSize(null), '—');
+  assert.equal(
+    shortSha('3e53b343e7d8bd109b217a0fd279ee5cadd7d9a8434d7c185dc65e88e80ffe9e'),
+    '`3e53b3…`'
+  );
+  assert.equal(shortSha(null), '—');
+});
+
+test('buildStatusTable: six rows, short links, fallback on failed browsers', () => {
+  const results = {
+    'firefox': {status: 'ok'},
+    'firefox-dev': {status: 'new-version'},
+    'librewolf': {status: 'lookup-failed'},
+    'floorp': {status: 'ok'},
+    'zen': {status: 'ok'},
+    'waterfox': {status: 'ok'},
+  };
+  const baseline = {
+    firefox: {
+      version: '155.0.1',
+      size: 91715344,
+      sha256: '27a24fcdde805cb6a34c5c102e98ebfe5f0302078202376d2828f8797ed80298',
+      checkedAt: '2026-09-05T07:00:00Z',
+      checkedUrl: 'https://github.com/onemen/firefox-scripts/actions/runs/1',
+    },
+    librewolf: {
+      version: '154.0.1-2',
+      size: 165878432,
+      sha256: '1d9fe9440a765cb6d51e1256423eaab6e2522f4bd2de644827b019d3205dca91',
+      checkedAt: '2026-08-31T12:08:43Z',
+      checkedUrl: 'https://github.com/onemen/firefox-scripts/actions/runs/2',
+    },
+  };
+  const table = buildStatusTable({results, baseline});
+  const lines = table.split('\n');
+  assert.equal(lines.length, 8); // header + separator + 6 browsers
+  const firefox = lines.find(l => l.startsWith('| firefox '));
+  assert.match(
+    firefox,
+    /\| 155\.0\.1 \| 87\.5 MB · `27a24f…` \| \[Sep 5\]\(https:\/\/github\.com\/onemen\/firefox-scripts\/actions\/runs\/1\) \| ✅ up to date \| — \| ⏳ none \|/
+  );
+  const librewolf = lines.find(l => l.startsWith('| librewolf '));
+  assert.match(librewolf, /\| 154\.0\.1-2 \| 158\.2 MB · `1d9fe9…` \| \[Aug 31\]\(/);
+  assert.match(librewolf, /\| ❌ lookup failed \| cached: 154\.0\.1-2 · \[Aug 31\]/);
+  assert.match(librewolf, /\| — \|$/); // advisory fork → no E2E cell
+  const dev = lines.find(l => l.startsWith('| firefox-dev '));
+  assert.match(dev, /\| 🆕 new version \|/);
+  const waterfox = lines.find(l => l.startsWith('| waterfox '));
+  assert.match(waterfox, /\| — \| — · — \| — \| ✅ up to date \| — \| — \|/);
+});
+
+test('validatedCell / E2E validated column: match, stale, none, fork', () => {
+  const validated = {
+    browsers: {'firefox': {version: '155.0.1'}, 'firefox-dev': {version: '156.0b2'}},
+  };
+  assert.equal(validatedCell('firefox', {version: '155.0.1'}, validated), '✅ 155.0.1');
+  assert.equal(validatedCell('firefox', {version: '155.0.2'}, validated), '⏳ 155.0.1');
+  assert.equal(validatedCell('firefox', {version: '155.0.1'}, null), '⏳ none');
+  assert.equal(validatedCell('librewolf', {version: '155.0-1'}, validated), '—');
+  const table = buildStatusTable({
+    results: {firefox: {status: 'ok'}},
+    baseline: {firefox: {version: '155.0.1'}},
+    validated,
+  });
+  const row = table.split('\n').find(l => l.startsWith('| firefox '));
+  assert.match(row, /\| ✅ 155\.0\.1 \|$/);
+});
+
+test('updateHistory: appends and caps at the max', () => {
+  const entry = {date: 'new'};
+  assert.deepEqual(updateHistory([], entry), [entry]);
+  const base = Array.from({length: 10}, (_, i) => ({date: `run-${i}`}));
+  const capped = updateHistory(base, entry, {max: 10});
+  assert.equal(capped.length, 10);
+  assert.equal(capped.at(-1), entry);
+  assert.equal(capped[0].date, 'run-1'); // oldest trimmed
+});
+
+test('seedHistoryFromBaseline: baseline-only seed until real updates exist', () => {
+  const baseline = {
+    firefox: {version: '155.0.1', size: 91715344, sha256: '27a24f'},
+  };
+  const seed = seedHistoryFromBaseline(baseline);
+  assert.equal(seed.length, 1);
+  assert.equal(seed[0].kind, 'baseline');
+  assert.deepEqual(seed[0].changes[0], {
+    browser: 'firefox',
+    version: '155.0.1',
+    size: 91715344,
+    sha256: '27a24f',
+  });
+  assert.deepEqual(seedHistoryFromBaseline({}), []);
+});
+
+test('renderHistory: baseline seed vs real update entries', () => {
+  const baseline = renderHistory([
+    {
+      kind: 'baseline',
+      changes: [
+        {
+          browser: 'firefox',
+          version: '155.0.1',
+          size: 91715344,
+          sha256: '27a24fcdde805cb6a34c5c102e98ebfe5f0302078202376d2828f8797ed80298',
+        },
+      ],
+    },
+  ]);
+  assert.match(baseline, /^- baseline: firefox 155\.0\.1 · 87\.5 MB · `27a24f…`$/);
+  const update = renderHistory([
+    {
+      date: '2026-09-05T07:36:11Z',
+      runUrl: 'https://github.com/o/r/actions/runs/1',
+      changes: [
+        {
+          browser: 'firefox-dev',
+          prevVersion: '156.0b2',
+          newVersion: '156.0b3',
+          size: 93298280,
+          sha256: '3e53b343e7d8bd109b217a0fd279ee5cadd7d9a8434d7c185dc65e88e80ffe9e',
+        },
+      ],
+    },
+  ]);
+  assert.match(
+    update,
+    /^- \[Sep 5\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/1\) — update: firefox-dev 156\.0b2 → 156\.0b3 · 89\.0 MB · `3e53b3…`$/
+  );
+});
+
+test('buildMetaIssueBody: status table + history, no date in the header', () => {
+  const table = '| Browser | Last verified | ...';
+  const body = buildMetaIssueBody({
+    table,
+    history: '- [Sep 5](u) — update: firefox 155.0 → 155.0.1 · 87.5 MB · `27a24f…`',
+  });
+  assert.match(body, /^## Watchdog status\n\n/);
+  assert.match(body, /## Version history \(runs with real updates\)/);
+  assert.doesNotMatch(body, /\d{4}-\d{2}-\d{2}/); // header carries no run date — body changes only with content
+  const bare = buildMetaIssueBody({table, history: ''});
+  assert.doesNotMatch(bare, /Version history/);
+});
+
+test('isFailureIssueTitle: the auto-close set per browser', () => {
+  assert.ok(
+    isFailureIssueTitle(
+      'librewolf',
+      '[url-watchdog] librewolf download check failed: version lookup failed: timeout'
+    )
+  );
+  assert.ok(isFailureIssueTitle('librewolf', '[url-watchdog] librewolf version lookup failed'));
+  assert.ok(
+    isFailureIssueTitle('librewolf', '[url-watchdog] librewolf same version, binary size changed')
+  );
+  assert.ok(!isFailureIssueTitle('librewolf', '[url-watchdog] firefox 155.0 → 155.0.1'));
+  assert.ok(!isFailureIssueTitle('librewolf', '[url-watchdog] status'));
 });
