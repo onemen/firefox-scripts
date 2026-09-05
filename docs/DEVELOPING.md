@@ -394,23 +394,30 @@ node test/e2e/installer/smoke-security.mjs
 The installer's `--smoke-test` flag makes the headless run possible: it skips the
 no-browser-detected abort and the browser-tab open, and prints the session token to stdout.
 
-## Pre-push hook (opt-in)
+## Git hooks (opt-in)
 
-The repo ships one optional git hook: `githooks/pre-push` runs the CI-equivalent gates
-(`pnpm lint && pnpm format && pnpm test`, ~3–5s with caches) before a push leaves the machine, so a
-red CI run is predictable. It is **opt-in** — ADR 0008 removed required hooks, so nothing changes
-for plain clones:
+The repo ships two optional git hooks; both are **opt-in** — ADR 0008 removed required hooks, so
+nothing changes for plain clones:
 
 ```bash
 pnpm hooks:install     # sets core.hooksPath=githooks (self-heals a stale value)
 git config --unset core.hooksPath   # uninstall
-git push --no-verify   # bypass a single push
 ```
 
-The gates are repo-wide (like CI), not scoped to the pushed range. Docs-only contributors without a
-C toolchain should push with `--no-verify` (the `make analyze` leg of `pnpm lint` hard-fails without
-gcc) — CI still runs the full gate. Do **not** add generation steps here: generated files are
-produced on demand by the Makefile and publish tooling (ADR 0008).
+- `githooks/pre-push` runs the CI-equivalent gates (`pnpm lint && pnpm format && pnpm test`, ~3–5s
+  with caches) before a push leaves the machine, so a red CI run is predictable. The gates are
+  repo-wide (like CI), not scoped to the pushed range; bypass a single push with
+  `git push --no-verify`. Docs-only contributors without a C toolchain should push with
+  `--no-verify` (the `make analyze` leg of `pnpm lint` hard-fails without gcc) — CI still runs the
+  full gate.
+- `githooks/post-checkout` self-initializes a brand-new worktree: it fires only when the checkout
+  creates one (null previous head + branch checkout, i.e. `git worktree add`), copies the untracked
+  `.env` (publish/review tokens) from the main checkout, and runs `pnpm install --prefer-offline` so
+  the worktree is immediately usable. A failure never aborts the checkout — it just leaves the
+  worktree to initialize by hand.
+
+Do **not** add generation steps to hooks: generated files are produced on demand by the Makefile and
+publish tooling (ADR 0008).
 
 ## Test the auto-updater
 

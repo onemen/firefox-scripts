@@ -19,7 +19,10 @@ still holds it as its cwd).
 
 A fresh worktree carries no install: run `pnpm install` in it before running tools. pnpm hard-links
 packages from the global content-addressable store, so this is fast and disk-cheap, and the worktree
-stays fully self-contained — nothing done inside it can corrupt the parent checkout.
+stays fully self-contained — nothing done inside it can corrupt the parent checkout. When the opt-in
+githooks are installed (`pnpm hooks:install`), the `post-checkout` hook already does this for
+brand-new worktrees — it also copies the untracked `.env` from the main checkout — so a fresh
+worktree is ready to use immediately.
 
 Never link/symlink the parent's node_modules into a worktree (junction or otherwise). A shared
 mutable store looks cheaper but corrupted the parent install twice in one day: pnpm invoked inside

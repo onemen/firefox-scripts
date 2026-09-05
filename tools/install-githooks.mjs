@@ -4,10 +4,12 @@
  * Opt-in git hooks installer: `node tools/install-githooks.mjs` (or `pnpm
  * hooks:install`).
  *
- * Sets core.hooksPath to githooks/ — currently one pre-push gate that runs the
- * CI-equivalent checks (lint, format, test) so a red CI run is predictable. The
- * repo deliberately has no other hooks (ADR 0008 removed generation hooks;
- * generated files are built on demand by the Makefile / publish tooling).
+ * Sets core.hooksPath to githooks/ — a pre-push gate that runs the
+ * CI-equivalent checks (lint, format, test) so a red CI run is predictable, and
+ * a post-checkout hook that self-initializes brand-new worktrees (copies .env
+ * from the main checkout, runs pnpm install). The repo deliberately has no
+ * other hooks (ADR 0008 removed generation hooks; generated files are built on
+ * demand by the Makefile / publish tooling).
  *
  * Self-heals a stale core.hooksPath pointing at a missing directory (observed
  * in the wild) by replacing it, and refuses to silently stomp a live config.
@@ -63,10 +65,12 @@ if (current) {
 
 // Validate + chmod BEFORE flipping the config: a missing hook or a failed
 // chmod must never leave git pointed at hooks that cannot run.
-const prePush = path.join(HOOKS_DIR, 'pre-push');
-if (!fs.existsSync(prePush)) {
-  console.error(`✗ ${HOOKS_DIR_REL}/pre-push not found — core.hooksPath left unchanged.`);
-  process.exit(1);
+const hooks = ['pre-push', 'post-checkout'];
+for (const name of hooks) {
+  if (!fs.existsSync(path.join(HOOKS_DIR, name))) {
+    console.error(`✗ ${HOOKS_DIR_REL}/${name} not found — core.hooksPath left unchanged.`);
+    process.exit(1);
+  }
 }
 
 // Git for Windows runs hooks through bash, which ignores the executable bit;
@@ -74,13 +78,15 @@ if (!fs.existsSync(prePush)) {
 // unreliable through MSYS).
 const isWindows = process.platform === 'win32';
 if (!isWindows) {
-  fs.chmodSync(prePush, 0o755);
+  for (const name of hooks) {
+    fs.chmodSync(path.join(HOOKS_DIR, name), 0o755);
+  }
 }
 
 git('config', 'core.hooksPath', HOOKS_DIR_REL);
 console.log(`✓ core.hooksPath set to '${HOOKS_DIR_REL}'.`);
 console.log(
-  `✓ pre-push gate installed: pnpm lint && pnpm format && pnpm test` +
+  `✓ hooks installed: pre-push gate (lint/format/test) + post-checkout worktree self-init` +
     (isWindows ? '' : ' (chmod +x applied)') +
     `\n  bypass: git push --no-verify | uninstall: git config --unset core.hooksPath`
 );

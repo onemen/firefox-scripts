@@ -105,7 +105,8 @@ All paths are `<root>/.agents/skills/<name>/SKILL.md`.
 
 ## Commands
 
-Package manager is **pnpm** (root-only workspace, `"type": "module"`). No git hooks — generated
+Package manager is **pnpm** (root-only workspace, `"type": "module"`). Git hooks are opt-in only
+(`pnpm hooks:install`: pre-push gate + worktree post-checkout) and never generate files — generated
 files are produced on demand by the build/publish tooling.
 
 ```bash

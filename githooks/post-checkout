@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Post-checkout: self-initialize a brand-new worktree. Opt-in — install with
+# `pnpm hooks:install` (sets git's core.hooksPath to githooks/). Remove any
+# time with `git config --unset core.hooksPath`.
+#
+# Fires only when the checkout creates a new worktree (prev_head is the null
+# hash and a branch was checked out): `git worktree add` lands here, while a
+# plain branch switch always has a non-null previous head and is untouched.
+# The hook runs after the worktree is materialized, so a failure never aborts
+# anything — it just leaves the new worktree to initialize by hand.
+
+set -u
+
+prev_head="$1"
+is_branch="$3"
+
+NULL_HASH="0000000000000000000000000000000000000000"
+
+[ "$is_branch" -eq 1 ] || exit 0
+[ "$prev_head" = "$NULL_HASH" ] || exit 0
+
+echo "post-checkout: new worktree detected — initializing."
+
+# Main repository root: the checkout that owns this worktree's common .git dir.
+main_repo=$(git rev-parse --path-format=absolute --git-common-dir | sed 's/\/\.git$//')
+
+# .env holds publish/review tokens (untracked, gitignored) — git never carries
+# it into a worktree, so copy it from the main checkout when present.
+if [ -f "$main_repo/.env" ] && [ ! -f ".env" ]; then
+  echo "post-checkout: copying .env from the main checkout."
+  cp "$main_repo/.env" .env
+fi
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "post-checkout: pnpm not on PATH — run 'pnpm install' here manually." >&2
+  exit 0
+fi
+
+echo "post-checkout: pnpm install --prefer-offline"
+pnpm install --prefer-offline || {
+  echo "post-checkout: pnpm install failed — run it manually in this worktree." >&2
+  exit 0
+}
+
+echo "post-checkout: worktree ready."
+exit 0
