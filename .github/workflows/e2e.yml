@@ -152,7 +152,7 @@ jobs:
   installer:
     name: 'installer E2E · ${{ matrix.os }}'
     needs: changes
-    if: false # TEMP(snap-iter): only the snap leg runs — remove before merge.
+    if: needs.changes.outputs.installer == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -188,7 +188,7 @@ jobs:
   helper:
     name: 'helper E2E · ${{ matrix.os }}'
     needs: changes
-    if: false # TEMP(snap-iter): only the snap leg runs — remove before merge.
+    if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -218,7 +218,7 @@ jobs:
   updater:
     name: 'updater E2E · ${{ matrix.browser }} · ${{ matrix.os }}'
     needs: [changes, snapshot]
-    if: false # TEMP(snap-iter): only the snap leg runs — remove before merge.
+    if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -337,7 +337,7 @@ jobs:
   portable-firefox:
     name: 'portable Firefox E2E · ${{ matrix.os }}'
     needs: [changes, snapshot]
-    if: false # TEMP(snap-iter): only the snap leg runs — remove before merge.
+    if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -663,7 +663,9 @@ jobs:
     # changed-paths filter (skips on docs-only / tooling-only PRs). The legs
     # stay ADVISORY in the gate: their failures warn instead of blocking.
     needs: [changes, snapshot]
-    if: false # TEMP(snap-iter): only the snap leg runs — remove before merge.
+    if:
+      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
+      github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -739,7 +741,7 @@ jobs:
   e2e-gate:
     name: E2E gate
     runs-on: ubuntu-latest
-    if: false # TEMP(snap-iter): only the snap leg runs — remove before merge.
+    if: always()
     needs:
       [
         changes,
