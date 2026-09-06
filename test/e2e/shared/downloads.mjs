@@ -317,7 +317,22 @@ async function downloadAttempt(url, dest, budgetEnd, resumeFrom) {
       }
       written += chunk.length;
       if (!stream.write(Buffer.from(chunk))) {
-        await new Promise(resolve => stream.once('drain', resolve));
+        // Wait for drain — but never hang: if the stream errors while
+        // backpressured (disk full, closed fd) the drain event never fires.
+        // Race the two so the promise always settles; the error path rethrows
+        // through the same catch that flushes and resumes.
+        await new Promise((resolve, reject) => {
+          const onDrain = () => {
+            stream.off('error', onError);
+            resolve();
+          };
+          const onError = err => {
+            stream.off('drain', onDrain);
+            reject(err);
+          };
+          stream.once('drain', onDrain);
+          stream.once('error', onError);
+        });
       }
       // Progress heartbeat — CI logs show the transfer is alive.
       if (written - lastLogBytes >= 10 * 1048576) {
