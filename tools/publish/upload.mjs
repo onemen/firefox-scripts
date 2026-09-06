@@ -79,6 +79,7 @@ import {
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
 import {scanBinaries} from '../scan-av.mjs';
+import {scanVirusTotal} from '../scan-vt.mjs';
 import {
   bold,
   detail,
@@ -780,6 +781,40 @@ async function main() {
       }
       if (findings.length > 0) {
         error('Refusing to publish — an AV engine flagged a built binary.');
+        process.exitCode = 1;
+        return;
+      }
+    }
+
+    // Optional multi-engine scan via VirusTotal (requires VT_API_KEY in the
+    // env — a missing key or a transient API error only warns).  The publish
+    // hard-fails only when >= VT_FAIL_THRESHOLD (default 3) engines report a
+    // binary as malicious: a multi-engine consensus, not a single-engine FP.
+    section('VirusTotal scan');
+    if (avFiles.length > 0) {
+      const {results} = await scanVirusTotal(avFiles);
+      let vtBlocked = false;
+      for (const r of results) {
+        if (r.error) {
+          warn(`VirusTotal skipped ${path.basename(r.file)}: ${r.error}`);
+          continue;
+        }
+        const {malicious, suspicious, harmless, undetected} = r.stats;
+        const label =
+          `${path.basename(r.file)} — ${malicious} malicious / ${suspicious} suspicious / ` +
+          `${harmless} harmless / ${undetected} undetected (threshold ${r.threshold})`;
+        if (r.verdict === 'fail') {
+          error(`VirusTotal DETECTION: ${label}`);
+          vtBlocked = true;
+        } else if (r.verdict === 'warn') {
+          warn(`VirusTotal flagged: ${label}`);
+        } else {
+          info(`  ${green('clean')} on VirusTotal — ${label}`);
+        }
+      }
+      if (results.length === 0) warn('VirusTotal scan skipped — VT_API_KEY not set (optional).');
+      if (vtBlocked) {
+        error('Refusing to publish — VirusTotal flagged a built binary.');
         process.exitCode = 1;
         return;
       }

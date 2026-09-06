@@ -184,6 +184,10 @@ jobs:
           path: ${{ runner.temp }}/baseline/
       - run: pnpm install --frozen-lockfile
       - shell: bash
+        env:
+          # Optional: multi-engine VirusTotal scan of the built binaries before
+          # upload (tools/scan-vt.mjs).  Absent ⇒ skipped with a warning.
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=win"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
@@ -206,6 +210,8 @@ jobs:
           name: baseline-hashes
           path: ${{ runner.temp }}/baseline/
       - shell: bash
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=linux"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
@@ -226,6 +232,8 @@ jobs:
           name: baseline-hashes
           path: ${{ runner.temp }}/baseline/
       - shell: bash
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=mac"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
