@@ -2606,11 +2606,15 @@ static int main_impl(int argc, char *argv[]) {
         // dying, open the running server's UI tab in the default browser so
         // the user gets their window back, then exit quietly.  The freshly
         // opened tab (with feedback) is the only notification needed.
-        printf("Error: Could not start HTTP server (port %d in use).\n", DEFAULT_PORT);
+        // Name and reconnect on the port actually attempted (--port <n> can
+        // differ from the compiled default): another installer instance may
+        // be serving exactly that custom port.
+        int attempted = g_requested_port >= 0 ? g_requested_port : DEFAULT_PORT;
+        printf("Error: Could not start HTTP server (port %d in use).\n", attempted);
         printf("A Firefox Scripts Installer is already running; opening its tab.\n");
         char existing_url[128];
         snprintf(existing_url, sizeof(existing_url),
-                 "http://localhost:%d/", DEFAULT_PORT);
+                 "http://localhost:%d/", attempted);
         // Same hermeticity rule as the pre-bind probe above.
         if (!g_server_only) open_browser(existing_url, NULL);
         return 1;
