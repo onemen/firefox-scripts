@@ -891,7 +891,9 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       const clicked = await page.evaluate(() => {
         const cb = document.getElementById('chk-utils');
         const btn = document.getElementById('btn-install');
-        if (!cb || !btn || btn.disabled) return false;
+        if (!cb || !btn) return false;
+        // The Update button is disabled until a checkbox is checked — tick
+        // utils first, then click once the button enables.
         if (!cb.checked) cb.click();
         if (btn.disabled) return false;
         btn.click();
