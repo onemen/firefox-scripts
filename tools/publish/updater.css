@@ -154,19 +154,33 @@
   color: var(--text-primary);
 }
 
-.manual-panel-actions {
+/* The two options sit side by side under the warning text: the manual
+   actions as stacked outline buttons on the left, the installer as the
+   solid blue primary button on the right — the column split makes the
+   “manual install vs installer” choice visible at a glance. */
+.manual-panel-options {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 18px;
-  margin-top: 8px;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.manual-panel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
 
 .manual-action {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 0;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--warning-border);
   color: var(--accent-primary);
   font-size: 13px;
   font-weight: 600;
@@ -179,44 +193,35 @@
 }
 
 .manual-action:hover {
-  text-decoration: underline;
-}
-
-/* “Manual install … or run the installer” — the divider keeps the two
-   alternatives explicit (the links alone read as a single mixed list). */
-.manual-or {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 3px 0;
-  color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.manual-or::before,
-.manual-or::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border-color);
+  border-color: var(--accent-primary);
 }
 
 .manual-action.primary {
+  flex: 0 0 320px;
   justify-content: center;
-  width: 100%;
-  padding: 9px 14px;
-  border-radius: var(--radius-sm);
-  background: var(--accent-primary);
-  color: #fff;
   text-align: center;
+  padding: 14px 18px;
+  line-height: 1.35;
+  background: var(--accent-primary);
+  border: none;
+  color: #fff;
 }
 
 .manual-action.primary:hover {
   background: var(--accent-hover);
-  text-decoration: none;
+}
+
+/* Narrow screens: stack the manual buttons above the installer button. */
+@media (max-width: 640px) {
+  .manual-panel-options {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .manual-action.primary {
+    flex: 0 0 auto;
+    width: 100%;
+  }
 }
 
 /* Global action row — the per-package "Don't show again" checkboxes live
