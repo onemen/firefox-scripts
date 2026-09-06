@@ -21,11 +21,11 @@ Order matters: installer / updater / tests / CI first, core-file PRs last.
 - **Release gate (#4)** — remove README banner, v1.0 tag, milestone close, env protection for prod
   uploads, zip-the-installer-exe decision, tag move (P0-1).
 
-Remaining Phase 4 gaps are tracked by child issues #35–#37 (Dev Edition leg, installer UI layer,
-install-applies path) and #53–#56 (manual utils install, installer self-update tests, snap legs,
-portable-install legs). Additional test-infrastructure gaps — installer `--port 0`/`--server-only`
-test flags, an `env.json` deployment manifest, profile/process hygiene between E2E runs — are listed
-in `docs/future-work.md` §6 with their proposed issue homes.
+Phase 4 (installer + updater E2E matrix) is complete on `main`: the browser-matrix legs (#35–#37,
+#53, #54), the portable-Firefox legs (#56), and the snap Firefox leg (#55, merged via PR #142) all
+run in CI. Remaining test-infrastructure gaps — profile/process hygiene (#130), browser download
+pinning (#131), publish zip-verification tests (#133) — are tracked by issues and listed in
+`docs/future-work.md` §6.
 
 ## Post v1.0 (umbrella #38, milestone "Post v1.0")
 
