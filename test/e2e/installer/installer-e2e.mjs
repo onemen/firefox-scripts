@@ -54,7 +54,6 @@ function parseArgs() {
     else if (args[i] === '--help') {
       console.log(
         'Usage: node installer-e2e.mjs --snapshot <dir> [--ui] [--headless] [--no-test-surface] [--ui-fallback-open]'
-
       );
       process.exit(0);
     }
