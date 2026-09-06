@@ -723,7 +723,29 @@ async function runNoTabScenario(
     if (!browserReady) return seeded.profileDir;
     await new Promise(r => setTimeout(r, 3_000));
     const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
-    check(counter, !page, `tab does NOT open (${label})`);
+    // The tab opened when it should not — say WHICH package the scheduler
+    // thinks is stale so a misfire (e.g. the snap leg's fx-folder GreD) is
+    // attributable instead of a bare assertion failure.
+    let tabDiag = '';
+    if (page) {
+      tabDiag = await page
+        .evaluate(() => {
+          const vis = id =>
+            Boolean(document.getElementById(id)) && !document.getElementById(id).hidden;
+          return [
+            vis('utils-badge-update') ? 'utils=update' : null,
+            vis('utils-badge-ok') ? 'utils=ok' : null,
+            vis('config-badge-update') ? 'config=update' : null,
+            vis('config-badge-ok') ? 'config=ok' : null,
+            `binary=${document.getElementById('binary-path')?.textContent || '?'}`,
+            `profile=${document.getElementById('profile-path')?.textContent || '?'}`,
+          ]
+            .filter(Boolean)
+            .join(' | ');
+        })
+        .catch(() => 'could not read the updater tab DOM');
+    }
+    check(counter, !page, `tab does NOT open (${label})`, tabDiag || '');
     return seeded.profileDir;
   } finally {
     try {
