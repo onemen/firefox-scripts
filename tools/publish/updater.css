@@ -49,29 +49,29 @@
   cursor: not-allowed;
 }
 
-/* Updater card status cells: the selection checkbox sits inside the badge
-   (installer-style) and the "Don't show again for this update" checkbox on
-   its own row below it, aligned to the right edge of the row box. */
+/* Updater card status cells — IDENTICAL FIXED width in both the APPLICATION
+   BINARY and PROFILE FOLDER cards, so the badges and "Don't show again"
+   checkboxes sit on the same vertical axis across the two cards (the shared
+   .component-status-cell is content-sized, which would offset the columns).
+   The config column stacks badge → manual-install panel → skip checkbox; the
+   utils column badge → skip checkbox. */
 #config-status,
 #utils-status {
+  flex: 0 0 300px;
+  width: 300px;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
-  /* Same fixed width as the installer status cells so the component and
-     skip checkboxes line up across both rows. */
-  min-width: 250px;
+  gap: 8px;
 }
 
-/* The status column stacks the badge over the "Don't show again" checkbox, so
-   it is taller than the "PROFILE FOLDER" label row next to it.  Top-align the
-   label (instead of the shared center alignment) and nudge it down so the
-   11px label lines up with the badge's checkbox. */
-.profile-row-top {
-  align-items: flex-start;
-}
-
-.profile-row-name-line {
-  padding-top: 6px;
+/* Narrow screens: the shared media block stacks the row, so the status column
+   takes the full row width again instead of its fixed 300px. */
+@media (max-width: 640px) {
+  #config-status,
+  #utils-status {
+    flex: 0 0 auto;
+    width: 100%;
+  }
 }
 
 /* The updater card has no .browser-card-body wrapper (unlike the installer),
@@ -114,6 +114,126 @@
 
 .btn-remind[hidden] {
   display: none;
+}
+
+/* ==========================================================================
+   Config-folder note + manual-install panel (Snap config)
+   The in-browser updater cannot write the host config dir under Snap
+   confinement (AppArmor denies /etc/firefox even as root; see helper exit 3
+   on the Snap E2E leg), so the config row swaps its install checkbox for this
+   panel: download the zip + open the config folder, or download/run the
+   native installer (runs unconfined — the recommended path).
+   ========================================================================== */
+.config-folder-note {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.config-folder-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg-inset);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--text-primary);
+}
+
+.manual-panel {
+  align-self: stretch;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.manual-panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--warning-main);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
+.manual-panel-head svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.manual-panel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manual-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--accent-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.manual-action svg {
+  flex-shrink: 0;
+}
+
+.manual-action:hover {
+  background: var(--accent-light);
+  text-decoration: underline;
+}
+
+.manual-or {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.manual-or::before,
+.manual-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+
+.manual-action.primary {
+  justify-content: center;
+  margin-top: 4px;
+  background: var(--accent-primary);
+  color: #fff;
+  text-align: center;
+}
+
+.manual-action.primary:hover {
+  background: var(--accent-hover);
+  text-decoration: none;
+}
+
+.manual-note {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.manual-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg-inset);
+  border-radius: 4px;
+  padding: 0 4px;
 }
 
 /* Global action row — the per-package "Don't show again" checkboxes live
@@ -192,4 +312,11 @@
 .browser-list:not(.revealed) .browser-card {
   opacity: 0;
   visibility: hidden;
+}
+
+/* The updater tab's APPLICATION BINARY and PROFILE FOLDER sections are two
+   separate cards; give the profile card the same 12px rhythm the shared rows
+   use so card → card spacing matches header → card spacing. */
+.browser-list .browser-card + .browser-card {
+  margin-top: 12px;
 }

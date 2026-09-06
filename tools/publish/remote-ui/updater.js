@@ -73,8 +73,26 @@ const HELPER_FILENAMES = {
   linux: `helper_linux${ASSET_SUFFIX}`,
 };
 
+// The standalone native installer — published next to the zips (release assets
+// in prod, the dev-build-* branch in dev; see generateUpdaterConfig.mjs). The
+// manual-install panel points Snap users at it: unlike anything the confined
+// browser spawns, the installer runs unconfined and can write /etc/firefox.
+const INSTALLER_FILENAMES = {
+  win: `installer_win${ASSET_SUFFIX}.exe`,
+  macosx: `installer_mac${ASSET_SUFFIX}`,
+  linux: `installer_linux${ASSET_SUFFIX}`,
+};
+const INSTALLER_URL = `${ZIP_BASE_URL}/${
+  INSTALLER_FILENAMES[AppConstants.platform] || INSTALLER_FILENAMES.linux
+}`;
+
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
+// TEMP preview knob: force the Snap UI scenario (config needs manual install +
+// both packages stale) on any OS, so the manual-install panel can be reviewed
+// on a normal Windows/Linux/macOS build. Remove together with the panel's
+// callers once the Snap E2E leg is green.
+const PREF_FORCE_SNAP_UI = 'extensions.firefox-scripts.debugForceSnapUi';
 
 const UPDATER_UI_URI = 'chrome://firefox-scripts/content/ui/updater.html';
 
@@ -103,6 +121,28 @@ let onProgress = null;
 
 function logError(msg, err) {
   console.error(`Firefox Scripts updater: ${msg}`, err);
+}
+
+/** TEMP preview knob — see PREF_FORCE_SNAP_UI. */
+function forceSnapUiPreview() {
+  try {
+    return Services.prefs.getBoolPref(PREF_FORCE_SNAP_UI, false);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Snap-packaged Firefox: strictly confined, config (fx-folder) not writable
+ * in-tab — the install docs route snap config to /etc/firefox instead.
+ */
+function isSnapInstall() {
+  return Services.dirsvc.get('XREExeF', Ci.nsIFile).path.includes('/snap/');
+}
+
+/** The config package needs the manual-install path (Snap or the TEMP flag). */
+function configNeedsManualInstall() {
+  return isSnapInstall() || forceSnapUiPreview();
 }
 
 /** Read the display name once from <GreD>/application.ini (synchronous, ~2 KB). */
@@ -172,6 +212,10 @@ function packageSnapshot(kind, info) {
     updateNeeded: Boolean(info.updateNeeded),
     date: info.date || '',
     skipped: Boolean(skipHash && info.remoteHash && skipHash === info.remoteHash),
+    // Snap (or the TEMP preview flag): the in-tab config install can never
+    // write the host config dir, so the UI swaps the install checkbox for the
+    // manual-install panel.
+    manualInstall: kind === 'config' && configNeedsManualInstall(),
   };
 }
 
@@ -208,6 +252,10 @@ function stateSnapshot() {
     // ASSET_SUFFIX already makes them utils-dev.zip / fx-folder-dev.zip.
     fxFolderUrl: FX_FOLDER_URL,
     utilsUrl: UTILS_URL,
+    // The installer the manual panel recommends for Snap users, and the host
+    // config dir (fxFolderDir) that in-tab installs would target.
+    installerUrl: INSTALLER_URL,
+    configDir: fxFolderDir(),
     installing,
     restartEnabled,
   };
@@ -254,7 +302,14 @@ function handleSkipCommand(kind, checked) {
  *   is opened.
  */
 function downloadPackage(kind) {
-  const url = kind === 'config' ? FX_FOLDER_URL : UTILS_URL;
+  const url =
+    kind === 'config' ? FX_FOLDER_URL
+    : kind === 'utils' ? UTILS_URL
+    : kind === 'installer' ? INSTALLER_URL
+    : '';
+  if (!url) {
+    return;
+  }
   fetchBytes(url)
     .then(bytes => {
       const blob = new Blob([bytes], {type: 'application/zip'});
@@ -294,6 +349,13 @@ function closeUpdateTab() {
  */
 function revealFolder(kind) {
   try {
+    if (kind === 'config') {
+      // The config install dir (fxFolderDir): /etc/firefox on Snap, else GreD.
+      const f = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
+      f.initWithPath(fxFolderDir());
+      f.reveal();
+      return;
+    }
     const dir =
       kind === 'profile' ?
         Services.dirsvc.get('ProfD', Ci.nsIFile)
@@ -591,6 +653,16 @@ async function engineInit() {
     const info = await checkScriptsUpdateNeeded();
     if (info) {
       scriptsInfo = info;
+    }
+    if (forceSnapUiPreview()) {
+      // TEMP preview: mirror the Snap scenario (both packages stale) so the
+      // manual panel + badges render on any OS for visual review.
+      if (scriptsInfo.fxFolder) {
+        scriptsInfo.fxFolder.updateNeeded = true;
+      }
+      if (scriptsInfo.utils) {
+        scriptsInfo.utils.updateNeeded = true;
+      }
     }
   } catch (e) {
     logError('re-check on tab open', e);
