@@ -33,9 +33,10 @@ import {discoverFirefoxBinary} from './browsers.mjs';
 /**
  * Per-browser install recipes keyed by platform (win|mac|linux).
  *
- * - {url, args} → download the official installer from `url` (fetchWithRetry, so
- *   transient 5xx are retried) and run it with `args` (e.g. NSIS `/S` silent
- *   install), then resolve the binary from known install dirs.
+ * - {url, args} → download the official installer from `url` (progress-aware
+ *   streaming: a slow-but-advancing transfer is never aborted, only a stalled
+ *   stream is) and run it with `args` (e.g. NSIS `/S` silent install), then
+ *   resolve the binary from known install dirs.
  * - {url, app} → download the official dmg from `url`, mount it, and copy `app`
  *   into /Applications (macOS).
  * - {tarball, url} → download the official tarball and extract it; returns the
@@ -221,36 +222,153 @@ async function installTarball(url, browser, dest = path.join(os.homedir(), 'fire
   return binary;
 }
 
-async function fetchWithRetry(url, attempts, timeoutMs = 300_000) {
-  let lastErr;
-  for (let i = 1; i <= attempts; i++) {
-    try {
-      // Bound each attempt: a stalled connection would otherwise hang CI until
-      // the runner kills the job. Timeout failures flow through the retry
-      // path below like any other fetch error.
-      const res = await fetch(url, {signal: AbortSignal.timeout(timeoutMs)});
-      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-      return res;
-    } catch (err) {
-      lastErr = err;
-      console.log(`  download attempt ${i}/${attempts} failed: ${err.message}`);
-      if (i < attempts) {
-        // Backoff between attempts: the installer CDNs (e.g. librewolf.dev)
-        // stall occasionally, and a fresh attempt right away usually fails
-        // again. 5 s, 10 s, 15 s… — bounded, and well inside the job budget.
-        await new Promise(r => setTimeout(r, 5000 * i));
-      }
-    }
-  }
-  throw lastErr;
+// ── Progress-aware download ───────────────────────────────────────────────
+//
+// The installers are fetched from vendor CDNs whose speed varies wildly: the
+// same 158 MB LibreWolf installer took 13 s from CI runners and 5.5 min over a
+// home link (2026-09-06 measurements, issue #143). A wall-clock timeout kills
+// such a healthy-but-slow transfer mid-stream (~130 MB in) and retries it from
+// byte 0 — 5 attempts × 5 min + backoff ≈ 25 min of waste, then failure. So
+// instead: stream to disk, abort only when NO bytes advance for the stall
+// window (a 0.3 MB/s trickle delivers a chunk every ~2 s and is never killed),
+// and resume interrupted attempts via a Range request instead of restarting.
+
+const DEFAULT_STALL_MS = 60_000;
+const DEFAULT_TOTAL_BUDGET_MS = 20 * 60_000;
+const DEFAULT_RETRY_BACKOFF_MS = 5000;
+
+/** Env override, for the unit tests (same pattern as the resolver's backoff). */
+function envMs(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const stallTimeoutMs = () => envMs('DOWNLOAD_STALL_TIMEOUT_MS', DEFAULT_STALL_MS);
+const totalBudgetMs = () => envMs('DOWNLOAD_TOTAL_BUDGET_MS', DEFAULT_TOTAL_BUDGET_MS);
+const retryBackoffMs = () => envMs('DOWNLOAD_RETRY_BACKOFF_MS', DEFAULT_RETRY_BACKOFF_MS);
+
+/**
+ * A timer that can be cancelled — raced against chunk reads for stall
+ * detection.
+ */
+function abortIn(ms, message) {
+  let timer;
+  const promise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return {promise, cancel: () => clearTimeout(timer)};
 }
 
 /**
- * Download a URL to a local file (retrying), returning the file path.
+ * One streaming download attempt. Aborts when no bytes arrive for the stall
+ * window, when the attempt outlives its share of the total budget, or when the
+ * final size disagrees with Content-Length. The partial file stays on disk so
+ * the next attempt can resume it with a Range request.
+ *
+ * @param {string} url
+ * @param {string} dest
+ * @param {number} budgetEnd epoch ms — the attempt's wall-clock bound
+ * @param {number} resumeFrom bytes already on disk to resume after (0 =
+ *   restart)
+ * @returns {Promise<number>} bytes written
+ */
+async function downloadAttempt(url, dest, budgetEnd, resumeFrom) {
+  const headers = resumeFrom > 0 ? {Range: `bytes=${resumeFrom}-`} : {};
+  const res = await fetch(url, {
+    headers,
+    redirect: 'follow',
+    // Whole-attempt wall guard: fires on a hung connect/TTFB and enforces the
+    // share of the total budget left for this attempt. Mid-body stalls abort
+    // earlier via the per-chunk stall race below. The old code had a flat
+    // 5-min attempt cap that killed healthy slow downloads — this only bounds
+    // the TOTAL budget, so a 0.5 MB/s transfer of 158 MB (~5.5 min) completes.
+    signal: AbortSignal.timeout(Math.max(1, budgetEnd - Date.now())),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  const resuming = resumeFrom > 0 && res.status === 206;
+  const expected = (resuming ? resumeFrom : 0) + (Number(res.headers.get('content-length')) || 0);
+  const stream = fs.createWriteStream(dest, {flags: resuming ? 'a' : 'w'});
+  let streamErr;
+  stream.on('error', err => {
+    streamErr = err;
+  });
+  let written = resuming ? resumeFrom : 0;
+  let lastLogAt = Date.now();
+  let lastLogBytes = written;
+  if (!res.body) {
+    if (expected === 0) return 0;
+    throw new Error(`empty response body for ${url}`);
+  }
+  const reader = res.body.getReader();
+  try {
+    for (;;) {
+      if (streamErr) throw streamErr;
+      const stall = abortIn(
+        stallTimeoutMs(),
+        `download stalled: no bytes for ${stallTimeoutMs() / 1000}s`
+      );
+      let chunk;
+      try {
+        const result = await Promise.race([reader.read(), stall.promise]);
+        if (result.done) break;
+        chunk = result.value;
+      } finally {
+        stall.cancel();
+      }
+      written += chunk.length;
+      if (!stream.write(Buffer.from(chunk))) {
+        // Wait for drain — but never hang: if the stream errors while
+        // backpressured (disk full, closed fd) the drain event never fires.
+        // Race the two so the promise always settles; the error path rethrows
+        // through the same catch that flushes and resumes.
+        await new Promise((resolve, reject) => {
+          const onDrain = () => {
+            stream.off('error', onError);
+            resolve();
+          };
+          const onError = err => {
+            stream.off('drain', onDrain);
+            reject(err);
+          };
+          stream.once('drain', onDrain);
+          stream.once('error', onError);
+        });
+      }
+      // Progress heartbeat — CI logs show the transfer is alive.
+      if (written - lastLogBytes >= 10 * 1048576) {
+        const rate = Math.round(
+          (written - lastLogBytes) / 1024 / ((Date.now() - lastLogAt) / 1000)
+        );
+        console.log(`  ${Math.round(written / 1048576)} MB downloaded (${rate} KB/s)`);
+        lastLogAt = Date.now();
+        lastLogBytes = written;
+      }
+    }
+    await new Promise((resolve, reject) => stream.end(err => (err ? reject(err) : resolve())));
+  } catch (err) {
+    reader.cancel().catch(() => {});
+    // Flush whatever reached the WriteStream before closing, so the partial
+    // file on disk matches `written` and the next attempt can resume from it.
+    await new Promise(resolve => stream.end(resolve)).catch(() => {});
+    throw err;
+  }
+  if (expected && written !== expected) {
+    throw new Error(`download truncated: ${written} of ${expected} bytes`);
+  }
+  return written;
+}
+
+/**
+ * Download a URL to a local file, streaming to disk with stall detection and
+ * Range resume; returns the file path.
  *
  * A non-empty local file is reused when it matches the remote size (the
  * workflow restores downloads from the CI cache); a size mismatch means the
- * previous download was cut short, so it is re-fetched.
+ * previous download was cut short, so it is re-fetched. Interrupted attempts
+ * resume from the partial file via a Range request — a server without range
+ * support answers 200 and the attempt restarts cleanly. Throws only after all
+ * attempts fail (stall, budget, or HTTP error); the partial file is kept for
+ * the next call.
  */
 export async function downloadTo(url, dest) {
   if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
@@ -271,9 +389,37 @@ export async function downloadTo(url, dest) {
     }
   }
   fs.mkdirSync(path.dirname(dest), {recursive: true});
-  const res = await fetchWithRetry(url, 5);
-  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
-  return dest;
+  const attempts = 5;
+  const budgetEnd = Date.now() + totalBudgetMs();
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    // Resume only from a partial file written by a previous attempt of THIS
+    // call — a pre-existing wrong-size file (stale cache entry) was already
+    // rejected by the HEAD check above and must never be appended to.
+    const resumeFrom = attempt > 1 && fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+    try {
+      await downloadAttempt(url, dest, budgetEnd, resumeFrom);
+      return dest;
+    } catch (err) {
+      // Budget exhausted: no point burning the remaining attempts on
+      // instant timeouts — surface the real reason.
+      if (err.name === 'TimeoutError' && Date.now() >= budgetEnd - 1_000) {
+        throw new Error(
+          `download exceeded its ${Math.round(totalBudgetMs() / 60_000)} min budget: ${err.message}`,
+          {cause: err}
+        );
+      }
+      lastErr = err;
+      console.log(`  download attempt ${attempt}/${attempts} failed: ${err.message}`);
+      if (attempt < attempts) {
+        // Backoff between attempts: the installer CDNs (e.g. librewolf.dev)
+        // stall occasionally, and a fresh attempt right away usually fails
+        // again. 5 s, 10 s, 15 s… — bounded, and well inside the job budget.
+        await new Promise(r => setTimeout(r, retryBackoffMs() * attempt));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /**
