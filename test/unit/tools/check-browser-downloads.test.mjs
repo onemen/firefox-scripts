@@ -397,6 +397,9 @@ test('buildMetaIssueBody: status table + history, no date in the header', () => 
     history: '- [Sep 5](u) — update: firefox 155.0 → 155.0.1 · 87.5 MB · `27a24f…`',
   });
   assert.match(body, /^## Watchdog status\n\n/);
+  // static intro: describes the watchdog, sits between the heading and the table
+  assert.match(body, /^## Watchdog status\n\nThis is the status page for the \*\*URL watchdog\*\*/);
+  assert.match(body, /bot-maintained/);
   assert.match(body, /## Version history \(runs with real updates\)/);
   assert.doesNotMatch(body, /\d{4}-\d{2}-\d{2}/); // header carries no run date — body changes only with content
   const bare = buildMetaIssueBody({table, history: ''});
