@@ -432,6 +432,18 @@ export function formatDownloadMs(ms) {
  * is exactly what the version-aware CI installer cache still serves (the
  * fallback column). `validated` is the E2E record (see validatedCell).
  */
+/**
+ * Escape a value interpolated into a markdown table cell: an unescaped pipe
+ * would split the cell on github.com, silently shifting/dropping the cells
+ * after it (the row then fails the cell-count integrity tests). Values are
+ * vendor-served (version strings, checked URLs), so treat them as hostile. An
+ * escaped pipe (|) renders as a literal | and does NOT split — cmark-gfm splits
+ * the raw row before inline parsing, so no code-span awareness needed.
+ */
+export function escapeTableCell(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+}
+
 export function buildStatusTable({results, baseline, validated}) {
   const rows = BROWSERS.map(browser => {
     const res = results[browser] || {status: 'ok'};
@@ -455,7 +467,9 @@ export function buildStatusTable({results, baseline, validated}) {
     // version has been fully downloaded at least once.
     const downloadTime = formatDownloadMs(entry.downloadMs);
     const e2e = validatedCell(browser, entry, validated);
-    return `| ${browser} | ${version} | ${sizeSha} | ${lastCheck} | ${statusTag(res.status)} | ${fallback} | ${downloadTime} | ${e2e} |`;
+    // Every variable value goes through escapeTableCell: the row's cell
+    // count must never depend on what a vendor feed returned (issue #136).
+    return `| ${browser} | ${escapeTableCell(version)} | ${escapeTableCell(sizeSha)} | ${escapeTableCell(lastCheck)} | ${escapeTableCell(statusTag(res.status))} | ${escapeTableCell(fallback)} | ${escapeTableCell(downloadTime)} | ${escapeTableCell(e2e)} |`;
   });
   return [
     '| Browser | Last verified | Size · SHA-256 | Last check | Status | Fallback (CI cache) | Download time | E2E validated |',
