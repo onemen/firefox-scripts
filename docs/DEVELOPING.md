@@ -122,6 +122,52 @@ xcode-select --install
 make dist_mac   # builds dist/installer/installer_mac
 ```
 
+## AV false positives and the AV scan gate
+
+The installer/helper binaries are unsigned, stripped, statically-linked PEs — the classic profile
+for antivirus **machine-learning** false positives. `installer_win.exe` was once flagged by Windows
+Defender (`Program:Script/Wacapew.A!ml`) while every local build of the same source scanned clean.
+The confirmed root cause was a **toolchain bump, not a code change**: the publish workflow ran
+`msys2/setup-msys2` with `update: true`, and a full `pacman -Syu` on 2026-09-05 pulled the gcc
+16.1.0 → 16.2.0 package update (published to MSYS2 repos the day before). The rebuilt artifact's
+bytes landed inside the `!ml` model's detection pocket (the near-identical dev-mode build and all
+local 16.1.0 builds scanned clean). `!ml` models are byte-sensitive and change over time, so the
+workflow now skips the system upgrade (`update: false`) — the AV gate below is what enforces that a
+rebuild with any new toolchain still scans clean before it ships. Three structural measures keep
+this in check:
+
+1. **PE metadata** — `installer/src/installer.rc` + `installer.manifest` (compiled by `windres` on
+   the Windows build) give the exe a version resource (FileDescription/CompanyName/ProductName), an
+   asInvoker manifest and Win10/11 compatibility GUIDs. A stripped PE with _no_ version info is the
+   #1 ML false-positive profile; this mirrors what `installer/src/helper/version.rc` already did for
+   `helper_win.exe`.
+2. **The AV scan gate** — `tools/scan-av.mjs` scans built binaries before they are published
+   (Windows: Windows Defender via `MpCmdRun.exe`; Linux/macOS: ClamAV `clamscan`). The publish flow
+   (`tools/publish/upload.mjs`) scans the EXACT bytes about to be uploaded and refuses to publish
+   when any engine reports a detection. A missing engine is only a warning (GitHub Windows runners
+   often run Defender in passive mode), so the gate degrades gracefully but never ships a flagged
+   artifact silently.
+
+### Local scan (after `make dist_win`)
+
+```bash
+pnpm scan:av -- dist/installer/installer_win.exe dist/installer/helper_win.exe
+# exit 0 = clean, exit 1 = detection, exit 2 = usage
+```
+
+### False-positive handling
+
+- If a scanner flags a freshly built binary, do **not** publish it — investigate first. Local builds
+  and the CI artifact differ (toolchain version), so a clean local scan does not guarantee the CI
+  build is clean; the upload gate is what enforces that.
+- Report confirmed false positives to Microsoft (Defender/other Microsoft engines):
+  <https://www.microsoft.com/en-us/wdsi/filesubmission> — select “Your app or file was incorrectly
+  detected as malware” and attach the flagged binary. Microsoft can clear the hash/family in
+  Defender’s cloud, which also clears it for users.
+- A durable long-term fix is **code signing** (e.g. Azure Trusted Signing); it is the only measure
+  that systematically improves AV/OS reputation, but it costs money — the measures above are the
+  zero-cost alternative.
+
 ## Making changes
 
 1. **Chrome scripts** (`core/chrome/utils/`): edit JS files.
