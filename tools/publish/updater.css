@@ -125,21 +125,10 @@
    download/run the native installer (runs unconfined — recommended).
    ========================================================================== */
 .manual-panel {
-  display: flex;
-  align-items: center;
-  gap: 18px;
   border: 1px solid var(--warning-border);
   background: var(--warning-bg);
   border-radius: var(--radius-md);
   padding: 10px 14px;
-}
-
-.manual-panel-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
 .manual-panel-head {
@@ -169,7 +158,8 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  gap: 4px 18px;
+  margin-top: 8px;
 }
 
 .manual-action {
@@ -192,10 +182,32 @@
   text-decoration: underline;
 }
 
+/* “Manual install … or run the installer” — the divider keeps the two
+   alternatives explicit (the links alone read as a single mixed list). */
+.manual-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 3px 0;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.manual-or::before,
+.manual-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+
 .manual-action.primary {
-  flex: 0 0 264px;
   justify-content: center;
-  padding: 8px 14px;
+  width: 100%;
+  padding: 9px 14px;
   border-radius: var(--radius-sm);
   background: var(--accent-primary);
   color: #fff;
@@ -205,19 +217,6 @@
 .manual-action.primary:hover {
   background: var(--accent-hover);
   text-decoration: none;
-}
-
-/* Narrow screens: stack the guidance text/links above the installer button. */
-@media (max-width: 640px) {
-  .manual-panel {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .manual-action.primary {
-    flex: 0 0 auto;
-    width: 100%;
-  }
 }
 
 /* Global action row — the per-package "Don't show again" checkboxes live
