@@ -101,8 +101,8 @@ function render() {
   }
 
   // Snap scenario (config can't be installed in-tab): hide the config install
-  // checkbox and surface the amber manual-install panel + the config-folder
-  // note instead; the Update button then only ever installs utils.
+  // checkbox (the Update button then only ever installs utils) and surface the
+  // amber manual-install band between the two rows instead.
   const cfgPkg = s.packages && s.packages.config;
   const cfgManual = Boolean(cfgPkg && cfgPkg.updateNeeded && cfgPkg.manualInstall);
   const chkConfig = $('chk-config');
@@ -113,7 +113,6 @@ function render() {
     }
   }
   $('config-manual').hidden = !cfgManual;
-  $('config-folder-note').hidden = !cfgManual;
   $('manual-installer').href = s.installerUrl || '#';
 
   // Manual download links: show the real zip URLs (they end with
