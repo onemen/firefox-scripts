@@ -44,6 +44,12 @@ jobs:
     name: check browser download URLs
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
+    # The full-download path is progress-aware (issue #143): a slow vendor
+    # download runs to its 20 min transfer budget (plus retries) instead of
+    # being killed early. The job timeout must fit that budget, not the other
+    # way around.
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
