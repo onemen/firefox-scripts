@@ -1,4 +1,8 @@
 CC ?= gcc
+# Overridable windres (binutils).  Native Windows builds default to `windres`
+# (MSYS2 UCRT64); cross-compiles (`make dist_win CC=x86_64-w64-mingw32-gcc`)
+# pass WINDRES=x86_64-w64-mingw32-windres so the PE resource is still linked.
+WINDRES ?= windres
 # Size-optimized: -Os, strip symbols, and emit each function into its own
 # section so the linker's section GC (GC_FLAGS below) can drop dead code.
 # Note: -fdata-sections is deliberately NOT used — with it, mingw-w64 gcc
@@ -87,7 +91,7 @@ $(TARGET): $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h $(WIN_RES)
 
 # Compile the Windows version resource + manifest into a COFF object.
 $(SRC_DIR)/installer.res: $(SRC_DIR)/installer.rc $(SRC_DIR)/installer.manifest
-	windres $(SRC_DIR)/installer.rc -O coff -o $@
+	$(WINDRES) $(SRC_DIR)/installer.rc -O coff -o $@
 
 # Publish mode for the generated config: see tools/publish/publishMode.mjs.
 # Empty (default) = prod; MODE=dev rewrites _config.h / updater-config.sys.mjs
@@ -142,9 +146,13 @@ $(SRC_DIR)/resources.h: embed.mjs $(WEB_DIR)/index.html $(WEB_DIR)/style.css $(W
 # Windows build (cross-compile or native on Windows)
 # -mwindows: link as GUI subsystem so double-click from Explorer doesn't open a terminal
 # --verbose / --log-console flag re-attaches to parent console when run from terminal
-dist_win: resources config $(WIN_RES)
+# dist_win is the win target on ANY host (native or cross-compile), so the PE
+# resource must be built + linked here regardless of $(WIN_RES), which is only
+# set on a Windows host (for `make all` via $(TARGET)).  Cross-compiles pass
+# WINDRES=x86_64-w64-mingw32-windres.
+dist_win: resources config $(SRC_DIR)/installer.res
 	$(MKDIR)
-	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(WIN_RES) -o $(DIST_DIR)/installer_win$(ASSET_SUFFIX).exe $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) \
+	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(SRC_DIR)/installer.res -o $(DIST_DIR)/installer_win$(ASSET_SUFFIX).exe $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) \
 		-lws2_32 -lshell32 -luser32 -lcrypt32 -lbcrypt -static -static-libgcc \
 		-mwindows
 

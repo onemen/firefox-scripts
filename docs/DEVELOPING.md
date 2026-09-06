@@ -111,8 +111,9 @@ sudo apt install gcc
 make all                      # builds dist/installer/installer_linux
 
 # Windows cross-compile from Linux/WSL
-sudo apt install gcc-mingw-w64-x86-64-posix
-make dist_win CC=x86_64-w64-mingw32-gcc   # builds dist/installer/installer_win.exe
+sudo apt install gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+make dist_win CC=x86_64-w64-mingw32-gcc WINDRES=x86_64-w64-mingw32-windres
+#   builds dist/installer/installer_win.exe with the PE version resource
 ```
 
 ### macOS
