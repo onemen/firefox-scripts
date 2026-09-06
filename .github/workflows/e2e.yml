@@ -617,13 +617,17 @@ jobs:
 
       # Detection against the snap build (HTTP + UI layers + the test-surface
       # layer from #129): the installer must discover /snap/bin/firefox and
-      # report it like any other browser.  The UI layer runs HEADED (no
-      # --headless): a headless snap Firefox does not accept the installer's
-      # cross-process tab open the way a headless tarball install does —
-      # headed under xvfb is also the real-user mode this leg simulates.
+      # report it like any other browser.  The UI layer runs HEADED under xvfb
+      # (real-user mode) with --ui-fallback-open: the installer's cross-process
+      # relaunch cannot hand its URL into a BiDi-driven SNAP instance under CI
+      # (headless and headed, unconfined and snap-wrapped relaunch all fail on
+      # this leg; the tarball legs hand off fine), so when no tab surfaces the
+      # harness opens the installer's own UI URL in-process and the UI
+      # assertions (cards, badges, screenshot) still run.  The relaunch caveat
+      # is documented in docs/future-work.md §2.
       - name: Run installer E2E (snap Firefox)
         if: steps.snapd.outputs.available == 'true'
-        run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui
+        run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui --ui-fallback-open
 
       # Updater flow against the snap build: tab opens, config seeds into the
       # (now runner-owned) /etc/firefox GreD, status renders. Elevation into
@@ -633,14 +637,7 @@ jobs:
       # reports independently, so one failure never hides the other's result.
       - name: Run updater E2E (snap Firefox)
         if: always() && steps.snapd.outputs.available == 'true'
-        # Run the stale scenarios and the up-to-date scenario in SEPARATE
-        # processes: the leg's GreD (/etc/firefox) is shared across scenarios,
-        # so a single process leaks state into the up-to-date check. Splitting
-        # isolates whether that scenario's misfire is cross-scenario residue or
-        # genuine snap behavior. (The harness restores GreD between processes.)
-        run: |
-          xvfb-run -a node test/e2e/updater/updater-e2e.mjs --scenario 1,2,3
-          xvfb-run -a node test/e2e/updater/updater-e2e.mjs --scenario 4
+        run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
 
       - name: Upload diagnostics
         if: failure()
