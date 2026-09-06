@@ -23,6 +23,10 @@ on:
   pull_request:
     paths:
       - 'test/e2e/shared/downloads.mjs'
+      # The stateless --pr pass exercises the watchdog tool itself, so tool
+      # changes get a live (vendor-facing, always-green) smoke run too — same
+      # set the browser-downloads filter ownership already defines.
+      - 'tools/check-browser-downloads.mjs'
   # The PR check is stateless + always green, so it can safely run on the
   # merge queue too (a required check must report on merge_group).
   merge_group:
