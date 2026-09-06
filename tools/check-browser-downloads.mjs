@@ -514,13 +514,26 @@ export function renderHistory(history) {
 }
 
 /**
- * Meta-issue body: the status table + the version history. No run date in the
- * header on purpose — the body must only change when the table or the history
- * changes, so fully-green no-op runs do not churn the issue.
+ * Static intro for the meta issue: what the watchdog is and that the body is
+ * bot-maintained. Constant, so it never churns the body on its own — the body
+ * still only changes when the table or the history changes.
+ */
+const WATCHDOG_INTRO = `This is the status page for the **URL watchdog** — the weekly workflow
+(.github/workflows/url-watchdog.yml) that re-resolves every browser's latest version from its
+vendor API, verifies the download endpoint, and re-baselines the SHA-256 ledger on new releases
+(each new release also dispatches the browser E2E). The table and history below are bot-maintained
+and rewritten each run; download failures and size changes open separate [url-watchdog] issues that
+auto-close once the browser checks green again.`;
+
+/**
+ * Meta-issue body: the static intro + the status table + the version history.
+ * No run date in the header on purpose — the body must only change when the
+ * table or the history changes, so fully-green no-op runs do not churn the
+ * issue.
  */ export function buildMetaIssueBody({table, history}) {
   const historyBlock =
     history ? `\n\n## Version history (runs with real updates)\n\n${history}\n` : '';
-  return `## Watchdog status\n\n${table}${historyBlock}`;
+  return `## Watchdog status\n\n${WATCHDOG_INTRO}\n\n${table}${historyBlock}`;
 }
 
 /**
