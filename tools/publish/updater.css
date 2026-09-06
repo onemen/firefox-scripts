@@ -155,8 +155,9 @@
 }
 
 /* Two options, spelled out: under the warning, a one-line hint introduces
-   the choice, the manual path runs as numbered steps (download → extract &
-   copy → open folder), and the OR divider leads to the installer button. */
+   the choice. The manual path runs as numbered steps in the left column
+   (download → extract & copy → open folder); the installer button sits on
+   the right, top-aligned with step 1. */
 .manual-panel-hint {
   margin: 6px 0 0 22px;
   color: var(--text-secondary);
@@ -164,10 +165,19 @@
   line-height: 1.45;
 }
 
+.manual-panel-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  margin-top: 10px;
+}
+
 .manual-steps {
   list-style: none;
   counter-reset: manual-step;
-  margin: 10px 0 2px 22px;
+  flex: 1;
+  min-width: 0;
+  margin: 0 0 0 22px;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -214,40 +224,33 @@
   text-decoration: underline;
 }
 
-.manual-or {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 8px 0 8px 22px;
-  color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.manual-or::before,
-.manual-or::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border-color);
-}
-
 .manual-action.primary {
+  flex: 0 0 320px;
   justify-content: center;
-  width: 100%;
-  padding: 10px 14px;
+  text-align: center;
+  padding: 12px 16px;
   line-height: 1.4;
   background: var(--accent-primary);
   border: none;
   color: #fff;
-  text-align: center;
 }
 
 .manual-action.primary:hover {
   background: var(--accent-hover);
   text-decoration: none;
+}
+
+/* Narrow screens: stack the installer button under the manual steps. */
+@media (max-width: 640px) {
+  .manual-panel-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .manual-action.primary {
+    flex: 0 0 auto;
+    width: 100%;
+  }
 }
 
 /* Global action row — the per-package "Don't show again" checkboxes live
