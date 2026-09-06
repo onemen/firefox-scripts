@@ -724,6 +724,45 @@ async function notifyLookupFailure(browser, reason, context) {
   }
 }
 
+/**
+ * Notify a failed E2E auto-dispatch (issue #143): the baseline already recorded
+ * the new version, so later watchdog runs will NOT re-dispatch it — without
+ * this issue the release would sit untested silently. The title deliberately
+ * does NOT match isFailureIssueTitle: the watchdog cannot verify an E2E run
+ * happened, so the issue stays open until the operator closes it after a
+ * successful (manual) dispatch — a green watchdog check must not auto-close it.
+ * Deduped per browser via the exact-title match.
+ */
+async function notifyDispatchFailure(browser, reason) {
+  try {
+    const token = process.env.GITHUB_TOKEN || '';
+    const repo = process.env.GITHUB_REPOSITORY || '';
+    const runUrl =
+      process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY ?
+        `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
+      : 'local';
+    const title = `[url-watchdog] ${browser} E2E dispatch failed`;
+    const remedy =
+      FORK_BROWSERS.includes(browser) ?
+        `gh workflow run e2e.yml -f browser=${browser}`
+      : 'gh workflow run e2e.yml  # full dispatch — also refreshes the validated-versions record';
+    const body =
+      `Watchdog run: ${runUrl}\n\n` +
+      `The automatic E2E dispatch for the new ${browser} release failed, and the ` +
+      'version is already recorded in the watchdog baseline — later runs will NOT ' +
+      `re-dispatch it, so the release stays untested:\n\n- ${reason}\n\n` +
+      'Retry the dispatch manually, then close this issue:\n\n' +
+      `\`${remedy}\``;
+    if (!token || !repo || process.argv.includes('--dry-run')) {
+      console.log(`[notification skipped] would open: ${title}`);
+      return;
+    }
+    await openIssueIfNew(token, repo, title, body);
+  } catch (err) {
+    console.log(`  notification failed (non-fatal): ${err.message}`);
+  }
+}
+
 export async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const prMode = process.argv.includes('--pr');
@@ -1113,9 +1152,9 @@ export async function main() {
   // lity E2E") but it was never wired up — new releases sat untested until an
   // unrelated push or a manual dispatch. Runs only after the baseline persis-
   // ted (the fail-closed exit above already returned otherwise), so a browser
-  // is dispatched at most once per recorded version. A failed dispatch is a
-  // warning, not a failed run — the baseline and the issue surface already
-  // succeeded, and the next run re-triggers only if the version is still new.
+  // is dispatched at most once per recorded version — which also means a
+  // FAILED dispatch is never retried by later runs (the version is no longer
+  // new): it surfaces as a run warning plus a deduped per-browser issue.
   if (!prMode && !dryRun && token && repo) {
     const plans = planDispatches(findings);
     if (plans.length > 0) {
@@ -1129,6 +1168,12 @@ export async function main() {
             `::warning file=tools/check-browser-downloads.mjs::E2E dispatch failed ` +
               `for ${plan.browser || 'full matrix'}: ${err.message}`
           );
+          // See the block comment: not retried on later runs — make the
+          // untested release visible with a deduped issue per affected browser
+          // (the full dispatch covers both hard gates).
+          for (const browser of plan.browser ? [plan.browser] : VALIDATED_BROWSERS) {
+            await notifyDispatchFailure(browser, err.message);
+          }
         }
       }
     }
