@@ -239,8 +239,11 @@ async function verifyFullDownload(url, browser) {
   const startedAt = Date.now();
   try {
     await downloadTo(url, tmp);
+    // Capture the transfer time BEFORE hashing — the metric is download
+    // duration; hashing (1-2s for a 158 MB installer) is verification.
+    const downloadMs = Date.now() - startedAt;
     const sha256 = await sha256File(tmp);
-    return {ok: true, size: fs.statSync(tmp).size, sha256, downloadMs: Date.now() - startedAt};
+    return {ok: true, size: fs.statSync(tmp).size, sha256, downloadMs};
   } catch (err) {
     return {ok: false, reason: `full download failed: ${err.message}`};
   } finally {

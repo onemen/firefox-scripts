@@ -282,8 +282,9 @@ unusually slow CI link:
 | `DOWNLOAD_TOTAL_BUDGET_MS`  | 1200000 (20 min) | Wall-clock budget across all 5 attempts (retries resume, so slow links still complete). Must stay below the watchdog job's `timeout-minutes: 30`.       |
 | `DOWNLOAD_RETRY_BACKOFF_MS` | 5000             | Wait between attempts.                                                                                                                                  |
 
-Each is read per call, so a workflow step can set one (e.g. `env: DOWNLOAD_TOTAL_BUDGET_MS: 3000000`
-on a known-slow runner) without touching the others.
+Each is read per call, so a workflow step can set one (e.g. `env: DOWNLOAD_TOTAL_BUDGET_MS: 1500000`
+— 25 min, still inside the watchdog job's 30-minute timeout — on a known-slow runner) without
+touching the others.
 
 The script creates the fixed-tag **`ci-downloads`** release on demand, uploads the asset under the
 resolver's expected name, and dispatches `e2e.yml` with `browser` (+ optional `version`) — a
