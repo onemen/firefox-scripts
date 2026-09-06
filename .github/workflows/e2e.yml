@@ -617,10 +617,13 @@ jobs:
 
       # Detection against the snap build (HTTP + UI layers + the test-surface
       # layer from #129): the installer must discover /snap/bin/firefox and
-      # report it like any other browser.
+      # report it like any other browser.  The UI layer runs HEADED (no
+      # --headless): a headless snap Firefox does not accept the installer's
+      # cross-process tab open the way a headless tarball install does —
+      # headed under xvfb is also the real-user mode this leg simulates.
       - name: Run installer E2E (snap Firefox)
         if: steps.snapd.outputs.available == 'true'
-        run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui --headless
+        run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui
 
       # Updater flow against the snap build: tab opens, config seeds into the
       # (now runner-owned) /etc/firefox GreD, status renders. Elevation into
@@ -630,7 +633,14 @@ jobs:
       # reports independently, so one failure never hides the other's result.
       - name: Run updater E2E (snap Firefox)
         if: always() && steps.snapd.outputs.available == 'true'
-        run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
+        # Run the stale scenarios and the up-to-date scenario in SEPARATE
+        # processes: the leg's GreD (/etc/firefox) is shared across scenarios,
+        # so a single process leaks state into the up-to-date check. Splitting
+        # isolates whether that scenario's misfire is cross-scenario residue or
+        # genuine snap behavior. (The harness restores GreD between processes.)
+        run: |
+          xvfb-run -a node test/e2e/updater/updater-e2e.mjs --scenario 1,2,3
+          xvfb-run -a node test/e2e/updater/updater-e2e.mjs --scenario 4
 
       - name: Upload diagnostics
         if: failure()
