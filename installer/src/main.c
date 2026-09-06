@@ -1169,6 +1169,9 @@ int handle_api_install(int client_fd, const char *query, const char *body, size_
 
     strncpy(g_binary_dir, detected_browsers[browser_idx].binary_path, MAX_PATH_LEN);
     get_parent_dir(g_binary_dir);
+    // Snap installs keep their autoconfig in /etc/firefox, not the read-only
+    // /snap/... app dir — fx-folder must be copied there.
+    config_dir_for_app_dir(g_binary_dir, g_binary_dir, sizeof(g_binary_dir));
 
     strncpy(g_profile_dir, detected_browsers[browser_idx].profile_path, MAX_PATH_LEN);
 

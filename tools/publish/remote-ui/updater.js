@@ -40,6 +40,7 @@ const {AppConstants} = ChromeUtils.importESModule('resource://gre/modules/AppCon
 const {
   computeFilesHash,
   checkScriptsUpdateNeeded,
+  fxFolderDir,
   extractZipFlatten,
   copyFileList,
   fetchBytes,
@@ -477,7 +478,7 @@ async function installConfig() {
       throw new Error('Downloaded fx-folder.zip failed hash verification.');
     }
 
-    const greDir = Services.dirsvc.get('GreD', Ci.nsIFile).path;
+    const greDir = fxFolderDir();
     sendProgress(70, 'Copying configuration files...');
     const {elevated} = await installConfigFiles(baseDir, info.files, greDir, tmpDir);
 
@@ -537,9 +538,7 @@ async function refreshPackageState(kind) {
   const info = scriptsInfo[kind === 'config' ? 'fxFolder' : 'utils'];
   if (info.files && info.remoteHash) {
     const dir =
-      kind === 'config' ?
-        Services.dirsvc.get('GreD', Ci.nsIFile).path
-      : PathUtils.join(PathUtils.profileDir, 'chrome', 'utils');
+      kind === 'config' ? fxFolderDir() : PathUtils.join(PathUtils.profileDir, 'chrome', 'utils');
     try {
       info.updateNeeded = computeFilesHash(info.files, dir) !== info.remoteHash;
     } catch (e) {

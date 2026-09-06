@@ -224,6 +224,26 @@ function withTimeout(promise, ms) {
 }
 
 /**
+ * The directory fx-folder (config.js, defaults/pref/config-prefs.js) lives in.
+ * Ordinary installs keep it in GreD — the app dir next to the binary.
+ * Snap-packaged Firefox is different: Services GreD is the read-only
+ * /snap/<name>/<rev>/... app mount, while the browser reads its autoconfig from
+ * /etc/firefox on the host (where the install docs tell snap users to place
+ * config.js). Hashing or copying against /snap/... can never match or write —
+ * it left fx-folder permanently "Update Available" on the snap E2E leg (#55) —
+ * so map snap installs to /etc/firefox.
+ *
+ * @returns {string}
+ */
+export function fxFolderDir() {
+  const exePath = Services.dirsvc.get('XREExeF', Ci.nsIFile).path;
+  if (exePath.includes('/snap/')) {
+    return '/etc/firefox';
+  }
+  return Services.dirsvc.get('GreD', Ci.nsIFile).path;
+}
+
+/**
  * Fetch the hash manifest and compare per-package local hashes against it.
  *
  * @returns {Promise<{fxFolder: Object; utils: Object; updaterUi: Object}>}
@@ -241,10 +261,9 @@ export async function checkScriptsUpdateNeeded() {
     const responseText = await withTimeout(fetchText(getHashesUrl()), MANIFEST_TIMEOUT_MS);
     const remoteInfo = JSON.parse(responseText);
 
-    const greDir = Services.dirsvc.get('GreD', Ci.nsIFile).path;
     const profileDir = Services.dirsvc.get('ProfD', Ci.nsIFile).path;
     const dirs = {
-      'fx-folder': greDir,
+      'fx-folder': fxFolderDir(),
       'utils': profileDir + '/chrome/utils',
       'updater-ui': profileDir + '/chrome/utils/updater/ui',
     };
