@@ -15,6 +15,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import {pathToFileURL} from 'url';
 
 const VT_API = 'https://www.virustotal.com/api/v3';
 const POLL_INTERVAL_MS = 2000;
@@ -103,4 +104,42 @@ export async function scanVirusTotal(
     }
   }
   return {results};
+}
+
+// CLI entry: node tools/scan-vt.mjs <binary> [<binary>...]
+// Reads VT_API_KEY from the environment (e.g. via `node --env-file-if-exists=.env`,
+// as pnpm scan:vt does).  Exits 0 = clean, 1 = >= threshold engines flagged, 2 = usage.
+const isCli =
+  process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (isCli) {
+  const files = process.argv.slice(2);
+  if (files.length === 0) {
+    console.error('usage: node tools/scan-vt.mjs <binary> [<binary>...]');
+    process.exit(2);
+  }
+  const {results} = await scanVirusTotal(files.map(f => path.resolve(f)));
+  if (results.length === 0) {
+    console.warn('VirusTotal scan skipped — VT_API_KEY not set (add it to .env).');
+    process.exit(0);
+  }
+  let blocked = false;
+  for (const r of results) {
+    if (r.error) {
+      console.warn(`! ${r.file} — ${r.error}`);
+      continue;
+    }
+    const {malicious, suspicious, harmless, undetected} = r.stats;
+    const line =
+      `${r.file} — ${malicious} malicious / ${suspicious} suspicious / ` +
+      `${harmless} harmless / ${undetected} undetected (threshold ${r.threshold})`;
+    if (r.verdict === 'fail') {
+      console.error(`!! ${line}`);
+      blocked = true;
+    } else if (r.verdict === 'warn') {
+      console.warn(`! ${line}`);
+    } else {
+      console.log(`OK ${line}`);
+    }
+  }
+  if (blocked) process.exit(1);
 }

@@ -156,6 +156,18 @@ pnpm scan:av -- dist/installer/installer_win.exe dist/installer/helper_win.exe
 # exit 0 = clean, exit 1 = detection, exit 2 = usage
 ```
 
+### Multi-engine check (optional — VirusTotal)
+
+```bash
+# put VT_API_KEY=... in the root .env (gitignored), then:
+pnpm scan:vt -- dist/installer/installer_win.exe
+```
+
+The publish flow also runs every built binary through VirusTotal when `VT_API_KEY` is present
+(GitHub secret on CI; root `.env` for a local `pnpm upload`), failing only when ≥
+`VT_FAIL_THRESHOLD` (default 3) engines report a binary as malicious. Without a key it just skips
+with a warning.
+
 ### False-positive handling
 
 - If a scanner flags a freshly built binary, do **not** publish it — investigate first. Local builds
