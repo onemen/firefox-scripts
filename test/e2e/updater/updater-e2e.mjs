@@ -899,6 +899,35 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       'install completed'
     );
     check(counter, completed, `install completes in tab (${label})`);
+    if (!completed) {
+      // Diagnostic: capture the tab's error banner + badge DOM and the console
+      // mirror so an in-tab install failure (snap config dir, elevation, ...)
+      // is identifiable from CI logs alone.
+      const dom = await page
+        .evaluate(() => {
+          const prog = document.getElementById('card-progress');
+          const err = document.getElementById('card-progress-error');
+          const utilsOk = document.getElementById('utils-badge-ok');
+          const configOk = document.getElementById('config-badge-ok');
+          return {
+            progress: prog?.textContent?.trim() ?? null,
+            progressError: err?.textContent?.trim() ?? null,
+            progressHidden: prog ? prog.hidden : null,
+            errorDisplay: err?.style?.display ?? null,
+            utilsOk: Boolean(utilsOk && !utilsOk.hidden),
+            configOk: Boolean(configOk && !configOk.hidden),
+          };
+        })
+        .catch(() => null);
+      console.log(`  [diag:install-applies] tab at completion timeout: ${JSON.stringify(dom)}`);
+      const shotPath = path.join(
+        REPO_ROOT,
+        'dist',
+        `updater-e2e-${label.replace(/\s+/g, '_')}.png`
+      );
+      await screenshotPrivileged(page, shotPath).catch(() => {});
+      dumpConsoleLog(seeded.profileDir);
+    }
 
     const successShown = await page
       .evaluate(() => !document.getElementById('success-banner')?.hidden)
