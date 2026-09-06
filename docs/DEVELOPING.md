@@ -271,6 +271,28 @@ pnpm ci:download -- librewolf-155.0-1-windows-x86_64-setup.exe
 pnpm ci:download -- "Waterfox Setup 6.7.1.1.exe" --version 6.7.1.1
 ```
 
+#### Download timeouts for slow runners (`test/e2e/shared/downloads.mjs`)
+
+`downloadTo` — used by every CI installer fetch and the watchdog's full-download verification — is
+**progress-aware** (issue #143): it streams to disk and aborts only when **no bytes advance for the
+stall window**, never on a healthy-but-slow transfer (the same 158 MB LibreWolf installer took 13 s
+from CI runners and 5.5 min over a home link). Interrupted attempts resume via a Range request
+instead of restarting from byte 0, and a 10 MB-interval heartbeat (`MB downloaded (KB/s)`) in the
+log shows the transfer is alive.
+
+Three environment variables tune it — the defaults fit every observed runner; override only for an
+unusually slow CI link:
+
+| Variable                    | Default          | Meaning                                                                                                                                                 |
+| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DOWNLOAD_STALL_TIMEOUT_MS` | 60000            | Abort the attempt when no bytes arrive for this long. A 0.3 MB/s trickle delivers a chunk every ~2 s and is never killed — only a dead stream trips it. |
+| `DOWNLOAD_TOTAL_BUDGET_MS`  | 1200000 (20 min) | Wall-clock budget across all 5 attempts (retries resume, so slow links still complete). Must stay below the watchdog job's `timeout-minutes: 30`.       |
+| `DOWNLOAD_RETRY_BACKOFF_MS` | 5000             | Wait between attempts.                                                                                                                                  |
+
+Each is read per call, so a workflow step can set one (e.g. `env: DOWNLOAD_TOTAL_BUDGET_MS: 1500000`
+— 25 min, still inside the watchdog job's 30-minute timeout — on a known-slow runner) without
+touching the others.
+
 The script creates the fixed-tag **`ci-downloads`** release on demand, uploads the asset under the
 resolver's expected name, and dispatches `e2e.yml` with `browser` (+ optional `version`) — a
 single-browser updater-E2E run. CI's `cleanup-ci-downloads` job deletes the consumed asset

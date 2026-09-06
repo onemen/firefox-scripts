@@ -26,15 +26,19 @@
  *   4. META ISSUE — one `[url-watchdog] status` issue is kept current after every
  *        run: a per-browser status table (last verified version, size +
  *        SHA-256, the run that last checked it, a status tag, the CI-cache
- *        fallback version for failed browsers, and the E2E-validated version
- *        for the hard-gate browsers) plus a version history that only grows on
- *        runs with real version updates — the durable SHA-256 ledger (search
- *        `label:url-watchdog` for it).
+ *        fallback version, the full-download transfer time, and the
+ *        E2E-validated version for the hard-gate browsers) plus a version
+ *        history that only grows on runs with real version updates — the
+ *        durable SHA-256 ledger (search `label:url-watchdog` for it).
  *   5. ERROR ISSUES — rot and same-version size changes still open their own issue,
  *        deduped per browser (the exact issue title is matched against open
  *        issues carrying the `url-watchdog` label); the watchdog auto-closes
  *        any open failure issue for a browser once a later run checks it green
  *        again.
+ *   6. E2E DISPATCH — a new release triggers the browser E2E (issue #143): fork
+ *        browsers get a single-browser dispatch (the ADR 0021 manual escape),
+ *        the hard-gate browsers share one full dispatch whose record-validation
+ *        refreshes the validated-versions record. Non-fatal on failure.
  * - PR (pull_request touching the download map): stateless and always green —
  *   findings surface as ::warning:: / ::notice:: annotations, so the check can
  *   be marked required without ever blocking. No baseline, no issues, no full
@@ -48,9 +52,10 @@
  * installer since ADR 0021 — gets the full version + endpoint + SHA-256
  * treatment.
  *
- * Requires GITHUB_TOKEN with issues: write for issue creation; without it, or
- * with --dry-run, findings are printed instead. Exit code stays 0 when findings
- * are reported (they become issues / annotations, not CI failures).
+ * Requires GITHUB_TOKEN with issues: write for issue creation and actions:
+ * write for the E2E dispatch; without it, or with --dry-run, findings are
+ * printed instead. Exit code stays 0 when findings are reported (they become
+ * issues / annotations, not CI failures).
  */
 
 import {createHash} from 'node:crypto';
@@ -101,6 +106,9 @@ export const VALIDATED_BROWSERS = ['firefox', 'firefox-dev'];
  */
 export const FORK_BROWSERS = ['librewolf', 'floorp', 'zen', 'waterfox'];
 
+/** E2E workflow dispatched when a new release is recorded (repo file name). */
+const E2E_WORKFLOW = 'e2e.yml';
+
 /**
  * Resolve the current release version for a browser via the shared resolver
  * (retry + mirror chains; LibreWolf bsys6-first, waterfox GitHub→CDN).
@@ -108,6 +116,50 @@ export const FORK_BROWSERS = ['librewolf', 'floorp', 'zen', 'waterfox'];
 export async function resolveVersion(browser) {
   const {version} = await resolveBrowserVersion(browser);
   return version;
+}
+
+/**
+ * Pure planner for the post-baseline E2E auto-dispatch (issue #143): map
+ * new-version findings to E2E workflow dispatches.
+ *
+ * - Fork browsers each get a single-browser dispatch — the `browser` input
+ *   collapses the matrix to that leg (the ADR 0021 manual escape, whose runs
+ *   sit in their own non-cancelled concurrency group).
+ * - The hard-gate browsers share ONE full dispatch (`browser=all`): it runs the
+ *   updater legs on all 3 OSes and record-validation, refreshing the
+ *   validated-versions record the publish gate reads. One dispatch, never two —
+ *   a second full dispatch would land in the same cancel-in-progress
+ *   concurrency group and kill the first.
+ *
+ * `first-run` findings are deliberately excluded: a cache eviction re-baselines
+ * without any release having shipped. Fork dispatches are capped at the fork
+ * browser set, so a malformed findings list cannot spam the API.
+ *
+ * @param {{kind: string; browser: string}[]} findings
+ * @returns {{browser?: string; ref: string}[]} dispatch payloads in issue order
+ *   (`browser` absent = full matrix)
+ */
+export function planDispatches(findings) {
+  const newVersions = findings.filter(f => f.kind === 'new-version');
+  const forks = [
+    ...new Set(newVersions.map(f => f.browser).filter(b => FORK_BROWSERS.includes(b))),
+  ];
+  const hardGates = newVersions.some(f => VALIDATED_BROWSERS.includes(f.browser));
+  const plans = forks.map(browser => ({browser, ref: 'main'}));
+  if (hardGates) plans.push({ref: 'main'});
+  return plans;
+}
+
+/**
+ * Dispatch the E2E workflow on main for one planned leg. `browser` absent = the
+ * full matrix (the hard-gate path, which also runs record-validation). Fork
+ * dispatches set the `browser` input, collapsing the matrix to that leg.
+ */
+async function dispatchE2E(token, repo, {browser}) {
+  await ghApi(token, `/repos/${repo}/actions/workflows/${E2E_WORKFLOW}/dispatches`, {
+    method: 'POST',
+    body: {ref: 'main', inputs: {browser: browser || 'all', version: ''}},
+  });
 }
 
 /** Parse a Content-Range header ('bytes 0-1023/104857600') → total size. */
@@ -184,10 +236,14 @@ export async function sha256File(file) {
  */
 async function verifyFullDownload(url, browser) {
   const tmp = path.join(os.tmpdir(), `watchdog-${browser}-${process.pid}.exe`);
+  const startedAt = Date.now();
   try {
     await downloadTo(url, tmp);
+    // Capture the transfer time BEFORE hashing — the metric is download
+    // duration; hashing (1-2s for a 158 MB installer) is verification.
+    const downloadMs = Date.now() - startedAt;
     const sha256 = await sha256File(tmp);
-    return {ok: true, size: fs.statSync(tmp).size, sha256};
+    return {ok: true, size: fs.statSync(tmp).size, sha256, downloadMs};
   } catch (err) {
     return {ok: false, reason: `full download failed: ${err.message}`};
   } finally {
@@ -359,6 +415,18 @@ export function validatedCell(browser, entry, validated) {
 }
 
 /**
+ * Human-readable duration for the meta-issue download-time cell ('13s', '4m
+ * 12s'); '—' when unknown (browser never fully downloaded this version).
+ */
+export function formatDownloadMs(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${s % 60}s`;
+}
+
+/**
  * Markdown status table for the meta issue. `baseline` is the per-browser
  * record AFTER this run — a browser that failed keeps its previous entry, which
  * is exactly what the version-aware CI installer cache still serves (the
@@ -375,13 +443,23 @@ export function buildStatusTable({results, baseline, validated}) {
     const version = entry.version || '—';
     const sizeSha = `${formatSize(entry.size)} · ${shortSha(entry.sha256)}`;
     const lastCheck = formatCheck(entry.checkedAt, entry.checkedUrl);
-    const fallback = failed ? `cached: ${version} · ${lastCheck}` : '—';
+    // The CI cache always holds the last verified version, green run or not —
+    // show it unconditionally (the staleness suffix matters only on failure,
+    // where it tells the operator how old the fallback is).
+    const fallback =
+      version === '—' ? '—'
+      : failed ? `cached: ${version} · ${lastCheck}`
+      : `cached: ${version}`;
+    // Download time of the last VERIFIED full download — the transfer-speed
+    // history for the vendor hosts (issue #136). Unknown until a browser's
+    // version has been fully downloaded at least once.
+    const downloadTime = formatDownloadMs(entry.downloadMs);
     const e2e = validatedCell(browser, entry, validated);
-    return `| ${browser} | ${version} | ${sizeSha} | ${lastCheck} | ${statusTag(res.status)} | ${fallback} | ${e2e} |`;
+    return `| ${browser} | ${version} | ${sizeSha} | ${lastCheck} | ${statusTag(res.status)} | ${fallback} | ${downloadTime} | ${e2e} |`;
   });
   return [
-    '| Browser | Last verified | Size · SHA-256 | Last check | Status | Fallback (CI cache) | E2E validated |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| Browser | Last verified | Size · SHA-256 | Last check | Status | Fallback (CI cache) | Download time | E2E validated |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
     ...rows,
   ].join('\n');
 }
@@ -408,6 +486,7 @@ export function seedHistoryFromBaseline(baseline) {
     version: baseline[b].version,
     size: baseline[b].size,
     sha256: baseline[b].sha256,
+    downloadMs: baseline[b].downloadMs,
   }));
   return changes.length ? [{kind: 'baseline', changes}] : [];
 }
@@ -419,10 +498,12 @@ export function renderHistory(history) {
       const items = h.changes
         .map(c => {
           const sha = shortSha(c.sha256);
+          const dl =
+            formatDownloadMs(c.downloadMs) === '—' ? '' : ` · ${formatDownloadMs(c.downloadMs)}`;
           if (h.kind === 'baseline') {
-            return `${c.browser} ${c.version} · ${formatSize(c.size)} · ${sha}`;
+            return `${c.browser} ${c.version} · ${formatSize(c.size)} · ${sha}${dl}`;
           }
-          return `${c.browser} ${c.prevVersion} → ${c.newVersion} · ${formatSize(c.size)} · ${sha}`;
+          return `${c.browser} ${c.prevVersion} → ${c.newVersion} · ${formatSize(c.size)} · ${sha}${dl}`;
         })
         .join(' · ');
       const label =
@@ -672,6 +753,45 @@ async function notifyLookupFailure(browser, reason, context) {
   }
 }
 
+/**
+ * Notify a failed E2E auto-dispatch (issue #143): the baseline already recorded
+ * the new version, so later watchdog runs will NOT re-dispatch it — without
+ * this issue the release would sit untested silently. The title deliberately
+ * does NOT match isFailureIssueTitle: the watchdog cannot verify an E2E run
+ * happened, so the issue stays open until the operator closes it after a
+ * successful (manual) dispatch — a green watchdog check must not auto-close it.
+ * Deduped per browser via the exact-title match.
+ */
+async function notifyDispatchFailure(browser, reason) {
+  try {
+    const token = process.env.GITHUB_TOKEN || '';
+    const repo = process.env.GITHUB_REPOSITORY || '';
+    const runUrl =
+      process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY ?
+        `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
+      : 'local';
+    const title = `[url-watchdog] ${browser} E2E dispatch failed`;
+    const remedy =
+      FORK_BROWSERS.includes(browser) ?
+        `gh workflow run e2e.yml -f browser=${browser}`
+      : 'gh workflow run e2e.yml  # full dispatch — also refreshes the validated-versions record';
+    const body =
+      `Watchdog run: ${runUrl}\n\n` +
+      `The automatic E2E dispatch for the new ${browser} release failed, and the ` +
+      'version is already recorded in the watchdog baseline — later runs will NOT ' +
+      `re-dispatch it, so the release stays untested:\n\n- ${reason}\n\n` +
+      'Retry the dispatch manually, then close this issue:\n\n' +
+      `\`${remedy}\``;
+    if (!token || !repo || process.argv.includes('--dry-run')) {
+      console.log(`[notification skipped] would open: ${title}`);
+      return;
+    }
+    await openIssueIfNew(token, repo, title, body);
+  } catch (err) {
+    console.log(`  notification failed (non-fatal): ${err.message}`);
+  }
+}
+
 export async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const prMode = process.argv.includes('--pr');
@@ -896,6 +1016,7 @@ export async function main() {
         version,
         size: verified.size,
         sha256: verified.sha256,
+        downloadMs: verified.downloadMs,
         checkedAt: new Date().toISOString(),
         checkedUrl: runUrl,
       };
@@ -908,6 +1029,7 @@ export async function main() {
           newVersion: version,
           size: verified.size,
           sha256: verified.sha256,
+          downloadMs: verified.downloadMs,
         });
       } else {
         console.log('  first run — baseline recorded');
@@ -930,6 +1052,7 @@ export async function main() {
       // version bumps (which re-verifies via a full download).
       size: sizeChanged ? prev.size : total || prev.size || null,
       sha256: prev.sha256 || null,
+      downloadMs: prev.downloadMs ?? null,
       checkedAt: new Date().toISOString(),
       checkedUrl: runUrl,
     };
@@ -1011,6 +1134,7 @@ export async function main() {
         newVersion: f.newVersion,
         size: f.size,
         sha256: f.sha256,
+        downloadMs: f.downloadMs,
       })),
     });
   }
@@ -1054,6 +1178,38 @@ export async function main() {
   if (!prMode && !dryRun) {
     fs.mkdirSync(baselineDir, {recursive: true});
     fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + '\n');
+  }
+
+  // Auto-dispatch the browser E2E for new releases (issue #143): docs/ci-
+  // inventory.md promised this ("should dispatch targeted updater compatibi-
+  // lity E2E") but it was never wired up — new releases sat untested until an
+  // unrelated push or a manual dispatch. Runs only after the baseline persis-
+  // ted (the fail-closed exit above already returned otherwise), so a browser
+  // is dispatched at most once per recorded version — which also means a
+  // FAILED dispatch is never retried by later runs (the version is no longer
+  // new): it surfaces as a run warning plus a deduped per-browser issue.
+  if (!prMode && !dryRun && token && repo) {
+    const plans = planDispatches(findings);
+    if (plans.length > 0) {
+      console.log(`\nDispatching browser E2E for ${plans.length} new release(s):`);
+      for (const plan of plans) {
+        try {
+          await dispatchE2E(token, repo, plan);
+          console.log(`  dispatched e2e.yml on main (${plan.browser || 'full matrix'})`);
+        } catch (err) {
+          console.log(
+            `::warning file=tools/check-browser-downloads.mjs::E2E dispatch failed ` +
+              `for ${plan.browser || 'full matrix'}: ${err.message}`
+          );
+          // See the block comment: not retried on later runs — make the
+          // untested release visible with a deduped issue per affected browser
+          // (the full dispatch covers both hard gates).
+          for (const browser of plan.browser ? [plan.browser] : VALIDATED_BROWSERS) {
+            await notifyDispatchFailure(browser, err.message);
+          }
+        }
+      }
+    }
   }
 
   console.log(
