@@ -249,11 +249,12 @@ CLI flags win over environment variables, which win over the config file.
 
 `.github/workflows/e2e.yml`:
 
-| Job       | OS matrix                                | Gate                |
-| --------- | ---------------------------------------- | ------------------- |
-| installer | ubuntu, macos, windows                   | Hard (blocks merge) |
-| helper    | ubuntu (sudo test)                       | Hard                |
-| updater   | ubuntu (Mozilla tarball), macos, windows | Hard                |
+| Job          | OS matrix                                | Gate                                |
+| ------------ | ---------------------------------------- | ----------------------------------- |
+| installer    | ubuntu, macos, windows                   | Hard (blocks merge)                 |
+| helper       | ubuntu (sudo test)                       | Hard                                |
+| updater      | ubuntu (Mozilla tarball), macos, windows | Hard                                |
+| snap Firefox | ubuntu (snap store install)              | Advisory (skips without snapd, #55) |
 
 See `docs/e2e-matrix-plan.md` for the planned browser × OS expansion (Waterfox, Zen, Firefox
 Nightly, LibreWolf, and Floorp). The post-v1.0 browser expansion is tracked in issue #38.

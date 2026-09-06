@@ -1169,6 +1169,9 @@ int handle_api_install(int client_fd, const char *query, const char *body, size_
 
     strncpy(g_binary_dir, detected_browsers[browser_idx].binary_path, MAX_PATH_LEN);
     get_parent_dir(g_binary_dir);
+    // Snap installs keep their autoconfig in /etc/firefox, not the read-only
+    // /snap/... app dir — fx-folder must be copied there.
+    config_dir_for_app_dir(g_binary_dir, g_binary_dir, sizeof(g_binary_dir));
 
     strncpy(g_profile_dir, detected_browsers[browser_idx].profile_path, MAX_PATH_LEN);
 
@@ -1869,6 +1872,36 @@ static void set_resume_session_once(const char *profile) {
 }
 
 /**
+ * Path to EXEC for a detected browser, vs. the recorded binary path.
+ * Detection records the process image (/proc/<pid>/exe), so a Snap install
+ * yields the inner /snap/<name>/<rev>/usr/lib/firefox/firefox binary.
+ * Exec'ing that inner binary directly runs it OUTSIDE the snap's confinement:
+ * it cannot hand a URL off to the confined, already-running snap instance
+ * (the instance's IPC lives behind the snap's private /tmp + AppArmor) and
+ * instead starts a second, unconfined browser — the installer tab never lands
+ * in the user's browser.  Relaunching through the /snap/bin/<name> snap-exec
+ * wrapper (what the desktop entry and every normal snap launch use) shares
+ * the running instance's confinement, so the handoff works.  Non-snap
+ * installs are relaunched as recorded.
+ *
+ * Only used off-Windows (snaps are a Linux packaging).
+ */
+#ifndef _WIN32
+static void snap_launcher_path(const char *binary, char *out, size_t out_sz) {
+    if (strncmp(binary, "/snap/", 6) == 0) {
+        const char *name_start = binary + 6;
+        const char *name_end = strchr(name_start, '/');
+        if (name_end && name_end > name_start) {
+            snprintf(out, out_sz, "/snap/bin/%.*s", (int)(name_end - name_start),
+                     name_start);
+            return;
+        }
+    }
+    snprintf(out, out_sz, "%s", binary);
+}
+#endif
+
+/**
  * Launch a browser instance for the given profile with a clean cache.
  * Passes `url` (if non-empty) as --new-tab so the installer tab opens as part
  * of this launch.  Session restore is handled by the resume_session_once pref
@@ -1915,15 +1948,17 @@ static int launch_browser_profile(const RunningBrowser *b, const char *url) {
     verbose_printf("[restart] ERROR: CreateProcessW failed, error %lu\n", GetLastError());
     return 0;
 #else
+    char launch[MAX_PATH_LEN];
+    snap_launcher_path(b->binary_path, launch, sizeof(launch));
     pid_t child = fork();
     if (child == 0) {
         setsid();
         if (strlen(b->profile_path) > 0) {
-            execl(b->binary_path, b->binary_path, "-profile", b->profile_path,
+            execl(launch, launch, "-profile", b->profile_path,
                   "-purgecaches", "--new-tab", url, (char *)NULL);
         } else {
-            execl(b->binary_path, b->binary_path, "-purgecaches", "--new-tab",
-                  url, (char *)NULL);
+            execl(launch, launch, "-purgecaches", "--new-tab", url,
+                  (char *)NULL);
         }
         _exit(1);
     }
@@ -1966,10 +2001,13 @@ static void open_url_in_profile(const char *binary, const char *profile, const c
     log_msg("[openurl] CreateProcessW failed: %lu\n", GetLastError());
     open_browser(url, NULL);
 #else
+    char launch[MAX_PATH_LEN];
+    snap_launcher_path(binary, launch, sizeof(launch));
     pid_t child = fork();
     if (child == 0) {
         setsid();
-        execl(binary, binary, "-profile", profile, "--new-tab", url, (char *)NULL);
+        execl(launch, launch, "-profile", profile, "--new-tab", url,
+              (char *)NULL);
         _exit(1);
     }
     if (child > 0) {

@@ -319,11 +319,114 @@
                 </div>
               </div>
 
-              <!-- Row 2: profile folder + utils status -->
-              <div class="profile-row">
-                <div class="profile-row-top">
-                  <div class="profile-row-name-line">
-                    <span class="profile-row-name">PROFILE FOLDER</span>
+              <!-- Snap manual-install guidance — a full-width band between the
+                   APPLICATION BINARY and PROFILE FOLDER rows (both stay inside
+                   this one browser card). Shown when the config package can't be
+                   installed in-tab under Snap confinement. -->
+              <div class="manual-panel" id="config-manual" hidden="true">
+                <div class="manual-panel-head">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                    />
+                    <line x1="12" y1="9" x2="12" y2="13" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
+                  <span
+                    >Snap Firefox can't modify the configuration files from inside the browser —
+                    they install to <code>/etc/firefox</code>.</span
+                  >
+                </div>
+                <p class="manual-panel-hint">
+                  You have two options — download and install manually, or use the installer.
+                </p>
+                <div class="manual-panel-body">
+                  <ol class="manual-steps">
+                    <li>
+                      <a class="manual-action" id="manual-download-config" href="#">
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        Download configuration files (zip)
+                      </a>
+                    </li>
+                    <li>Extract the files and copy into the configuration folder</li>
+                    <li>
+                      <a class="manual-action" id="manual-open-config" href="#">
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path
+                            d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                          />
+                        </svg>
+                        Open configuration folder
+                      </a>
+                    </li>
+                  </ol>
+                  <a
+                    class="manual-action primary"
+                    id="manual-installer"
+                    href="#"
+                    title="Runs outside Snap confinement — handles the administrator permissions for you"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Download the installer and run it — updates both packages (recommended)
+                  </a>
+                </div>
+              </div>
+
+              <!-- Row 2: profile folder + utils status — sibling row after
+                   APPLICATION BINARY inside the same browser card, sharing its
+                   layout so the status/checkbox columns align across the two. -->
+              <div class="row-item">
+                <div class="path-block">
+                  <div class="path-title-row">
+                    <span class="path-title">PROFILE FOLDER</span>
                     <button
                       type="button"
                       class="btn-open-folder"
@@ -347,52 +450,47 @@
                       </svg>
                     </button>
                   </div>
-                  <div class="profile-row-badges" id="utils-status">
-                    <span id="utils-badge-update" class="badge-update" hidden="true">
-                      <input
-                        type="checkbox"
-                        class="chk-component"
-                        id="chk-utils"
-                        data-kind="utils"
-                      />
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="#eab308"
-                        stroke-width="3"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <circle cx="12" cy="12" r="6" />
-                      </svg>
-                      utils: Update Available
-                    </span>
-                    <span id="utils-badge-ok" class="badge-uptodate" hidden="true">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="3"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      utils: Up To Date
-                    </span>
-                    <label class="skip-checkbox" id="skip-utils" hidden="true">
-                      <input type="checkbox" id="skip-utils-input" data-skip="utils" />
-                      <span>Don't show again for this update</span>
-                    </label>
-                  </div>
+                  <span class="path-value" id="profile-path"></span>
                 </div>
-                <span class="profile-row-value" id="profile-path"></span>
+                <div class="component-status-cell" id="utils-status">
+                  <span id="utils-badge-update" class="badge-update" hidden="true">
+                    <input type="checkbox" class="chk-component" id="chk-utils" data-kind="utils" />
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#eab308"
+                      stroke-width="3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="6" />
+                    </svg>
+                    utils: Update Available
+                  </span>
+                  <span id="utils-badge-ok" class="badge-uptodate" hidden="true">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    utils: Up To Date
+                  </span>
+                  <label class="skip-checkbox" id="skip-utils" hidden="true">
+                    <input type="checkbox" id="skip-utils-input" data-skip="utils" />
+                    <span>Don't show again for this update</span>
+                  </label>
+                </div>
               </div>
             </div>
 

@@ -93,6 +93,18 @@ export const DOWNLOADS = {
     },
     page: 'https://www.mozilla.org/firefox/developer/',
   },
+  // Snap-packaged Firefox (Linux only) — issue #55. Installs through the snap
+  // store (`snap install firefox --classic` needs no extra flags on the
+  // runners' Ubuntu image; sudo is available on hosted runners). GreD of the
+  // snap build is DISCOVERED at runtime by the E2E (findGreDir + a
+  // /etc/firefox probe in the workflow), reconciling docs/future-work §2.1.
+  // Note: Firefox Dev Edition has no snap channel, so this covers stable only.
+  'firefox-snap': {
+    install: {
+      linux: {snap: true},
+    },
+    page: 'https://snapcraft.io/firefox',
+  },
   'waterfox': {
     install: {
       // Waterfox publishes no GitHub release assets, but its own CDN serves a
@@ -198,6 +210,12 @@ export async function resolveDownloadUrl(browser, platform = process.platform) {
           ` — manual install only (official page: ${DOWNLOADS[browser].page})`
         : '')
     );
+  }
+  if (recipe.snap) {
+    // The snap store resolves the revision at install time; there is no
+    // cacheable URL. Report the snap origin so a caller keying a cache on the
+    // URL gets a stable identifier (and so --url documents the mechanism).
+    return 'snap://firefox';
   }
   if (recipe.resolver) {
     const {url} = await resolveInstallerUrl(browser);
@@ -660,6 +678,25 @@ export async function installBrowser(browser, platform = process.platform) {
       `${browser} has no automated install for ${key}` +
         (def.page ? ` — manual install only (official page: ${def.page})` : '')
     );
+  }
+  if (recipe.snap) {
+    // Snap store install (Linux): the snap daemon handles download + install;
+    // `--classic` grants the classic confinement Firefox's launcher expects.
+    // The snap command itself elevates via sudo (passwordless on hosted
+    // runners) — the recipe must run UNPRIVILEGED so its $GITHUB_ENV export
+    // (FIREFOX_BINARY) lands in the caller's environment; running the whole
+    // step under sudo would strip GITHUB_ENV (sudo env_reset) and the
+    // workflow's later steps would never see the binary path.
+    execSync('sudo snap install firefox --classic', {stdio: 'inherit'});
+    // /snap/bin/firefox is the stable launcher path (a symlink into
+    // /snap/firefox/current/...); discoverFirefoxBinary lists it as a Linux
+    // fallback candidate, but resolve it here explicitly so the exported
+    // FIREFOX_BINARY is exactly the launcher the tests will drive.
+    const binary = '/snap/bin/firefox';
+    if (!fs.existsSync(binary)) {
+      throw new Error('snap install ran, but /snap/bin/firefox not found');
+    }
+    return binary;
   }
   if (browser === 'firefox' && process.env.PORTABLE_BROWSER_DIR) {
     const url = recipe.tarball || recipe.url;

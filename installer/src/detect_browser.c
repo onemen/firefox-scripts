@@ -1044,19 +1044,34 @@ void refresh_waterfox_versions(RunningBrowser *browsers, int count) {
  * installed = file presence (a stale or partial install is still installed);
  * up_to_date = hash comparison against the ingested manifest.
  */
+void config_dir_for_app_dir(const char *app_dir, char *out, size_t out_sz) {
+    // Snap app dirs are read-only mounts; the browser reads config.js from
+    // /etc/firefox instead (see detect_browser.h).
+    if (app_dir && strstr(app_dir, "/snap/")) {
+        snprintf(out, out_sz, "/etc/firefox");
+        return;
+    }
+    // Guard the identity copy: with out == app_dir the snprintf below would
+    // read and write the same object, which is undefined behavior in C.
+    if (out == app_dir) return;
+    snprintf(out, out_sz, "%s", app_dir ? app_dir : "");
+}
+
 void refresh_install_status_full(RunningBrowser *browser) {
-    char binary_dir[MAX_PATH_LEN];
-    strncpy(binary_dir, browser->binary_path, MAX_PATH_LEN);
-    get_parent_dir(binary_dir);
+    char app_dir[MAX_PATH_LEN];
+    strncpy(app_dir, browser->binary_path, MAX_PATH_LEN);
+    get_parent_dir(app_dir);
+    char config_dir[MAX_PATH_LEN];
+    config_dir_for_app_dir(app_dir, config_dir, sizeof(config_dir));
     char utils_dir[MAX_PATH_LEN];
     snprintf(utils_dir, sizeof(utils_dir), "%s%cchrome%cutils",
              browser->profile_path, PATH_SEPARATOR, PATH_SEPARATOR);
 
     int saved = g_is_initial_scan;
     g_is_initial_scan = 0;
-    browser->config_installed = check_files_present(0, binary_dir);
+    browser->config_installed = check_files_present(0, config_dir);
     browser->utils_installed = check_files_present(1, utils_dir);
-    browser->config_up_to_date = check_package_status(0, binary_dir);
+    browser->config_up_to_date = check_package_status(0, config_dir);
     browser->utils_up_to_date = check_package_status(1, utils_dir);
     g_is_initial_scan = saved;
 }
@@ -2154,9 +2169,11 @@ static void find_active_profile_readonly(const char *binary_path, char *out_prof
 
 int check_config_status(const char *binary_path) {
     // Presence-only: config.js (or the canonical file list) exists in the
-    // binary dir.  The up-to-date verdict comes from check_package_status()
+    // config dir.  The up-to-date verdict comes from check_package_status()
     // via refresh_install_status_full().
-    return check_files_present(0, binary_path);
+    char config_dir[MAX_PATH_LEN];
+    config_dir_for_app_dir(binary_path, config_dir, sizeof(config_dir));
+    return check_files_present(0, config_dir);
 }
 
 int check_utils_status(const char *profile_path) {
@@ -2380,10 +2397,10 @@ static int extract_profile_from_cmdline(const char *cmdline, char *out, size_t o
 void refresh_install_status(RunningBrowser *browser) {
     int saved = g_is_initial_scan;
     g_is_initial_scan = 1;
-    char binary_dir[MAX_PATH_LEN];
-    strncpy(binary_dir, browser->binary_path, MAX_PATH_LEN);
-    get_parent_dir(binary_dir);
-    browser->config_installed = check_config_status(binary_dir);
+    char app_dir[MAX_PATH_LEN];
+    strncpy(app_dir, browser->binary_path, MAX_PATH_LEN);
+    get_parent_dir(app_dir);
+    browser->config_installed = check_config_status(app_dir);
     browser->utils_installed = check_utils_status(browser->profile_path);
     g_is_initial_scan = saved;
 }

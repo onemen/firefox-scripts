@@ -12,13 +12,15 @@
  * Up To Date Scenario 3 (both-stale): both Update Available Scenario 4
  * (up-to-date): tab does NOT open (no state to surface) Scenario 5 (skipped):
  * skip pref suppresses the tab entirely Scenario 6 (install-applies): click
- * btn-install and assert the packages are actually copied to disk (issue #37)
- * Scenario 7 (manual-install-upgrade): a hand-installed utils.zip brings the
- * updater — no tab with a pre-updater utils, tab after replacing it (issue #53)
- * Scenario 8 (manual-install-no-ui): a hand-installed utils.zip ships NO ui
- * folder (the tab UI lives in the separate updater-ui.zip); after a fresh check
- * the scheduler self-installs the ui (ensureUpdaterUi) and the tab is visible
- * (issue #102)
+ * btn-install and assert the packages are actually copied to disk (issue #37);
+ * under Snap the config package is never offered in-tab — the checkbox is
+ * hidden and the manual-install band shown, so the run installs utils only and
+ * asserts the config files stay untouched Scenario 7 (manual-install-upgrade):
+ * a hand-installed utils.zip brings the updater — no tab with a pre-updater
+ * utils, tab after replacing it (issue #53) Scenario 8 (manual-install-no-ui):
+ * a hand-installed utils.zip ships NO ui folder (the tab UI lives in the
+ * separate updater-ui.zip); after a fresh check the scheduler self-installs the
+ * ui (ensureUpdaterUi) and the tab is visible (issue #102)
  *
  * Each scenario: fresh temp profile → seed utils + fx-folder → modify files to
  * force desired state → launch Firefox → wait for tab (or assert none) → run
@@ -624,7 +626,9 @@ async function runStaleScenario(
 
     // ── Checkbox → Update button wiring ──
     const cbWired = await page.evaluate(async () => {
-      const chks = document.querySelectorAll('.chk-component');
+      // Only visible checkboxes can be clicked by the user — under Snap the
+      // hidden config checkbox must not drive the Update button.
+      const chks = document.querySelectorAll('.chk-component:not([hidden])');
       if (chks.length === 0) return null;
       const btn = document.getElementById('btn-install');
       if (!btn) return null;
@@ -723,7 +727,29 @@ async function runNoTabScenario(
     if (!browserReady) return seeded.profileDir;
     await new Promise(r => setTimeout(r, 3_000));
     const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
-    check(counter, !page, `tab does NOT open (${label})`);
+    // The tab opened when it should not — say WHICH package the scheduler
+    // thinks is stale so a misfire (e.g. the snap leg's fx-folder GreD) is
+    // attributable instead of a bare assertion failure.
+    let tabDiag = '';
+    if (page) {
+      tabDiag = await page
+        .evaluate(() => {
+          const vis = id =>
+            Boolean(document.getElementById(id)) && !document.getElementById(id).hidden;
+          return [
+            vis('utils-badge-update') ? 'utils=update' : null,
+            vis('utils-badge-ok') ? 'utils=ok' : null,
+            vis('config-badge-update') ? 'config=update' : null,
+            vis('config-badge-ok') ? 'config=ok' : null,
+            `binary=${document.getElementById('binary-path')?.textContent || '?'}`,
+            `profile=${document.getElementById('profile-path')?.textContent || '?'}`,
+          ]
+            .filter(Boolean)
+            .join(' | ');
+        })
+        .catch(() => 'could not read the updater tab DOM');
+    }
+    check(counter, !page, `tab does NOT open (${label})`, tabDiag || '');
     return seeded.profileDir;
   } finally {
     try {
@@ -756,6 +782,10 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error('Firefox not found');
+  // Snap (strict confinement): the config package lives in /etc/firefox and
+  // the confined browser can never write it, so the UI hides the config
+  // checkbox and shows the manual-install band — Update installs utils only.
+  const isSnap = firefoxBin.includes('/snap/');
 
   const seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
 
@@ -838,50 +868,192 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     check(counter, rendered, `card rendered (${label})`);
     if (!rendered) return seeded.profileDir;
 
-    // Check BOTH checkboxes (utils + config are both stale), then click
-    // install. handleInstallCommand installs config first, then utils, and
-    // refreshPackageState flips each badge to OK as it finishes.
-    const clicked = await page.evaluate(() => {
-      const btn = document.getElementById('btn-install');
-      if (!btn) return false;
-      for (const kind of ['chk-config', 'chk-utils']) {
-        const cb = document.getElementById(kind);
-        if (!cb) return false;
+    // The install flow differs by packaging: normally both stale packages
+    // install in-tab (config first, then utils, badges flip as each lands);
+    // under Snap the config checkbox is hidden and Update installs utils only.
+    if (isSnap) {
+      // Snap: config never offered in-tab — its checkbox is hidden and the
+      // amber manual band explains the manual paths instead.
+      const cfg = await page.evaluate(() => {
+        const chk = document.getElementById('chk-config');
+        const band = document.getElementById('config-manual');
+        const chkUtils = document.getElementById('chk-utils');
+        return {
+          configCheckboxHidden: chk ? chk.hidden : null,
+          bandShown: band ? !band.hidden : false,
+          utilsCheckbox: Boolean(chkUtils),
+        };
+      });
+      check(counter, cfg.configCheckboxHidden === true, `config checkbox hidden (snap, ${label})`);
+      check(counter, cfg.bandShown, `manual guidance band shown (snap, ${label})`);
+      check(counter, cfg.utilsCheckbox, `utils checkbox present (snap, ${label})`);
+
+      const clicked = await page.evaluate(() => {
+        const cb = document.getElementById('chk-utils');
+        const btn = document.getElementById('btn-install');
+        if (!cb || !btn) return false;
+        // The Update button is disabled until a checkbox is checked — tick
+        // utils first, then click once the button enables.
         if (!cb.checked) cb.click();
-      }
-      btn.click();
-      return true;
-    });
-    check(counter, clicked, `install clicked (${label})`);
+        if (btn.disabled) return false;
+        btn.click();
+        return true;
+      });
+      check(counter, clicked, `install clicked (utils only, ${label})`);
 
-    // Completion: both badges flipped to OK and the progress bar hidden once
-    // the whole flow finishes. Local file:// downloads take a couple of
-    // seconds per package, so allow a generous margin.
-    const completed = await waitForCondition(
-      page,
-      () => {
-        const utilsOk = document.getElementById('utils-badge-ok');
-        const configOk = document.getElementById('config-badge-ok');
-        const progress = document.getElementById('card-progress');
-        const err = document.getElementById('card-progress-error');
-        return Boolean(
-          utilsOk &&
-          !utilsOk.hidden &&
-          configOk &&
-          !configOk.hidden &&
-          progress?.hidden &&
-          err?.style.display === 'none'
+      // Completion: utils badge flipped to OK and the progress bar hidden.
+      const completed = await waitForCondition(
+        page,
+        () => {
+          const utilsOk = document.getElementById('utils-badge-ok');
+          const utilsUpd = document.getElementById('utils-badge-update');
+          const progress = document.getElementById('card-progress');
+          const err = document.getElementById('card-progress-error');
+          return Boolean(
+            utilsOk &&
+            !utilsOk.hidden &&
+            utilsUpd &&
+            utilsUpd.hidden &&
+            progress?.hidden &&
+            err?.style.display === 'none'
+          );
+        },
+        60_000,
+        'utils install completed'
+      );
+      check(counter, completed, `utils install completes in tab (${label})`);
+      if (!completed) {
+        // Diagnostic: capture the tab's error banner + badge DOM and the
+        // console mirror so an in-tab install failure is identifiable from CI
+        // logs alone.
+        const dom = await page
+          .evaluate(() => {
+            const prog = document.getElementById('card-progress');
+            const err = document.getElementById('card-progress-error');
+            const utilsOk = document.getElementById('utils-badge-ok');
+            const utilsUpd = document.getElementById('utils-badge-update');
+            return {
+              progress: prog?.textContent?.trim() ?? null,
+              progressError: err?.textContent?.trim() ?? null,
+              progressHidden: prog ? prog.hidden : null,
+              errorDisplay: err?.style?.display ?? null,
+              utilsOk: Boolean(utilsOk && !utilsOk.hidden),
+              utilsUpdate: Boolean(utilsUpd && !utilsUpd.hidden),
+            };
+          })
+          .catch(() => null);
+        console.log(`  [diag:install-applies] tab at completion timeout: ${JSON.stringify(dom)}`);
+        const shotPath = path.join(
+          REPO_ROOT,
+          'dist',
+          `updater-e2e-${label.replace(/\s+/g, '_')}.png`
         );
-      },
-      60_000,
-      'install completed'
-    );
-    check(counter, completed, `install completes in tab (${label})`);
+        await screenshotPrivileged(page, shotPath).catch(() => {});
+        dumpConsoleLog(seeded.profileDir);
+      }
 
-    const successShown = await page
-      .evaluate(() => !document.getElementById('success-banner')?.hidden)
-      .catch(() => false);
-    check(counter, successShown, `success banner shown after install (${label})`);
+      // Config stays stale + manual under Snap — nothing was attempted in-tab
+      // and the all-good banner must NOT show while config is still pending.
+      const configManualStill = await page
+        .evaluate(() => {
+          const upd = document.getElementById('config-badge-update');
+          const ok = document.getElementById('config-badge-ok');
+          const band = document.getElementById('config-manual');
+          const chk = document.getElementById('chk-config');
+          const banner = document.getElementById('success-banner');
+          return {
+            stillManual: Boolean(
+              upd && !upd.hidden && ok && ok.hidden && band && !band.hidden && chk && chk.hidden
+            ),
+            successBannerHidden: banner ? banner.hidden : null,
+          };
+        })
+        .catch(() => ({}));
+      check(
+        counter,
+        configManualStill.stillManual === true,
+        `config still manual after install (${label})`
+      );
+      check(
+        counter,
+        configManualStill.successBannerHidden !== false,
+        `success banner hidden while config pending (${label})`
+      );
+    } else {
+      // Standard install: check BOTH checkboxes (utils + config stale), then
+      // click install. handleInstallCommand installs config first, then utils,
+      // and refreshPackageState flips each badge to OK as it finishes.
+      const clicked = await page.evaluate(() => {
+        const btn = document.getElementById('btn-install');
+        if (!btn) return false;
+        for (const kind of ['chk-config', 'chk-utils']) {
+          const cb = document.getElementById(kind);
+          if (!cb) return false;
+          if (!cb.checked) cb.click();
+        }
+        btn.click();
+        return true;
+      });
+      check(counter, clicked, `install clicked (${label})`);
+
+      // Completion: both badges flipped to OK and the progress bar hidden once
+      // the whole flow finishes. Local file:// downloads take a couple of
+      // seconds per package, so allow a generous margin.
+      const completed = await waitForCondition(
+        page,
+        () => {
+          const utilsOk = document.getElementById('utils-badge-ok');
+          const configOk = document.getElementById('config-badge-ok');
+          const progress = document.getElementById('card-progress');
+          const err = document.getElementById('card-progress-error');
+          return Boolean(
+            utilsOk &&
+            !utilsOk.hidden &&
+            configOk &&
+            !configOk.hidden &&
+            progress?.hidden &&
+            err?.style.display === 'none'
+          );
+        },
+        60_000,
+        'install completed'
+      );
+      check(counter, completed, `install completes in tab (${label})`);
+      if (!completed) {
+        // Diagnostic: capture the tab's error banner + badge DOM and the
+        // console mirror so an in-tab install failure is identifiable from CI
+        // logs alone.
+        const dom = await page
+          .evaluate(() => {
+            const prog = document.getElementById('card-progress');
+            const err = document.getElementById('card-progress-error');
+            const utilsOk = document.getElementById('utils-badge-ok');
+            const configOk = document.getElementById('config-badge-ok');
+            return {
+              progress: prog?.textContent?.trim() ?? null,
+              progressError: err?.textContent?.trim() ?? null,
+              progressHidden: prog ? prog.hidden : null,
+              errorDisplay: err?.style?.display ?? null,
+              utilsOk: Boolean(utilsOk && !utilsOk.hidden),
+              configOk: Boolean(configOk && !configOk.hidden),
+            };
+          })
+          .catch(() => null);
+        console.log(`  [diag:install-applies] tab at completion timeout: ${JSON.stringify(dom)}`);
+        const shotPath = path.join(
+          REPO_ROOT,
+          'dist',
+          `updater-e2e-${label.replace(/\s+/g, '_')}.png`
+        );
+        await screenshotPrivileged(page, shotPath).catch(() => {});
+        dumpConsoleLog(seeded.profileDir);
+      }
+
+      const successShown = await page
+        .evaluate(() => !document.getElementById('success-banner')?.hidden)
+        .catch(() => false);
+      check(counter, successShown, `success banner shown after install (${label})`);
+    }
   } finally {
     try {
       await browser?.close();
@@ -917,16 +1089,31 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     `installed utils re-hashes to the manifest (${label})`
   );
   const greConfig = path.join(greDir, 'config.js');
-  check(
-    counter,
-    fs.existsSync(greConfig) && !fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
-    `config probe replaced by install (${label})`
-  );
-  check(
-    counter,
-    computeInstalledHash(configFiles, greDir) === configHash,
-    `installed config re-hashes to the manifest (${label})`
-  );
+  if (isSnap) {
+    // Config untouched: the tab only offered the manual band under Snap, so
+    // the probe stays and the dir still differs from the manifest.
+    check(
+      counter,
+      fs.existsSync(greConfig) && fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+      `config probe NOT replaced (snap manual, ${label})`
+    );
+    check(
+      counter,
+      computeInstalledHash(configFiles, greDir) !== configHash,
+      `config dir still differs from the manifest (snap manual, ${label})`
+    );
+  } else {
+    check(
+      counter,
+      fs.existsSync(greConfig) && !fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+      `config probe replaced by install (${label})`
+    );
+    check(
+      counter,
+      computeInstalledHash(configFiles, greDir) === configHash,
+      `installed config re-hashes to the manifest (${label})`
+    );
+  }
 
   return seeded.profileDir;
 }

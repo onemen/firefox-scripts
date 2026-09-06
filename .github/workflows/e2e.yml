@@ -494,6 +494,168 @@ jobs:
             dist/updater-e2e-*.png
           if-no-files-found: ignore
 
+  # ── Snap Firefox E2E (#55) ─────────────────────────────────────────────────
+  # Ubuntu's default Firefox packaging is a snap; every other leg installs the
+  # official tarball, so the snap build was never exercised and its GreD was
+  # unverified (future-work §2.1 marked it "open"). This leg installs Firefox
+  # through the snap store, verifies the actual GreD path, and runs the
+  # installer (HTTP+UI detection) and updater E2E against the snap binary.
+  #
+  # ADVISORY in the gate: hosted runners may lack snapd or block store
+  # downloads, and the snap refresh cycle is outside our control. Skipped
+  # quietly when snapd is unavailable.
+  snap-firefox:
+    name: 'snap Firefox E2E · ubuntu-latest'
+    needs: [changes, snapshot]
+    if: needs.changes.outputs.updater == 'true'
+    runs-on: ubuntu-latest
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+    steps:
+      - uses: $/.github/actions/setup-repo
+
+      # Availability gate: skip the whole leg when the runner has no working
+      # snapd (advisory — availability varies by runner image, #55).
+      - name: Check snapd availability
+        id: snapd
+        run: |
+          if command -v snap >/dev/null 2>&1 && sudo snap list >/dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "snapd is available"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::snapd unavailable on this runner — snap E2E leg skipped (#55)"
+          fi
+
+      - name: Install Linux test prerequisites
+        if: steps.snapd.outputs.available == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+
+      # The snap store resolves the revision at install time (no cacheable
+      # URL, so no actions/cache step here); downloads.mjs wraps
+      # `sudo snap install firefox --classic` (it elevates the snap command
+      # itself — running this recipe under sudo would strip $GITHUB_ENV and
+      # FIREFOX_BINARY would never reach the later steps) and exports
+      # /snap/bin/firefox.
+      - name: Install Firefox (snap)
+        if: steps.snapd.outputs.available == 'true'
+        run: node test/e2e/shared/downloads.mjs firefox-snap
+
+      # THE point of this leg (#55): discover the snap GreD at runtime —
+      # findGreDir() maps a /snap/ binary to /etc/firefox — and verify it
+      # against the actual snap mount before any test relies on it. Findings
+      # land in the step summary so the future-work §2.1 row can be closed.
+      - name: Verify snap GreD
+        if: steps.snapd.outputs.available == 'true'
+        run: |
+          set -euo pipefail
+          BIN="$FIREFOX_BINARY"
+          test -x "$BIN" || { echo "::error::snap Firefox binary missing: $BIN"; exit 1; }
+          # One single-quoted-script string: a second quoted fragment would
+          # become argv[1] and shift $BIN to argv[2] (that bug made GRED
+          # empty in the first CI run).
+          GRED=$(node --input-type=module -e "import {findGreDir} from './test/e2e/shared/browsers.mjs'; console.log(findGreDir(process.argv[1]))" "$BIN")
+          echo "binary: $BIN"
+          echo "findGreDir(): $GRED"
+          echo "### Snap Firefox GreD verification (#55)" >> "$GITHUB_STEP_SUMMARY"
+          echo "| probe | result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| FIREFOX_BINARY | \`$BIN\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| findGreDir() | \`$GRED\` |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -d /etc/firefox ]; then
+            echo "/etc/firefox exists → documented GreD target confirmed for this snap build"
+            echo "| /etc/firefox exists | yes |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "/etc/firefox does NOT exist — findGreDir() must be reconciled with the actual path"
+            echo "| /etc/firefox exists | no |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| snap mount | \`$(snap run --shell firefox -c 'echo $SNAP' 2>/dev/null || echo n/a)\` |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Hard assertion: whatever findGreDir() returns must exist as a
+          # directory after the snap install (user-writable config dir is
+          # created on first run or by the package itself).
+          test -d "$GRED" || {
+            echo "::error::findGreDir() returned a non-existent dir for the snap binary: $GRED"
+            exit 1
+          }
+
+      - name: Download dev snapshot
+        if: steps.snapd.outputs.available == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-snapshot
+          path: dist/
+
+      # Same as the portable-firefox job: the shared snapshot is built on
+      # Ubuntu but artifact upload/download drops the execute bit, so build
+      # the native installer locally (package zips stay from the snapshot).
+      - name: Build native installer
+        if: steps.snapd.outputs.available == 'true'
+        run: |
+          make -C installer dist_linux MODE=dev
+          chmod +x dist/installer/installer_linux-dev
+          # findInstaller() prefers INSTALLER_BIN: the E2E looks in the
+          # SNAPSHOT dir (dist/dev-HEAD-<sha>/), where the artifact copy
+          # lacks the execute bit — point it at the freshly built binary.
+          echo "INSTALLER_BIN=$PWD/dist/installer/installer_linux-dev" >> "$GITHUB_ENV"
+
+      # Snap-environment preparation for the two E2E runs:
+      #
+      # 1. WRITABLE GreD — the tabmixplus-docs installation guide says snap
+      #    users copy config.js into /etc/firefox and "may have to create the
+      #    sub folders defaults/pref" themselves; on the runner /etc/firefox
+      #    is root-owned, so chown it to the runner user (the production
+      #    analog is the updater's admin-copy path, which stays on the manual
+      #    checklist — here we make the SEED writable so the harness can
+      #    exercise the flow it is supposed to test).
+      # 2. SNAP-ACCESSIBLE TMP — a strictly-confined snap Firefox cannot read
+      #    /tmp (karma-firefox-launcher#183), so the E2E's os.tmpdir() test
+      #    profiles are invisible to it ("Could not find profile folder").
+      #    Point TMPDIR into $HOME, which the snap's home interface allows.
+      - name: Prepare snap environment
+        if: steps.snapd.outputs.available == 'true'
+        run: |
+          sudo chown -R "$(id -un):$(id -gn)" /etc/firefox
+          mkdir -p /etc/firefox/defaults/pref
+          mkdir -p "$HOME/tmp"
+          echo "TMPDIR=$HOME/tmp" >> "$GITHUB_ENV"
+
+      # Detection against the snap build (HTTP + UI layers + the test-surface
+      # layer from #129): the installer must discover /snap/bin/firefox and
+      # report it like any other browser.  The UI layer runs HEADED under xvfb
+      # (real-user mode) with --ui-fallback-open: the installer's cross-process
+      # relaunch cannot hand its URL into a BiDi-driven SNAP instance under CI
+      # (headless and headed, unconfined and snap-wrapped relaunch all fail on
+      # this leg; the tarball legs hand off fine), so when no tab surfaces the
+      # harness opens the installer's own UI URL in-process and the UI
+      # assertions (cards, badges, screenshot) still run.  The relaunch caveat
+      # is documented in docs/future-work.md §2.
+      - name: Run installer E2E (snap Firefox)
+        if: steps.snapd.outputs.available == 'true'
+        run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui --ui-fallback-open
+
+      # Updater flow against the snap build: tab opens, config seeds into the
+      # (now runner-owned) /etc/firefox GreD, status renders. Elevation into
+      # a root-owned GreD stays on the manual release checklist (future-work
+      # §2) — the admin-copy path cannot be automated on hosted runners.
+      # Runs even when the installer step above failed: each half of the leg
+      # reports independently, so one failure never hides the other's result.
+      - name: Run updater E2E (snap Firefox)
+        if: always() && steps.snapd.outputs.available == 'true'
+        run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-snap-firefox
+          path: |
+            dist/installer-e2e-*.png
+            dist/updater-e2e-*.png
+          if-no-files-found: ignore
+
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
   # Each browser resolves its installer through test/e2e/shared/browserResolver.mjs:
   # LibreWolf (Codeberg bsys6 → packages API; librewolf.dev → dl.librewolf.net
@@ -587,7 +749,17 @@ jobs:
     name: E2E gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [changes, snapshot, installer, helper, updater, portable-firefox, browser-matrix]
+    needs:
+      [
+        changes,
+        snapshot,
+        installer,
+        helper,
+        updater,
+        portable-firefox,
+        snap-firefox,
+        browser-matrix,
+      ]
     steps:
       # Local action — a fresh runner needs the repo checked out first.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -596,14 +768,20 @@ jobs:
           changes-result: ${{ needs.changes.result }}
           # e2e-gate always verifies: per-job applicability decides which jobs
           # must pass vs. must be skipped (no single branchKey anymore).
+          # Keep applicability/results entries bare — the gate-coverage checker
+          # parses 12-space `name:` pairs only (no comment lines inside).
           branch: true
           branch-label: E2E-relevant changes
+          # snap-firefox is additionally availability-gated at runtime (snapd
+          # probe): the gate treats it as advisory, so a runner without snapd
+          # cannot block a merge.
           applicability: |-
             snapshot:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
             installer:${{ needs.changes.outputs.installer == 'true' }}
             helper:${{ needs.changes.outputs.updater == 'true' }}
             updater:${{ needs.changes.outputs.updater == 'true' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
+            snap-firefox:${{ needs.changes.outputs.updater == 'true' }}
             browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
@@ -614,10 +792,11 @@ jobs:
             helper:${{ needs.helper.result }}
             updater:${{ needs.updater.result }}
             portable-firefox:${{ needs.portable-firefox.result }}
+            snap-firefox:${{ needs.snap-firefox.result }}
             browser-matrix:${{ needs.browser-matrix.result }}
           required: snapshot installer helper updater portable-firefox
-          advisory: browser-matrix
-          skip-guard: snapshot installer helper updater portable-firefox browser-matrix
+          advisory: snap-firefox browser-matrix
+          skip-guard: snapshot installer helper updater portable-firefox snap-firefox browser-matrix
 
   # ── Record validated browser versions (#4) ────────────────────────────────
   # After the updater matrix legs (firefox/firefox-dev × 3 OSes) ran and

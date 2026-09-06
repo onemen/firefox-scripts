@@ -44,12 +44,14 @@ if [ "$BRANCH" = "true" ]; then
     fi
   done
   # Advisory jobs warn instead of failing the gate (fork-browser legs);
-  # non-applicable ones must be skipped too.
+  # non-applicable ones must be skipped too. An advisory job may also skip
+  # ITSELF at runtime for availability (snap-firefox's snapd probe, #55):
+  # that is a deliberate skip, not a degradation, so no warning.
   for name in $ADVISORY; do
     if applies "$name"; then
       r="$(lookup "$name")"
       case "$r" in
-        success) ok "$name" "$r" ;;
+        success | skipped) ok "$name" "$r" ;;
         *) echo "::warning::$name $r (advisory)" ;;
       esac
     else

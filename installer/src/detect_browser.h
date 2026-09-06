@@ -49,6 +49,19 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results);
 void refresh_install_status(RunningBrowser *browser);
 
 /**
+ * Map a browser's app dir to the directory where its fx-folder (config.js,
+ * defaults/pref/config-prefs.js) lives.  Ordinary installs keep config next
+ * to the binary (the app dir).  Snap-packaged Firefox differs: its app dir is
+ * the read-only /snap/<name>/<rev>/... mount and Firefox reads autoconfig
+ * from /etc/firefox on the host instead — so a /snap/... app dir maps to
+ * /etc/firefox (this is where install docs tell snap users to place
+ * config.js).
+ *
+ * @param app_dir  the dir containing the browser executable (or the app dir)
+ */
+void config_dir_for_app_dir(const char *app_dir, char *out, size_t out_sz);
+
+/**
  * Check if config files are installed in the binary directory
  * Returns 1 if installed, 0 if not
  */

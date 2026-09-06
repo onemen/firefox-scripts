@@ -49,29 +49,28 @@
   cursor: not-allowed;
 }
 
-/* Updater card status cells: the selection checkbox sits inside the badge
-   (installer-style) and the "Don't show again for this update" checkbox on
-   its own row below it, aligned to the right edge of the row box. */
+/* Updater card status cells — IDENTICAL FIXED width in the APPLICATION
+   BINARY and PROFILE FOLDER rows (siblings inside the same browser card), so
+   the badges and "Don't show again" checkboxes sit on the same vertical axis
+   across the two rows (the shared .component-status-cell is content-sized,
+   which would offset the columns). Each column stacks badge → skip checkbox. */
 #config-status,
 #utils-status {
+  flex: 0 0 300px;
+  width: 300px;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
-  /* Same fixed width as the installer status cells so the component and
-     skip checkboxes line up across both rows. */
-  min-width: 250px;
+  gap: 8px;
 }
 
-/* The status column stacks the badge over the "Don't show again" checkbox, so
-   it is taller than the "PROFILE FOLDER" label row next to it.  Top-align the
-   label (instead of the shared center alignment) and nudge it down so the
-   11px label lines up with the badge's checkbox. */
-.profile-row-top {
-  align-items: flex-start;
-}
-
-.profile-row-name-line {
-  padding-top: 6px;
+/* Narrow screens: the shared media block stacks the row, so the status column
+   takes the full row width again instead of its fixed 300px. */
+@media (max-width: 640px) {
+  #config-status,
+  #utils-status {
+    flex: 0 0 auto;
+    width: 100%;
+  }
 }
 
 /* The updater card has no .browser-card-body wrapper (unlike the installer),
@@ -114,6 +113,144 @@
 
 .btn-remind[hidden] {
   display: none;
+}
+
+/* ==========================================================================
+   Snap config — manual-install guidance band
+   The in-browser updater cannot write the host config dir under Snap
+   confinement (AppArmor denies /etc/firefox even as root; see helper exit 3
+   on the Snap E2E leg).  Instead of an in-tab install, the config row hides
+   its install checkbox and a full-width amber band under the row points the
+   user at the manual paths: download the zip + open the config folder, or
+   download/run the native installer (runs unconfined — recommended).
+   ========================================================================== */
+.manual-panel {
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+
+.manual-panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--warning-main);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.manual-panel-head svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.manual-panel-head code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg-inset);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--text-primary);
+}
+
+/* Two options, spelled out: under the warning, a one-line hint introduces
+   the choice. The manual path runs as numbered steps in the left column
+   (download → extract & copy → open folder); the installer button sits on
+   the right, top-aligned with step 1. */
+.manual-panel-hint {
+  margin: 6px 0 0 22px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.manual-panel-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  margin-top: 10px;
+}
+
+.manual-steps {
+  list-style: none;
+  counter-reset: manual-step;
+  flex: 1;
+  min-width: 0;
+  margin: 0 0 0 22px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.manual-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  counter-increment: manual-step;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.manual-steps li::before {
+  content: counter(manual-step) ".";
+  min-width: 14px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.manual-steps .manual-action {
+  padding: 0;
+}
+
+.manual-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--accent-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.manual-action svg {
+  flex-shrink: 0;
+}
+
+.manual-action:hover {
+  text-decoration: underline;
+}
+
+.manual-action.primary {
+  flex: 0 0 320px;
+  justify-content: center;
+  text-align: center;
+  padding: 12px 16px;
+  line-height: 1.4;
+  background: var(--accent-primary);
+  border: none;
+  color: #fff;
+}
+
+.manual-action.primary:hover {
+  background: var(--accent-hover);
+  text-decoration: none;
+}
+
+/* Narrow screens: stack the installer button under the manual steps. */
+@media (max-width: 640px) {
+  .manual-panel-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .manual-action.primary {
+    flex: 0 0 auto;
+    width: 100%;
+  }
 }
 
 /* Global action row — the per-package "Don't show again" checkboxes live

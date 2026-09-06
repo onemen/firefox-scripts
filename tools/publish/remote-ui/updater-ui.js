@@ -100,6 +100,21 @@ function render() {
     }
   }
 
+  // Snap scenario (config can't be installed in-tab): hide the config install
+  // checkbox (the Update button then only ever installs utils) and surface the
+  // amber manual-install band between the two rows instead.
+  const cfgPkg = s.packages && s.packages.config;
+  const cfgManual = Boolean(cfgPkg && cfgPkg.updateNeeded && cfgPkg.manualInstall);
+  const chkConfig = $('chk-config');
+  if (chkConfig) {
+    chkConfig.hidden = cfgManual;
+    if (cfgManual) {
+      chkConfig.checked = false;
+    }
+  }
+  $('config-manual').hidden = !cfgManual;
+  $('manual-installer').href = s.installerUrl || '#';
+
   // Manual download links: show the real zip URLs (they end with
   // fx-folder.zip / utils.zip, or the -dev names in dev builds) exactly like
   // the installer's links; clicks are forwarded to the engine (it fetches and
@@ -200,13 +215,22 @@ function bindEvents() {
 
   // Open-folder buttons (binary dir + profile dir).
   const bindOpenFolder = (id, kind) => {
-    const btn = $(id);
-    if (btn) {
-      btn.addEventListener('click', () => UpdaterEngine.revealFolder(kind));
+    const el = $(id);
+    if (el) {
+      el.addEventListener('click', event => {
+        event.preventDefault();
+        UpdaterEngine.revealFolder(kind);
+      });
     }
   };
   bindOpenFolder('btn-open-folder-binary', 'binary');
   bindOpenFolder('btn-open-folder-profile', 'profile');
+  // Manual-install panel actions (Snap config): open the host config dir and
+  // download the installer. "Download configuration files" reuses the zip
+  // download bound above via kind 'config'.
+  bindDownload('manual-download-config', 'config');
+  bindDownload('manual-installer', 'installer');
+  bindOpenFolder('manual-open-config', 'config');
 }
 
 /* ---------------- init ---------------- */

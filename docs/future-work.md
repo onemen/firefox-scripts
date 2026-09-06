@@ -87,14 +87,14 @@ manually.
 
 ### 2.1 Manual matrix (current)
 
-| Scenario                      | Browser dir                        | Expectation                                                                     |
-| ----------------------------- | ---------------------------------- | ------------------------------------------------------------------------------- |
-| Portable / user-owned install | e.g. `D:\firefox`                  | Direct `IOUtils.copy` — no helper, no UAC. (automation tracked in #56)          |
-| Standard Windows install      | `C:\Program Files\Mozilla Firefox` | Direct copy fails → elevated-copy helper → exactly one UAC prompt → files land. |
-| Elevation cancelled           | —                                  | Helper exits `2` → tab shows "elevation cancelled", nothing written.            |
-| Linux (deb/rpm)               | `/usr/lib/firefox`                 | `pkexec` prompt once (fallback `sudo`).                                         |
-| Linux snap                    | `/etc/firefox` (per docs)          | **open**: GreD differs from the documented target — verify actual path (#55).   |
-| macOS                         | `Firefox.app/Contents/Resources`   | `osascript` prompt once.                                                        |
+| Scenario                      | Browser dir                        | Expectation                                                                                                                                                                                                                                      |
+| ----------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Portable / user-owned install | e.g. `D:\firefox`                  | Direct `IOUtils.copy` — no helper, no UAC. (automation tracked in #56)                                                                                                                                                                           |
+| Standard Windows install      | `C:\Program Files\Mozilla Firefox` | Direct copy fails → elevated-copy helper → exactly one UAC prompt → files land.                                                                                                                                                                  |
+| Elevation cancelled           | —                                  | Helper exits `2` → tab shows "elevation cancelled", nothing written.                                                                                                                                                                             |
+| Linux (deb/rpm)               | `/usr/lib/firefox`                 | `pkexec` prompt once (fallback `sudo`).                                                                                                                                                                                                          |
+| Linux snap                    | `/etc/firefox`                     | Verified by the snap E2E leg (#55): the CI job installs the snap build, reports `findGreDir()` (`/etc/firefox`) vs the actual snap layout in the step summary, and hard-fails when they diverge. Elevation into the snap GreD stays manual (§2). |
+| macOS                         | `Firefox.app/Contents/Resources`   | `osascript` prompt once.                                                                                                                                                                                                                         |
 
 ### 2.2 Automated (planned, tool undecided)
 
@@ -154,7 +154,8 @@ sync problem is gone — there is nothing tracked that can drift (see ADR
 - [ ] Expand/collapse all controls in the browser cards.
 - [ ] Scan all profiles and binaries using cityhash for faster status (currently one SHA-256 per
       package per profile).
-- [ ] Test on Linux with and without snap; test on macOS (both Intel and arm64).
+- [ ] Test on Linux with and without snap (snap covered by the E2E snap leg, #55); test on macOS
+      (both Intel and arm64).
 
 ## 5. Updater UX follow-ups
 
