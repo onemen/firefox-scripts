@@ -15,6 +15,7 @@
 #else
 #include <fcntl.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -34,6 +35,15 @@ static int g_verbose = 0;
 // no browser is detected, never open a browser tab, and print the session
 // token to stdout so the test can drive the API.
 static int g_smoke_test = 0;
+
+// --server-only: skip the browser scan and never open a UI tab — headless
+// HTTP-server mode for the second-instance detection tests (E2E).
+static int g_server_only = 0;
+
+// --env-file <path>: after the server binds, write a JSON manifest (port,
+// session token, run id, UI URL) to this file so the E2E harness can read the
+// deployment facts instead of scraping stdout or the fixed default port.
+static char g_env_file_path[MAX_PATH_LEN] = "";
 
 #define verbose_printf(...)                 \
     do {                                    \
@@ -55,6 +65,44 @@ static char g_ui_host_profile[MAX_PATH_LEN] = "";
 
 // Port the HTTP server bound, needed to rebuild the UI URL after a restart.
 static int g_http_port = 0;
+
+// Port to request at startup.  -1 = flag not given (use DEFAULT_PORT);
+// 0 = bind an OS-ephemeral port; >0 = bind exactly that port.  The sentinel
+// matters: --port 0 (ephemeral) must stay distinguishable from no --port.
+static int g_requested_port = -1;
+
+// Run id (wall-clock ms since epoch — uniqueness across runs is all the
+// harness needs; it is NOT a monotonic clock reading) — lets the E2E harness
+// tell two installer runs apart when both write env.json manifests.
+static unsigned long long run_id_ms(void) {
+#ifdef _WIN32
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    unsigned long long t = ((unsigned long long)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    return (t - 116444736000000000ULL) / 10000ULL;  // 100ns ticks -> ms since epoch
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (unsigned long long)ts.tv_sec * 1000ULL + (unsigned long long)ts.tv_nsec / 1000000ULL;
+#endif
+}
+
+// Write the --env-file deployment manifest (best-effort): a tiny JSON record
+// the E2E harness reads for port/token/run-id instead of scraping stdout.
+// Never fatal — a test surface must not break a working server.
+static void write_env_manifest(const char *path, int port) {
+    if (!path || !path[0]) return;
+    char json[512];
+    int pos = snprintf(json, sizeof(json),
+                       "{\"port\":%d,\"token\":\"%s\",\"runId\":%llu,\"uiUrl\":\"http://localhost:%d/?t=%s\"}",
+                       port, g_session_token, run_id_ms(), port, g_session_token);
+    if (pos <= 0 || pos >= (int)sizeof(json)) return;
+    if (save_buf_to_file(path, json, (size_t)pos) == 0) {
+        log_msg("[startup] env manifest written to %s\n", path);
+    } else {
+        log_msg("[startup] failed to write env manifest to %s\n", path);
+    }
+}
 
 /* Fill buf with cryptographically secure random bytes from the OS RNG.
  * Returns 0 on success, -1 when the platform RNG is unavailable. */
@@ -2296,7 +2344,60 @@ static int main_impl(int argc, char *argv[]) {
     }
 #endif
 
-    // Handle flags
+    // Handle flags.  The existing one-shot modes (--help, --test-hash,
+    // --test-self-update, --scan-only) still dispatch on argv[1] below; the
+    // runtime server flags (--verbose, --smoke-test, --server-only, --port,
+    // --env-file) are parsed for EVERY argument so they compose, e.g.
+    //   installer --server-only --port 0 --env-file "$TMP/env.json"
+    // (the E2E harness combines them freely).
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--verbose") == 0 ||
+            strcmp(argv[i], "--log-console") == 0) {
+#ifdef _WIN32
+            freopen("CONOUT$", "w", stdout);
+            freopen("CONOUT$", "w", stderr);
+#endif
+            g_verbose = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--smoke-test") == 0) {
+            g_smoke_test = 1;
+            g_verbose = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--server-only") == 0) {
+            // Test surface: HTTP server without browser scan or UI tab.
+            // Implies the smoke rules (never abort on zero browsers).
+            g_server_only = 1;
+            g_smoke_test = 1;
+            g_verbose = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--port") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Usage: %s --port <n> (0 = OS-ephemeral)\n", argv[0]);
+                return 1;
+            }
+            char *end = NULL;
+            long val = strtol(argv[++i], &end, 10);
+            if (!end || *end != '\0' || val < 0 || val > 65535) {
+                fprintf(stderr, "Invalid --port value: %s (expected 0-65535)\n", argv[i]);
+                return 1;
+            }
+            g_requested_port = (int)val;
+            continue;
+        }
+        if (strcmp(argv[i], "--env-file") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Usage: %s --env-file <path>\n", argv[0]);
+                return 1;
+            }
+            strncpy(g_env_file_path, argv[++i], MAX_PATH_LEN - 1);
+            g_env_file_path[MAX_PATH_LEN - 1] = '\0';
+            continue;
+        }
+    }
+
     if (argc > 1) {
         if (strcmp(argv[1], "--help") == 0) {
             print_help();
@@ -2380,18 +2481,6 @@ static int main_impl(int argc, char *argv[]) {
             printf("download_url=%s\n", download_url);
             return 0;
         }
-        if (strcmp(argv[1], "--verbose") == 0 ||
-            strcmp(argv[1], "--log-console") == 0) {
-#ifdef _WIN32
-            freopen("CONOUT$", "w", stdout);
-            freopen("CONOUT$", "w", stderr);
-#endif
-            g_verbose = 1;
-        }
-        if (strcmp(argv[1], "--smoke-test") == 0) {
-            g_smoke_test = 1;
-            g_verbose = 1;
-        }
         if (strcmp(argv[1], "--scan-only") == 0) {
             // Debug helper: run browser detection only, print the result, and
             // exit without network checks, the HTTP server, or the UI.
@@ -2438,9 +2527,15 @@ static int main_impl(int argc, char *argv[]) {
     // verify or prime here — the tab always opens and drives that.
     printf("Firefox Scripts Installer v%s\n", INSTALLER_VERSION);
 
-    // Scan browsers
-    printf("Scanning for running browsers...\n");
-    detected_count = scan_and_filter_browsers(detected_browsers, MAX_BROWSERS);
+    // Scan browsers (--server-only skips the scan: headless HTTP-server mode
+    // for the second-instance tests, where no browser UI is ever touched).
+    if (g_server_only) {
+        printf("Server-only mode: skipping browser scan.\n");
+        detected_count = 0;
+    } else {
+        printf("Scanning for running browsers...\n");
+        detected_count = scan_and_filter_browsers(detected_browsers, MAX_BROWSERS);
+    }
 
     if (detected_count == 0 && !g_smoke_test) {
         printf("No supported browsers detected.\n");
@@ -2485,30 +2580,43 @@ static int main_impl(int argc, char *argv[]) {
     // succeed (SO_REUSEADDR).  Detect it up front: open the running server's
     // tab in the default browser and exit quietly instead of running a second
     // server on the same port.  The freshly opened tab is the feedback.
-    if (tcp_listening(DEFAULT_PORT)) {
+    // Skipped when --port was given: the E2E free-port/no-hijack contract
+    // starts several installers on non-default ports, so the default-port
+    // probe must not redirect them to somebody else's UI.
+    if (g_requested_port < 0 && tcp_listening(DEFAULT_PORT)) {
         printf("A Firefox Scripts Installer is already running; opening its tab.\n");
         char existing_url[128];
         snprintf(existing_url, sizeof(existing_url),
                  "http://localhost:%d/", DEFAULT_PORT);
-        open_browser(existing_url, NULL);
+        // --server-only never touches a browser — the E2E second-instance
+        // test relies on this to stay hermetic (no default-browser tab).
+        if (!g_server_only) open_browser(existing_url, NULL);
         return 1;
     }
 
     // Start HTTP server.  The UI tab ALWAYS opens: it is the only component
     // with network access, so even when everything is up-to-date it must run
     // to fetch + ingest the manifest and confirm the status to the user.
-    int port = http_server_start(DEFAULT_PORT);
+    // --port <n> overrides the compiled default; 0 binds an OS-ephemeral port
+    // (getsockname reports the actual port, so the UI URL is rebuilt from it).
+    int port = http_server_start((unsigned short)(g_requested_port >= 0 ? g_requested_port
+                                                                        : DEFAULT_PORT));
     if (port < 0) {
         // Port is already bound by another installer instance.  Instead of
         // dying, open the running server's UI tab in the default browser so
         // the user gets their window back, then exit quietly.  The freshly
         // opened tab (with feedback) is the only notification needed.
-        printf("Error: Could not start HTTP server (port %d in use).\n", DEFAULT_PORT);
+        // Name and reconnect on the port actually attempted (--port <n> can
+        // differ from the compiled default): another installer instance may
+        // be serving exactly that custom port.
+        int attempted = g_requested_port >= 0 ? g_requested_port : DEFAULT_PORT;
+        printf("Error: Could not start HTTP server (port %d in use).\n", attempted);
         printf("A Firefox Scripts Installer is already running; opening its tab.\n");
         char existing_url[128];
         snprintf(existing_url, sizeof(existing_url),
-                 "http://localhost:%d/", DEFAULT_PORT);
-        open_browser(existing_url, NULL);
+                 "http://localhost:%d/", attempted);
+        // Same hermeticity rule as the pre-bind probe above.
+        if (!g_server_only) open_browser(existing_url, NULL);
         return 1;
     }
 
@@ -2525,6 +2633,11 @@ static int main_impl(int argc, char *argv[]) {
         // gate; print it (flushed) so the spawned process can read it.
         printf("SMOKE_TEST_SESSION_TOKEN=%s\n", g_session_token);
         fflush(stdout);
+    }
+    // Deployment manifest for the E2E harness: written only when --env-file
+    // was passed, after the token exists so the record is complete.
+    if (g_env_file_path[0] != '\0') {
+        write_env_manifest(g_env_file_path, port);
     }
 
     printf("\nStarting installer UI at http://localhost:%d/\n", port);

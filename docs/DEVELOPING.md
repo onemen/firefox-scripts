@@ -200,11 +200,17 @@ node test/e2e/installer/installer-e2e.mjs --snapshot dist/dev-main-abc1234
 node test/e2e/updater/updater-e2e.mjs --firefox "/path/to/firefox" --snapshot dist/dev-main-abc1234
 ```
 
-### Installer E2E (29 assertions)
+### Installer E2E
 
 Starts the installer in `--smoke-test` mode and exercises every state-changing `/api` route: token
 gate (missing, wrong, valid), CORS absence, ping, browsers, rescan, status, self-update, and the
 install/close-browser/manifest gated routes. No browser required.
+
+A second layer (on by default; `--no-test-surface` skips it) exercises the #129 installer test
+flags: `--port 0` binds an OS-ephemeral port reported through the `--env-file <path>` manifest
+(port, session token, run id, UI URL — no port scraping), `--port <fixed>` binds that port, and a
+plain second installer defers to the one already serving the default port without opening a tab
+(`--server-only` skips the browser scan and never touches a browser, so the layer is hermetic).
 
 The optional `--ui` flag launches a real Firefox instance and verifies the web UI renders browser
 cards with correct status badges, but this is slower and requires a display.
@@ -263,6 +269,28 @@ pnpm ci:download -- librewolf-155.0-1-windows-x86_64-setup.exe
 # inference override when the filename is ambiguous:
 pnpm ci:download -- "Waterfox Setup 6.7.1.1.exe" --version 6.7.1.1
 ```
+
+#### Download timeouts for slow runners (`test/e2e/shared/downloads.mjs`)
+
+`downloadTo` — used by every CI installer fetch and the watchdog's full-download verification — is
+**progress-aware** (issue #143): it streams to disk and aborts only when **no bytes advance for the
+stall window**, never on a healthy-but-slow transfer (the same 158 MB LibreWolf installer took 13 s
+from CI runners and 5.5 min over a home link). Interrupted attempts resume via a Range request
+instead of restarting from byte 0, and a 10 MB-interval heartbeat (`MB downloaded (KB/s)`) in the
+log shows the transfer is alive.
+
+Three environment variables tune it — the defaults fit every observed runner; override only for an
+unusually slow CI link:
+
+| Variable                    | Default          | Meaning                                                                                                                                                 |
+| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DOWNLOAD_STALL_TIMEOUT_MS` | 60000            | Abort the attempt when no bytes arrive for this long. A 0.3 MB/s trickle delivers a chunk every ~2 s and is never killed — only a dead stream trips it. |
+| `DOWNLOAD_TOTAL_BUDGET_MS`  | 1200000 (20 min) | Wall-clock budget across all 5 attempts (retries resume, so slow links still complete). Must stay below the watchdog job's `timeout-minutes: 30`.       |
+| `DOWNLOAD_RETRY_BACKOFF_MS` | 5000             | Wait between attempts.                                                                                                                                  |
+
+Each is read per call, so a workflow step can set one (e.g. `env: DOWNLOAD_TOTAL_BUDGET_MS: 1500000`
+— 25 min, still inside the watchdog job's 30-minute timeout — on a known-slow runner) without
+touching the others.
 
 The script creates the fixed-tag **`ci-downloads`** release on demand, uploads the asset under the
 resolver's expected name, and dispatches `e2e.yml` with `browser` (+ optional `version`) — a

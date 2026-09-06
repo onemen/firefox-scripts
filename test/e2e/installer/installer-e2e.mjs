@@ -2,12 +2,17 @@
 /**
  * Installer E2E test.
  *
- * Two layers:
+ * Three layers:
  *
  * 1. HTTP layer (always runs): starts installer in --smoke-test, exercises token
  *    gate and every /api endpoint (29 assertions). Fast, reliable, no browser
  *    needed.
- * 2. UI layer (--ui flag): launches a real Firefox, starts the installer (normal
+ * 2. Test-surface layer (--test-surface, default on; --no-test-surface to skip):
+ *    exercises the #129 installer test flags — `--port 0` (ephemeral bind,
+ *    reported via env.json), `--server-only` (no scan, no UI tab) and the
+ *    second-instance path (a second installer on the same port refuses to
+ *    serve, the first keeps answering). No browser needed.
+ * 3. UI layer (--ui flag): launches a real Firefox, starts the installer (normal
  *    mode, so it detects the browser), navigates to the web UI, and asserts
  *    cards render with expected statuses.
  *
@@ -39,13 +44,16 @@ const TIMEOUT_MS = 15_000;
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const opts = {ui: false};
+  const opts = {ui: false, testSurface: true};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--snapshot' && args[i + 1]) opts.snapshot = args[++i];
     else if (args[i] === '--headless') opts.headless = true;
     else if (args[i] === '--ui') opts.ui = true;
+    else if (args[i] === '--no-test-surface') opts.testSurface = false;
     else if (args[i] === '--help') {
-      console.log('Usage: node installer-e2e.mjs --snapshot <dir> [--ui] [--headless]');
+      console.log(
+        'Usage: node installer-e2e.mjs --snapshot <dir> [--ui] [--headless] [--no-test-surface]'
+      );
       process.exit(0);
     }
   }
@@ -282,6 +290,234 @@ async function runHttpLayer(counter, sessionToken) {
       }
     }
   }
+}
+
+// ── Test-surface layer (issue #129 flags) ───────────────────────────────
+
+/**
+ * Spawn an installer with arbitrary args and resolve when its env.json manifest
+ * appears (or the process exits — a refusal path). Returns the parsed manifest
+ * plus the ChildProcess for cleanup.
+ */
+function spawnWithEnvFile(bin, args, envFile, timeoutMs = 15_000) {
+  return new Promise(resolve => {
+    const proc = spawn(bin, args, {stdio: ['ignore', 'pipe', 'pipe']});
+    let out = '';
+    proc.stdout.on('data', d => (out += d.toString()));
+    proc.stderr.on('data', d => (out += d.toString()));
+    const started = Date.now();
+    const poll = setInterval(() => {
+      let manifest = null;
+      try {
+        manifest = JSON.parse(fs.readFileSync(envFile, 'utf8'));
+      } catch {
+        // not written yet (or process refused to start)
+      }
+      const exited = proc.exitCode !== null || proc.signalCode !== null || proc.killed;
+      if (manifest || exited || Date.now() - started > timeoutMs) {
+        clearInterval(poll);
+        if (!manifest) {
+          // Failure diagnostics: why did no manifest appear?
+          console.log(
+            `  [spawnWithEnvFile] no manifest for "${args.join(' ')}" — ` +
+              `exitCode=${proc.exitCode} killed=${proc.killed} timedOut=${
+                Date.now() - started > timeoutMs
+              } envFile=${envFile} exists=${fs.existsSync(envFile)}\n` +
+              `    output: ${out.slice(0, 400).replace(/\n/g, '\n    ')}`
+          );
+        }
+        resolve({proc, manifest, output: out, timedOut: !manifest && !exited});
+      }
+    }, 100);
+  });
+}
+
+async function runTestSurfaceLayer(counter, bin) {
+  console.log('\nTest-surface layer (--port 0 / --server-only / env.json / second instance)');
+  const workDir = tempDir('fxs-installer-surface');
+  fs.mkdirSync(workDir, {recursive: true});
+
+  // TS-1: --port 0 binds an OS-ephemeral port and reports it via env.json.
+  // No --port probe may hijack the run onto the default port: the manifest's
+  // port must differ from 8777 and answer /api/ping.
+  console.log('\nTS-1: --port 0 (ephemeral bind) + --env-file manifest');
+  {
+    const envFile = path.join(workDir, 'env-ephemeral.json');
+    const {proc, manifest} = await spawnWithEnvFile(
+      bin,
+      ['--server-only', '--port', '0', '--env-file', envFile],
+      envFile
+    );
+    try {
+      check(counter, Boolean(manifest), 'env.json manifest written for --port 0');
+      if (manifest) {
+        check(
+          counter,
+          Number.isInteger(manifest.port) && manifest.port > 0 && manifest.port !== PORT,
+          `manifest port is ephemeral and not the default (${manifest?.port} vs ${PORT})`
+        );
+        check(
+          counter,
+          typeof manifest.token === 'string' && /^[a-f0-9]{16}$/.test(manifest.token),
+          'manifest carries a 16-hex session token'
+        );
+        check(
+          counter,
+          manifest.uiUrl === `http://localhost:${manifest.port}/?t=${manifest.token}`,
+          'manifest uiUrl matches port + token'
+        );
+        check(
+          counter,
+          Number.isInteger(manifest.runId) && manifest.runId > 0,
+          'manifest carries a run id'
+        );
+        const ping = await fetch(`http://127.0.0.1:${manifest.port}/api/ping`, {
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        check(counter, ping.ok, `server answers on the ephemeral port ${manifest.port}`);
+      }
+    } finally {
+      proc.kill();
+      await waitForProcessExit(proc, 5000);
+    }
+  }
+
+  // TS-2: --port <fixed> binds exactly that port; the manifest reports it.
+  console.log('\nTS-2: --port <fixed>');
+  // Grab a free port by binding and closing a server, then hand it to the
+  // installer (inherently racy, but the window is tiny and failure is
+  // surfaced by the ping check below).
+  const {createServer} = await import('node:net');
+  const fixedPort = await new Promise(resolve => {
+    const srv = createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
+  {
+    const envFile = path.join(workDir, 'env-fixed.json');
+    const {proc, manifest} = await spawnWithEnvFile(
+      bin,
+      ['--server-only', '--port', String(fixedPort), '--env-file', envFile],
+      envFile
+    );
+    try {
+      check(counter, manifest?.port === fixedPort, `manifest reports the fixed port ${fixedPort}`);
+      if (manifest?.port) {
+        const ping = await fetch(`http://127.0.0.1:${fixedPort}/api/ping`, {
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        check(counter, ping.ok, `server answers on the fixed port ${fixedPort}`);
+      }
+    } finally {
+      proc.kill();
+      await waitForProcessExit(proc, 5000);
+    }
+  }
+
+  // TS-3: second-instance handoff (the production contract). A plain second
+  // installer (no --port) while another one serves the DEFAULT port must NOT
+  // start its own server: it detects the listener, exits, and the first keeps
+  // answering. (Probing an explicit --port busy-port is NOT portable: Windows
+  // SO_REUSEADDR lets a second bind succeed there.)
+  //
+  // The first instance takes the default port: --server-only (no scan/tab) +
+  // NO --port flag — the exact production shape, only headless.
+  console.log('\nTS-3: second instance defers to the one on the default port');
+  {
+    const envFile = path.join(workDir, 'env-first.json');
+    const first = spawn(bin, ['--server-only', '--env-file', envFile], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    try {
+      const ready = await waitForServerOn(PORT, 15_000);
+      check(counter, ready, `first installer serves on the default port ${PORT}`);
+      if (ready) {
+        const second = await spawnWithEnvFile(
+          bin,
+          ['--server-only'],
+          path.join(workDir, 'env-second.json'),
+          8000
+        );
+        try {
+          // The second run must detect the running installer and exit
+          // without serving (no env.json — its bind never happened).
+          check(
+            counter,
+            second.output.includes('A Firefox Scripts Installer is already running'),
+            'second instance reports the running installer'
+          );
+          check(
+            counter,
+            !second.manifest,
+            'second instance wrote no env.json (it did not start a server)'
+          );
+          check(
+            counter,
+            second.proc.exitCode !== null,
+            `second instance exited (${second.proc.exitCode})`
+          );
+          const ping = await fetch(`${BASE}/api/ping`, {signal: AbortSignal.timeout(TIMEOUT_MS)});
+          check(counter, ping.ok, 'first server still answers after the collision');
+        } finally {
+          second.proc.kill();
+        }
+      }
+    } finally {
+      first.kill();
+      await waitForProcessExit(first, 5000);
+    }
+  }
+
+  // TS-4: --server-only never runs the browser scan and never opens a tab.
+  // Verified via the startup output: no "Scanning for running browsers" line.
+  console.log('\nTS-4: --server-only skips the browser scan');
+  {
+    const envFile = path.join(workDir, 'env-scan.json');
+    const {proc, output} = await spawnWithEnvFile(
+      bin,
+      ['--server-only', '--env-file', envFile],
+      envFile
+    );
+    try {
+      check(
+        counter,
+        !output.includes('Scanning for running browsers'),
+        '--server-only output has no browser-scan line'
+      );
+      check(
+        counter,
+        output.includes('Server-only mode: skipping browser scan'),
+        '--server-only announces the skipped scan'
+      );
+    } finally {
+      proc.kill();
+      await waitForProcessExit(proc, 5000);
+    }
+  }
+
+  fs.rmSync(workDir, {recursive: true, force: true});
+}
+
+/**
+ * Poll a specific port's /api/ping until it answers or the deadline passes.
+ * (waitForServer above is hard-wired to the default PORT.)
+ */
+async function waitForServerOn(port, maxWaitMs = 15_000) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/ping`, {
+        signal: AbortSignal.timeout(800),
+      });
+      if (res.ok) return true;
+    } catch {
+      // not ready yet
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return false;
 }
 
 // ── UI layer tests (optional, --ui flag) ───────────────────────────────────
@@ -526,6 +762,13 @@ async function run() {
   } finally {
     proc.kill();
     await waitForProcessExit(proc, 10_000);
+  }
+
+  // Test-surface layer (default on) — spawns its own installers on
+  // non-default ports, so it must also wait for the smoke-test instance to
+  // be gone first.
+  if (opts.testSurface) {
+    await runTestSurfaceLayer(counter, bin);
   }
 
   // UI layer (optional) — spawns a fresh installer that now owns the port.

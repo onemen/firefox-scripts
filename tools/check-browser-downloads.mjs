@@ -26,10 +26,10 @@
  *   4. META ISSUE — one `[url-watchdog] status` issue is kept current after every
  *        run: a per-browser status table (last verified version, size +
  *        SHA-256, the run that last checked it, a status tag, the CI-cache
- *        fallback version for failed browsers, and the E2E-validated version
- *        for the hard-gate browsers) plus a version history that only grows on
- *        runs with real version updates — the durable SHA-256 ledger (search
- *        `label:url-watchdog` for it).
+ *        fallback version, the full-download transfer time, and the
+ *        E2E-validated version for the hard-gate browsers) plus a version
+ *        history that only grows on runs with real version updates — the
+ *        durable SHA-256 ledger (search `label:url-watchdog` for it).
  *   5. ERROR ISSUES — rot and same-version size changes still open their own issue,
  *        deduped per browser (the exact issue title is matched against open
  *        issues carrying the `url-watchdog` label); the watchdog auto-closes
@@ -236,10 +236,14 @@ export async function sha256File(file) {
  */
 async function verifyFullDownload(url, browser) {
   const tmp = path.join(os.tmpdir(), `watchdog-${browser}-${process.pid}.exe`);
+  const startedAt = Date.now();
   try {
     await downloadTo(url, tmp);
+    // Capture the transfer time BEFORE hashing — the metric is download
+    // duration; hashing (1-2s for a 158 MB installer) is verification.
+    const downloadMs = Date.now() - startedAt;
     const sha256 = await sha256File(tmp);
-    return {ok: true, size: fs.statSync(tmp).size, sha256};
+    return {ok: true, size: fs.statSync(tmp).size, sha256, downloadMs};
   } catch (err) {
     return {ok: false, reason: `full download failed: ${err.message}`};
   } finally {
@@ -411,6 +415,18 @@ export function validatedCell(browser, entry, validated) {
 }
 
 /**
+ * Human-readable duration for the meta-issue download-time cell ('13s', '4m
+ * 12s'); '—' when unknown (browser never fully downloaded this version).
+ */
+export function formatDownloadMs(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${s % 60}s`;
+}
+
+/**
  * Markdown status table for the meta issue. `baseline` is the per-browser
  * record AFTER this run — a browser that failed keeps its previous entry, which
  * is exactly what the version-aware CI installer cache still serves (the
@@ -427,13 +443,23 @@ export function buildStatusTable({results, baseline, validated}) {
     const version = entry.version || '—';
     const sizeSha = `${formatSize(entry.size)} · ${shortSha(entry.sha256)}`;
     const lastCheck = formatCheck(entry.checkedAt, entry.checkedUrl);
-    const fallback = failed ? `cached: ${version} · ${lastCheck}` : '—';
+    // The CI cache always holds the last verified version, green run or not —
+    // show it unconditionally (the staleness suffix matters only on failure,
+    // where it tells the operator how old the fallback is).
+    const fallback =
+      version === '—' ? '—'
+      : failed ? `cached: ${version} · ${lastCheck}`
+      : `cached: ${version}`;
+    // Download time of the last VERIFIED full download — the transfer-speed
+    // history for the vendor hosts (issue #136). Unknown until a browser's
+    // version has been fully downloaded at least once.
+    const downloadTime = formatDownloadMs(entry.downloadMs);
     const e2e = validatedCell(browser, entry, validated);
-    return `| ${browser} | ${version} | ${sizeSha} | ${lastCheck} | ${statusTag(res.status)} | ${fallback} | ${e2e} |`;
+    return `| ${browser} | ${version} | ${sizeSha} | ${lastCheck} | ${statusTag(res.status)} | ${fallback} | ${downloadTime} | ${e2e} |`;
   });
   return [
-    '| Browser | Last verified | Size · SHA-256 | Last check | Status | Fallback (CI cache) | E2E validated |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| Browser | Last verified | Size · SHA-256 | Last check | Status | Fallback (CI cache) | Download time | E2E validated |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
     ...rows,
   ].join('\n');
 }
@@ -460,6 +486,7 @@ export function seedHistoryFromBaseline(baseline) {
     version: baseline[b].version,
     size: baseline[b].size,
     sha256: baseline[b].sha256,
+    downloadMs: baseline[b].downloadMs,
   }));
   return changes.length ? [{kind: 'baseline', changes}] : [];
 }
@@ -471,10 +498,12 @@ export function renderHistory(history) {
       const items = h.changes
         .map(c => {
           const sha = shortSha(c.sha256);
+          const dl =
+            formatDownloadMs(c.downloadMs) === '—' ? '' : ` · ${formatDownloadMs(c.downloadMs)}`;
           if (h.kind === 'baseline') {
-            return `${c.browser} ${c.version} · ${formatSize(c.size)} · ${sha}`;
+            return `${c.browser} ${c.version} · ${formatSize(c.size)} · ${sha}${dl}`;
           }
-          return `${c.browser} ${c.prevVersion} → ${c.newVersion} · ${formatSize(c.size)} · ${sha}`;
+          return `${c.browser} ${c.prevVersion} → ${c.newVersion} · ${formatSize(c.size)} · ${sha}${dl}`;
         })
         .join(' · ');
       const label =
@@ -987,6 +1016,7 @@ export async function main() {
         version,
         size: verified.size,
         sha256: verified.sha256,
+        downloadMs: verified.downloadMs,
         checkedAt: new Date().toISOString(),
         checkedUrl: runUrl,
       };
@@ -999,6 +1029,7 @@ export async function main() {
           newVersion: version,
           size: verified.size,
           sha256: verified.sha256,
+          downloadMs: verified.downloadMs,
         });
       } else {
         console.log('  first run — baseline recorded');
@@ -1021,6 +1052,7 @@ export async function main() {
       // version bumps (which re-verifies via a full download).
       size: sizeChanged ? prev.size : total || prev.size || null,
       sha256: prev.sha256 || null,
+      downloadMs: prev.downloadMs ?? null,
       checkedAt: new Date().toISOString(),
       checkedUrl: runUrl,
     };
@@ -1102,6 +1134,7 @@ export async function main() {
         newVersion: f.newVersion,
         size: f.size,
         sha256: f.sha256,
+        downloadMs: f.downloadMs,
       })),
     });
   }

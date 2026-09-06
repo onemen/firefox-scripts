@@ -20,6 +20,7 @@ const {
   compareBaseline,
   formatAge,
   formatCheck,
+  formatDownloadMs,
   formatRunDate,
   formatSize,
   isFailureIssueTitle,
@@ -230,14 +231,21 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
   const table = buildStatusTable({results, baseline});
   const lines = table.split('\n');
   assert.equal(lines.length, 8); // header + separator + 6 browsers
+  assert.match(
+    table,
+    /^\| Browser \| Last verified \| Size · SHA-256 \| Last check \| Status \| Fallback \(CI cache\) \| Download time \| E2E validated \|/
+  );
   const firefox = lines.find(l => l.startsWith('| firefox '));
   assert.match(
     firefox,
-    /\| 155\.0\.1 \| 87\.5 MB · `27a24f…` \| \[Sep 5\]\(https:\/\/github\.com\/onemen\/firefox-scripts\/actions\/runs\/1\) \| ✅ up to date \| — \| ⏳ none \|/
+    /\| 155\.0\.1 \| 87\.5 MB · `27a24f…` \| \[Sep 5\]\(https:\/\/github\.com\/onemen\/firefox-scripts\/actions\/runs\/1\) \| ✅ up to date \| cached: 155\.0\.1 \| — \| ⏳ none \|/
   );
   const librewolf = lines.find(l => l.startsWith('| librewolf '));
   assert.match(librewolf, /\| 154\.0\.1-2 \| 158\.2 MB · `1d9fe9…` \| \[Aug 31\]\(/);
-  assert.match(librewolf, /\| ❌ lookup failed \| cached: 154\.0\.1-2 · \[Aug 31\]/);
+  assert.match(
+    librewolf,
+    /\| ❌ lookup failed \| cached: 154\.0\.1-2 · \[Aug 31\]\([^)]+\) \| — \|/
+  );
   assert.match(librewolf, /\| — \|$/); // advisory fork → no E2E cell
 
   // A failed full-download verification must render as failed with the
@@ -255,11 +263,49 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
     },
   });
   const zen = tableDl.split('\n').find(l => l.startsWith('| zen '));
-  assert.match(zen, /\| ⚠️ download failed \| cached: 1\.21\.15b · Aug 25 \|/);
+  assert.match(zen, /\| ⚠️ download failed \| cached: 1\.21\.15b · Aug 25 \| — \|/);
   const dev = lines.find(l => l.startsWith('| firefox-dev '));
   assert.match(dev, /\| 🆕 new version \|/);
   const waterfox = lines.find(l => l.startsWith('| waterfox '));
-  assert.match(waterfox, /\| — \| — · — \| — \| ✅ up to date \| — \| — \|/);
+  assert.match(waterfox, /\| — \| — · — \| — \| ✅ up to date \| — \| — \| — \|/);
+});
+
+test('buildStatusTable: fallback shows cached version on green runs, download time when known', () => {
+  // Green run + a recorded downloadMs: the cache column still shows what CI
+  // would fall back to (the version IS in the cache), and the transfer time
+  // of the verified download appears (issue #136).
+  const withData = buildStatusTable({
+    results: {librewolf: {status: 'ok'}},
+    baseline: {
+      librewolf: {
+        version: '155.0.1-1',
+        size: 165783376,
+        sha256: 'd01c3b0e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4',
+        downloadMs: 12900,
+        checkedAt: '2026-09-06T11:13:17Z',
+        checkedUrl: 'https://github.com/o/r/actions/runs/1',
+      },
+    },
+  });
+  const row = withData.split('\n').find(l => l.startsWith('| librewolf '));
+  assert.match(row, /\| ✅ up to date \| cached: 155\.0\.1-1 \| 13s \| — \|$/);
+
+  // Green run, no downloadMs yet (pre-baseline entry): em dash, never '0s'.
+  const noTime = buildStatusTable({
+    results: {zen: {status: 'ok'}},
+    baseline: {zen: {version: '1.22b', size: 114152784, sha256: 'ab12cd'}},
+  });
+  const zenRow = noTime.split('\n').find(l => l.startsWith('| zen '));
+  assert.match(zenRow, /\| cached: 1\.22b \| — \| — \|$/);
+});
+
+test('formatDownloadMs: human durations, unknown stays an em dash', () => {
+  assert.equal(formatDownloadMs(12900), '13s');
+  assert.equal(formatDownloadMs(252_000), '4m 12s');
+  assert.equal(formatDownloadMs(335_400), '5m 35s');
+  assert.equal(formatDownloadMs(0), '—');
+  assert.equal(formatDownloadMs(undefined), '—');
+  assert.equal(formatDownloadMs(null), '—');
 });
 
 test('validatedCell / E2E validated column: match, stale, none, fork', () => {
@@ -291,7 +337,7 @@ test('updateHistory: appends and caps at the max', () => {
 
 test('seedHistoryFromBaseline: baseline-only seed until real updates exist', () => {
   const baseline = {
-    firefox: {version: '155.0.1', size: 91715344, sha256: '27a24f'},
+    firefox: {version: '155.0.1', size: 91715344, sha256: '27a24f', downloadMs: 900},
   };
   const seed = seedHistoryFromBaseline(baseline);
   assert.equal(seed.length, 1);
@@ -301,6 +347,7 @@ test('seedHistoryFromBaseline: baseline-only seed until real updates exist', () 
     version: '155.0.1',
     size: 91715344,
     sha256: '27a24f',
+    downloadMs: 900,
   });
   assert.deepEqual(seedHistoryFromBaseline({}), []);
 });
@@ -315,11 +362,12 @@ test('renderHistory: baseline seed vs real update entries', () => {
           version: '155.0.1',
           size: 91715344,
           sha256: '27a24fcdde805cb6a34c5c102e98ebfe5f0302078202376d2828f8797ed80298',
+          downloadMs: 12900,
         },
       ],
     },
   ]);
-  assert.match(baseline, /^- baseline: firefox 155\.0\.1 · 87\.5 MB · `27a24f…`$/);
+  assert.match(baseline, /^- baseline: firefox 155\.0\.1 · 87\.5 MB · `27a24f…` · 13s$/);
   const update = renderHistory([
     {
       date: '2026-09-05T07:36:11Z',
@@ -331,13 +379,14 @@ test('renderHistory: baseline seed vs real update entries', () => {
           newVersion: '156.0b3',
           size: 93298280,
           sha256: '3e53b343e7d8bd109b217a0fd279ee5cadd7d9a8434d7c185dc65e88e80ffe9e',
+          downloadMs: 252_000,
         },
       ],
     },
   ]);
   assert.match(
     update,
-    /^- \[Sep 5\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/1\) — update: firefox-dev 156\.0b2 → 156\.0b3 · 89\.0 MB · `3e53b3…`$/
+    /^- \[Sep 5\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/1\) — update: firefox-dev 156\.0b2 → 156\.0b3 · 89\.0 MB · `3e53b3…` · 4m 12s$/
   );
 });
 
