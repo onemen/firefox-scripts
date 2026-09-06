@@ -177,10 +177,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 14px;
+  padding: 6px 10px;
   border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  border: 1px solid var(--warning-border);
+  /* The manual actions are plain links on the amber band — no box, so the
+     solid blue installer button stays the only “button” in the band. */
+  background: transparent;
   color: var(--accent-primary);
   font-size: 13px;
   font-weight: 600;
@@ -193,7 +194,8 @@
 }
 
 .manual-action:hover {
-  border-color: var(--accent-primary);
+  background: var(--accent-light);
+  text-decoration: underline;
 }
 
 .manual-action.primary {
