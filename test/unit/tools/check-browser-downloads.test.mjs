@@ -203,6 +203,35 @@ test('formatSize / shortSha: human units', () => {
   assert.equal(shortSha(null), '—');
 });
 
+/**
+ * Cell-count integrity for a rendered markdown table — the generated-table twin
+ * of the MD056 lint (which only sees repo docs, never the meta-issue body).
+ * Asserts every row has exactly the header's cell count, so a future renderer
+ * edit can never emit a row GitHub would render with dropped or merged cells
+ * (the docs/ci-inventory.md #147 failure mode). Escaped pipes (|) don't split;
+ * empty cells count — same rules cmark-gfm applies. Returns the expected column
+ * count for further assertions.
+ */
+function assertTableIntegrity(table, label = 'table') {
+  const lines = table.split('\n').filter(l => l.trim().startsWith('|'));
+  assert.ok(lines.length >= 2, `${label}: header + delimiter row must exist`);
+  const cells = row =>
+    row
+      .replace(/\\\|/g, '\u0000') // \| is an escaped pipe, not a splitter
+      .replace(/^\s*\|/, '')
+      .replace(/\|\s*$/, '')
+      .split('|').length;
+  const expected = cells(lines[0]);
+  lines.forEach((line, i) => {
+    assert.equal(
+      cells(line),
+      expected,
+      `${label} line ${i + 1} has ${cells(line)} cells, expected ${expected}: ${line}`
+    );
+  });
+  return expected;
+}
+
 test('buildStatusTable: six rows, short links, fallback on failed browsers', () => {
   const results = {
     'firefox': {status: 'ok'},
@@ -229,6 +258,7 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
     },
   };
   const table = buildStatusTable({results, baseline});
+  assertTableIntegrity(table, 'status table');
   const lines = table.split('\n');
   assert.equal(lines.length, 8); // header + separator + 6 browsers
   assert.match(
@@ -262,6 +292,7 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
       },
     },
   });
+  assertTableIntegrity(tableDl, 'download-failed table');
   const zen = tableDl.split('\n').find(l => l.startsWith('| zen '));
   assert.match(zen, /\| ⚠️ download failed \| cached: 1\.21\.15b · Aug 25 \| — \|/);
   const dev = lines.find(l => l.startsWith('| firefox-dev '));
@@ -287,6 +318,7 @@ test('buildStatusTable: fallback shows cached version on green runs, download ti
       },
     },
   });
+  assertTableIntegrity(withData, 'green + downloadMs table');
   const row = withData.split('\n').find(l => l.startsWith('| librewolf '));
   assert.match(row, /\| ✅ up to date \| cached: 155\.0\.1-1 \| 13s \| — \|$/);
 
@@ -295,8 +327,46 @@ test('buildStatusTable: fallback shows cached version on green runs, download ti
     results: {zen: {status: 'ok'}},
     baseline: {zen: {version: '1.22b', size: 114152784, sha256: 'ab12cd'}},
   });
+  assertTableIntegrity(noTime, 'no-downloadMs table');
   const zenRow = noTime.split('\n').find(l => l.startsWith('| zen '));
   assert.match(zenRow, /\| cached: 1\.22b \| — \| — \|$/);
+});
+
+test('buildStatusTable: cell-count integrity under extreme cell values', () => {
+  // The meta-issue table is generated, not hand-written — the MD056 lint
+  // never sees it. Every rendered row must keep the header's cell count on
+  // its own: extreme-but-legal values (long versions, huge durations, URLs
+  // with syntax characters, absent baseline entries) must not split or merge
+  // a cell on github.com (the #147 dropped-row failure mode).
+  const results = {
+    'firefox': {status: 'ok'},
+    'firefox-dev': {status: 'new-version'},
+    'librewolf': {status: 'lookup-failed'},
+    'floorp': {status: 'size-change'},
+    'zen': {status: 'download-failed'},
+    'waterfox': {status: 'endpoint-failed'},
+  };
+  const baseline = {
+    firefox: {
+      version: '155.0.1-1-windows-x86_64-long-build-identifier',
+      size: 165_783_376,
+      sha256: 'a'.repeat(64),
+      downloadMs: 5_000_000,
+      checkedAt: '2026-09-06T11:13:17Z',
+      checkedUrl: 'https://example.com/runs/1(2)?x=1 y',
+    },
+    // zen: deliberately absent — every cell must fall back to an em dash.
+  };
+  const table = buildStatusTable({
+    results,
+    baseline,
+    validated: {
+      browsers: {firefox: {version: '155.0.1-1-windows-x86_64-long-build-identifier'}},
+    },
+  });
+  const cols = assertTableIntegrity(table, 'kitchen-sink table');
+  assert.equal(cols, 8);
+  assert.equal(table.split('\n').length, 8); // header + delimiter + 6 browsers
 });
 
 test('formatDownloadMs: human durations, unknown stays an em dash', () => {
@@ -321,6 +391,7 @@ test('validatedCell / E2E validated column: match, stale, none, fork', () => {
     baseline: {firefox: {version: '155.0.1'}},
     validated,
   });
+  assertTableIntegrity(table, 'validated table');
   const row = table.split('\n').find(l => l.startsWith('| firefox '));
   assert.match(row, /\| ✅ 155\.0\.1 \|$/);
 });
