@@ -777,6 +777,14 @@ async function run() {
   }
 
   if (!summary(counter)) process.exitCode = 1;
+
+  // Hard-exit instead of letting node unwind naturally: the UI layer spawns the
+  // installer detached, and the installer relaunches the detected browser,
+  // which inherits the installer's stdio pipes. A browser that outlives this
+  // process (e.g. the snap leg's relaunch, which starts its own instance when
+  // it cannot hand the URL off) keeps those pipes open, so the event loop never
+  // drains and the job hangs until CI cancels it. The summary is final.
+  process.exit(process.exitCode || 0);
 }
 
 run().catch(err => {

@@ -626,8 +626,10 @@ jobs:
       # (now runner-owned) /etc/firefox GreD, status renders. Elevation into
       # a root-owned GreD stays on the manual release checklist (future-work
       # §2) — the admin-copy path cannot be automated on hosted runners.
+      # Runs even when the installer step above failed: each half of the leg
+      # reports independently, so one failure never hides the other's result.
       - name: Run updater E2E (snap Firefox)
-        if: steps.snapd.outputs.available == 'true'
+        if: always() && steps.snapd.outputs.available == 'true'
         run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
 
       - name: Upload diagnostics
