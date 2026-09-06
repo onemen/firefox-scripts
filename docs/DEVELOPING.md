@@ -326,7 +326,8 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
 
 `.github/workflows/ci.yml` runs on every PR and on `main` pushes:
 
-- **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, clang-format,
+- **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, markdownlint-cli2 — MD056
+  table-column-count catches merged table rows that prettier cannot see (#147) — clang-format,
   `gcc -fanalyzer`), `pnpm format`, and `pnpm test` (unit tests).
 - **publish gate** (Windows / Linux / macOS) — `pnpm upload:local --mode=dev` rebuilds every package
   zip and the native binaries for the runner's OS, so regressions in generated files, hashes or the

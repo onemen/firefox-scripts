@@ -1,0 +1,49 @@
+// config/.markdownlint-cli2.jsonc — markdownlint-cli2 configuration.
+//
+// The repo's markdown is prettier-formatted (line length, list style, table
+// alignment are prettier's domain), so structural rules that duplicate
+// prettier's behavior or fight its output stay off. The rules that ARE on
+// catch what prettier cannot: MD056 (table-column-count) is the reason this
+// config exists — a merged table row (two rows glued onto one line) is a
+// syntactically valid row with extra cells that GitHub renders by dropping
+// the surplus row (docs/ci-inventory.md, PR #147), and prettier passes it.
+{
+  "config": {
+    "default": false,
+
+    // ── On: what prettier cannot see ─────────────────────────────────────
+    // Table rows must match their header's column count.
+    "MD056": true,
+    // Table pipes must be escaped/piped consistently — catches a stray cell
+    // that would silently start a new (broken) table.
+    "MD055": true,
+    // Headings must increment by one level (h2 → h4 jumps are edit accidents).
+    "MD001": true,
+    // Duplicate headings in the same section make anchors ambiguous.
+    "MD024": {"siblings_only": true},
+    // Bare URLs should be wrapped (autolinks render inconsistently).
+    "MD034": true,
+    // ── Off: prettier's domain or deliberately different house style ─────
+    "MD013": false, // line length — prettier wraps; tables may be long
+    "MD031": false, // blanks around fences — nested list fences (DEVELOPING.md) are indented, not blank-separated
+    "MD033": false, // inline HTML — updater docs embed details/summary
+    "MD036": false, // no-emphasis-as-heading — emphasis paragraphs are house style
+    "MD040": false, // fenced code language — directory trees / placeholder fences have none
+    "MD041": false, // first-line heading — generated/detached fragments start mid-doc
+    "MD046": false, // code-block style — both fences and indented appear legitimately
+    "MD060": false, // table alignment style is prettier's
+  },
+  // Third-party skills (ADR 0022) are upstream text — never linted or
+  // formatted. Same exclusion the eslint markdown config derives from the
+  // watchdog's frontmatter classification.
+  "globs": ["**/*.md"],
+  "ignores": [
+    "**/.agents/skills/cavecrew/**",
+    "**/.agents/skills/code-review/**",
+    "**/.agents/skills/debugging-firefox/**",
+    "**/.agents/skills/grill-me/**",
+    "**/.agents/skills/lavish/**",
+    "**/node_modules/**",
+    "**/dist/**",
+  ],
+}

@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "lint": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache && node tools/format-c.mjs --check && make -C installer analyze",
+    "lint": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache && node tools/format-c.mjs --check && make -C installer analyze && markdownlint-cli2 --config ./config/.markdownlint-cli2.jsonc \"**/*.md\" \"#node_modules\" \"#dist\"",
     "lint:c": "node tools/format-c.mjs --check",
     "hooks:install": "node tools/install-githooks.mjs",
     "format": "node tools/sync-skill-gates.mjs && node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
@@ -42,6 +42,7 @@
     "eslint-plugin-mozilla": "5.0.1",
     "eslint-plugin-security": "4.0.1",
     "globals": "17.11.0",
+    "markdownlint-cli2": "0.23.2",
     "minimatch": "10.2.6",
     "prettier": "3.9.6",
     "prettier-plugin-jsdoc": "1.8.1",

@@ -115,7 +115,7 @@ files are produced on demand by the build/publish tooling.
 
 ```bash
 pnpm install
-pnpm lint          # eslint + C format check + gcc -fanalyzer over installer/src
+pnpm lint          # eslint + markdownlint (MD056 table integrity) + C format check + gcc -fanalyzer
 pnpm format        # check: C + prettier
 pnpm format:fix    # apply both
 pnpm test          # unit tests (test/unit/, pure Node, no build)
