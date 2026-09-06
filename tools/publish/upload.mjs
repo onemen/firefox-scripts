@@ -78,6 +78,7 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {scanBinaries} from '../scan-av.mjs';
 import {
   bold,
   detail,
@@ -758,6 +759,31 @@ async function main() {
       builtInstallers,
       builtHelpers,
     } = await buildBinaries(platforms, storedHashes);
+
+    // AV gate: scan the EXACT bytes about to be uploaded and refuse to publish
+    // a flagged artifact (installer_win.exe was once falsely flagged by
+    // Defender — see tools/scan-av.mjs).  Best-effort engines: a missing
+    // scanner only warns; a positive detection hard-fails the run.
+    section('AV scan');
+    const avFiles = [...builtInstallers.map(installerPath), ...builtHelpers.map(helperPath)];
+    if (avFiles.length > 0) {
+      const {findings, scanned, notes} = await scanBinaries(avFiles);
+      for (const n of notes) warn(n);
+      if (scanned.length > 0) {
+        info(
+          `  ${green('clean')} — ${scanned.length} binary(ies) scanned by ` +
+            `${process.platform === 'win32' ? 'Windows Defender' : 'ClamAV'}`
+        );
+      }
+      for (const f of findings) {
+        error(`AV DETECTION: ${path.basename(f.file)} — ${f.engine}: ${f.detail}`);
+      }
+      if (findings.length > 0) {
+        error('Refusing to publish — an AV engine flagged a built binary.');
+        process.exitCode = 1;
+        return;
+      }
+    }
 
     const merged = {...storedHashes, ...zipUpdated, ...binUpdated};
     const manifestChanged =
