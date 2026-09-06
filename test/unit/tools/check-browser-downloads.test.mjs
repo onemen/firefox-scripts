@@ -401,6 +401,18 @@ test('buildStatusTable: hostile pipe in a vendor-served value cannot split a cel
   assertTableIntegrity(failed, 'failed-hostile table');
   const zenRow = failed.split('\n').find(l => l.startsWith('| zen '));
   assert.match(zenRow, /cached: 1\.22\\\|b/);
+
+  // A line break in a hostile value would split the ROW itself into extra
+  // markdown rows (cmark-gfm ends a table row at \n) — row injection, the
+  // same failure class as a pipe. The renderer collapses it to a space.
+  const injected = buildStatusTable({
+    results: {firefox: {status: 'ok'}},
+    baseline: {firefox: {version: `1.0\n| injected | row |`}},
+  });
+  assertTableIntegrity(injected, 'newline-injection table');
+  assert.equal(injected.split('\n').length, 8); // no extra rows appeared
+  const ffRow = injected.split('\n').find(l => l.startsWith('| firefox '));
+  assert.match(ffRow, /1\.0 \\\| injected \\\| row \\\|/); // kept, pipes escaped, one line
 });
 
 test('escapeTableCell: pipes and backslashes, non-string input', () => {
@@ -420,6 +432,9 @@ test('escapeTableCell: pipes and backslashes, non-string input', () => {
   assert.equal(escapeTableCell(BS), [BS, BS].join(''));
   assert.equal(escapeTableCell(12900), '12900'); // String() coercion
   assert.equal(escapeTableCell(undefined), 'undefined');
+  // line breaks collapse to a single space (row-splitting prevention)
+  assert.equal(escapeTableCell(`a${PIPE}b`.replace(PIPE, '\n')), 'a b');
+  assert.equal(escapeTableCell('a\r\n\nb'), 'a b');
 });
 
 test('formatDownloadMs: human durations, unknown stays an em dash', () => {

@@ -434,14 +434,22 @@ export function formatDownloadMs(ms) {
  */
 /**
  * Escape a value interpolated into a markdown table cell: an unescaped pipe
- * would split the cell on github.com, silently shifting/dropping the cells
- * after it (the row then fails the cell-count integrity tests). Values are
- * vendor-served (version strings, checked URLs), so treat them as hostile. An
- * escaped pipe (|) renders as a literal | and does NOT split — cmark-gfm splits
- * the raw row before inline parsing, so no code-span awareness needed.
+ * would split the cell on github.com (silently shifting/dropping the cells
+ * after it), and a raw line break would split the ROW into extra markdown rows.
+ * Values are vendor-served (version strings, checked URLs), so treat them as
+ * hostile. Backslashes are escaped first so a pre-escaped backslash pipe
+ * sequence can't become live again; an escaped pipe renders as a literal pipe
+ * and does NOT split — cmark-gfm splits the raw row before inline parsing, so
+ * no code-span awareness is needed.
  */
 export function escapeTableCell(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+  // Backslashes first (a pre-escaped \| can't become live again), then line
+  // breaks (a raw \r/\n would split the ROW into extra markdown rows — same
+  // failure class as a pipe), then pipes.
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\|/g, '\\|');
 }
 
 export function buildStatusTable({results, baseline, validated}) {
