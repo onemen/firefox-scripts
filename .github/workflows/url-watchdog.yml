@@ -91,6 +91,14 @@ jobs:
           key: url-watchdog-baseline-${{ github.run_id }}
           save-always: true
 
+    # Job-level scoping (the E2E workflow's precedent): dispatching the browser
+    # E2E when a new release is recorded needs actions: write; the issue
+    # surface needs issues: write. The PR job below needs neither.
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+
   # ── PR: stateless rot check at review time ────────────────────────────────
   # Runs only when the download map itself changed. The script exits 0 and
   # prints ::warning:: annotations on rot, so this job never blocks — but it
@@ -99,6 +107,10 @@ jobs:
     name: browser download URLs (PR)
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    # Stateless vendor checks + annotations only — no GitHub API calls, so no
+    # write scopes.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

@@ -53,10 +53,13 @@ not justify another filter.
 | Pages publish / publish — linux binaries        | Manual dispatch                            | Publishes Linux artifacts                                                                                                                                                           | Serialized after Windows                                                                                                                                                                                  |
 | Pages publish / publish — mac binaries          | Manual dispatch                            | Publishes macOS artifacts                                                                                                                                                           | Serialized after Linux                                                                                                                                                                                    |
 
-When the watchdog detects a new browser version, it should dispatch targeted updater compatibility
-E2E for that browser rather than the entire suite. Firefox, Firefox Dev Edition, LibreWolf, Floorp,
-Zen, and Waterfox map to their corresponding browser-matrix test (Waterfox's leg is advisory during
-its soak period — ADR 0021).
+When the watchdog detects a new browser version it dispatches the browser-specific E2E (the full
+suite stays untouched): fork browsers (LibreWolf, Floorp, Zen, Waterfox) each get a single-browser
+dispatch — the `browser` input collapses the matrix to that leg, the same manual escape as ADR 0021
+— while a Firefox / Firefox Dev Edition release shares one full dispatch whose record-validation
+refreshes the validated-versions record the publish gate reads. Dispatch happens only after the
+baseline persisted (a fail-closed run dispatches nothing) and a failed dispatch is a run warning,
+not a failure.
 
 The weekly watchdog is the only scheduled refresh of the browser baseline, so a browser released
 between the last watchdog run and a publish would ship unvalidated. The Pages publish workflow runs
@@ -71,7 +74,7 @@ instead of blocking, since dev artifacts are disposable test builds.
 | Area                           | Current behavior                                                                                                                                                                                                              | Remaining follow-up                                             |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | Watchdog unchanged browser     | Vendor API, URL resolution, and 1 KB range request; no full installer download                                                                                                                                                | None                                                            |
-| Watchdog new browser version   | Temporary full download + SHA-256, then removal; version-history entry in the meta issue (the SHA-256 ledger)                                                                                                                 | None                                                            |
+| Watchdog new browser version   | Temporary full download + SHA-256, then removal; version-history entry in the meta issue (the SHA-256 ledger); dispatches the browser E2E for the new release (forks single-browser, hard gates one full dispatch — #143)     | None (implemented)                                              |
 | Watchdog status meta issue     | Single `[url-watchdog] status` issue: per-browser table (last verified version, size/SHA-256, last-check run link, status tag, CI-cache fallback, E2E-validated version) + version history; PATCHed only when content changed | None (implemented)                                              |
 | Validated-versions comment     | E2E record-validation job comments the validated firefox/firefox-dev versions on the meta issue (deduped: only when the versions changed)                                                                                     | None (implemented)                                              |
 | Watchdog error issues          | Rot / size-change open deduped issues; the watchdog auto-closes them with a resolving-run comment once the browser checks green again                                                                                         | None (implemented)                                              |

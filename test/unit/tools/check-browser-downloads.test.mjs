@@ -26,6 +26,7 @@ const {
   issueBody,
   issueTitle,
   parseContentRange,
+  planDispatches,
   renderHistory,
   seedHistoryFromBaseline,
   sha256File,
@@ -366,4 +367,76 @@ test('isFailureIssueTitle: the auto-close set per browser', () => {
   );
   assert.ok(!isFailureIssueTitle('librewolf', '[url-watchdog] firefox 155.0 → 155.0.1'));
   assert.ok(!isFailureIssueTitle('librewolf', '[url-watchdog] status'));
+});
+
+// ── planDispatches (E2E auto-dispatch, issue #143) ──────────────────────────
+
+test('planDispatches: each fork gets its own single-browser dispatch', () => {
+  assert.deepEqual(
+    planDispatches([
+      {kind: 'new-version', browser: 'librewolf'},
+      {kind: 'new-version', browser: 'zen'},
+    ]),
+    [
+      {browser: 'librewolf', ref: 'main'},
+      {browser: 'zen', ref: 'main'},
+    ]
+  );
+});
+
+test('planDispatches: hard gates share ONE full dispatch (no cancel-in-progress kill)', () => {
+  // Firefox + Dev Edition usually bump together — two full dispatches would
+  // land in the same cancel-in-progress concurrency group and the second
+  // would cancel the first before record-validation ever runs.
+  assert.deepEqual(
+    planDispatches([
+      {kind: 'new-version', browser: 'firefox'},
+      {kind: 'new-version', browser: 'firefox-dev'},
+    ]),
+    [{ref: 'main'}]
+  );
+});
+
+test('planDispatches: mixed release → fork escapes + one full dispatch', () => {
+  assert.deepEqual(
+    planDispatches([
+      {kind: 'new-version', browser: 'firefox'},
+      {kind: 'new-version', browser: 'floorp'},
+    ]),
+    [{browser: 'floorp', ref: 'main'}, {ref: 'main'}]
+  );
+});
+
+test('planDispatches: first-run findings never dispatch (cache eviction ≠ release)', () => {
+  assert.deepEqual(
+    planDispatches([
+      {kind: 'first-run', browser: 'librewolf'},
+      {kind: 'first-run', browser: 'firefox'},
+    ]),
+    []
+  );
+});
+
+test('planDispatches: no new-version findings → no dispatches', () => {
+  assert.deepEqual(
+    planDispatches([
+      {kind: 'rot', browser: 'librewolf', reason: 'endpoint failed'},
+      {kind: 'size-change', browser: 'zen'},
+    ]),
+    []
+  );
+  assert.deepEqual(planDispatches([]), []);
+});
+
+test('planDispatches: dedupes repeated forks, caps at the fork set', () => {
+  // Dedup: the same fork twice in one findings list dispatches once. The cap:
+  // a browser outside FORK_BROWSERS must never reach a fork escape.
+  assert.deepEqual(
+    planDispatches([
+      {kind: 'new-version', browser: 'waterfox'},
+      {kind: 'new-version', browser: 'waterfox'},
+    ]),
+    [{browser: 'waterfox', ref: 'main'}]
+  );
+  assert.deepEqual(planDispatches([{kind: 'new-version', browser: 'not-a-browser'}]), []);
 });
