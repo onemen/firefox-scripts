@@ -82,10 +82,11 @@ jobs:
       # the current releases against main" — the post-release escape that
       # re-records the validated versions the publish gate requires (#4). The
       # path filter sees no commit diff on dispatch, so forcing updater=true
-      # here is the SINGLE point that makes the snapshot/helper/updater/
-      # portable-firefox/browser-matrix jobs run; the e2e-gate applicability
-      # reads this same output, so the gate and the jobs stay consistent. A
-      # partial single-browser dispatch does NOT force it (ADR 0021).
+      # here makes the helper/updater/portable-firefox legs run; a partial
+      # single-browser dispatch does NOT force it (ADR 0021) — its snapshot +
+      # browser-matrix legs are forced by their own job-level escape conditions
+      # instead (the snapshot needs-cascade would otherwise skip the whole
+      # matrix, see #143).
       updater:
         ${{ steps.filter.outputs.updater == 'true' || (github.event_name == 'workflow_dispatch' &&
         (inputs.browser == '' || inputs.browser == 'all')) }}
@@ -133,7 +134,13 @@ jobs:
   snapshot:
     name: build dev snapshot
     needs: changes
-    if: needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'
+    # A single-browser dispatch (the watchdog's new-release leg, or ci:download)
+    # must build the snapshot too: browser-matrix needs it, and a needs-chain
+    # skip is transitive — without this, the escape dispatch ran nothing
+    # (#143 proof run 34033626251).
+    if:
+      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
+      github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
     runs-on: ubuntu-latest
     steps:
       - uses: $/.github/actions/setup-repo
@@ -592,7 +599,7 @@ jobs:
           branch: true
           branch-label: E2E-relevant changes
           applicability: |-
-            snapshot:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' }}
+            snapshot:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
             installer:${{ needs.changes.outputs.installer == 'true' }}
             helper:${{ needs.changes.outputs.updater == 'true' }}
             updater:${{ needs.changes.outputs.updater == 'true' }}

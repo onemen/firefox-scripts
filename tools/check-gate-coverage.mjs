@@ -373,11 +373,13 @@ const CONTRACTS = [
     gate: 'e2e-gate',
     // Independent filter outputs (installer/updater/core) — each gated job
     // must carry exactly its expected changed-paths `if:` and be listed in
-    // the gate's `applicability:` block. browser-matrix additionally runs for
-    // a single-browser manual-escape dispatch (ADR 0021) — the combined `if:`
-    // is its contract.
+    // the gate's `applicability:` block. browser-matrix AND snapshot
+    // additionally run for a single-browser manual-escape dispatch (ADR 0021;
+    // snapshot must run because browser-matrix needs it and a needs-chain
+    // skip is transitive, #143) — the combined `if:` is their contract.
     gatedIfs: {
-      'snapshot': "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'",
+      'snapshot':
+        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
       'installer': "needs.changes.outputs.installer == 'true'",
       'helper': "needs.changes.outputs.updater == 'true'",
       'updater': "needs.changes.outputs.updater == 'true'",
