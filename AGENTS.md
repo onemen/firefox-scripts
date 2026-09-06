@@ -99,7 +99,11 @@ detail lives there so this file stays a checklist, not a manual. All skills are 
 | `change-workflow`   | authored    | Making code changes — subsystem, docs, validation order                |
 | `generated-files`   | authored    | Regenerating or reasoning about the untracked build files              |
 | `publishing`        | authored    | Releasing — `upload` / `upload:local`, prod/dev modes                  |
+| `cavecrew`          | third-party | Delegating locate / small-edit / diff-review subtasks to subagents     |
+| `code-review`       | third-party | Reviewing a diff against the repo's standards and originating spec     |
 | `debugging-firefox` | third-party | Debugging live Firefox via DevTools RDP (`docs/debugging-with-rdp.md`) |
+| `grill-me`          | third-party | Stress-testing a plan or design before committing to it                |
+| `lavish`            | third-party | Turning complex/visual agent output into annotatable HTML artifacts    |
 
 All paths are `<root>/.agents/skills/<name>/SKILL.md`.
 
@@ -193,6 +197,8 @@ Before finishing:
 - generated files are regenerated on demand (Makefile / createZip / syncGeneratedFiles);
 - no `.local` files were used as authoritative sources;
 - no unrelated files were modified;
+- if a code change invalidates any statement in AGENTS.md, skills, or docs/, update those documents
+  in the same step. Do not leave stale instructions;
 - failed/unavailable validation is reported;
 - the task worktree is removed (`git worktree remove`; retry the empty directory if a process still
   held it).

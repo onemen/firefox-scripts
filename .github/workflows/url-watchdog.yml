@@ -23,6 +23,10 @@ on:
   pull_request:
     paths:
       - 'test/e2e/shared/downloads.mjs'
+      # The stateless --pr pass exercises the watchdog tool itself, so tool
+      # changes get a live (vendor-facing, always-green) smoke run too — same
+      # set the browser-downloads filter ownership already defines.
+      - 'tools/check-browser-downloads.mjs'
   # The PR check is stateless + always green, so it can safely run on the
   # merge queue too (a required check must report on merge_group).
   merge_group:
@@ -44,6 +48,11 @@ jobs:
     name: check browser download URLs
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
+    # The full-download path is progress-aware (issue #143): a slow vendor
+    # download runs to its 20 min transfer budget (plus retries) instead of
+    # being killed early. The job timeout must fit that budget, not the other
+    # way around.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -91,6 +100,14 @@ jobs:
           key: url-watchdog-baseline-${{ github.run_id }}
           save-always: true
 
+    # Job-level scoping (the E2E workflow's precedent): dispatching the browser
+    # E2E when a new release is recorded needs actions: write; the issue
+    # surface needs issues: write. The PR job below needs neither.
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+
   # ── PR: stateless rot check at review time ────────────────────────────────
   # Runs only when the download map itself changed. The script exits 0 and
   # prints ::warning:: annotations on rot, so this job never blocks — but it
@@ -99,6 +116,10 @@ jobs:
     name: browser download URLs (PR)
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    # Stateless vendor checks + annotations only — no GitHub API calls, so no
+    # write scopes.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
