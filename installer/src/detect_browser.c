@@ -1051,6 +1051,9 @@ void config_dir_for_app_dir(const char *app_dir, char *out, size_t out_sz) {
         snprintf(out, out_sz, "/etc/firefox");
         return;
     }
+    // Guard the identity copy: with out == app_dir the snprintf below would
+    // read and write the same object, which is undefined behavior in C.
+    if (out == app_dir) return;
     snprintf(out, out_sz, "%s", app_dir ? app_dir : "");
 }
 

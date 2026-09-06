@@ -564,7 +564,7 @@ jobs:
           else
             echo "/etc/firefox does NOT exist — findGreDir() must be reconciled with the actual path"
             echo "| /etc/firefox exists | no |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| snap mount | \`$(snap run --shell firefox -c 'echo $SNAP' 2>/dev/null || n/a)\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| snap mount | \`$(snap run --shell firefox -c 'echo $SNAP' 2>/dev/null || echo n/a)\` |" >> "$GITHUB_STEP_SUMMARY"
           fi
           # Hard assertion: whatever findGreDir() returns must exist as a
           # directory after the snap install (user-writable config dir is
