@@ -88,11 +88,6 @@ const INSTALLER_URL = `${ZIP_BASE_URL}/${
 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
-// TEMP preview knob: force the Snap UI scenario (config needs manual install +
-// both packages stale) on any OS, so the manual-install panel can be reviewed
-// on a normal Windows/Linux/macOS build. Remove together with the panel's
-// callers once the Snap E2E leg is green.
-const PREF_FORCE_SNAP_UI = 'extensions.firefox-scripts.debugForceSnapUi';
 
 const UPDATER_UI_URI = 'chrome://firefox-scripts/content/ui/updater.html';
 
@@ -123,15 +118,6 @@ function logError(msg, err) {
   console.error(`Firefox Scripts updater: ${msg}`, err);
 }
 
-/** TEMP preview knob — see PREF_FORCE_SNAP_UI. */
-function forceSnapUiPreview() {
-  try {
-    return Services.prefs.getBoolPref(PREF_FORCE_SNAP_UI, false);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Snap-packaged Firefox: strictly confined, config (fx-folder) not writable
  * in-tab — the install docs route snap config to /etc/firefox instead.
@@ -140,9 +126,9 @@ function isSnapInstall() {
   return Services.dirsvc.get('XREExeF', Ci.nsIFile).path.includes('/snap/');
 }
 
-/** The config package needs the manual-install path (Snap or the TEMP flag). */
+/** The config package needs the manual-install path (Snap only). */
 function configNeedsManualInstall() {
-  return isSnapInstall() || forceSnapUiPreview();
+  return isSnapInstall();
 }
 
 /** Read the display name once from <GreD>/application.ini (synchronous, ~2 KB). */
@@ -212,9 +198,8 @@ function packageSnapshot(kind, info) {
     updateNeeded: Boolean(info.updateNeeded),
     date: info.date || '',
     skipped: Boolean(skipHash && info.remoteHash && skipHash === info.remoteHash),
-    // Snap (or the TEMP preview flag): the in-tab config install can never
-    // write the host config dir, so the UI swaps the install checkbox for the
-    // manual-install panel.
+    // Snap: the in-tab config install can never write the host config dir, so
+    // the UI swaps the install checkbox for the manual-install band.
     manualInstall: kind === 'config' && configNeedsManualInstall(),
   };
 }
@@ -653,16 +638,6 @@ async function engineInit() {
     const info = await checkScriptsUpdateNeeded();
     if (info) {
       scriptsInfo = info;
-    }
-    if (forceSnapUiPreview()) {
-      // TEMP preview: mirror the Snap scenario (both packages stale) so the
-      // manual panel + badges render on any OS for visual review.
-      if (scriptsInfo.fxFolder) {
-        scriptsInfo.fxFolder.updateNeeded = true;
-      }
-      if (scriptsInfo.utils) {
-        scriptsInfo.utils.updateNeeded = true;
-      }
     }
   } catch (e) {
     logError('re-check on tab open', e);
