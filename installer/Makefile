@@ -42,10 +42,17 @@ ifeq ($(OS),Windows_NT)
   # console when run from a terminal for diagnostic output.
   # The all target also depends on 'config' which generates _config.h from installer.conf.
   WIN_LIBS = -lws2_32 -lshell32 -luser32 -lcrypt32 -lbcrypt -static -static-libgcc -mwindows
+  # Windows PE version resource + manifest (installer.rc/.manifest): gives the
+  # exe a proper Properties dialog and legitimacy metadata for AV machine
+  # learning — a stripped unsigned PE with no version info is the classic
+  # false-positive profile (Defender: Program:Script/Wacapew.A!ml).  Mirrors
+  # the helper's src/helper/version.rc.  Empty on non-Windows targets.
+  WIN_RES = $(SRC_DIR)/installer.res
   # Section GC: drop unreferenced functions/data emitted by -ffunction-sections.
   GC_FLAGS = -Wl,--gc-sections
 else
   WIN_LIBS =
+  WIN_RES =
   UNAME_S := $(shell uname -s)
   ifeq ($(UNAME_S),Darwin)
     TARGET = $(DIST_DIR)/installer_mac
@@ -74,9 +81,13 @@ endif
 all: resources config $(TARGET)
 
 # Native target rule - maps $(TARGET) to the actual build command
-$(TARGET): $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h
+$(TARGET): $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h $(WIN_RES)
 	$(MKDIR)
-	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -o $(TARGET) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) $(WIN_LIBS)
+	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(WIN_RES) -o $(TARGET) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) $(WIN_LIBS)
+
+# Compile the Windows version resource + manifest into a COFF object.
+$(SRC_DIR)/installer.res: $(SRC_DIR)/installer.rc $(SRC_DIR)/installer.manifest
+	windres $(SRC_DIR)/installer.rc -O coff -o $@
 
 # Publish mode for the generated config: see tools/publish/publishMode.mjs.
 # Empty (default) = prod; MODE=dev rewrites _config.h / updater-config.sys.mjs
@@ -131,9 +142,9 @@ $(SRC_DIR)/resources.h: embed.mjs $(WEB_DIR)/index.html $(WEB_DIR)/style.css $(W
 # Windows build (cross-compile or native on Windows)
 # -mwindows: link as GUI subsystem so double-click from Explorer doesn't open a terminal
 # --verbose / --log-console flag re-attaches to parent console when run from terminal
-dist_win: resources config
+dist_win: resources config $(WIN_RES)
 	$(MKDIR)
-	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -o $(DIST_DIR)/installer_win$(ASSET_SUFFIX).exe $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) \
+	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(WIN_RES) -o $(DIST_DIR)/installer_win$(ASSET_SUFFIX).exe $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) \
 		-lws2_32 -lshell32 -luser32 -lcrypt32 -lbcrypt -static -static-libgcc \
 		-mwindows
 
@@ -204,6 +215,6 @@ verify: $(TARGET)
 
 # Clean build artifacts
 clean:
-	rm -f $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h
+	rm -f $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h $(SRC_DIR)/installer.res
 	rm -f $(SRC_DIR)/helper/version.res
 	rm -rf $(DIST_DIR)
