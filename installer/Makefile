@@ -16,15 +16,6 @@ CFLAGS = -Os -s -ffunction-sections
 # ~32 KB per binary (measured: 237 KB -> 200 KB on Windows).
 MINIZ_TRIM = -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ZLIB_APIS
 
-# PE header versions for the Windows installer.  mingw-w64's link defaults to
-# an XP-era MajorSubsystemVersion (5.02 / OS 4.0); AV machine-learning engines
-# weight a stripped, unsigned PE that claims to target Windows XP as a
-# packer/cryptor profile signal.  Windows 10/11 ignore these fields entirely
-# (the installer.manifest supportedOS GUID overrides them), so bumping to 6.0
-# is behavior-neutral but removes the anomaly.  Used only by the Windows
-# installer link lines below (both the all target and dist_win).
-WIN_PE_VERSIONS = -Wl,--major-subsystem-version,6 -Wl,--minor-subsystem-version,0 -Wl,--major-os-version,6 -Wl,--minor-os-version,0
-
 SRC_DIR = src
 # Unified build-output root: all build artifacts land in dist/installer at the
 # repo top level.  Make is always run from the installer/ dir (either `cd
@@ -96,7 +87,7 @@ all: resources config $(TARGET)
 # Native target rule - maps $(TARGET) to the actual build command
 $(TARGET): $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h $(WIN_RES)
 	$(MKDIR)
-	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(WIN_RES) -o $(TARGET) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) $(WIN_PE_VERSIONS) $(WIN_LIBS)
+	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(WIN_RES) -o $(TARGET) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) $(WIN_LIBS)
 
 # Compile the Windows version resource + manifest into a COFF object.
 $(SRC_DIR)/installer.res: $(SRC_DIR)/installer.rc $(SRC_DIR)/installer.manifest
@@ -161,7 +152,7 @@ $(SRC_DIR)/resources.h: embed.mjs $(WEB_DIR)/index.html $(WEB_DIR)/style.css $(W
 # WINDRES=x86_64-w64-mingw32-windres.
 dist_win: resources config $(SRC_DIR)/installer.res
 	$(MKDIR)
-	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(SRC_DIR)/installer.res -o $(DIST_DIR)/installer_win$(ASSET_SUFFIX).exe $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) $(WIN_PE_VERSIONS) \
+	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(SRC_DIR)/installer.res -o $(DIST_DIR)/installer_win$(ASSET_SUFFIX).exe $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) \
 		-lws2_32 -lshell32 -luser32 -lcrypt32 -lbcrypt -static -static-libgcc \
 		-mwindows
 
