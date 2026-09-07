@@ -97,12 +97,10 @@ body {
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   padding: 24px;
-  min-height: 100vh; /* short content: the app still fills the viewport, so .app-footer's margin-top:auto pins it to the bottom (issue #4) */
+  min-height: 100vh; /* short content: the app still fills the viewport, so .app-footer's margin-top:auto rests it on the page bottom (issue #4) */
   /* The footer's divider strip breaks out of the 820px grid with 50vw
      margins; 50vw includes the scrollbar width, so clip the (invisible)
-     horizontal overshoot instead of growing a horizontal scrollbar.
-     overflow: clip creates no scroll container, so position:sticky keeps
-     working. */
+     horizontal overshoot instead of growing a horizontal scrollbar. */
   overflow-x: clip;
   display: flex;
   justify-content: center;
@@ -1087,22 +1085,21 @@ body {
    installer web UI and the updater tab (updater.css is generated from this
    file, so both UIs render the same footer from one source).
 
-   A sticky bottom bar: visible while scrolling on long pages (no need to
-   scroll to reach it), settling into its natural place at the end — never a
-   floating overlay on top of interactive content, and on short content
-   margin-top:auto still rests it on the page bottom.
+   In-flow content, never sticky/fixed: it sits after the page content (below
+   the fold on long pages is fine) and margin-top:auto rests it on the page
+   bottom when the content is short. The divider strip breaks out of the
+   820px grid to span the full window width; the CONTENT is re-padded back
+   into the grid. The body's own 24px padding is the space below the footer —
+   the footer itself carries no bottom padding.
    ========================================================================== */
 .app-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
   margin-top: auto;
   /* Full-width divider strip: break out of the 820px grid, then re-pad so the
      CONTENT stays aligned to it (the scrollbar-width overshoot of the 50vw
      breakout is clipped by body{overflow-x: clip}). */
   margin-inline: calc(50% - 50vw);
   padding-inline: calc(50vw - 50%);
-  padding-block: 14px;
+  padding-block: 24px 0;
   background: var(--bg-body);
   border-top: 1px solid var(--border-color);
   display: flex;
