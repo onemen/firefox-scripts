@@ -10,6 +10,19 @@ WINDRES ?= windres
 # bloating the executable by ~5 MB.
 CFLAGS = -Os -s -ffunction-sections
 
+# Deterministic PE: GNU ld stamps the COFF TimeDateStamp with the current
+# link time, so every rebuild produced unique bytes — and with it a fresh
+# SHA-256 and a fresh VirusTotal analysis, letting Microsoft's ML re-roll its
+# verdict on every build (clean one day, Wacatac/C!ml the next, same source).
+# Exporting SOURCE_DATE_EPOCH (binutils honors it in the PE backend) pins the
+# stamp to the last commit's timestamp: deterministic per commit, and a
+# realistic-looking date (zeroed stamps read as packer artifacts to some ML).
+# The repo root may be a detached worktree (no HEAD), so fall back to a fixed
+# epoch when git cannot answer.
+BUILD_EPOCH = $(shell git -C .. log -1 --format=%ct 2>/dev/null || echo 1785600000)
+SOURCE_DATE_EPOCH = $(BUILD_EPOCH)
+export SOURCE_DATE_EPOCH
+
 # miniz trim: the installer only READS zips (never compresses/writes), so the
 # deflate/compression side and the zlib-compat wrappers are dead code.
 # MINIZ_NO_DEFLATE_APIS also implies MINIZ_NO_ARCHIVE_WRITING_APIS.  Saves
