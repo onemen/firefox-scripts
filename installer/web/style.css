@@ -98,6 +98,12 @@ body {
   -webkit-font-smoothing: antialiased;
   padding: 24px;
   min-height: 100vh; /* short content: the app still fills the viewport, so .app-footer's margin-top:auto pins it to the bottom (issue #4) */
+  /* The footer's divider strip breaks out of the 820px grid with 50vw
+     margins; 50vw includes the scrollbar width, so clip the (invisible)
+     horizontal overshoot instead of growing a horizontal scrollbar.
+     overflow: clip creates no scroll container, so position:sticky keeps
+     working. */
+  overflow-x: clip;
   display: flex;
   justify-content: center;
 }
@@ -1080,29 +1086,53 @@ body {
    App Footer (issue #4) — persistent license/links line shared by the
    installer web UI and the updater tab (updater.css is generated from this
    file, so both UIs render the same footer from one source).
+
+   A sticky bottom bar: visible while scrolling on long pages (no need to
+   scroll to reach it), settling into its natural place at the end — never a
+   floating overlay on top of interactive content, and on short content
+   margin-top:auto still rests it on the page bottom.
    ========================================================================== */
 .app-footer {
-  /* Push to the container's bottom edge when the content is shorter than
-     the viewport; flows after the content when it is longer. */
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
   margin-top: auto;
+  /* Full-width divider strip: break out of the 820px grid, then re-pad so the
+     CONTENT stays aligned to it (the scrollbar-width overshoot of the 50vw
+     breakout is clipped by body{overflow-x: clip}). */
+  margin-inline: calc(50% - 50vw);
+  padding-inline: calc(50vw - 50%);
+  padding-block: 14px;
+  background: var(--bg-body);
+  border-top: 1px solid var(--border-color);
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 2px 16px;
-  padding: 12px 4px 2px;
-  border-top: 1px solid var(--border-color);
+  gap: 4px 16px;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--text-muted); /* copyright text recedes; links stay full-strength */
+}
+.app-footer-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.app-footer-icon {
+  flex: none;
+  color: var(--text-muted); /* monochrome brand mark, follows the text */
 }
 .app-footer-links {
   display: inline-flex;
-  gap: 14px;
+  gap: 22px;
 }
 .app-footer a {
   color: var(--accent-primary);
   text-decoration: none;
+  transition: color 0.15s ease;
 }
 .app-footer a:hover {
+  color: var(--accent-hover);
   text-decoration: underline;
+  text-underline-offset: 3px;
 }
