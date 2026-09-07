@@ -165,10 +165,17 @@ jobs:
         with:
           install: 'false'
       - name: Set up MSYS2 toolchain (make + gcc)
+        # update: false — no pacman -Syu on every publish.  A full system
+        # upgrade mid-cycle changed the gcc version (16.1.0 → 16.2.0,
+        # published to MSYS2 repos 2026-09-04) and the rebuilt installer_win.exe
+        # was falsely flagged by Defender's ML (Program:Script/Wacapew.A!ml) the
+        # next day.  Skipping the system upgrade keeps the toolchain stable; the
+        # upload AV gate (tools/scan-av.mjs) is the enforcement that a rebuild
+        # with any new toolchain still scans clean before it ships.
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
           msystem: UCRT64
-          update: true
+          update: false
           install: >-
             mingw-w64-ucrt-x86_64-gcc make
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -177,6 +184,10 @@ jobs:
           path: ${{ runner.temp }}/baseline/
       - run: pnpm install --frozen-lockfile
       - shell: bash
+        env:
+          # Optional: multi-engine VirusTotal scan of the built binaries before
+          # upload (tools/scan-vt.mjs).  Absent ⇒ skipped with a warning.
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=win"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
@@ -199,6 +210,8 @@ jobs:
           name: baseline-hashes
           path: ${{ runner.temp }}/baseline/
       - shell: bash
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=linux"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
@@ -219,6 +232,8 @@ jobs:
           name: baseline-hashes
           path: ${{ runner.temp }}/baseline/
       - shell: bash
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=mac"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
