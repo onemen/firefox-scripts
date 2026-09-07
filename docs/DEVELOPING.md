@@ -111,8 +111,9 @@ sudo apt install gcc
 make all                      # builds dist/installer/installer_linux
 
 # Windows cross-compile from Linux/WSL
-sudo apt install gcc-mingw-w64-x86-64-posix
-make dist_win CC=x86_64-w64-mingw32-gcc   # builds dist/installer/installer_win.exe
+sudo apt install gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+make dist_win CC=x86_64-w64-mingw32-gcc WINDRES=x86_64-w64-mingw32-windres
+#   builds dist/installer/installer_win.exe with the PE version resource
 ```
 
 ### macOS
@@ -121,6 +122,70 @@ make dist_win CC=x86_64-w64-mingw32-gcc   # builds dist/installer/installer_win.
 xcode-select --install
 make dist_mac   # builds dist/installer/installer_mac
 ```
+
+## AV false positives and the AV scan gate
+
+The installer/helper binaries are unsigned, stripped, statically-linked PEs — the classic profile
+for antivirus **machine-learning** false positives. `installer_win.exe` was once flagged by Windows
+Defender (`Program:Script/Wacapew.A!ml`) while every local build of the same source scanned clean.
+The confirmed root cause was a **toolchain bump, not a code change**: the publish workflow ran
+`msys2/setup-msys2` with `update: true`, and a full `pacman -Syu` on 2026-09-05 pulled the gcc
+16.1.0 → 16.2.0 package update (published to MSYS2 repos the day before). The rebuilt artifact's
+bytes landed inside the `!ml` model's detection pocket (the near-identical dev-mode build and all
+local 16.1.0 builds scanned clean). `!ml` models are byte-sensitive and change over time, so the
+workflow now skips the system upgrade (`update: false`) — the AV gate below is what enforces that a
+rebuild with any new toolchain still scans clean before it ships. Three structural measures keep
+this in check:
+
+1. **PE metadata** — `installer/src/installer.rc` + `installer.manifest` (compiled by `windres` on
+   the Windows build) give the exe a version resource (FileDescription/CompanyName/ProductName), an
+   asInvoker manifest and Win10/11 compatibility GUIDs. A stripped PE with _no_ version info is the
+   #1 ML false-positive profile; this mirrors what `installer/src/helper/version.rc` already did for
+   `helper_win.exe`.
+2. **The AV scan gate** — `tools/scan-av.mjs` scans built binaries before they are published
+   (Windows: Windows Defender via `MpCmdRun.exe`; Linux/macOS: ClamAV `clamscan`). The publish flow
+   (`tools/publish/upload.mjs`) scans the EXACT bytes about to be uploaded and refuses to publish
+   when any engine reports a detection. A missing engine is only a warning (GitHub Windows runners
+   often run Defender in passive mode), so the gate degrades gracefully but never ships a flagged
+   artifact silently.
+
+### Local scan (after `make dist_win`)
+
+```bash
+pnpm scan:av -- dist/installer/installer_win.exe dist/installer/helper_win.exe
+# exit 0 = clean, exit 1 = detection, exit 2 = usage
+```
+
+### Multi-engine check (optional — VirusTotal)
+
+```bash
+# put VT_API_KEY=... in the root .env (gitignored), then:
+pnpm scan:vt -- dist/installer/installer_win.exe
+```
+
+The publish flow also runs every built binary through VirusTotal when `VT_API_KEY` is present
+(GitHub secret on CI; root `.env` for a local `pnpm upload`). The publish fails when ≥
+`VT_FAIL_THRESHOLD` (default 3) engines report a binary as malicious **or** when a veto engine
+(`VT_VETO_ENGINES`, default `Microsoft`) reports it as malicious at any count — a Microsoft/Defender
+verdict must never ship, even alone. Hits below the configured threshold from non-veto engines warn
+but do not block (the known-FP band at the default of 3). The run log names the flagging engines.
+Without a key it just skips with a warning, and an analysis VirusTotal has not finished when the
+poll times out is reported as a skip — never as clean.
+
+### False-positive handling
+
+- If a scanner flags a freshly built binary, do **not** publish it — investigate first. Local builds
+  and the CI artifact differ (toolchain version), so a clean local scan does not guarantee the CI
+  build is clean; the upload gate is what enforces that.
+- Report confirmed false positives to Microsoft (Defender/other Microsoft engines):
+  <https://www.microsoft.com/en-us/wdsi/filesubmission> — select “Your app or file was incorrectly
+  detected as malware” and attach the flagged binary. Microsoft can clear the hash/family in
+  Defender’s cloud, which also clears it for users.
+- A durable long-term fix is **code signing**; it is the only measure that systematically improves
+  AV/OS reputation. Paid options exist (Azure Trusted Signing), and the **SignPath Foundation**
+  sponsors free Authenticode signing for accepted open-source projects (Windows binaries only —
+  exactly the flagged artifacts here). The measures above are the zero-cost alternative while the
+  signing application is pending.
 
 ## Making changes
 
@@ -362,18 +427,18 @@ Exit code 0 means every package's JS hash matches the C binary's (computed with 
 **PR path filtering** — every E2E job (`.github/workflows/e2e.yml`: the `snapshot` build, the
 installer/updater matrices, the `helper` elevated-copy test, and the `browser-matrix` fork legs) and
 the publish gate (`build` in `.github/workflows/ci.yml`) run only when a changed file can affect
-them (`core/**`, `config/installer.conf`, `installer/**`, `tools/publish/**`, `test/e2e/**`,
-`package.json`, `pnpm-lock.yaml`, the workflows/actions). Docs-only / tooling-only PRs skip all of
-them; `changes`, `checks`, `ci-gate` and `e2e-gate` always run, so the required checks keep
-reporting. The aggregate gates share one engine — `.github/actions/verify-gate` (required / advisory
-/ skip-guard / always-report checks) — and `pnpm check:gates` statically enforces the contract:
-every workflow job is listed in its gate's `needs:`, path-filter `if:`s stay in place, and
-always-report jobs carry no job-level `if:`. The `browser-matrix` fork legs (LibreWolf, Floorp, Zen
-— downloaded from third-party hosts: librewolf.dev's package registry and GitHub release assets) are
-advisory when they run: failures warn in the gate instead of failing the PR. Firefox Developer
-Edition is first-party Mozilla, so it runs as a required leg of the `updater` job (#35), not in the
-advisory matrix. Waterfox has no direct download URL and stays manual (tracked by version only in
-the URL watchdog).
+them (`core/**`, `config/installer.conf`, `installer/**`, `tools/publish/**`, `tools/scan-av.mjs`,
+`tools/scan-vt.mjs`, `test/e2e/**`, `package.json`, `pnpm-lock.yaml`, the workflows/actions).
+Docs-only / tooling-only PRs skip all of them; `changes`, `checks`, `ci-gate` and `e2e-gate` always
+run, so the required checks keep reporting. The aggregate gates share one engine —
+`.github/actions/verify-gate` (required / advisory / skip-guard / always-report checks) — and
+`pnpm check:gates` statically enforces the contract: every workflow job is listed in its gate's
+`needs:`, path-filter `if:`s stay in place, and always-report jobs carry no job-level `if:`. The
+`browser-matrix` fork legs (LibreWolf, Floorp, Zen — downloaded from third-party hosts:
+librewolf.dev's package registry and GitHub release assets) are advisory when they run: failures
+warn in the gate instead of failing the PR. Firefox Developer Edition is first-party Mozilla, so it
+runs as a required leg of the `updater` job (#35), not in the advisory matrix. Waterfox has no
+direct download URL and stays manual (tracked by version only in the URL watchdog).
 
 **Agent file-change hooks (recommended, per-workstation)** — agent clients (Codebuff, Claude Code,
 …) can run a command after each file edit and feed the output back to the agent in the same turn.

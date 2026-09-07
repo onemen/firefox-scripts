@@ -25,13 +25,13 @@ change.
 
 ### Filter ownership
 
-| Output              | Intended paths                                                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `publish`           | `core/**`, `config/installer.conf`, `installer/**`, `tools/publish/**`, packaging dependencies, `.github/actions/**`, and CI workflow files |
-| `installer`         | Installer implementation/web/API files and `test/e2e/installer/**`                                                                          |
-| `updater`           | `core/chrome/utils/updater/**`, `installer/src/helper/**`, updater shared helpers/tests, and updater workflow/action files                  |
-| `core`              | Browser-chrome/core files and core smoke tests; shared E2E infrastructure may conservatively select all affected groups                     |
-| `browser-downloads` | `test/e2e/shared/downloads.mjs`, watchdog tooling, and watchdog workflow files                                                              |
+| Output              | Intended paths                                                                                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `publish`           | `core/**`, `config/installer.conf`, `installer/**`, `tools/publish/**`, the AV/VT scan tools (`tools/scan-av.mjs`, `tools/scan-vt.mjs`), packaging dependencies, `.github/actions/**`, and CI workflow files |
+| `installer`         | Installer implementation/web/API files and `test/e2e/installer/**`                                                                                                                                           |
+| `updater`           | `core/chrome/utils/updater/**`, `installer/src/helper/**`, updater shared helpers/tests, and updater workflow/action files                                                                                   |
+| `core`              | Browser-chrome/core files and core smoke tests; shared E2E infrastructure may conservatively select all affected groups                                                                                      |
+| `browser-downloads` | `test/e2e/shared/downloads.mjs`, watchdog tooling, and watchdog workflow files                                                                                                                               |
 
 `installer/src/helper/**` belongs to the updater group because the helper binary is used by updater
 installation flows. Its helper E2E remains a separate job, but shares the updater filter.
