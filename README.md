@@ -36,6 +36,10 @@ inspection).
    - `installer_win.exe` — Windows
    - `installer_linux` — Linux
    - `installer_mac` — macOS
+
+   Windows binaries are code-signed by the [SignPath Foundation](https://signpath.org/), the
+   open-source code-signing program.
+
 2. **Run** the downloaded installer. It connects to a running Firefox-family browser (Firefox,
    Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets
    you pick which browser to set up.
