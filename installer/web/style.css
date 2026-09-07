@@ -909,7 +909,7 @@ body {
 /* ==========================================================================
    Reveal Animation (validated content fades/steps in — no state flash)
    The browser-list content is only painted once validation completes; the
-   .revealed class (added by revealCardsAndScroll) triggers a staggered
+   .revealed class (added by revealCards in script.js) triggers a staggered
    entrance for the cards instead of an abrupt swap.
    ========================================================================== */
 @keyframes card-in {

@@ -309,24 +309,18 @@
   }
 
   /**
-   * Animate the freshly-validated browser-list content in and scroll it into
-   * view. Runs once per page load: the 'revealed' class persists across card
-   * re-renders (install refresh), so only the first validated paint animates.
+   * Animate the freshly-validated browser-list content in. Runs once per page
+   * load: the 'revealed' class persists across card re-renders (install
+   * refresh), so only the first validated paint animates.
+   *
+   * No automatic scroll: on load the list sits below the short header, always
+   * in view, and a scrollIntoView(block:'start') here clamps to maxScroll on
+   * pages only slightly taller than the viewport — which slammed the page to
+   * the very bottom and flashed the footer into view (issue #4 review).
    */
-  function revealCardsAndScroll(container) {
+  function revealCards(container) {
     if (!container || container.classList.contains('revealed')) return;
     container.classList.add('revealed');
-    const smooth =
-      !window.matchMedia || !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    // Let the CSS entrance animation start, then bring the content into view.
-    setTimeout(function () {
-      try {
-        container.scrollIntoView({behavior: smooth ? 'smooth' : 'auto', block: 'start'});
-      } catch {
-        // scrollIntoView options are unsupported in older engines; the content
-        // is already visible in the document flow either way.
-      }
-    }, 150);
   }
 
   /* ========================================================================
@@ -1670,7 +1664,7 @@
       // scanning indicator and let the Promise.all path handle the error.
       if (!installBlocked && data) {
         renderBrowsers(data);
-        revealCardsAndScroll(container);
+        revealCards(container);
       }
       return data;
     });
@@ -1708,7 +1702,7 @@
           checkSelfUpdate();
           // The cards were already animated on the early render; this is a
           // no-op when the container is already .revealed.
-          revealCardsAndScroll(container);
+          revealCards(container);
         };
 
         if (!pkg) {
@@ -1789,7 +1783,7 @@
         // cannot be reached, so show the blocked notification.
         showNetworkError();
         renderInstallBlocked();
-        revealCardsAndScroll(container);
+        revealCards(container);
       });
 
     // NOTE: the beforeunload->shutdown handler is NOT registered here.  It is
