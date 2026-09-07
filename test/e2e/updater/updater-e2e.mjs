@@ -54,6 +54,11 @@ import {
   discoverFirefoxBinary,
   findGreDir,
 } from '../shared/browsers.mjs';
+import {
+  closeBrowser,
+  killStrayProcesses,
+  removeProfileCompatibilityIni,
+} from '../shared/processHygiene.mjs';
 
 const UPDATER_URL = 'chrome://firefox-scripts/content/ui/updater.html';
 const FORCE_UTILS_STALE = 'RDFDataSource.sys.mjs';
@@ -133,11 +138,13 @@ function parseArgs() {
     else if (args[i] === '--headless') opts.headless = true;
     else if (args[i] === '--keep-profile') opts.keepProfile = true;
     else if (args[i] === '--no-fail-fast') opts.failFast = false;
+    else if (args[i] === '--repeat' && args[i + 1] && Number(args[i + 1]) > 0)
+      opts.repeat = Number(args[++i]);
     else if (args[i] === '--scenario' && args[i + 1])
       opts.scenarios = args[++i].split(',').map(s => s.trim());
     else if (args[i] === '--help') {
       console.log(
-        '        Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,2,3]'
+        '        Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,2,3] [--repeat 2]'
       );
       process.exit(0);
     }
@@ -190,6 +197,10 @@ function seedProfile(
     'extensions.firefox-scripts.lastScriptsCheckDate': '',
   };
   const chromeUtils = path.join(profileDir, 'chrome', 'utils');
+
+  // Profile hygiene (issue #130): never reuse a previous run's GRE
+  // compatibility state, even if a profile directory were ever reused.
+  removeProfileCompatibilityIni(profileDir);
 
   // Extract utils
   const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);
@@ -661,7 +672,7 @@ async function runStaleScenario(
     return seeded.profileDir;
   } finally {
     try {
-      await browser?.close();
+      await closeBrowser(browser);
     } catch {
       /* ignore */
     }
@@ -753,7 +764,7 @@ async function runNoTabScenario(
     return seeded.profileDir;
   } finally {
     try {
-      await browser?.close();
+      await closeBrowser(browser);
     } catch {
       /* ignore */
     }
@@ -1056,7 +1067,7 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     }
   } finally {
     try {
-      await browser?.close();
+      await closeBrowser(browser);
     } catch {
       /* ignore */
     }
@@ -1169,7 +1180,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
     }
   } finally {
     try {
-      await browser?.close();
+      await closeBrowser(browser);
     } catch {
       /* ignore */
     }
@@ -1238,7 +1249,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
     }
   } finally {
     try {
-      await browser?.close();
+      await closeBrowser(browser);
     } catch {
       /* ignore */
     }
@@ -1388,7 +1399,7 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
     }
   } finally {
     try {
-      await browser?.close();
+      await closeBrowser(browser);
     } catch {
       /* ignore */
     }
@@ -1441,6 +1452,11 @@ async function run() {
   }
   logBakedConfig(snapshotDir);
 
+  // Process hygiene (issue #130): a cancelled or crashed previous run can
+  // leave the detached installer holding port 8777 and BiDi browsers holding
+  // temp profiles — kill them before anything waits on that port.
+  await killStrayProcesses();
+
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) {
     console.error('Firefox not found. Set FIREFOX_BINARY or pass --firefox <path>');
@@ -1460,7 +1476,6 @@ async function run() {
     // Scenario steps run in order; after the first failure the remaining
     // scenarios almost always fail for the same root cause, so skip them
     // (opt out with --no-fail-fast).
-
     const scenarioSteps = [
       {
         id: '1',
@@ -1545,21 +1560,28 @@ async function run() {
       },
     ];
 
-    for (const step of scenarioSteps) {
-      if (!scenarios.includes(step.id)) continue;
-      if ((opts.failFast ?? true) && counter.failed > 0) {
-        console.log(`\n  SKIP scenario ${step.id}: fail-fast after earlier failure`);
-        continue;
-      }
-      if (step.pre) {
-        const err = step.pre();
-        if (err) {
-          console.log(`  SKIP ${step.skipLabel}: ${err}`);
-          check(counter, true, `${step.skipLabel} skipped (GreD not writable locally)`);
+    // --repeat <n> re-runs the whole scenario selection (fresh profile per
+    // scenario per pass) — the deterministic repeat-run proof of #130.
+    const repeat = opts.repeat ?? 1;
+    for (let pass = 1; pass <= repeat; pass++) {
+      if (repeat > 1) console.log(`\n===== repeat pass ${pass}/${repeat} =====`);
+
+      for (const step of scenarioSteps) {
+        if (!scenarios.includes(step.id)) continue;
+        if ((opts.failFast ?? true) && counter.failed > 0) {
+          console.log(`\n  SKIP scenario ${step.id}: fail-fast after earlier failure`);
           continue;
         }
+        if (step.pre) {
+          const err = step.pre();
+          if (err) {
+            console.log(`  SKIP ${step.skipLabel}: ${err}`);
+            check(counter, true, `${step.skipLabel} skipped (GreD not writable locally)`);
+            continue;
+          }
+        }
+        await step.run();
       }
-      await step.run();
     }
   } finally {
     if (!opts.keepProfile) {
