@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import {
   analysisComplete,
   enginesReported,
+  maliciousEngines,
   vtFailThreshold,
   vtVerdict,
+  vtVetoEngines,
 } from '../../../tools/scan-vt.mjs';
 
 test('vtVerdict: clean when no malicious engines', () => {
@@ -52,6 +54,45 @@ test('vtVerdict: fail at/above the threshold', () => {
   assert.equal(vtVerdict({malicious: 9}, 3), 'fail');
 });
 
+test('vtVerdict: a veto engine (Microsoft) fails below the threshold', () => {
+  // The CI-built exe: Microsoft + Bkav flag, 2 < threshold 3 — must still fail.
+  const engines = {
+    Microsoft: {category: 'malicious', result: 'Trojan:Win32/Wacatac.C!ml'},
+    Bkav: {category: 'malicious', result: 'W32.Malware.7F00676A'},
+  };
+  assert.equal(vtVerdict({malicious: 2}, 3, engines), 'fail');
+  assert.equal(vtVerdict({malicious: 1}, 3, {Microsoft: {category: 'malicious'}}), 'fail');
+});
+
+test('vtVerdict: non-veto engines keep warn semantics below the threshold', () => {
+  assert.equal(
+    vtVerdict({malicious: 2}, 3, {Bkav: {category: 'malicious'}, Elastic: {category: 'malicious'}}),
+    'warn'
+  );
+  assert.equal(vtVerdict({malicious: 1}, 3, {Bkav: {category: 'malicious'}}), 'warn');
+  // Microsoft present but NOT malicious must not veto.
+  assert.equal(vtVerdict({malicious: 1}, 3, {Microsoft: {category: 'undetected'}}), 'warn');
+});
+
+test('vtVerdict: custom veto list is honored', () => {
+  assert.equal(vtVerdict({malicious: 1}, 3, {Bkav: {category: 'malicious'}}, ['Bkav']), 'fail');
+  assert.equal(vtVerdict({malicious: 1}, 3, {Bkav: {category: 'malicious'}}, []), 'warn');
+});
+
+test('maliciousEngines: lists only engines whose category is malicious', () => {
+  assert.deepEqual(
+    maliciousEngines({
+      Microsoft: {category: 'malicious'},
+      Bkav: {category: 'malicious'},
+      Elastic: {category: 'undetected'},
+      Ikarus: {category: 'failure'},
+    }),
+    ['Microsoft', 'Bkav']
+  );
+  assert.deepEqual(maliciousEngines(undefined), []);
+  assert.deepEqual(maliciousEngines({}), []);
+});
+
 test('vtVerdict: threshold is per-call and not global', () => {
   assert.equal(vtVerdict({malicious: 1}, 1), 'fail');
   assert.equal(vtVerdict({malicious: 1}, 5), 'warn');
@@ -71,5 +112,20 @@ test('vtFailThreshold: defaults to 3, honors VT_FAIL_THRESHOLD', () => {
   } finally {
     if (before === undefined) delete process.env.VT_FAIL_THRESHOLD;
     else process.env.VT_FAIL_THRESHOLD = before;
+  }
+});
+
+test('vtVetoEngines: defaults to Microsoft, honors VT_VETO_ENGINES', () => {
+  const before = process.env.VT_VETO_ENGINES;
+  try {
+    delete process.env.VT_VETO_ENGINES;
+    assert.deepEqual(vtVetoEngines(), ['Microsoft']);
+    process.env.VT_VETO_ENGINES = 'Bkav, Elastic';
+    assert.deepEqual(vtVetoEngines(), ['Bkav', 'Elastic']);
+    process.env.VT_VETO_ENGINES = ','; // empty ⇒ default
+    assert.deepEqual(vtVetoEngines(), ['Microsoft']);
+  } finally {
+    if (before === undefined) delete process.env.VT_VETO_ENGINES;
+    else process.env.VT_VETO_ENGINES = before;
   }
 });

@@ -164,9 +164,13 @@ pnpm scan:vt -- dist/installer/installer_win.exe
 ```
 
 The publish flow also runs every built binary through VirusTotal when `VT_API_KEY` is present
-(GitHub secret on CI; root `.env` for a local `pnpm upload`), failing only when ≥
-`VT_FAIL_THRESHOLD` (default 3) engines report a binary as malicious. Without a key it just skips
-with a warning.
+(GitHub secret on CI; root `.env` for a local `pnpm upload`). The publish fails when ≥
+`VT_FAIL_THRESHOLD` (default 3) engines report a binary as malicious **or** when a veto engine
+(`VT_VETO_ENGINES`, default `Microsoft`) reports it as malicious at any count — a Microsoft/Defender
+verdict must never ship, even alone. 1–2 hits from non-veto engines warn but do not block (the
+known-FP band). The run log names the flagging engines. Without a key it just skips with a warning,
+and an analysis VirusTotal has not finished when the poll times out is reported as a skip — never as
+clean.
 
 ### False-positive handling
 
@@ -177,9 +181,11 @@ with a warning.
   <https://www.microsoft.com/en-us/wdsi/filesubmission> — select “Your app or file was incorrectly
   detected as malware” and attach the flagged binary. Microsoft can clear the hash/family in
   Defender’s cloud, which also clears it for users.
-- A durable long-term fix is **code signing** (e.g. Azure Trusted Signing); it is the only measure
-  that systematically improves AV/OS reputation, but it costs money — the measures above are the
-  zero-cost alternative.
+- A durable long-term fix is **code signing**; it is the only measure that systematically improves
+  AV/OS reputation. Paid options exist (Azure Trusted Signing), and the **SignPath Foundation**
+  sponsors free Authenticode signing for accepted open-source projects (Windows binaries only —
+  exactly the flagged artifacts here). The measures above are the zero-cost alternative while the
+  signing application is pending.
 
 ## Making changes
 

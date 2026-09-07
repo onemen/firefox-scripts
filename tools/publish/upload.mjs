@@ -787,9 +787,12 @@ async function main() {
     }
 
     // Optional multi-engine scan via VirusTotal (requires VT_API_KEY in the
-    // env — a missing key or a transient API error only warns).  The publish
-    // hard-fails only when >= VT_FAIL_THRESHOLD (default 3) engines report a
-    // binary as malicious: a multi-engine consensus, not a single-engine FP.
+    // env — a missing key, a transient API error, or an analysis that never
+    // completes only warns).  The publish hard-fails when >= VT_FAIL_THRESHOLD
+    // (default 3) engines report a binary as malicious — a multi-engine
+    // consensus, not a single-engine FP — or when a veto engine (default
+    // Microsoft) reports it as malicious at any count.  Any fail verdict
+    // returns BEFORE the Publishing section below, so no asset is uploaded.
     section('VirusTotal scan');
     if (avFiles.length > 0) {
       const {results} = await scanVirusTotal(avFiles);
@@ -803,11 +806,12 @@ async function main() {
         const label =
           `${path.basename(r.file)} — ${malicious} malicious / ${suspicious} suspicious / ` +
           `${harmless} harmless / ${undetected} undetected (threshold ${r.threshold})`;
+        const who = r.flags?.length > 0 ? ` (flagged by ${r.flags.join(', ')})` : '';
         if (r.verdict === 'fail') {
-          error(`VirusTotal DETECTION: ${label}`);
+          error(`VirusTotal DETECTION: ${label}${who}`);
           vtBlocked = true;
         } else if (r.verdict === 'warn') {
-          warn(`VirusTotal flagged: ${label}`);
+          warn(`VirusTotal flagged: ${label}${who}`);
         } else {
           info(`  ${green('clean')} on VirusTotal — ${label}`);
         }

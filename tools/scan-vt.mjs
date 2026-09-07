@@ -9,10 +9,11 @@
 //
 // Best-effort by design — VT_API_KEY (or VIRUSTOTAL_API_KEY) in the
 // environment, a transient API error, a rate limit, or an analysis that never
-// completes only warn, never block.  The publish only hard-fails when the
-// number of engines reporting the binary as malicious reaches
-// VT_FAIL_THRESHOLD (default 3) — a strong multi-engine consensus that is not
-// an AV false-positive.  An incomplete analysis is NEVER reported as clean:
+// completes only warn, never block.  The publish hard-fails when the number of
+// engines reporting the binary as malicious reaches VT_FAIL_THRESHOLD (default
+// 3) — a multi-engine consensus that is not an AV false-positive — OR when a
+// veto engine (Microsoft, the complainant in the original issue) reports it as
+// malicious at any count.  An incomplete analysis is NEVER reported as clean:
 // if VirusTotal has not finished scanning when the timeout elapses, the file
 // is skipped with a warning so the publish cannot claim a verdict it did not
 // get.
@@ -25,6 +26,10 @@ import {pathToFileURL} from 'url';
 const VT_API = 'https://www.virustotal.com/api/v3';
 const POLL_INTERVAL_MS = 2000;
 const DEFAULT_TIMEOUT_MS = 300_000;
+// Engines whose 'malicious' verdict alone vetoes the publish (see
+// docs/DEVELOPING.md — Microsoft cloud flagged installer_win.exe even when
+// every other engine stayed silent, so a Defender verdict must never ship).
+const VETO_ENGINES = ['Microsoft'];
 
 export function vtApiKey() {
   return process.env.VT_API_KEY || process.env.VIRUSTOTAL_API_KEY || null;
@@ -35,6 +40,16 @@ export function vtFailThreshold() {
   return Number.isFinite(n) && n > 0 ? n : 3;
 }
 
+export function vtVetoEngines() {
+  const raw = process.env.VT_VETO_ENGINES;
+  const parsed = (raw ?? '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  // Empty/unset (or a list that filters to nothing) ⇒ the default veto.
+  return parsed.length > 0 ? parsed : [...VETO_ENGINES];
+}
+
 /**
  * Pure verdict over VT detection stats. Only meaningful for a COMPLETED
  * analysis (see analysisComplete) — an empty/incomplete stats object is not
@@ -42,11 +57,16 @@ export function vtFailThreshold() {
  *
  * @param {{malicious: number; suspicious: number}} stats
  * @param {number} threshold
+ * @param {Object<string, {category?: string}>} [engines] per-engine results
+ * @param {string[]} [vetoEngines] engines whose malicious verdict is a veto
  * @returns {'fail' | 'warn' | 'clean'}
  */
-export function vtVerdict(stats, threshold) {
+export function vtVerdict(stats, threshold, engines = {}, vetoEngines = VETO_ENGINES) {
   const malicious = Number(stats?.malicious ?? 0);
-  if (malicious >= threshold) return 'fail';
+  const vetoed = Object.entries(engines).some(
+    ([name, result]) => vetoEngines.includes(name) && result?.category === 'malicious'
+  );
+  if (vetoed || malicious >= threshold) return 'fail';
   if (malicious > 0) return 'warn';
   return 'clean';
 }
@@ -86,6 +106,18 @@ export function analysisComplete(status, stats) {
 }
 
 /**
+ * Engine names whose last result was 'malicious'.
+ *
+ * @param {Object<string, {category?: string}> | undefined} engines
+ * @returns {string[]}
+ */
+export function maliciousEngines(engines) {
+  return Object.entries(engines ?? {})
+    .filter(([, result]) => result?.category === 'malicious')
+    .map(([name]) => name);
+}
+
+/**
  * Submit bytes to VirusTotal and return either a fresh pollable analysis id
  * ({id}) or, when VirusTotal already knows the bytes and rejects the duplicate
  * submission with HTTP 409 (AlreadySubmittedError), their last completed stats
@@ -104,7 +136,7 @@ async function uploadFile(apikey, file) {
   });
   if (res.ok) {
     const id = (await res.json()).data?.id;
-    if (id) return {id};
+    if (id) return {sha256, id};
     throw new Error('VirusTotal returned no analysis id');
   }
   if (res.status !== 409) throw new Error(`VirusTotal upload failed (HTTP ${res.status})`);
@@ -113,13 +145,20 @@ async function uploadFile(apikey, file) {
     headers: {'x-apikey': apikey},
   });
   if (!known.ok) throw new Error(`VirusTotal upload failed (HTTP ${res.status})`);
-  return {stats: (await known.json()).data?.attributes?.last_analysis_stats ?? {}};
+  return {sha256, stats: (await known.json()).data?.attributes?.last_analysis_stats ?? {}};
 }
 
 async function getAnalysis(apikey, id) {
   const res = await fetch(`${VT_API}/analyses/${id}`, {headers: {'x-apikey': apikey}});
   if (!res.ok) throw new Error(`VirusTotal analysis failed (HTTP ${res.status})`);
   return (await res.json()).data;
+}
+
+/** Best-effort per-engine results of the file's last completed analysis. */
+async function getFileEngines(apikey, sha256) {
+  const res = await fetch(`${VT_API}/files/${sha256}`, {headers: {'x-apikey': apikey}});
+  if (!res.ok) return undefined;
+  return (await res.json()).data?.attributes?.last_analysis_results;
 }
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -130,9 +169,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
  *
  * @param {string[]} files absolute paths of the binaries to scan
  * @param {{threshold?: number; timeoutMs?: number}} [opts]
- * @returns {Promise<{results: Array}>} results entries: {file, status,
- *   stats:{malicious,suspicious,harmless,undetected}} or {file, error} when
- *   that file's scan failed.
+ * @returns {Promise<{results: Array}>} results entries: {file, status, stats,
+ *   threshold, verdict, flags} or {file, error} when that file's scan failed or
+ *   never completed.
  */
 export async function scanVirusTotal(
   files,
@@ -144,6 +183,7 @@ export async function scanVirusTotal(
   for (const file of files) {
     try {
       const uploaded = await uploadFile(key, file);
+      let stats;
       if (uploaded.stats) {
         // Bytes VirusTotal already knew — its last completed analysis is the
         // verdict.  An empty stats object means the analysis has not finished
@@ -156,42 +196,48 @@ export async function scanVirusTotal(
           });
           continue;
         }
-        results.push({
-          file,
-          status: 'completed',
-          stats: uploaded.stats,
-          threshold,
-          verdict: vtVerdict(uploaded.stats, threshold),
-        });
-        continue;
-      }
-      const start = Date.now();
-      let data;
-      for (;;) {
-        await sleep(POLL_INTERVAL_MS);
-        data = await getAnalysis(key, uploaded.id);
+        stats = uploaded.stats;
+      } else {
+        const start = Date.now();
+        let data;
+        for (;;) {
+          await sleep(POLL_INTERVAL_MS);
+          data = await getAnalysis(key, uploaded.id);
+          const attrs = data.attributes ?? {};
+          if (analysisComplete(attrs.status, attrs.stats) || Date.now() - start >= timeoutMs) break;
+        }
         const attrs = data.attributes ?? {};
-        if (analysisComplete(attrs.status, attrs.stats) || Date.now() - start >= timeoutMs) break;
+        stats = attrs.stats ?? {};
+        if (!analysisComplete(attrs.status, stats)) {
+          // VirusTotal never finished scanning (still queued, or completed
+          // with no engine results).  Skip with a warning — never clean.
+          results.push({
+            file,
+            error:
+              `VirusTotal analysis incomplete after ${Math.round((Date.now() - start) / 1000)}s ` +
+              `(status: ${attrs.status ?? 'unknown'}) — skipping, not treated as clean`,
+          });
+          continue;
+        }
       }
-      const attrs = data.attributes ?? {};
-      const stats = attrs.stats ?? {};
-      if (!analysisComplete(attrs.status, stats)) {
-        // VirusTotal never finished scanning (still queued, or completed with
-        // no engine results).  Skip with a warning — never report as clean.
-        results.push({
-          file,
-          error:
-            `VirusTotal analysis incomplete after ${Math.round((Date.now() - start) / 1000)}s ` +
-            `(status: ${attrs.status ?? 'unknown'}) — skipping, not treated as clean`,
-        });
-        continue;
+      // Engine names only matter once something is flagged (a veto engine at
+      // count 0 is a contradiction) — and the lookup is best-effort: if it
+      // fails, the count-based verdict still stands (never a silent clean).
+      let engines;
+      if ((stats.malicious ?? 0) > 0) {
+        try {
+          engines = await getFileEngines(key, uploaded.sha256);
+        } catch {
+          engines = undefined;
+        }
       }
       results.push({
         file,
-        status: attrs.status,
+        status: 'completed',
         stats,
         threshold,
-        verdict: vtVerdict(stats, threshold),
+        verdict: vtVerdict(stats, threshold, engines),
+        flags: maliciousEngines(engines),
       });
     } catch (err) {
       results.push({file, error: err.message});
@@ -202,7 +248,8 @@ export async function scanVirusTotal(
 
 // CLI entry: node tools/scan-vt.mjs <binary> [<binary>...]
 // Reads VT_API_KEY from the environment (e.g. via `node --env-file-if-exists=.env`,
-// as pnpm scan:vt does).  Exits 0 = clean, 1 = >= threshold engines flagged, 2 = usage.
+// as pnpm scan:vt does).  Exits 0 = clean, 1 = flagged (>= threshold engines or
+// a veto engine), 2 = usage.
 const isCli =
   process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isCli) {
@@ -226,11 +273,12 @@ if (isCli) {
     const line =
       `${r.file} — ${malicious} malicious / ${suspicious} suspicious / ` +
       `${harmless} harmless / ${undetected} undetected (threshold ${r.threshold})`;
+    const who = r.flags.length > 0 ? ` (flagged by ${r.flags.join(', ')})` : '';
     if (r.verdict === 'fail') {
-      console.error(`!! ${line}`);
+      console.error(`!! ${line}${who}`);
       blocked = true;
     } else if (r.verdict === 'warn') {
-      console.warn(`! ${line}`);
+      console.warn(`! ${line}${who}`);
     } else {
       console.log(`OK ${line}`);
     }
