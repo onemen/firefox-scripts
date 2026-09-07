@@ -464,8 +464,18 @@ export function ciDownloadsAssetName(browser, version) {
 /**
  * Resolve the installer download URL for a browser, walking its source chain.
  * `version` pins the version-embedded sources; without it, the current version
- * is resolved first. The `ci-downloads` manual-escape release is probed by
- * expected filename after the official mirrors.
+ * is resolved first (or taken from BROWSER_PIN_VERSION when set). The
+ * `ci-downloads` manual-escape release is probed by expected filename after the
+ * official mirrors.
+ *
+ * Pin semantics (ADR 0023): a pinned run may only be served by sources that can
+ * actually express the pinned version — version-embedded mirror URLs and the
+ * ci-downloads asset keyed by exact version. Version-AGNOSTIC sources
+ * (floorp/zen's `/releases/latest/download/` URLs) are skipped under a pin:
+ * they always serve the newest release, so honoring them would download the
+ * latest installer while labeling it the pinned version. A pinned browser
+ * without any version-embedded source is served by ci-downloads alone (the
+ * manual escape's contract: `pnpm ci:download` uploads the exact installer).
  *
  * @param {string} browser
  * @param {{version?: string | null}} [opts]
@@ -480,11 +490,20 @@ export function ciDownloadsAssetName(browser, version) {
 export async function resolveInstallerUrl(browser, {version = null} = {}) {
   const chain = INSTALLER_CHAINS[browser];
   if (!chain) throw new Error(`no installer chain for browser '${browser}'`);
-  const resolved = await resolveBrowserVersion(browser, {pin: version});
+  const pin = version ?? process.env.BROWSER_PIN_VERSION ?? null;
+  const resolved = await resolveBrowserVersion(browser, {pin});
   const v = resolved.version;
 
-  // ① official mirrors (each source may be version-embedded)
+  // ① official mirrors (each source may be version-embedded). Under a pin,
+  // version-agnostic sources are ineligible (they cannot serve `v` — a
+  // zero-arity source takes no version parameter by construction).
   for (const build of chain.sources) {
+    if (pin && build.length === 0) {
+      console.log(
+        `  pin ${v}: skipping version-agnostic mirror (it always serves the latest release)`
+      );
+      continue;
+    }
     const url = build(v);
     // Cheap existence check: the version-embedded hosts 404 on a wrong guess,
     // the stable-latest URLs always answer. A 404 moves to the next source.
@@ -523,7 +542,10 @@ export async function resolveInstallerUrl(browser, {version = null} = {}) {
   }
 
   throw new Error(
-    `no installer source answered for ${browser} ${v} (official mirrors + ${CI_DOWNLOADS_TAG})`
+    pin ?
+      `no installer source answered for ${browser} ${v} (pinned run: version-embedded ` +
+        `mirrors + ${CI_DOWNLOADS_TAG} — upload the exact installer with pnpm ci:download)`
+    : `no installer source answered for ${browser} ${v} (official mirrors + ${CI_DOWNLOADS_TAG})`
   );
 }
 

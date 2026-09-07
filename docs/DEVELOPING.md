@@ -374,6 +374,21 @@ single-browser updater-E2E run. CI's `cleanup-ci-downloads` job deletes the cons
 afterwards and the release + tag once empty, so the steady state is "the release does not exist".
 Extra flags: `--no-dispatch` (upload only), `--clean` (delete release + tag now).
 
+### Browser version pinning (ADR 0023)
+
+The E2E matrix resolves the _latest_ browser release at run time — by design (ADR 0023): the URL
+watchdog → E2E dispatch → validated-versions → drift-gate chain exists to validate each new vendor
+release, so a vendor update flipping CI is signal. To reproduce or test a specific version, pin a
+single-browser dispatch with a `version` input (`pnpm ci:download -- <installer> --version <v>` does
+it as part of the manual escape; it sets `BROWSER_PIN_VERSION`). Pin semantics are strict: a pinned
+run is served only by sources that can express the exact version — version-embedded mirror URLs and
+the `ci-downloads` asset. Version-agnostic sources (floorp/zen's `/releases/latest/download/` URLs)
+are skipped under a pin, so a pinned floorp/zen leg requires the exact installer uploaded to
+`ci-downloads` and fails loudly otherwise. Firefox stable / Dev Edition are not pinnable (their
+official endpoints are version-agnostic redirects). Whatever a leg installed,
+`downloads.mjs --installed-version` reads the version from the binary itself — the recorded ground
+truth.
+
 A partial (single-browser) dispatch deliberately skips the validated-versions recorder — it cannot
 fabricate E2E coverage for firefox/firefox-dev, so it can never satisfy the publish gate on its own.
 A FULL dispatch (browser input unset or `all`) is the post-release re-validation escape: the path

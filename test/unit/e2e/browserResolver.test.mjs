@@ -353,6 +353,67 @@ test('resolveInstallerUrl: bsys6 release asset before ci-downloads', async () =>
   }
 });
 
+test('resolveInstallerUrl: pin skips version-agnostic mirrors (floorp/zen) → ci-downloads', async () => {
+  resetCiDownloadsProbe();
+  const {restore} = stubFetch([
+    // The version-agnostic official mirror MUST NOT be probed: it always
+    // serves the latest release, so honoring it under a pin would download
+    // the newest installer while labeling it the pinned version (ADR 0023).
+    [
+      'releases/latest/download/floorp-windows-x86_64.installer.exe',
+      () => {
+        throw new Error('version-agnostic mirror reached under a pin');
+      },
+    ],
+    // ci-downloads carries the EXACT pinned asset.
+    [
+      'releases/tags/ci-downloads',
+      () =>
+        okJson({
+          assets: [
+            {
+              name: 'floorp-12.17.2-installer.exe',
+              browser_download_url: 'https://x/ci-floorp.exe',
+            },
+          ],
+        }),
+    ],
+  ]);
+  try {
+    const resolved = await resolveInstallerUrl('floorp', {version: '12.17.2'});
+    assert.equal(resolved.url, 'https://x/ci-floorp.exe');
+    assert.equal(resolved.source, CI_DOWNLOADS_TAG);
+    assert.equal(resolved.version, '12.17.2');
+  } finally {
+    restore();
+  }
+});
+
+test('resolveInstallerUrl: unpinned floorp keeps the stable latest mirror', async () => {
+  resetCiDownloadsProbe();
+  const {restore} = stubFetch([
+    // version chain: GitHub releases answers
+    ['repos/Floorp-Projects/Floorp/releases/latest', () => okJson({tag_name: 'v12.17.3'})],
+    // the stable mirror answers (HEAD probe) — the official source wins
+    [
+      'releases/latest/download/floorp-windows-x86_64.installer.exe',
+      u => ({ok: true, status: 200, url: u}),
+    ],
+  ]);
+  try {
+    const resolved = await resolveInstallerUrl('floorp');
+    assert.equal(
+      resolved.url,
+      'https://github.com/Floorp-Projects/Floorp/releases/latest/download/floorp-windows-x86_64.installer.exe'
+    );
+    assert.equal(resolved.source, 'official');
+    assert.equal(resolved.version, '12.17.3');
+    assert.equal(resolved.sha256Url, null);
+  } finally {
+    restore();
+  }
+});
+
 test('resolveBrowserVersion: BROWSER_PIN_VERSION env pins the chain', async () => {
   const prev = process.env.BROWSER_PIN_VERSION;
   process.env.BROWSER_PIN_VERSION = '155.0-1';
