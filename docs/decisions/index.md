@@ -78,6 +78,8 @@ Open these before proposing a new primitive, surface, or storage home.
   resolver (retry + mirror chains, fail-closed watchdog) + temporary `ci-downloads` manual escape
 - [0022](./0022-agent-skills-management.md) — Agent skills are `gh`-installed and pristine; no
   `skills-lock.json`, no second `.agent/` root; drift = watchdog issue → reviewed PR
+- [0023](./0023-e2e-browser-version-pinning.md) — E2E browser versions track latest at run time;
+  explicit pin escape hatch with strict pin semantics (version-embedded sources + `ci-downloads`)
 
 ## Historical
 
