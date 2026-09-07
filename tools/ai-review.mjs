@@ -19,7 +19,7 @@
 //   --head-ref <ref>    Head ref (default: $HEAD_REF env or HEAD).
 //   --max-findings N    Cap on total findings written to RDJSON (default 10).
 //   --max-files N       Cap on files reviewed per run (default 30).
-//   --max-diff-chars N  Per-file diff size cap for the token budget (default 8000).
+//   --max-diff-chars N  Per-file diff size cap for the token budget (default 60000).
 //   --summary-only      Write the summary but emit an empty diagnostics set.
 //   --dry-run           Print what would be reviewed without calling any API.
 //   --out <dir>         Output directory (default dist/review).
@@ -84,7 +84,7 @@ export function parseArgs(argv) {
     headRef: process.env.HEAD_REF || 'HEAD',
     maxFindings: 10,
     maxFiles: 30,
-    maxDiffChars: 8000,
+    maxDiffChars: 60000,
     summaryOnly: false,
     dryRun: false,
     out: join(process.cwd(), 'dist', 'review'),
@@ -302,8 +302,12 @@ function fileDiff(baseRef, headRef, file) {
 }
 
 function truncateDiff(diff, maxChars) {
+  // The marker must tell the model not to guess: a truncated diff hides
+  // surrounding code (e.g. the top of a function), and models fabricate
+  // "used before declared" bugs from that missing context. Verify against
+  // the real file instead of inferring from hunk order.
   return diff.length > maxChars ?
-      `${diff.slice(0, maxChars)}\n\n[...diff truncated at ${maxChars} chars for token budget]`
+      `${diff.slice(0, maxChars)}\n\n[...diff truncated at ${maxChars} chars — code outside these hunks is\nnot shown; if a suspected issue depends on it (e.g. declaration order),\nverify against the actual file before reporting]`
     : diff;
 }
 
@@ -356,7 +360,7 @@ export async function reviewFiles({
   files,
   fileDiffs,
   providers,
-  maxDiffChars = 8000,
+  maxDiffChars = 60000,
   maxFindings = 10,
   summaryOnly = false,
   name = 'AI review',
