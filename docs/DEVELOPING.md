@@ -265,6 +265,16 @@ node test/e2e/installer/installer-e2e.mjs --snapshot dist/dev-main-abc1234
 node test/e2e/updater/updater-e2e.mjs --firefox "/path/to/firefox" --snapshot dist/dev-main-abc1234
 ```
 
+Repeat runs need no manual cleanup (issue #130): each script sweeps stray browser/installer
+processes from a previous run before starting (anything whose command line references the harness's
+temp dirs or the built installer binaries), profiles are created fresh per scenario with
+`compatibility.ini` removed, and `closeBrowser` waits for the OS process to exit before the next
+scenario starts. To prove determinism, run the updater selection twice in a row with one command:
+
+```bash
+node test/e2e/updater/updater-e2e.mjs --snapshot dist/dev-main-abc1234 --repeat 2
+```
+
 ### Installer E2E
 
 Starts the installer in `--smoke-test` mode and exercises every state-changing `/api` route: token
