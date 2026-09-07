@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+//
 // scan-av.mjs — scan built binaries with whatever antivirus engine is
 // available on the host, so a publish can refuse to ship a flagged artifact.
 //

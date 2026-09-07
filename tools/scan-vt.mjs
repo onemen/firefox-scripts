@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+//
 // tools/scan-vt.mjs — optional multi-engine scan of built binaries against
 // VirusTotal before publishing.
 //
