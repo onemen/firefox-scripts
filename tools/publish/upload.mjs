@@ -396,10 +396,27 @@ async function buildBinaries(platforms, storedHashes) {
   // place). Never rebuild or reuse — derive the built set from what exists on
   // disk so the gates + publish below operate on the signed bytes.
   if (SKIP_BUILD) {
+    // Fail fast: pass 2 is the ONLY pass that runs the AV/VT gates + uploads,
+    // so publishing without the staged bytes for anything this run would
+    // rebuild would silently skip the security gates AND write hashes into
+    // hashes.json that point at binaries never uploaded. Require the staged
+    // file for every in-scope platform whose hash changed (always true in
+    // dev). A genuinely idle prod pass (nothing changed, nothing staged) still
+    // completes — it uploads nothing and leaves the manifest untouched.
+    const missing = [];
     for (const p of platforms) {
-      if (fs.existsSync(installerPath(p))) builtInstallers.push(p);
-      if (fs.existsSync(helperPath(p))) builtHelpers.push(p);
+      if (installerChanged && !fs.existsSync(installerPath(p))) missing.push(installerAssetName(p));
+      if (helperChanged && !fs.existsSync(helperPath(p))) missing.push(helperAssetName(p));
     }
+    if (missing.length > 0) {
+      throw new Error(
+        `--skip-build is missing the staged binaries this run would publish: ` +
+          `${missing.join(', ')} — run pass 1 (--build-only) and preserve ` +
+          `${BUILD_ROOT} before pass 2.`
+      );
+    }
+    if (installerChanged) builtInstallers.push(...platforms);
+    if (helperChanged) builtHelpers.push(...platforms);
     const updated = {};
     if (installerChanged) updated.installer = {hash: installerHash, date: installerDate};
     if (helperChanged) updated.helper = {hash: helperHash, date: helperDate};

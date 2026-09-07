@@ -2,11 +2,15 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   analysisComplete,
   enginesReported,
   maliciousEngines,
+  scanVirusTotal,
   vtFailThreshold,
   vtVerdict,
   vtVetoEngines,
@@ -114,6 +118,51 @@ test('vtFailThreshold: defaults to 3, honors VT_FAIL_THRESHOLD', () => {
   } finally {
     if (before === undefined) delete process.env.VT_FAIL_THRESHOLD;
     else process.env.VT_FAIL_THRESHOLD = before;
+  }
+});
+
+test('scanVirusTotal: VT_VETO_ENGINES env reaches the verdict (regression: veto was hardcoded)', async () => {
+  // The env veto must change the gate. Mock the VT API so the file is "known":
+  // POST /files → 409 (duplicate), then GET /files/<sha> twice — once for the
+  // last_analysis_stats, once for the per-engine results (Bkav malicious at
+  // count 1, under threshold 3 — only a Bkav veto can make this 'fail').
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-vt-veto-'));
+  const file = path.join(dir, 'sample.bin');
+  fs.writeFileSync(file, 'vt-veto-regression');
+  const realFetch = globalThis.fetch;
+  const key = process.env.VT_API_KEY;
+  const veto = process.env.VT_VETO_ENGINES;
+  try {
+    process.env.VT_API_KEY = 'test-key';
+    process.env.VT_VETO_ENGINES = 'Bkav';
+    let fileGets = 0;
+    globalThis.fetch = async (url, opts = {}) => {
+      if (String(url).endsWith('/files') && (opts.method ?? 'GET') === 'POST') {
+        return {ok: false, status: 409, json: async () => ({})};
+      }
+      fileGets += 1;
+      const attrs =
+        fileGets === 1 ?
+          {last_analysis_stats: {malicious: 1, suspicious: 0, harmless: 0, undetected: 60}}
+        : {
+            last_analysis_results: {
+              Bkav: {category: 'malicious', result: 'W32.Malware.X'},
+              Microsoft: {category: 'undetected'},
+            },
+          };
+      return {ok: true, status: 200, json: async () => ({data: {attributes: attrs}})};
+    };
+    const {results} = await scanVirusTotal([file]);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].verdict, 'fail', 'Bkav veto from VT_VETO_ENGINES must fail the gate');
+    assert.deepEqual(results[0].flags, ['Bkav']);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (key === undefined) delete process.env.VT_API_KEY;
+    else process.env.VT_API_KEY = key;
+    if (veto === undefined) delete process.env.VT_VETO_ENGINES;
+    else process.env.VT_VETO_ENGINES = veto;
+    fs.rmSync(dir, {recursive: true, force: true});
   }
 });
 

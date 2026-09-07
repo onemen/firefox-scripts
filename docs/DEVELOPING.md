@@ -167,10 +167,10 @@ The publish flow also runs every built binary through VirusTotal when `VT_API_KE
 (GitHub secret on CI; root `.env` for a local `pnpm upload`). The publish fails when ≥
 `VT_FAIL_THRESHOLD` (default 3) engines report a binary as malicious **or** when a veto engine
 (`VT_VETO_ENGINES`, default `Microsoft`) reports it as malicious at any count — a Microsoft/Defender
-verdict must never ship, even alone. 1–2 hits from non-veto engines warn but do not block (the
-known-FP band). The run log names the flagging engines. Without a key it just skips with a warning,
-and an analysis VirusTotal has not finished when the poll times out is reported as a skip — never as
-clean.
+verdict must never ship, even alone. Hits below the configured threshold from non-veto engines warn
+but do not block (the known-FP band at the default of 3). The run log names the flagging engines.
+Without a key it just skips with a warning, and an analysis VirusTotal has not finished when the
+poll times out is reported as a skip — never as clean.
 
 ### False-positive handling
 

@@ -181,6 +181,10 @@ export async function scanVirusTotal(
 ) {
   const key = vtApiKey();
   if (!key) return {results: []};
+  // The veto list is read once per run so the env override (VT_VETO_ENGINES)
+  // reaches the verdict — without this, vtVerdict's default would silently
+  // hardcode the VETO_ENGINES constant and the knob would do nothing.
+  const vetoEngines = vtVetoEngines();
   const results = [];
   for (const file of files) {
     try {
@@ -238,7 +242,7 @@ export async function scanVirusTotal(
         status: 'completed',
         stats,
         threshold,
-        verdict: vtVerdict(stats, threshold, engines),
+        verdict: vtVerdict(stats, threshold, engines, vetoEngines),
         flags: maliciousEngines(engines),
       });
     } catch (err) {
