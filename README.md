@@ -36,6 +36,7 @@ inspection).
    - `installer_win.exe` — Windows
    - `installer_linux` — Linux
    - `installer_mac` — macOS
+
 2. **Run** the downloaded installer. It connects to a running Firefox-family browser (Firefox,
    Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets
    you pick which browser to set up.
@@ -121,4 +122,11 @@ Please search existing issues first — your problem may already be reported.
 
 ### License
 
-[MIT](LICENSE.md) © 2026 ONEMEN <tabmix.onemen@gmail.com>
+[MIT](LICENSE.md) © 2026 ONEMEN <tabmix.onemen@gmail.com> — `SPDX-License-Identifier: MIT`
+
+Applies to the whole repository **except** the upstream-derived `core/` tree (files outside
+`core/chrome/utils/updater/`), which is
+[Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/) per
+[`core/LICENSE`](core/LICENSE) — `SPDX-License-Identifier: MPL-2.0`. The custom in-browser updater
+(`core/chrome/utils/updater/`) is MIT like the rest of the repo. See
+[Original Scripts and Core Folders](#original-scripts-and-core-folders).

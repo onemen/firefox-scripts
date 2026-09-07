@@ -15,6 +15,8 @@
     "check:decisions": "node tools/check-decisions.mjs",
     "check:gates": "node tools/check-gate-coverage.mjs",
     "test:hash": "node installer/test/test_hash.mjs && node installer/test/test_self_update.mjs",
+    "scan:av": "node tools/scan-av.mjs",
+    "scan:vt": "node --env-file-if-exists=.env tools/scan-vt.mjs",
     "test:e2e": "node test/e2e/shared/run.mjs",
     "test:e2e:installer": "node test/e2e/shared/run.mjs --installer",
     "test:e2e:updater": "node test/e2e/shared/run.mjs --updater",

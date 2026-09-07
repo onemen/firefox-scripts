@@ -37,6 +37,10 @@ jobs:
               - 'config/installer.conf'
               - 'installer/**'
               - 'tools/publish/**'
+              # The publish AV/VT scan tools run inside upload.mjs (the gate's
+              # `upload:local` rehearsal), so edits to them must re-trigger it.
+              - 'tools/scan-av.mjs'
+              - 'tools/scan-vt.mjs'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - '.github/actions/**'

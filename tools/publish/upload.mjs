@@ -29,6 +29,15 @@
 //   --no-tag           (prod only) skip moving the 'latest' release tag to the
 //                      uploaded commit (it is force-updated after every
 //                      non-idle prod upload).
+//   --build-only       pass 1 of the SignPath signing flow: build/stage the
+//                      binaries, write dist/.build/build-manifest.json, then
+//                      exit BEFORE the AV/VT gates and publishing. The staging
+//                      tree is kept on disk so the workflow can code-sign the
+//                      staged files between passes.
+//   --skip-build       pass 2 of the SignPath flow: never rebuild (or reuse)
+//                      binaries — treat whatever is staged as the final,
+//                      code-signed artifacts — then run the gates + publish.
+//                      Mutually exclusive with --build-only.
 //   --verbose          per-file zip listings and other detail lines.
 //   --quiet            suppress progress output (errors still print).
 //
@@ -78,6 +87,8 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {scanBinaries} from '../scan-av.mjs';
+import {scanVirusTotal} from '../scan-vt.mjs';
 import {
   bold,
   detail,
@@ -116,6 +127,16 @@ const REF = (() => {
 // GitHub runs normally leave nothing in dist/; --keep-copy additionally writes
 // a prod-copy-<branch>-<hash>/ (or dev-copy-…) snapshot before cleanup.
 const KEEP_COPY = process.argv.includes('--keep-copy');
+// SignPath two-pass flow: pass 1 (--build-only) builds + stages the binaries
+// and writes build-manifest.json so the workflow can code-sign each staged
+// file in place; pass 2 (--skip-build) runs the AV/VT gates + publishing on
+// those signed bytes. The two are exclusive — a build-only pass that also
+// skipped building would have nothing to sign.
+const BUILD_ONLY = process.argv.includes('--build-only');
+const SKIP_BUILD = process.argv.includes('--skip-build');
+if (BUILD_ONLY && SKIP_BUILD) {
+  throw new Error('--build-only and --skip-build are mutually exclusive.');
+}
 // Removed flags fail loudly: an old --dry-run / --packages-only /
 // --binaries-only invocation must never silently turn into a real upload.
 // The offline check is now `--local` (upload:local).
@@ -369,6 +390,39 @@ async function buildBinaries(platforms, storedHashes) {
 
   const builtInstallers = [];
   const builtHelpers = [];
+
+  // Pass 2 of the SignPath flow (--skip-build): the staged binaries ARE the
+  // final artifacts (pass 1 built them, the workflow code-signed them in
+  // place). Never rebuild or reuse — derive the built set from what exists on
+  // disk so the gates + publish below operate on the signed bytes.
+  if (SKIP_BUILD) {
+    // Fail fast: pass 2 is the ONLY pass that runs the AV/VT gates + uploads,
+    // so publishing without the staged bytes for anything this run would
+    // rebuild would silently skip the security gates AND write hashes into
+    // hashes.json that point at binaries never uploaded. Require the staged
+    // file for every in-scope platform whose hash changed (always true in
+    // dev). A genuinely idle prod pass (nothing changed, nothing staged) still
+    // completes — it uploads nothing and leaves the manifest untouched.
+    const missing = [];
+    for (const p of platforms) {
+      if (installerChanged && !fs.existsSync(installerPath(p))) missing.push(installerAssetName(p));
+      if (helperChanged && !fs.existsSync(helperPath(p))) missing.push(helperAssetName(p));
+    }
+    if (missing.length > 0) {
+      throw new Error(
+        `--skip-build is missing the staged binaries this run would publish: ` +
+          `${missing.join(', ')} — run pass 1 (--build-only) and preserve ` +
+          `${BUILD_ROOT} before pass 2.`
+      );
+    }
+    if (installerChanged) builtInstallers.push(...platforms);
+    if (helperChanged) builtHelpers.push(...platforms);
+    const updated = {};
+    if (installerChanged) updated.installer = {hash: installerHash, date: installerDate};
+    if (helperChanged) updated.helper = {hash: helperHash, date: helperDate};
+    return {updated, builtInstallers, builtHelpers};
+  }
+
   // Staging is emptied on every run, so in local mode unchanged binaries are
   // reused from the newest existing snapshot (the continuity baseline) instead
   // of being recompiled.
@@ -405,6 +459,42 @@ async function buildBinaries(platforms, storedHashes) {
   if (installerChanged) updated.installer = {hash: installerHash, date: installerDate};
   if (helperChanged) updated.helper = {hash: helperHash, date: helperDate};
   return {updated, builtInstallers, builtHelpers};
+}
+
+/**
+ * Pass 1 of the SignPath flow (--build-only): record which binaries were staged
+ * and where, so the publish workflow can upload each to SignPath for code
+ * signing and copy the signed result back over the same path before pass 2
+ * (--skip-build) runs the gates + publish. Written into the staging tree
+ * (dist/.build/build-manifest.json), which build-only keeps on disk.
+ */
+function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
+  const files = [
+    ...builtInstallers.map(p => ({
+      role: 'installer',
+      platform: p,
+      asset: installerAssetName(p),
+      absPath: installerPath(p),
+    })),
+    ...builtHelpers.map(p => ({
+      role: 'helper',
+      platform: p,
+      asset: helperAssetName(p),
+      absPath: helperPath(p),
+    })),
+  ];
+  const manifest = {mode: PUBLISH_MODE, platforms, stagingDir: BUILD_ROOT, files};
+  const manifestPath = path.join(BUILD_ROOT, 'build-manifest.json');
+  fs.mkdirSync(BUILD_ROOT, {recursive: true});
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+  if (files.length === 0) {
+    info('  nothing to sign — no binaries needed rebuilding');
+  } else {
+    for (const f of files) {
+      info(`  staged ${yellow(f.role)} ${f.asset} → ${dim(f.absPath)}`);
+    }
+  }
+  info(`  build manifest → ${manifestPath}`);
 }
 
 /**
@@ -695,6 +785,10 @@ function runRefBuild(ref) {
 }
 
 async function main() {
+  // Pass 1 of the SignPath flow (--build-only) hands its staging tree to the
+  // workflow signing step + pass 2, so the finally block below must leave
+  // dist/.build in place on that path.
+  let keepStaging = false;
   try {
     // --ref builds happen in a detached worktree, so the current checkout may
     // stay dirty; the worktree itself starts clean.
@@ -759,6 +853,81 @@ async function main() {
       builtHelpers,
     } = await buildBinaries(platforms, storedHashes);
 
+    // SignPath flow pass 1 (--build-only): stop here with the staged binaries
+    // and the build manifest. The workflow code-signs each staged file, then
+    // re-invokes this tool with --skip-build (pass 2) to run the AV/VT gates
+    // + publishing on the signed bytes. Success keeps the staging tree on
+    // disk (see the finally block below).
+    if (BUILD_ONLY) {
+      writeBuildManifest(platforms, builtInstallers, builtHelpers);
+      keepStaging = true;
+      success('\n✓ Staged binaries ready for code signing (run pass 2 with --skip-build)');
+      return;
+    }
+
+    // AV gate: scan the EXACT bytes about to be uploaded and refuse to publish
+    // a flagged artifact (installer_win.exe was once falsely flagged by
+    // Defender — see tools/scan-av.mjs).  Best-effort engines: a missing
+    // scanner only warns; a positive detection hard-fails the run.
+    section('AV scan');
+    const avFiles = [...builtInstallers.map(installerPath), ...builtHelpers.map(helperPath)];
+    if (avFiles.length > 0) {
+      const {findings, scanned, notes} = await scanBinaries(avFiles);
+      for (const n of notes) warn(n);
+      if (scanned.length > 0) {
+        info(
+          `  ${green('clean')} — ${scanned.length} binary(ies) scanned by ` +
+            `${process.platform === 'win32' ? 'Windows Defender' : 'ClamAV'}`
+        );
+      }
+      for (const f of findings) {
+        error(`AV DETECTION: ${path.basename(f.file)} — ${f.engine}: ${f.detail}`);
+      }
+      if (findings.length > 0) {
+        error('Refusing to publish — an AV engine flagged a built binary.');
+        process.exitCode = 1;
+        return;
+      }
+    }
+
+    // Optional multi-engine scan via VirusTotal (requires VT_API_KEY in the
+    // env — a missing key, a transient API error, or an analysis that never
+    // completes only warns).  The publish hard-fails when >= VT_FAIL_THRESHOLD
+    // (default 3) engines report a binary as malicious — a multi-engine
+    // consensus, not a single-engine FP — or when a veto engine (default
+    // Microsoft) reports it as malicious at any count.  Any fail verdict
+    // returns BEFORE the Publishing section below, so no asset is uploaded.
+    section('VirusTotal scan');
+    if (avFiles.length > 0) {
+      const {results} = await scanVirusTotal(avFiles);
+      let vtBlocked = false;
+      for (const r of results) {
+        if (r.error) {
+          warn(`VirusTotal skipped ${path.basename(r.file)}: ${r.error}`);
+          continue;
+        }
+        const {malicious, suspicious, harmless, undetected} = r.stats;
+        const label =
+          `${path.basename(r.file)} — ${malicious} malicious / ${suspicious} suspicious / ` +
+          `${harmless} harmless / ${undetected} undetected (threshold ${r.threshold})`;
+        const who = r.flags?.length > 0 ? ` (flagged by ${r.flags.join(', ')})` : '';
+        if (r.verdict === 'fail') {
+          error(`VirusTotal DETECTION: ${label}${who}`);
+          vtBlocked = true;
+        } else if (r.verdict === 'warn') {
+          warn(`VirusTotal flagged: ${label}${who}`);
+        } else {
+          info(`  ${green('clean')} on VirusTotal — ${label}`);
+        }
+      }
+      if (results.length === 0) warn('VirusTotal scan skipped — VT_API_KEY not set (optional).');
+      if (vtBlocked) {
+        error('Refusing to publish — VirusTotal flagged a built binary.');
+        process.exitCode = 1;
+        return;
+      }
+    }
+
     const merged = {...storedHashes, ...zipUpdated, ...binUpdated};
     const manifestChanged =
       ALWAYS ||
@@ -802,9 +971,11 @@ async function main() {
     // Leave the working tree like a fresh clone: the run regenerated the
     // untracked generated files with this mode's URLs; delete them so no
     // localhost/dev-baked copies linger (all regenerable on demand). Also
-    // remove the transient staging tree so dist/ holds only snapshots.
+    // remove the transient staging tree so dist/ holds only snapshots —
+    // except after a successful --build-only pass, which keeps its staging
+    // tree for the workflow signing step + the --skip-build pass 2.
     cleanGenerated();
-    fs.rmSync(BUILD_ROOT, {recursive: true, force: true});
+    if (!keepStaging) fs.rmSync(BUILD_ROOT, {recursive: true, force: true});
   }
 }
 
