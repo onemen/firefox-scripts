@@ -1,0 +1,42 @@
+#include <windows.h>
+
+// Windows version resource for the installer executable.  The helper binary
+// (src/helper/version.rc) already carries one; without it the installer is a
+// stripped, unsigned PE with no metadata — the exact profile AV machine-learning
+// engines flag as suspicious (Defender: Program:Script/Wacapew.A!ml).
+// Keep FILEVERSION/PRODUCTVERSION in sync with VERSION in config/installer.conf.
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "Comments",         "Installs and updates the Firefox Scripts helper packages (fx-folder + utils)\0"
+            VALUE "CompanyName",      "Tab Mix Plus\0"
+            VALUE "FileDescription",  "Firefox Scripts Installer\0"
+            VALUE "FileVersion",      "1.0.0\0"
+            VALUE "InternalName",     "installer_win.exe\0"
+            VALUE "LegalCopyright",   "Copyright 2026 Tab Mix Plus\0"
+            VALUE "OriginalFilename", "installer_win.exe\0"
+            VALUE "ProductName",      "Firefox Scripts\0"
+            VALUE "ProductVersion",   "1.0.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
+// Application manifest: explicit asInvoker (no UAC prompt for the installer
+// itself — the standalone helper elevates), DPI-aware, and Win10/11
+// compatibility GUIDs.  A manifest is a standard legitimacy signal for
+// non-elevating GUI tools.
+1 RT_MANIFEST "installer.manifest"

@@ -36,7 +36,7 @@ test('parseArgs applies defaults and overrides', () => {
   assert.equal(args.baseRef, 'main');
   assert.equal(args.headRef, process.env.HEAD_REF || 'HEAD');
   assert.equal(args.maxFiles, 30);
-  assert.equal(args.maxDiffChars, 8000);
+  assert.equal(args.maxDiffChars, 60000);
   assert.equal(args.dryRun, false);
 });
 
@@ -210,6 +210,44 @@ test('collects findings and summaries from provider responses', async () => {
   assert.equal(result.rdjson.diagnostics[1].message, 'Bug B\n\nSuggestion: Fix B');
   assert.equal(result.summary.length, 2);
   assert.match(result.summary[0], /Summary a\.js/);
+});
+
+test('truncated diffs warn the model to verify against the real file', async () => {
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const longDiff = `hunk start\n${'same-line\n'.repeat(50)}hunk end`;
+  const requestImpl = async (provider, body) => {
+    const content = body.messages[1].content;
+    // Capture what the model actually receives for both files.
+    captured.push({file: /Review the diff of ([^\s:]+)/.exec(content)?.[1], content});
+    return {
+      kind: 'success',
+      body: {
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({summary: 'S', findings: []}),
+            },
+          },
+        ],
+      },
+    };
+  };
+  const captured = [];
+  await reviewFiles({
+    files: ['big.js', 'small.js'],
+    fileDiffs: new Map([
+      ['big.js', longDiff],
+      ['small.js', 'short diff'],
+    ]),
+    providers,
+    maxDiffChars: 40,
+    requestImpl,
+  });
+  const big = captured.find(c => c.file === 'big.js').content;
+  const small = captured.find(c => c.file === 'small.js').content;
+  assert.match(big, /diff truncated at 40 chars/);
+  assert.match(big, /verify against the actual file before reporting/);
+  assert.ok(!small.includes('diff truncated'), 'small diffs must not carry the marker');
 });
 
 test('caps findings via maxFindings and honors summaryOnly', async () => {
