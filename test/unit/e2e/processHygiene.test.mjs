@@ -51,9 +51,12 @@ test('removeProfileCompatibilityIni: deletes the ini, keeps the rest', () => {
   try {
     const ini = path.join(dir, 'compatibility.ini');
     fs.writeFileSync(ini, '[Compatibility]\nLastVersion=155.0.1_20260901/en-US\n');
+    const prefs = path.join(dir, 'prefs.js');
+    fs.writeFileSync(prefs, 'user_pref("x", true);\n');
     removeProfileCompatibilityIni(dir, {log: () => {}});
     assert.equal(fs.existsSync(ini), false);
-    assert.equal(fs.existsSync(path.join(dir, 'prefs.js')), false); // untouched
+    assert.equal(fs.existsSync(prefs), true, 'prefs.js untouched');
+    assert.equal(fs.readFileSync(prefs, 'utf8'), 'user_pref("x", true);\n');
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
   }

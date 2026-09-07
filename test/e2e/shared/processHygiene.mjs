@@ -48,11 +48,11 @@ export function isE2eProcess(cmdline) {
  * @returns {Promise<number>} number of processes killed (best-effort count)
  */
 export async function killStrayProcesses({log = console.log} = {}) {
+  // Windows: list candidate processes with their command lines, kill each by
+  // PID. One PowerShell round-trip; -NoProfile keeps it fast and side-effect
+  // free. Stop-Process on an already-exited PID throws per-process, hence the
+  // per-item -ErrorAction SilentlyContinue.
   if (process.platform === 'win32') {
-    // List candidate processes with their command lines, kill each by PID.
-    // One PowerShell round-trip; -NoProfile keeps it fast and side-effect
-    // free. Stop-Process on an already-exited PID throws per-process, hence
-    // the per-item -ErrorAction SilentlyContinue.
     const ps =
       'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match ' +
       "'fxs-(e2e|installer-ui)|installer_(win|linux|mac)' } | ForEach-Object { " +
@@ -63,18 +63,38 @@ export async function killStrayProcesses({log = console.log} = {}) {
       timeout: 30_000,
     });
     return report(res, log);
-  }
-  // POSIX: pkill -f matches the same argv patterns. pkill exits 1 when no
-  // process matched — the normal steady state, not an error. macOS and the
+  } // POSIX: pkill -f matches the same argv patterns. pkill exits 1 when no
+  // process matched — the normal steady state, not an error — and it prints
+  // nothing either way, so "how many" is only known on Windows. macOS and the
   // Ubuntu runner images both ship pkill.
   const res = spawnSync('pkill', ['-f', 'fxs-(e2e|installer-ui)|installer_(win|linux|mac)'], {
     encoding: 'utf8',
     timeout: 30_000,
   });
-  return report(res, log);
+  if (res.error) {
+    log(`  [hygiene] stray-process sweep unavailable: ${res.error.message}`);
+    return 0;
+  }
+  if (res.status === 0) {
+    // pkill matched and signalled at least one process, but does not report
+    // the count.
+    log(
+      '  [hygiene] killed ≥1 stray process(es) from a previous run (pkill does not report the count)'
+    );
+    return 1;
+  }
+  if (res.status > 1) {
+    log(`  [hygiene] stray-process sweep failed (pkill exit ${res.status})`);
+    return 0;
+  }
+  log('  [hygiene] no stray processes from a previous run');
+  return 0;
 }
 
-/** Interpret a sweep result for the log; returns the killed-process count. */
+/**
+ * Interpret the Windows sweep result for the log; returns the killed-process
+ * count (the PowerShell loop prints one `PID:Name` line per killed process).
+ */
 function report(res, log) {
   if (res.error) {
     log(`  [hygiene] stray-process sweep unavailable: ${res.error.message}`);
