@@ -8,18 +8,23 @@
 // built binary through VT at publish time turns that manual check into a gate.
 //
 // Best-effort by design — VT_API_KEY (or VIRUSTOTAL_API_KEY) in the
-// environment, a transient API error, or a rate limit only warn, never block.
-// The publish only hard-fails when the number of engines reporting the binary
-// as malicious reaches VT_FAIL_THRESHOLD (default 3) — a strong multi-engine
-// consensus that is not an AV false-positive.
+// environment, a transient API error, a rate limit, or an analysis that never
+// completes only warn, never block.  The publish only hard-fails when the
+// number of engines reporting the binary as malicious reaches
+// VT_FAIL_THRESHOLD (default 3) — a strong multi-engine consensus that is not
+// an AV false-positive.  An incomplete analysis is NEVER reported as clean:
+// if VirusTotal has not finished scanning when the timeout elapses, the file
+// is skipped with a warning so the publish cannot claim a verdict it did not
+// get.
 
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import {pathToFileURL} from 'url';
 
 const VT_API = 'https://www.virustotal.com/api/v3';
 const POLL_INTERVAL_MS = 2000;
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 300_000;
 
 export function vtApiKey() {
   return process.env.VT_API_KEY || process.env.VIRUSTOTAL_API_KEY || null;
@@ -31,7 +36,9 @@ export function vtFailThreshold() {
 }
 
 /**
- * Pure verdict over VT detection stats.
+ * Pure verdict over VT detection stats. Only meaningful for a COMPLETED
+ * analysis (see analysisComplete) — an empty/incomplete stats object is not
+ * "clean", callers must guard with analysisComplete first.
  *
  * @param {{malicious: number; suspicious: number}} stats
  * @param {number} threshold
@@ -44,8 +51,50 @@ export function vtVerdict(stats, threshold) {
   return 'clean';
 }
 
+/**
+ * Number of engines that reported a result in the given stats object (every VT
+ * category counts — a verdict of "clean" with zero engines is meaningless).
+ *
+ * @param {{}} stats
+ * @returns {number}
+ */
+export function enginesReported(stats) {
+  const s = stats ?? {};
+  return [
+    'malicious',
+    'suspicious',
+    'harmless',
+    'undetected',
+    'timeout',
+    'confirmed-timeout',
+    'failure',
+    'type-unsupported',
+  ].reduce((n, k) => n + Number(s[k] ?? 0), 0);
+}
+
+/**
+ * A VT analysis is only trustworthy once it finished (status 'completed') AND
+ * at least one engine reported a result. A 'queued'/'running' analysis, or a
+ * 'completed' one with empty stats, must never be read as a verdict.
+ *
+ * @param {string | undefined} status
+ * @param {{}} stats
+ * @returns {boolean}
+ */
+export function analysisComplete(status, stats) {
+  return status === 'completed' && enginesReported(stats) > 0;
+}
+
+/**
+ * Submit bytes to VirusTotal and return either a fresh pollable analysis id
+ * ({id}) or, when VirusTotal already knows the bytes and rejects the duplicate
+ * submission with HTTP 409 (AlreadySubmittedError), their last completed stats
+ * ({stats}). Never throws on 409 — the known file's stats are the fallback so
+ * repeat scans of unchanged bytes still get a verdict.
+ */
 async function uploadFile(apikey, file) {
   const buf = await fs.promises.readFile(file);
+  const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
   const form = new FormData();
   form.append('file', new Blob([buf]), path.basename(file));
   const res = await fetch(`${VT_API}/files`, {
@@ -53,8 +102,18 @@ async function uploadFile(apikey, file) {
     headers: {'x-apikey': apikey},
     body: form,
   });
-  if (!res.ok) throw new Error(`VirusTotal upload failed (HTTP ${res.status})`);
-  return (await res.json()).data?.id;
+  if (res.ok) {
+    const id = (await res.json()).data?.id;
+    if (id) return {id};
+    throw new Error('VirusTotal returned no analysis id');
+  }
+  if (res.status !== 409) throw new Error(`VirusTotal upload failed (HTTP ${res.status})`);
+  // Duplicate submission — fall back to the file's last completed analysis.
+  const known = await fetch(`${VT_API}/files/${sha256}`, {
+    headers: {'x-apikey': apikey},
+  });
+  if (!known.ok) throw new Error(`VirusTotal upload failed (HTTP ${res.status})`);
+  return {stats: (await known.json()).data?.attributes?.last_analysis_stats ?? {}};
 }
 
 async function getAnalysis(apikey, id) {
@@ -84,17 +143,52 @@ export async function scanVirusTotal(
   const results = [];
   for (const file of files) {
     try {
-      const id = await uploadFile(key, file);
+      const uploaded = await uploadFile(key, file);
+      if (uploaded.stats) {
+        // Bytes VirusTotal already knew — its last completed analysis is the
+        // verdict.  An empty stats object means the analysis has not finished
+        // yet: skip with a warning, never report as clean.
+        if (!analysisComplete('completed', uploaded.stats)) {
+          results.push({
+            file,
+            error:
+              'VirusTotal has no completed analysis for these bytes yet — skipping, not treated as clean',
+          });
+          continue;
+        }
+        results.push({
+          file,
+          status: 'completed',
+          stats: uploaded.stats,
+          threshold,
+          verdict: vtVerdict(uploaded.stats, threshold),
+        });
+        continue;
+      }
       const start = Date.now();
       let data;
-      do {
+      for (;;) {
         await sleep(POLL_INTERVAL_MS);
-        data = await getAnalysis(key, id);
-      } while (data.attributes?.status === 'queued' && Date.now() - start < timeoutMs);
-      const stats = data.attributes?.stats ?? {};
+        data = await getAnalysis(key, uploaded.id);
+        const attrs = data.attributes ?? {};
+        if (analysisComplete(attrs.status, attrs.stats) || Date.now() - start >= timeoutMs) break;
+      }
+      const attrs = data.attributes ?? {};
+      const stats = attrs.stats ?? {};
+      if (!analysisComplete(attrs.status, stats)) {
+        // VirusTotal never finished scanning (still queued, or completed with
+        // no engine results).  Skip with a warning — never report as clean.
+        results.push({
+          file,
+          error:
+            `VirusTotal analysis incomplete after ${Math.round((Date.now() - start) / 1000)}s ` +
+            `(status: ${attrs.status ?? 'unknown'}) — skipping, not treated as clean`,
+        });
+        continue;
+      }
       results.push({
         file,
-        status: data.attributes?.status,
+        status: attrs.status,
         stats,
         threshold,
         verdict: vtVerdict(stats, threshold),
