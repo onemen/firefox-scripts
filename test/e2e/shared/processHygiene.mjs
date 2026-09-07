@@ -44,30 +44,44 @@ export function isE2eProcess(cmdline) {
  * tooling is unavailable or lists nothing, the sweep is a no-op with a log
  * line.
  *
- * @param {{log?: (msg: string) => void}} [opts]
- * @returns {Promise<number>} number of processes killed (best-effort count)
+ * Unit-test seam: `run` replaces the spawnSync call (tests must never execute
+ * the real sweep — it kills matching processes) and `platform` selects the
+ * win32/POSIX branch so both are covered on any host.
+ *
+ * @param {{
+ *   log?: (msg: string) => void;
+ *   run?: typeof import('node:child_process').spawnSync;
+ *   platform?: string;
+ * }} [opts]
+ * @returns {Promise<number>} number of processes killed (best-effort count;
+ *   pkill on POSIX does not report a count, so ≥1 is reported as 1)
  */
-export async function killStrayProcesses({log = console.log} = {}) {
+export async function killStrayProcesses({
+  log = console.log,
+  run = spawnSync,
+  platform = process.platform,
+} = {}) {
   // Windows: list candidate processes with their command lines, kill each by
   // PID. One PowerShell round-trip; -NoProfile keeps it fast and side-effect
   // free. Stop-Process on an already-exited PID throws per-process, hence the
   // per-item -ErrorAction SilentlyContinue.
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     const ps =
       'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match ' +
       "'fxs-(e2e|installer-ui)|installer_(win|linux|mac)' } | ForEach-Object { " +
       'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; ' +
       '"$($_.ProcessId):$($_.Name)" }';
-    const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+    const res = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
       encoding: 'utf8',
       timeout: 30_000,
     });
     return report(res, log);
-  } // POSIX: pkill -f matches the same argv patterns. pkill exits 1 when no
+  }
+  // POSIX: pkill -f matches the same argv patterns. pkill exits 1 when no
   // process matched — the normal steady state, not an error — and it prints
   // nothing either way, so "how many" is only known on Windows. macOS and the
   // Ubuntu runner images both ship pkill.
-  const res = spawnSync('pkill', ['-f', 'fxs-(e2e|installer-ui)|installer_(win|linux|mac)'], {
+  const res = run('pkill', ['-f', 'fxs-(e2e|installer-ui)|installer_(win|linux|mac)'], {
     encoding: 'utf8',
     timeout: 30_000,
   });

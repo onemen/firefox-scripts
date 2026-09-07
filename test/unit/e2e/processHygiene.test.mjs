@@ -129,15 +129,80 @@ test('closeBrowser: null/undefined and close()-throwing browsers are safe', asyn
   );
 });
 
-// ── killStrayProcesses: smoke check only (never throws, logs) ────────────────
+// ── killStrayProcesses: the sweep with a STUBBED OS runner ─────────────────
+// The real sweep kills matching processes — unit tests must never execute it
+// (a live E2E on the same machine would be terminated). The runner is
+// injected, so the win32 and POSIX branches are both tested on any host.
 
-test('killStrayProcesses: runs on this OS without throwing', async () => {
+test('killStrayProcesses: win32 branch counts the PowerShell PID lines', async () => {
+  const seen = [];
+  const killed = await killStrayProcesses({
+    platform: 'win32',
+    run: (cmd, args) => {
+      seen.push({cmd, args: [...args]});
+      return {status: 0, stdout: '123:firefox.exe\n456:installer_win.exe\n'};
+    },
+  });
+  assert.equal(killed, 2);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].cmd, 'powershell.exe');
+  assert.match(seen[0].args.at(-1), /fxs-\(e2e\|installer-ui\)\|installer_\(win\|linux\|mac\)/);
+});
+
+test('killStrayProcesses: win32 branch with nothing matched', async () => {
   const logs = [];
-  const killed = await killStrayProcesses({log: m => logs.push(m)});
-  assert.equal(typeof killed, 'number');
-  assert.ok(killed >= 0);
-  // On a clean machine the sweep reports the steady state; whatever it found,
-  // it must have logged exactly one status line.
-  assert.equal(logs.length, 1);
-  assert.match(logs[0], /\[hygiene\]/);
+  const killed = await killStrayProcesses({
+    log: m => logs.push(m),
+    platform: 'win32',
+    run: () => ({status: 0, stdout: ''}),
+  });
+  assert.equal(killed, 0);
+  assert.match(logs[0], /no stray processes/);
+});
+
+test('killStrayProcesses: POSIX match reports ≥1 without a count (pkill prints nothing)', async () => {
+  const logs = [];
+  const killed = await killStrayProcesses({
+    log: m => logs.push(m),
+    platform: 'linux',
+    run: () => ({status: 0, stdout: ''}),
+  });
+  assert.equal(killed, 1);
+  assert.match(logs[0], /killed ≥1/);
+});
+
+test('killStrayProcesses: POSIX no-match (pkill exit 1) is the steady state', async () => {
+  const logs = [];
+  const killed = await killStrayProcesses({
+    log: m => logs.push(m),
+    platform: 'linux',
+    run: () => ({status: 1, stdout: ''}),
+  });
+  assert.equal(killed, 0);
+  assert.match(logs[0], /no stray processes/);
+});
+
+test('killStrayProcesses: sweep tooling failure is reported, not thrown', async () => {
+  const logs = [];
+  const killed = await killStrayProcesses({
+    log: m => logs.push(m),
+    platform: 'linux',
+    run: () => ({status: 2, stdout: ''}),
+  });
+  assert.equal(killed, 0);
+  assert.match(logs[0], /failed/);
+});
+
+test('killStrayProcesses: missing OS tooling is reported, not thrown', async () => {
+  const logs = [];
+  const killed = await killStrayProcesses({
+    log: m => logs.push(m),
+    platform: 'linux',
+    run: () => {
+      const e = new Error('spawn pkill ENOENT');
+      return {error: e, status: null, stdout: ''};
+    },
+  });
+  assert.equal(killed, 0);
+  assert.match(logs[0], /unavailable/);
 });
