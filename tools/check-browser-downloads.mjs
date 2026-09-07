@@ -432,6 +432,26 @@ export function formatDownloadMs(ms) {
  * is exactly what the version-aware CI installer cache still serves (the
  * fallback column). `validated` is the E2E record (see validatedCell).
  */
+/**
+ * Escape a value interpolated into a markdown table cell: an unescaped pipe
+ * would split the cell on github.com (silently shifting/dropping the cells
+ * after it), and a raw line break would split the ROW into extra markdown rows.
+ * Values are vendor-served (version strings, checked URLs), so treat them as
+ * hostile. Backslashes are escaped first so a pre-escaped backslash pipe
+ * sequence can't become live again; an escaped pipe renders as a literal pipe
+ * and does NOT split — cmark-gfm splits the raw row before inline parsing, so
+ * no code-span awareness is needed.
+ */
+export function escapeTableCell(value) {
+  // Backslashes first (a pre-escaped \| can't become live again), then line
+  // breaks (a raw \r/\n would split the ROW into extra markdown rows — same
+  // failure class as a pipe), then pipes.
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\|/g, '\\|');
+}
+
 export function buildStatusTable({results, baseline, validated}) {
   const rows = BROWSERS.map(browser => {
     const res = results[browser] || {status: 'ok'};
@@ -455,7 +475,9 @@ export function buildStatusTable({results, baseline, validated}) {
     // version has been fully downloaded at least once.
     const downloadTime = formatDownloadMs(entry.downloadMs);
     const e2e = validatedCell(browser, entry, validated);
-    return `| ${browser} | ${version} | ${sizeSha} | ${lastCheck} | ${statusTag(res.status)} | ${fallback} | ${downloadTime} | ${e2e} |`;
+    // Every variable value goes through escapeTableCell: the row's cell
+    // count must never depend on what a vendor feed returned (issue #136).
+    return `| ${browser} | ${escapeTableCell(version)} | ${escapeTableCell(sizeSha)} | ${escapeTableCell(lastCheck)} | ${escapeTableCell(statusTag(res.status))} | ${escapeTableCell(fallback)} | ${escapeTableCell(downloadTime)} | ${escapeTableCell(e2e)} |`;
   });
   return [
     '| Browser | Last verified | Size · SHA-256 | Last check | Status | Fallback (CI cache) | Download time | E2E validated |',

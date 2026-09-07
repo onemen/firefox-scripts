@@ -45,5 +45,10 @@
     "**/.agents/skills/lavish/**",
     "**/node_modules/**",
     "**/dist/**",
+    // Local drafts (gitignored .local files/dirs) — same exclusion
+    // .prettierignore and eslint.config.js use (AGENTS.md: they are not
+    // authoritative sources and their style is not gated).
+    "**/*local*/**",
+    "**/*local*.*",
   ],
 }

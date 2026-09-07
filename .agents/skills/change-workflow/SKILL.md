@@ -13,16 +13,32 @@ description:
 
 Do task work in a fresh `git worktree add ../<parent>/worktrees/<slug> -b <branch>` (one folder per
 task, trivially deletable, out of the parent dir). A stale-husk sweep after threads exit is just
-`rmdir worktrees/*`. Remove the worktree before finishing (`git worktree remove <path>`; add
-`--force` if it refuses over the gitignored node_modules, and retry the empty dir later if a process
-still holds it as its cwd).
+`rmdir worktrees/*`.
+
+**Removing a worktree (Windows gotcha):** `git worktree remove` — even `--force` — can silently
+leave the pnpm `node_modules` behind: the deep `.pnpm` paths exceed `MAX_PATH`, part of the
+filesystem deletion fails, and git deregisters the worktree anyway. `git worktree list` then looks
+clean while a husk stays on disk (22 of these accumulated in one week). `--force` only relaxes git's
+_cleanliness_ check (untracked/modified files, submodules); it does not make the filesystem delete
+more thorough. Remove in this order, and verify at the end:
+
+```bash
+rm -rf <workspace>/worktrees/<slug>/node_modules   # delete deps FIRST ...
+git worktree remove --force <workspace>/worktrees/<slug>
+git worktree list                                   # ... then verify the dir is really gone
+```
+
+A dead husk is provably safe to delete: fully unregistered (`git worktree prune` reports nothing),
+no `.git` file inside, and nothing but `node_modules` in the directory. Anything else — report it,
+don't delete it. The officially blessed alternative is the same two steps manually: `rm -rf` the
+directory, then `git worktree prune`.
 
 A fresh worktree carries no install: run `pnpm install` in it before running tools. pnpm hard-links
-packages from the global content-addressable store, so this is fast and disk-cheap, and the
-worktreestays fully self-contained — nothing done inside it can corrupt the parent checkout. When
-the opt-in githooks are installed (`pnpm hooks:install`), the `post-checkout` hook already does this
-for brand-new worktrees, so a fresh worktree is ready to use immediately. (The hook does not copy
-the root `.env` — the GitHub token stays in the main checkout only; copy it by hand if a token-using
+packages from the global content-addressable store, so this is fast and disk-cheap, and the worktree
+stays fully self-contained — nothing done inside it can corrupt the parent checkout. When the opt-in
+githooks are installed (`pnpm hooks:install`), the `post-checkout` hook already does this for
+brand-new worktrees, so a fresh worktree is ready to use immediately. (The hook does not copy the
+root `.env` — the GitHub token stays in the main checkout only; copy it by hand if a token-using
 command must run from a worktree.)
 
 Never link/symlink the parent's node_modules into a worktree (junction or otherwise). A shared

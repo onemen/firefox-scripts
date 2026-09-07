@@ -176,10 +176,12 @@ is not gated on CI — it can help debug failing checks. Add no CI/repo AI secre
 
 ## Agent workflow
 
-**Task worktrees:** use `<workspace>/worktrees/<slug>/` (one deletable folder per task) and remove
-them before finishing (`git worktree remove`; retry the empty dir if a process still held it). Run
-`pnpm install` in a fresh worktree; never link the parent's node_modules into it — details in the
-`change-workflow` skill.
+**Task worktrees:** use `<workspace>/worktrees/<slug>/` (one deletable folder per task), remove them
+before finishing, and verify the directory is really gone afterwards — on Windows the removal can
+silently leave an orphaned `node_modules` husk behind. The failure mode, the exact rm-then-prune
+recipe, and worktree install rules: the `change-workflow` skill.
+
+Run `pnpm install` in a fresh worktree; never link the parent's node_modules into it.
 
 Before changing code:
 
@@ -200,8 +202,7 @@ Before finishing:
 - if a code change invalidates any statement in AGENTS.md, skills, or docs/, update those documents
   in the same step. Do not leave stale instructions;
 - failed/unavailable validation is reported;
-- the task worktree is removed (`git worktree remove`; retry the empty directory if a process still
-  held it).
+- the task worktree is removed and the directory verified gone (see the `change-workflow` skill).
 
 ## Roadmap tracking
 

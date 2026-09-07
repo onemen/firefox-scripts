@@ -70,6 +70,22 @@ blocked on drift — the error tells the operator to run the URL watchdog workfl
 the baseline and triggers the browser-specific E2E) and then re-dispatch. **Dev** publishes warn
 instead of blocking, since dev artifacts are disposable test builds.
 
+## Deployment environments
+
+The Pages publish workflow deploys through GitHub environments (Settings → Environments); each
+publish job creates a deployment record, so a prod publish shows three `release` records (one per OS
+job) plus the `github-pages` Pages deployment.
+
+| Environment    | Created by           | Used by                            | Policy                                                                                                                                                                                |
+| -------------- | -------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `release`      | #76 (2026-08-27)     | All three prod publish jobs        | Protected-branches-only (main) — the main-only prod publish policy is enforced here; the E2E-validated requirement itself is checked pre-flight (drift gate + pre-publish job, above) |
+| `dev`          | 0744648 (2026-08-29) | Dev-mode publish (`mode == 'dev'`) | None — dev snapshots are disposable (ADR 0021); the environment exists so dev deployments get a valid name, it carries no rules                                                       |
+| `github-pages` | #15 (2026-08-22)     | The Pages deployment itself        | Custom branch policy for `gh-pages`                                                                                                                                                   |
+
+Dev publishes also create a disposable `dev-build-<id>` branch, tag, and prerelease release (served
+via jsDelivr). Delete all three after testing — the branch deletion alone leaves the tag serving on
+jsDelivr, so delete the release with `--cleanup-tag` too (DEVELOPING.md → Publish).
+
 ## Main observations
 
 | Area                           | Current behavior                                                                                                                                                                                                                                                                                                              | Remaining follow-up                                             |

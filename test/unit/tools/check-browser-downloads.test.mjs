@@ -15,6 +15,7 @@ const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-browser-dow
 const {
   buildMetaIssueBody,
   buildStatusTable,
+  escapeTableCell,
   collectDrift,
   collectValidatedDrift,
   compareBaseline,
@@ -367,6 +368,73 @@ test('buildStatusTable: cell-count integrity under extreme cell values', () => {
   const cols = assertTableIntegrity(table, 'kitchen-sink table');
   assert.equal(cols, 8);
   assert.equal(table.split('\n').length, 8); // header + delimiter + 6 browsers
+});
+
+test('buildStatusTable: hostile pipe in a vendor-served value cannot split a cell', () => {
+  // version comes from vendor release feeds — treat it as hostile. A raw |
+  // in any cell value would add a cell that GitHub renders by shifting/
+  // dropping the rest of the row; the renderer must escape it (the test-side
+  // assertTableIntegrity is the tripwire, this is the prevention).
+  const table = buildStatusTable({
+    results: {firefox: {status: 'ok'}},
+    baseline: {
+      firefox: {version: '155.0.1|x', sha256: 'ab12cd', downloadMs: 12900},
+    },
+  });
+  assertTableIntegrity(table, 'hostile-version table');
+  const row = table.split('\n').find(l => l.startsWith('| firefox '));
+  assert.match(row, /\| 155\.0\.1\\\|x \|/); // rendered escaped: 155.0.1\|x
+
+  // Backslash-pipe combo in the value must also stay one cell (the renderer
+  // escapes backslashes first so a pre-escaped \| can't turn live again).
+  const sneaky = buildStatusTable({
+    results: {zen: {status: 'ok'}},
+    baseline: {zen: {version: '1.22\\|b'}},
+  });
+  assertTableIntegrity(sneaky, 'sneaky-version table');
+
+  // Fallback cell (cached: <version>) is escaped too.
+  const failed = buildStatusTable({
+    results: {zen: {status: 'download-failed'}},
+    baseline: {zen: {version: '1.22|b'}},
+  });
+  assertTableIntegrity(failed, 'failed-hostile table');
+  const zenRow = failed.split('\n').find(l => l.startsWith('| zen '));
+  assert.match(zenRow, /cached: 1\.22\\\|b/);
+
+  // A line break in a hostile value would split the ROW itself into extra
+  // markdown rows (cmark-gfm ends a table row at \n) — row injection, the
+  // same failure class as a pipe. The renderer collapses it to a space.
+  const injected = buildStatusTable({
+    results: {firefox: {status: 'ok'}},
+    baseline: {firefox: {version: `1.0\n| injected | row |`}},
+  });
+  assertTableIntegrity(injected, 'newline-injection table');
+  assert.equal(injected.split('\n').length, 8); // no extra rows appeared
+  const ffRow = injected.split('\n').find(l => l.startsWith('| firefox '));
+  assert.match(ffRow, /1\.0 \\\| injected \\\| row \\\|/); // kept, pipes escaped, one line
+});
+
+test('escapeTableCell: pipes and backslashes, non-string input', () => {
+  // Inputs/expectations are built from char codes — no backslash literals, so
+  // the assertions cannot be silently altered by escaping layers.
+  const PIPE = String.fromCharCode(124);
+  const BS = String.fromCharCode(92);
+  assert.equal(escapeTableCell('plain'), 'plain');
+  assert.equal(escapeTableCell(`a${PIPE}b`), ['a', BS, PIPE, 'b'].join(''));
+  assert.equal(escapeTableCell(`a${PIPE}${PIPE}b`), ['a', BS, PIPE, BS, PIPE, 'b'].join(''));
+  // pre-escaped backslash+pipe in the input: the backslash is escaped first,
+  // so the pipe can never become live again (BS BS BS PIPE out)
+  assert.equal(
+    escapeTableCell(['a', BS, PIPE, 'b'].join('')),
+    ['a', BS, BS, BS, PIPE, 'b'].join('')
+  );
+  assert.equal(escapeTableCell(BS), [BS, BS].join(''));
+  assert.equal(escapeTableCell(12900), '12900'); // String() coercion
+  assert.equal(escapeTableCell(undefined), 'undefined');
+  // line breaks collapse to a single space (row-splitting prevention)
+  assert.equal(escapeTableCell(`a${PIPE}b`.replace(PIPE, '\n')), 'a b');
+  assert.equal(escapeTableCell('a\r\n\nb'), 'a b');
 });
 
 test('formatDownloadMs: human durations, unknown stays an em dash', () => {
