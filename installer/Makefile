@@ -187,10 +187,12 @@ dist_linux_aarch64: resources config
 	$(MKDIR)
 	$(AARCH64_CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -o $(DIST_DIR)/installer_linux_aarch64$(ASSET_SUFFIX) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS)
 
-# macOS build (requires macOS with clang)
+# macOS build (requires macOS with clang). Universal (x86_64 + arm64) so one
+# installer_mac asset serves Apple Silicon and Intel — mirrors helper_mac's
+# -arch pair (see #132).
 dist_mac: resources config
 	$(MKDIR)
-	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -o $(DIST_DIR)/installer_mac$(ASSET_SUFFIX) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS)
+	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -arch x86_64 -arch arm64 -o $(DIST_DIR)/installer_mac$(ASSET_SUFFIX) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS)
 
 # Build all platforms (requires cross-compilation toolchain)
 dist_all: dist_win dist_linux dist_mac

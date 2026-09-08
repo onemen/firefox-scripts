@@ -129,6 +129,11 @@ xcode-select --install
 make dist_mac   # builds dist/installer/installer_mac
 ```
 
+The macOS build is **universal** (x86_64 + arm64 in one binary, mirroring `helper_mac`), so the
+single `installer_mac` asset serves Apple Silicon and Intel Macs — verify with
+`lipo -archs dist/installer/installer_mac` (the E2E macOS runner asserts both slices and executes
+each one; #132).
+
 ## AV false positives and the AV scan gate
 
 The installer/helper binaries are unsigned, stripped, statically-linked PEs — the classic profile
