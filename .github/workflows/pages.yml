@@ -209,6 +209,14 @@ jobs:
         with:
           name: baseline-hashes
           path: ${{ runner.temp }}/baseline/
+      # The 'linux' platform builds the aarch64 twin too (upload.mjs expands
+      # it automatically), so the cross toolchain is required here.
+      - name: Install aarch64 cross toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-gcc --version | head -1
+
       - shell: bash
         env:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}

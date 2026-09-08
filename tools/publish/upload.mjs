@@ -196,8 +196,15 @@ const PACKAGES = [
 const PLATFORM = {
   win: {makeInstaller: 'dist_win', makeHelper: 'helper_win', ext: 'exe'},
   linux: {makeInstaller: 'dist_linux', makeHelper: 'helper_linux', ext: ''},
+  // ARM64 Linux twin: cross-compiled (aarch64-linux-gnu-gcc) in the same job
+  // as linux — published as its own asset so arm64 users get runnable
+  // binaries (see PLATFORM_LINUX_EXTRA below).
+  aarch64: {makeInstaller: 'dist_linux_aarch64', makeHelper: 'helper_linux_aarch64', ext: ''},
   mac: {makeInstaller: 'dist_mac', makeHelper: 'helper_mac', ext: ''},
 };
+// A 'linux' selection always implies the aarch64 twin (same sources, same
+// job); explicit '--platform=aarch64' builds the twin alone.
+const PLATFORM_LINUX_EXTRA = {linux: 'aarch64'};
 const VALID_PLATFORMS = new Set(Object.keys(PLATFORM));
 
 const zipFileName = name => `${name}${ASSET_SUFFIX}.zip`;
@@ -211,25 +218,41 @@ const helperAssetName = p => withExt(`helper_${p}`, p);
 const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p));
 const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p));
 
-/** Expand the effective build platform set: explicit list > --ci > native. */
+/**
+ * Expand the effective build platform set: explicit list > --ci > native.
+ * 'linux' pulls in the aarch64 twin automatically.
+ */
 function resolvePlatforms() {
+  let selected;
   if (PLATFORMS.length > 0) {
     for (const p of PLATFORMS) {
       if (!VALID_PLATFORMS.has(p)) {
-        throw new Error(`Unknown platform '${p}' (expected win|linux|mac)`);
+        throw new Error(`Unknown platform '${p}' (expected win|linux|aarch64|mac)`);
       }
     }
-    return PLATFORMS;
+    selected = PLATFORMS;
+  } else if (IS_CI) {
+    selected = ['win', 'linux', 'mac'];
+  } else {
+    switch (process.platform) {
+      case 'win32':
+        selected = ['win'];
+        break;
+      case 'darwin':
+        selected = ['mac'];
+        break;
+      default:
+        selected = ['linux'];
+        break;
+    }
   }
-  if (IS_CI) return ['win', 'linux', 'mac'];
-  switch (process.platform) {
-    case 'win32':
-      return ['win'];
-    case 'darwin':
-      return ['mac'];
-    default:
-      return ['linux'];
+  const expanded = [];
+  for (const p of selected) {
+    expanded.push(p);
+    const extra = PLATFORM_LINUX_EXTRA[p];
+    if (extra && !expanded.includes(extra)) expanded.push(extra);
   }
+  return expanded;
 }
 
 /** Run a make target in the installer dir, streaming output. */
@@ -245,6 +268,9 @@ function runMake(target) {
   // Redirect the Makefile's hardcoded ../dist/installer into the transient
   // staging tree, so dist/ never accumulates a persistent installer/ dir.
   const distVar = ' DIST_DIR=' + path.posix.join('..', 'dist', '.build', 'installer');
+  // ARM64 cross-compiler override: CI sets AARCH64_CC when its cross toolchain
+  // lands on a non-PATH location; local builds default to aarch64-linux-gnu-gcc.
+  const aarch64CcVar = process.env.AARCH64_CC ? ` AARCH64_CC=${process.env.AARCH64_CC}` : '';
   // The Makefile's $(MKDIR) probe falls back to cmd's `mkdir` under a Windows
   // spawn, which cannot create the two-level ../dist/.build/installer path (no
   // parent creation).  Pre-create it from Node so the link step always has a
@@ -255,11 +281,14 @@ function runMake(target) {
     // -s suppresses make's per-recipe command echo; the only stdout left is the
     // generator/embed chatter (regenerated-file notices), which we capture and
     // show only under --verbose. stderr stays inherited so gcc errors surface.
-    const out = execSync(`make -s ${target}${modeVar}${localVar}${genVar}${distVar}`, {
-      cwd: INSTALLER_DIR,
-      stdio: ['inherit', 'pipe', 'inherit'],
-      encoding: 'utf-8',
-    });
+    const out = execSync(
+      `make -s ${target}${modeVar}${localVar}${genVar}${distVar}${aarch64CcVar}`,
+      {
+        cwd: INSTALLER_DIR,
+        stdio: ['inherit', 'pipe', 'inherit'],
+        encoding: 'utf-8',
+      }
+    );
     if (out.trim()) detail(out.trimEnd());
   } catch (error) {
     if (error.stdout?.trim()) process.stdout.write(error.stdout);

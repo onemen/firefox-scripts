@@ -130,6 +130,10 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
 #define INSTALLER_BINARY_NAME "installer_win" INSTALLER_ASSET_SUFFIX ".exe"
 #elif defined(__APPLE__)
 #define INSTALLER_BINARY_NAME "installer_mac" INSTALLER_ASSET_SUFFIX
+#elif defined(__aarch64__)
+/* ARM64 Linux builds publish under their own asset name (the x86_64 installer
+ * cannot run on an arm64 host); mirrors the updater's INSTALLER_FILENAMES. */
+#define INSTALLER_BINARY_NAME "installer_linux_aarch64" INSTALLER_ASSET_SUFFIX
 #else
 #define INSTALLER_BINARY_NAME "installer_linux" INSTALLER_ASSET_SUFFIX
 #endif

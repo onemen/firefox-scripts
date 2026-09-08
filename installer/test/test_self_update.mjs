@@ -44,7 +44,7 @@ function getInstallerPath(snapshotDir) {
   let name;
   if (process.platform === 'win32') name = 'installer_win';
   else if (process.platform === 'darwin') name = 'installer_mac';
-  else name = 'installer_linux';
+  else name = process.arch === 'arm64' ? 'installer_linux_aarch64' : 'installer_linux';
   const plain = path.join(snapshotDir, `${name}${ext}`);
   if (fs.existsSync(plain)) return plain;
   const dev = path.join(snapshotDir, `${name}-dev${ext}`);
