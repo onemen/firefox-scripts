@@ -145,6 +145,13 @@ jobs:
     steps:
       - uses: $/.github/actions/setup-repo
 
+      # 'linux' implies the aarch64 twin in upload.mjs — install its
+      # cross-compiler first (also validates the cross-compile on every PR).
+      - name: Install aarch64 cross toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
 
@@ -168,6 +175,13 @@ jobs:
 
     steps:
       - uses: $/.github/actions/setup-repo
+
+      # 'linux' implies the aarch64 twin in upload.mjs (Linux runners only).
+      - name: Install aarch64 cross toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
 
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
