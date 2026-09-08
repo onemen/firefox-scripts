@@ -90,11 +90,13 @@ function main() {
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-self-update-'));
   // The installer matches the asset named after ITS OWN binary: dev snapshots
-  // ship installer_<os>-dev[.exe], prod keeps the plain name.  The fixture
-  // must use the same suffix the snapshot binary carries.
+  // ship installer_<os>[-arch]-dev[.exe], prod keeps the plain name.  The
+  // fixture must use the same suffix the snapshot binary carries — including
+  // the Linux arm64 twin, whose asset name spells installer_linux_aarch64.
   const plainBase =
     process.platform === 'win32' ? 'installer_win'
     : process.platform === 'darwin' ? 'installer_mac'
+    : process.arch === 'arm64' ? 'installer_linux_aarch64'
     : 'installer_linux';
   const isDev = path.basename(installer).includes('-dev');
   const asset = plainBase + (isDev ? '-dev' : '') + (process.platform === 'win32' ? '.exe' : '');

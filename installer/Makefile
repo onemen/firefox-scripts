@@ -195,7 +195,7 @@ dist_mac: resources config
 	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -arch x86_64 -arch arm64 -o $(DIST_DIR)/installer_mac$(ASSET_SUFFIX) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS)
 
 # Build all platforms (requires cross-compilation toolchain)
-dist_all: dist_win dist_linux dist_mac
+dist_all: dist_win dist_linux dist_linux_aarch64 dist_mac
 
 # ---- Standalone admin-copy helper (merged from onemen/admin-copy) ----
 # A tiny elevated-copy binary downloaded by the in-browser updater when the
@@ -217,7 +217,7 @@ helper_mac: $(SRC_DIR)/helper/helper_mac.c $(SRC_DIR)/helper/common_posix.c $(SR
 	clang -arch x86_64 -arch arm64 $(SRC_DIR)/helper/helper_mac.c $(SRC_DIR)/helper/common_posix.c -o $(DIST_DIR)/helper_mac$(ASSET_SUFFIX) -Oz -s -flto -Wl,-dead_strip -Wl,-sectcreate,__TEXT,__info_plist,$(SRC_DIR)/helper/Info.plist
 
 # Build all helper platforms (requires cross-compilation toolchain)
-helper_all: helper_win helper_linux helper_mac
+helper_all: helper_win helper_linux helper_linux_aarch64 helper_mac
 
 # Verify the built Windows executable has GUI subsystem (no terminal on double-click)
 # On Windows: dumpbin /headers installer_win.exe | findstr Subsystem should show 2 (GUI)

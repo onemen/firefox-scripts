@@ -254,9 +254,10 @@ function runMake(target) {
   // Redirect the Makefile's hardcoded ../dist/installer into the transient
   // staging tree, so dist/ never accumulates a persistent installer/ dir.
   const distVar = ' DIST_DIR=' + path.posix.join('..', 'dist', '.build', 'installer');
-  // ARM64 cross-compiler override: CI sets AARCH64_CC when its cross toolchain
-  // lands on a non-PATH location; local builds default to aarch64-linux-gnu-gcc.
-  const aarch64CcVar = process.env.AARCH64_CC ? ` AARCH64_CC=${process.env.AARCH64_CC}` : '';
+  // The ARM64 cross-compiler override is passed through the inherited
+  // environment: the Makefile reads AARCH64_CC with ?= (env wins over the
+  // aarch64-linux-gnu-gcc default), so no shell interpolation into the
+  // command string is needed — a path with spaces or metacharacters is safe.
   // The Makefile's $(MKDIR) probe falls back to cmd's `mkdir` under a Windows
   // spawn, which cannot create the two-level ../dist/.build/installer path (no
   // parent creation).  Pre-create it from Node so the link step always has a
@@ -267,14 +268,11 @@ function runMake(target) {
     // -s suppresses make's per-recipe command echo; the only stdout left is the
     // generator/embed chatter (regenerated-file notices), which we capture and
     // show only under --verbose. stderr stays inherited so gcc errors surface.
-    const out = execSync(
-      `make -s ${target}${modeVar}${localVar}${genVar}${distVar}${aarch64CcVar}`,
-      {
-        cwd: INSTALLER_DIR,
-        stdio: ['inherit', 'pipe', 'inherit'],
-        encoding: 'utf-8',
-      }
-    );
+    const out = execSync(`make -s ${target}${modeVar}${localVar}${genVar}${distVar}`, {
+      cwd: INSTALLER_DIR,
+      stdio: ['inherit', 'pipe', 'inherit'],
+      encoding: 'utf-8',
+    });
     if (out.trim()) detail(out.trimEnd());
   } catch (error) {
     if (error.stdout?.trim()) process.stdout.write(error.stdout);
