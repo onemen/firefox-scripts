@@ -3,7 +3,7 @@
 // Helpers shared by the publish scripts (upload.mjs): publish-mode gating,
 // GitHub token access, git-derived commit dates, and gitignore pattern loading.
 
-import {execSync} from 'child_process';
+import {execFileSync, execSync} from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import {fileURLToPath} from 'url';
@@ -45,15 +45,11 @@ export function getLatestCommitDate(dir, patterns) {
       return new Date().toISOString().split('T')[0];
     }
 
-    const relativePaths = files
-      .map(f => path.relative(REPO_ROOT, f).replace(/\\/g, '/'))
-      .join('\n');
+    const relativePaths = files.map(f => path.relative(REPO_ROOT, f).replace(/\\/g, '/'));
 
-    const date = execSync(
-      `git log -1 --format=%as -- ${relativePaths
-        .split('\n')
-        .map(p => `"${p}"`)
-        .join(' ')}`,
+    const date = execFileSync(
+      'git',
+      ['log', '-1', '--format=%as', '--', ...relativePaths],
       {
         encoding: 'utf-8',
         cwd: REPO_ROOT,
