@@ -10,9 +10,12 @@
 //
 //   - brand regex (primary, deterministic — autoconfig runs before AddonManager
 //     startup, so the registry may not be populated yet on Waterfox itself),
-//   - the AddonManager.externalExtensionLoaders registry (public Map getter,
-//     keyed by loader.name) — catches rebranded forks whose bundled loader is
-//     already registered, and makes a second evaluation of this file in a
+//   - brand regex (primary, deterministic — autoconfig runs before AddonManager
+//     startup, so the registry is empty at this point on every browser),
+//   - the external-loader registry via AddonManagerPrivate (internal export of
+//     AddonManager.sys.mjs, Map keyed by loader.name; the public AddonManager
+//     object does NOT expose it) — catches rebranded forks whose bundled loader
+//     is already registered, and makes a second evaluation of this file in a
 //     fresh scope inert (our own 'bootstrap' registration is then visible).
 //
 // These tests evaluate the *full* file in a Node vm with mocked Firefox
@@ -90,7 +93,17 @@ function makeSandbox(browserName, shared = {}) {
         }
       },
       importESModule(spec) {
-        if (spec.endsWith('AddonManager.sys.mjs')) return {AddonManager: addonManager};
+        if (spec.endsWith('AddonManager.sys.mjs')) {
+          return {
+            AddonManager: addonManager,
+            // Real surface: the registry getter lives on the internal export,
+            // not the public AddonManager object — and re-reads the live Map,
+            // so a test may swap it after creation.
+            get AddonManagerPrivate() {
+              return {externalExtensionLoaders: addonManager.externalExtensionLoaders};
+            },
+          };
+        }
         if (spec.endsWith('XPIDatabase.sys.mjs')) {
           return {XPIDatabase: xpidb, AddonInternal: function AddonInternal() {}};
         }

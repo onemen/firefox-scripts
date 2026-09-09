@@ -13,7 +13,9 @@ ChromeUtils.defineESModuleGetters(this, {
   NetUtil: 'resource://gre/modules/NetUtil.sys.mjs',
 });
 
-const {AddonManager} = ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
+const {AddonManager, AddonManagerPrivate} = ChromeUtils.importESModule(
+  'resource://gre/modules/AddonManager.sys.mjs'
+);
 const {XPIDatabase, AddonInternal} = ChromeUtils.importESModule(
   'resource://gre/modules/addons/XPIDatabase.sys.mjs'
 );
@@ -42,20 +44,23 @@ ChromeUtils.defineLazyGetter(this, 'logger', () => {
  * Waterfox bundles its own BootstrapLoader, so this copy must stay inert there
  * (config.js skips loading this file on Waterfox for the same reason; this
  * guard also covers a user-modified config.js that loads it unconditionally).
- * The brand regex is the primary, deterministic signal — autoconfig execution
- * timing relative to AddonManager startup is not guaranteed. The
- * external-loader registry (public Map getter on AddonManager, Gecko >= 102,
- * keyed by loader.name) is the secondary, name-independent signal: it catches
- * rebranded forks, and because addExternalExtensionLoader registers under the
- * key 'bootstrap' as well, it also makes a second evaluation of this file
- * inert.
+ * The brand regex is the primary, deterministic signal — autoconfig runs before
+ * AddonManager startup, so the registry is empty at this point on every
+ * browser; it protects only later evaluations. The external-loader registry is
+ * the secondary, name-independent signal: AddonManagerPrivate (internal export
+ * of AddonManager.sys.mjs, the same surface XPIProvider and XPIInstall consume)
+ * exposes externalExtensionLoaders, a Map keyed by loader.name. NOTE: the
+ * public AddonManager object does NOT expose the registry. Because
+ * addExternalExtensionLoader registers under the key 'bootstrap' as well, the
+ * registry also makes a re-evaluation of this file (e.g. a user script loading
+ * it into its own sandbox after AddonManager startup) inert on any browser.
  */
 function bootstrapLoaderBundled() {
   if (/waterfox/i.test(Services.appinfo.name)) {
     return true;
   }
   try {
-    const registry = AddonManager.externalExtensionLoaders;
+    const registry = AddonManagerPrivate?.externalExtensionLoaders;
     if (!registry) {
       return false;
     }
@@ -68,7 +73,7 @@ function bootstrapLoaderBundled() {
       }
     }
   } catch {
-    // Registry unavailable (older Gecko): brand check only.
+    // Registry unavailable (older Gecko / exotic build): brand check only.
   }
   return false;
 }
