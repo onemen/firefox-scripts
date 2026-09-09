@@ -19,9 +19,10 @@ communicates freshness without pretending every package changed.
 ## Decision
 
 - Artifact names are **permanent and unversioned**. The `latest` release carries exactly the package
-  zips + installers: `utils.zip`, `fx-folder.zip`, `installer_win.exe` / `installer_mac` /
-  `installer_linux`. `updater-ui.zip` and `helper_<os>` are gh-pages-branch artifacts — never
-  release assets.
+  zips + installers: `utils.zip`, `fx-folder.zip`, `installer_win.exe` / `installer_linux` /
+  `installer_linux_aarch64` / `installer_mac` (universal x86_64 + arm64 — one asset, both slices).
+  `updater-ui.zip` and `helper_<os>` (also covering `helper_linux_aarch64`) are gh-pages-branch
+  artifacts — never release assets.
 - Releases are tagged **per component + date**: `scripts-<YYYY-MM-DD>` (the zips) and
   `installer-<YYYY-MM-DD>` (installer + helper binaries). A component release is created only when
   that component changed.
@@ -29,6 +30,15 @@ communicates freshness without pretending every package changed.
   zips + the installers — and stays GitHub's "Latest"; component releases are created with
   `make_latest=false`. README, docs and the updater point only at `latest` — never at versioned
   URLs.
+
+## Amendment (2026-09-09)
+
+The asset set grew without touching the decision:
+[#166](https://github.com/onemen/firefox-scripts/pull/166) added the ARM64 Linux pair
+(`installer_linux_aarch64` as a release asset, `helper_linux_aarch64` on gh-pages) and
+[#165](https://github.com/onemen/firefox-scripts/pull/165) made `installer_mac` universal (x86_64 +
+arm64 in the one asset, CI-verified with `lipo`). Names stay unversioned and permanent;
+per-component date tags and the moving `latest` are unchanged.
 
 ## Consequences
 
