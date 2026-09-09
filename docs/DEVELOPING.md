@@ -110,6 +110,12 @@ Explorer does not open a terminal. Verify with:
 sudo apt install gcc
 make all                      # builds dist/installer/installer_linux
 
+# ARM64 (cross-compile; a native aarch64 host can pass AARCH64_CC=cc)
+sudo apt install gcc-aarch64-linux-gnu
+make dist_linux_aarch64 helper_linux_aarch64
+#   builds dist/installer/installer_linux_aarch64 + helper_linux_aarch64
+#   upload.mjs builds both automatically: 'linux' implies the aarch64 twin
+
 # Windows cross-compile from Linux/WSL
 sudo apt install gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
 make dist_win CC=x86_64-w64-mingw32-gcc WINDRES=x86_64-w64-mingw32-windres
@@ -689,8 +695,8 @@ unchanged.
 The same run compiles the installer and helper binaries when their source (`installer/src/`,
 `installer/src/helper/`) changes:
 
-- `installer_win.exe` / `installer_linux` / `installer_mac` — uploaded as assets of the release
-  tagged by `RELEASE_NAME` (`installer_win-dev.exe` etc. in dev mode).
+- `installer_win.exe` / `installer_linux` / `installer_linux_aarch64` / `installer_mac` — uploaded
+  as assets of the release tagged by `RELEASE_NAME` (`installer_win-dev.exe` etc. in dev mode).
 - `helper_win.exe` / `helper_linux` / `helper_mac` — pushed to the publish branch (the in-browser
   updater fetches them from there).
 - By default it builds only the current OS. Use `--ci` to cover all three platforms, or

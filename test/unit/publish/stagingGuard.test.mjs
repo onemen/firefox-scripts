@@ -14,7 +14,9 @@ const {collectOverrides, readInstallerConf, runStagingGuard, stagingBanner} =
   await import('../../../tools/publish/stagingGuard.mjs');
 
 test('readInstallerConf parses KEY=value lines and skips comments', () => {
-  const conf = readInstallerConf('config/installer.conf');
+  // Default arg → resolves through the module's absolute CONF_PATH, so the
+  // test behaves identically regardless of the process working directory.
+  const conf = readInstallerConf();
   assert.equal(conf.RELEASE_NAME, 'latest');
   assert.equal(conf.REPO_OWNER, 'onemen');
 });

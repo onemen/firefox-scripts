@@ -80,7 +80,7 @@ else
   MKDIR = @mkdir -p $(DIST_DIR) 2>/dev/null || true
 endif
 
-.PHONY: all resources config clean dist_win dist_linux dist_mac verify helper_win helper_linux helper_mac helper_all
+.PHONY: all resources config clean dist_win dist_linux dist_linux_aarch64 dist_mac verify helper_win helper_linux helper_linux_aarch64 helper_mac helper_all
 
 all: resources config $(TARGET)
 
@@ -176,6 +176,16 @@ dist_linux: resources config
 	$(MKDIR)
 	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -o $(DIST_DIR)/installer_linux$(ASSET_SUFFIX) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS)
 
+# Linux ARM64 build — published as a separate asset (installer_linux_aarch64)
+# alongside installer_linux, because Firefox ships arm64 Linux builds and the
+# elevated-copy helper must match the running architecture. Cross-compiles from
+# any host via aarch64-linux-gnu-gcc (Debian/Ubuntu: gcc-aarch64-linux-gnu;
+# a native aarch64 host can pass AARCH64_CC=cc). The sources are identical to
+# the x86_64 build — the hash manifest covers the source tree, not binaries.
+AARCH64_CC ?= aarch64-linux-gnu-gcc
+dist_linux_aarch64: resources config
+	$(MKDIR)
+	$(AARCH64_CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -o $(DIST_DIR)/installer_linux_aarch64$(ASSET_SUFFIX) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS)
 # macOS build (requires macOS with clang). Universal (x86_64 + arm64) so one
 # installer_mac asset serves Apple Silicon and Intel — mirrors helper_mac's
 # -arch pair (see #132).
@@ -184,7 +194,7 @@ dist_mac: resources config
 	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -arch x86_64 -arch arm64 -o $(DIST_DIR)/installer_mac$(ASSET_SUFFIX) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS)
 
 # Build all platforms (requires cross-compilation toolchain)
-dist_all: dist_win dist_linux dist_mac
+dist_all: dist_win dist_linux dist_linux_aarch64 dist_mac
 
 # ---- Standalone admin-copy helper (merged from onemen/admin-copy) ----
 # A tiny elevated-copy binary downloaded by the in-browser updater when the
@@ -197,11 +207,16 @@ helper_win: $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.rc | $(DIST
 helper_linux: $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c | $(DIST_DIR)
 	$(CC) $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c -o $(DIST_DIR)/helper_linux$(ASSET_SUFFIX) $(CFLAGS) $(GC_FLAGS)
 
+# ARM64 twin of helper_linux (same sources, aarch64 codegen — see the
+# dist_linux_aarch64 note).
+helper_linux_aarch64: $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c | $(DIST_DIR)
+	$(AARCH64_CC) $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c -o $(DIST_DIR)/helper_linux_aarch64$(ASSET_SUFFIX) $(CFLAGS) $(GC_FLAGS)
+
 helper_mac: $(SRC_DIR)/helper/helper_mac.c $(SRC_DIR)/helper/common_posix.c $(SRC_DIR)/helper/Info.plist | $(DIST_DIR)
 	clang -arch x86_64 -arch arm64 $(SRC_DIR)/helper/helper_mac.c $(SRC_DIR)/helper/common_posix.c -o $(DIST_DIR)/helper_mac$(ASSET_SUFFIX) -Oz -s -flto -Wl,-dead_strip -Wl,-sectcreate,__TEXT,__info_plist,$(SRC_DIR)/helper/Info.plist
 
 # Build all helper platforms (requires cross-compilation toolchain)
-helper_all: helper_win helper_linux helper_mac
+helper_all: helper_win helper_linux helper_linux_aarch64 helper_mac
 
 # Verify the built Windows executable has GUI subsystem (no terminal on double-click)
 # On Windows: dumpbin /headers installer_win.exe | findstr Subsystem should show 2 (GUI)

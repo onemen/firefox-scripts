@@ -23,8 +23,8 @@ The design decisions behind this document are recorded as ADRs in `docs/decision
 
 ## 1. Purpose
 
-The installer (`installer_win.exe` / `installer_linux` / `installer_mac`) installs three packages
-into a Firefox-based browser:
+The installer (`installer_win.exe` / `installer_linux` / `installer_linux_aarch64` /
+`installer_mac`) installs three packages into a Firefox-based browser:
 
 | Package          | Contents                                                                                                     | Destination                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |

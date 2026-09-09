@@ -34,8 +34,8 @@ inspection).
 1. **Download** the installer for your OS from the
    [releases page](https://github.com/onemen/firefox-scripts/releases):
    - `installer_win.exe` — Windows
-   - `installer_linux` — Linux
-   - `installer_mac` — macOS
+   - `installer_linux` — Linux (x86_64) · `installer_linux_aarch64` — Linux (ARM64)
+   - `installer_mac` — macOS (universal: Intel + Apple Silicon)
 
 2. **Run** the downloaded installer. It connects to a running Firefox-family browser (Firefox,
    Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets

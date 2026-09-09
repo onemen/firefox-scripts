@@ -14,14 +14,14 @@ Two phases feed the same hash-based status:
 
 ## Where files are stored on GitHub
 
-| Artifact                                                  | Host                 | URL                                                                                |
-| --------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------- |
-| `fx-folder.zip` (config package)                          | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/fx-folder.zip` |
-| `utils.zip`                                               | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip`     |
-| `installer_win.exe` / `installer_linux` / `installer_mac` | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/`              |
-| `updater-ui.zip` (the update tab itself)                  | gh-pages branch      | `https://onemen.github.io/firefox-scripts/updater-ui.zip`                          |
-| `hashes.json` (hash manifest)                             | gh-pages branch      | `https://onemen.github.io/firefox-scripts/hashes.json`                             |
-| `helper_win.exe` / `helper_linux` / `helper_mac`          | gh-pages branch      | `https://onemen.github.io/firefox-scripts/helper_<platform>` (+ `.exe` on Windows) |
+| Artifact                                                                              | Host                 | URL                                                                                |
+| ------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `fx-folder.zip` (config package)                                                      | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/fx-folder.zip` |
+| `utils.zip`                                                                           | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip`     |
+| `installer_win.exe` / `installer_linux` / `installer_linux_aarch64` / `installer_mac` | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/`              |
+| `updater-ui.zip` (the update tab itself)                                              | gh-pages branch      | `https://onemen.github.io/firefox-scripts/updater-ui.zip`                          |
+| `hashes.json` (hash manifest)                                                         | gh-pages branch      | `https://onemen.github.io/firefox-scripts/hashes.json`                             |
+| `helper_win.exe` / `helper_linux` / `helper_mac`                                      | gh-pages branch      | `https://onemen.github.io/firefox-scripts/helper_<platform>` (+ `.exe` on Windows) |
 
 The GitHub release carries exactly `fx-folder.zip`, `utils.zip` and the `installer_<os>` binaries;
 `updater-ui.zip` and the helper binaries are gh-pages-only (never release assets — the privileged
