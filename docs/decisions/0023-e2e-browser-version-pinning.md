@@ -35,9 +35,9 @@ Reproducibility is served by explicit escape hatches instead of repo-pinned vers
 - **Ground truth is recorded per run**: `downloads.mjs --installed-version` reads the version from
   the installed binary — what a leg validated is never inferred from a redirect.
 
-Firefox stable / Dev Edition are deliberately _not_ pinnable: their official `download.mozilla.org`
-endpoints are version-agnostic redirects, and tracking Firefox releases is the primary job of the
-hard-gated legs.
+Firefox stable / Dev Edition / Nightly are deliberately _not_ pinnable: their official
+`download.mozilla.org` endpoints are version-agnostic redirects, and tracking Firefox releases is
+the primary job of the hard-gated legs.
 
 ## Consequences
 

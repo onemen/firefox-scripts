@@ -123,6 +123,16 @@ const VERSION_CHAINS = {
       }),
     },
   ],
+  'nightly': [
+    {
+      source: 'product-details',
+      fetch: async () => ({
+        version: (
+          await fetchJsonWithRetry('https://product-details.mozilla.org/1.0/firefox_versions.json')
+        ).FIREFOX_NIGHTLY,
+      }),
+    },
+  ],
   'floorp': [
     {
       source: 'github-releases',
