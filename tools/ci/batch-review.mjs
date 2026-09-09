@@ -255,15 +255,24 @@ export async function main() {
   const tempBranch = `cr-batch-${process.pid}`;
   try {
     run('git', ['worktree', 'add', '--detach', wtree, args.base]);
-    const mergeRes = run(
-      'git',
-      ['-C', wtree, 'merge', '--no-edit', '--no-ff', '-m', 'cr batch review', ...unique],
-      {ignoreFail: true}
-    );
-    if (mergeRes.status !== 0) {
-      console.error('Merge failed (conflicts?). Nothing was reviewed.');
-      console.error(mergeRes.stderr?.trim().slice(-2000));
-      process.exit(2);
+    // Merge the branches sequentially instead of one octopus merge: octopus
+    // fails hard when two branches touch the same file even in different
+    // regions (e.g. stacked PRs that both edit docs/ci-inventory.md rows),
+    // while sequential merges use the normal region-merging strategy and
+    // produce the same combined tree for review.
+    for (const ref of unique) {
+      const mergeRes = run(
+        'git',
+        ['-C', wtree, 'merge', '--no-edit', '--no-ff', '-m', 'cr batch review', ref],
+        {ignoreFail: true}
+      );
+      if (mergeRes.status !== 0) {
+        console.error(
+          `Merge failed at ${ref} (conflicts with the already-merged set?). Nothing was reviewed.`
+        );
+        console.error(mergeRes.stderr?.trim().slice(-2000));
+        process.exit(2);
+      }
     }
     run('git', ['-C', wtree, 'switch', '-c', tempBranch]);
 
