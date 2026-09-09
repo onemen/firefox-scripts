@@ -395,8 +395,8 @@ it as part of the manual escape; it sets `BROWSER_PIN_VERSION`). Pin semantics a
 run is served only by sources that can express the exact version — version-embedded mirror URLs and
 the `ci-downloads` asset. Version-agnostic sources (floorp/zen's `/releases/latest/download/` URLs)
 are skipped under a pin, so a pinned floorp/zen leg requires the exact installer uploaded to
-`ci-downloads` and fails loudly otherwise. Firefox stable / Dev Edition are not pinnable (their
-official endpoints are version-agnostic redirects). Whatever a leg installed,
+`ci-downloads` and fails loudly otherwise. Firefox stable / Dev Edition / Nightly are not pinnable
+(their official endpoints are version-agnostic redirects). Whatever a leg installed,
 `downloads.mjs --installed-version` reads the version from the binary itself — the recorded ground
 truth.
 
