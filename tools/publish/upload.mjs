@@ -112,6 +112,7 @@ import {REF_NAME, REF_SHA} from './publishMode.mjs';
 import {assertCleanWorktree} from './gitUtils.mjs';
 import {linkNodeModules, unlinkNodeModules} from './refNodeModules.mjs';
 import {cleanGenerated} from './syncGeneratedFiles.mjs';
+import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
 const FORCE = process.argv.includes('--force');
@@ -157,6 +158,12 @@ const IS_CI = process.argv.includes('--ci');
 const PLATFORMS = process.argv
   .filter(a => a.startsWith('--platform='))
   .map(a => a.slice('--platform='.length));
+
+// Staging-target guard (#33): environment variables that redirect the publish
+// target abort a prod run before anything is built (warn in dev; --local
+// snapshots touch no GitHub target and are exempt). Escaping to a real staging
+// rehearsal requires the explicit FIREFOX_SCRIPTS_ALLOW_STAGING=1.
+runStagingGuard({mode: PUBLISH_MODE, local: LOCAL});
 
 const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
