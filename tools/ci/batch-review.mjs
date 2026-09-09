@@ -253,6 +253,15 @@ export async function main() {
 
   const wtree = worktreePath();
   const tempBranch = `cr-batch-${process.pid}`;
+  // process.exit() would terminate before the finally below runs (leaving the
+  // temp worktree behind — observed as orphaned cr-batch-* dirs), so failure
+  // paths inside the try throw this and the catch turns it into an exit code.
+  class BatchExit extends Error {
+    constructor(code) {
+      super(`exit ${code}`);
+      this.code = code;
+    }
+  }
   try {
     run('git', ['worktree', 'add', '--detach', wtree, args.base]);
     // Merge the branches sequentially instead of one octopus merge: octopus
@@ -271,7 +280,7 @@ export async function main() {
           `Merge failed at ${ref} (conflicts with the already-merged set?). Nothing was reviewed.`
         );
         console.error(mergeRes.stderr?.trim().slice(-2000));
-        process.exit(2);
+        throw new BatchExit(2);
       }
     }
     run('git', ['-C', wtree, 'switch', '-c', tempBranch]);
@@ -293,18 +302,18 @@ export async function main() {
           if (cr.status !== 0) {
             console.error(`Still rate-limited after the wait (exited ${cr.status}):`);
             console.error(cr.stderr?.trim().slice(-2000));
-            process.exit(4);
+            throw new BatchExit(4);
           }
         } else {
           console.error(
             'Run `cr usage` for period usage, or rerun later. Pass --wait <minutes> to auto-retry.'
           );
-          process.exit(4);
+          throw new BatchExit(4);
         }
       } else {
         console.error(`cr review exited ${cr.status}:`);
         console.error(cr.stderr?.trim().slice(-2000));
-        process.exit(3);
+        throw new BatchExit(3);
       }
     } else if (isRateLimited(`${cr.stdout || ''}\n${cr.stderr || ''}`)) {
       // Defensive: some environments report the limit in a passing exit.
@@ -315,6 +324,12 @@ export async function main() {
     console.log(
       cr.stdout?.trim() ? `\n${cr.stdout.trim()}` : 'cr review completed with no text output.'
     );
+  } catch (err) {
+    if (err instanceof BatchExit) {
+      process.exitCode = err.code;
+      return;
+    }
+    throw err;
   } finally {
     run('git', ['worktree', 'remove', '--force', wtree], {ignoreFail: true});
     if (!args.keep) run('git', ['branch', '-D', tempBranch], {ignoreFail: true});
