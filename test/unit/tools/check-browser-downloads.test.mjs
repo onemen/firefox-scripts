@@ -464,14 +464,41 @@ test('validatedCell / E2E validated column: match, stale, none, fork', () => {
   assert.match(row, /\| ✅ 155\.0\.1 \|$/);
 });
 
-test('updateHistory: appends and caps at the max', () => {
-  const entry = {date: 'new'};
+test('updateHistory: appends and caps per browser', () => {
+  const entry = {date: 'new', changes: [{browser: 'firefox', prevVersion: '1', newVersion: '2'}]};
   assert.deepEqual(updateHistory([], entry), [entry]);
-  const base = Array.from({length: 10}, (_, i) => ({date: `run-${i}`}));
-  const capped = updateHistory(base, entry, {max: 10});
-  assert.equal(capped.length, 10);
+  // Per-browser cap: firefox's oldest entries trim, other browsers' survive.
+  const base = [
+    {date: 'run-0', changes: [{browser: 'firefox', prevVersion: 'a', newVersion: 'b'}]},
+    {date: 'run-1', changes: [{browser: 'zen', prevVersion: '1.0', newVersion: '1.1'}]},
+    {date: 'run-2', changes: [{browser: 'firefox', prevVersion: 'b', newVersion: 'c'}]},
+    {date: 'run-3', changes: [{browser: 'firefox', prevVersion: 'c', newVersion: 'd'}]},
+  ];
+  const capped = updateHistory(base, entry, {perBrowser: 3});
+  assert.equal(capped.length, 4); // run-0 dropped entirely (its only change overflowed)
+  assert.equal(capped[0].date, 'run-1');
   assert.equal(capped.at(-1), entry);
-  assert.equal(capped[0].date, 'run-1'); // oldest trimmed
+  // Partial overflow: the surviving entry keeps only the under-cap changes.
+  const mixed = updateHistory(
+    [
+      {
+        date: 'old',
+        changes: [
+          {browser: 'firefox', prevVersion: 'a', newVersion: 'b'},
+          {browser: 'zen', prevVersion: '1.0', newVersion: '1.1'},
+        ],
+      },
+      {date: 'mid', changes: [{browser: 'firefox', prevVersion: 'b', newVersion: 'c'}]},
+    ],
+    {date: 'new', changes: [{browser: 'firefox', prevVersion: 'c', newVersion: 'd'}]},
+    {perBrowser: 2}
+  );
+  assert.equal(mixed.length, 3); // 'mid' firefox survives the cap; only 'old' firefox overflowed
+  assert.deepEqual(
+    mixed[0].changes.map(c => c.browser),
+    ['zen'] // firefox's 'old' occurrence overflowed; zen's stayed
+  );
+  assert.equal(mixed[0].date, 'old'); // same entry, same date/run link
 });
 
 test('seedHistoryFromBaseline: baseline-only seed until real updates exist', () => {

@@ -44,12 +44,21 @@ test('resolveDownloadUrl: firefox-dev resolves on all 3 OSes (#35 hard gate)', a
   assert.match(linux, /product=firefox-devedition-latest&os=linux64/);
 });
 
+test('resolveDownloadUrl: nightly resolves on all 3 OSes (#4 hard gate)', async () => {
+  const win = await resolveDownloadUrl('nightly', 'win32');
+  const mac = await resolveDownloadUrl('nightly', 'darwin');
+  const linux = await resolveDownloadUrl('nightly', 'linux');
+  assert.match(win, /product=firefox-nightly-latest&os=win64/);
+  assert.match(mac, /product=firefox-nightly-latest&os=osx/);
+  assert.match(linux, /product=firefox-nightly-latest&os=linux64/);
+});
+
 test('dmg app names match the browser discovery registry (space-safe volumes)', async () => {
   const browsersUrl = pathToFileURL(
     path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'browsers.mjs')
   ).href;
   const {BROWSERS} = await import(browsersUrl);
-  for (const browser of ['firefox', 'firefox-dev']) {
+  for (const browser of ['firefox', 'firefox-dev', 'nightly']) {
     const recipe = DOWNLOADS[browser]?.install?.mac;
     assert.ok(recipe?.app, `${browser} needs a mac dmg recipe`);
     // installDmg copies `<mount>/<app>` and discovery looks for
