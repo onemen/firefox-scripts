@@ -75,8 +75,14 @@ export const WATCHDOG_LABEL = 'url-watchdog';
 export const META_ISSUE_TITLE = '[url-watchdog] status';
 const MIN_BINARY_BYTES = 10_000_000; // installers are ~100 MB; smaller = wrong file
 const RANGE_BYTES = 1024;
-/** Version-history entries kept in the meta issue (oldest trimmed). */
-const HISTORY_MAX = 10;
+/**
+ * Version-history cap per browser: each browser keeps its last N transition
+ * entries in the meta issue. Per-browser (not per-run) so a chatty browser
+ * cannot evict a quiet one's only history, and bounded overall at
+ *
+ * |BROWSERS| × N lines.
+ */
+const HISTORY_PER_BROWSER = 3;
 /**
  * Statuses that prove a browser checked green — their failure issues
  * auto-close.
@@ -488,12 +494,35 @@ export function buildStatusTable({results, baseline, validated}) {
 
 /**
  * Append one version-history entry per run with real updates ({date, runUrl,
- * changes: [{browser, prevVersion, newVersion, size, sha256}]}). Capped at
- * HISTORY_MAX — the oldest entries are trimmed.
+ * changes: [{browser, prevVersion, newVersion, size, sha256}]}). Capped per
+ * browser at HISTORY_PER_BROWSER — an entry whose every change overflowed a
+ * browser's cap is dropped; one that only partially overflows keeps its
+ * under-cap changes (splitting preserves the other browsers' data, and the
+ * rendered line still carries the same date/run link).
  */
-export function updateHistory(history, entry, {max = HISTORY_MAX} = {}) {
+export function updateHistory(history, entry, {perBrowser = HISTORY_PER_BROWSER} = {}) {
   const next = [...history, entry];
-  return next.length > max ? next.slice(next.length - max) : next;
+  // Total recorded occurrences per browser across the whole (new) history.
+  const totals = {};
+  for (const h of next) {
+    for (const c of h.changes ?? []) {
+      if (c.browser) totals[c.browser] = (totals[c.browser] ?? 0) + 1;
+    }
+  }
+  // Walk oldest → newest, keeping each browser's LAST perBrowser occurrences.
+  const seen = {};
+  const out = [];
+  for (const h of next) {
+    const changes = h.changes ?? [];
+    const kept = changes.filter(c => {
+      if (!c.browser) return true;
+      seen[c.browser] = (seen[c.browser] ?? 0) + 1;
+      return seen[c.browser] > totals[c.browser] - perBrowser;
+    });
+    if (kept.length === 0) continue;
+    out.push(kept.length === changes.length ? h : {...h, changes: kept});
+  }
+  return out;
 }
 
 /**
@@ -669,13 +698,28 @@ async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   return json;
 }
 
-/** Find an open url-watchdog issue by exact title (null when absent). */
+/**
+ * Find an open url-watchdog issue by exact title (null when absent).
+ *
+ * The label-filtered list serves from GitHub's label index, which can be
+ * momentarily stale — on 2026-09-09 it transiently omitted the open, labeled
+ * meta issue minutes after comments on it were deleted, and the watchdog
+ * created a duplicate status issue instead of PATCHing it (issue #173, closed
+ * as a duplicate of #136). So a miss falls back to one unfiltered open-issues
+ * query (title match only, no label index) before concluding "absent", and the
+ * OLDEST match wins so a stable target accumulates history.
+ */
 async function findOpenIssueByTitle(token, repo, title) {
   const open = await ghApi(
     token,
     `/repos/${repo}/issues?state=open&labels=${WATCHDOG_LABEL}&per_page=100`
   );
-  return open.find(i => i.title === title) || null;
+  let matches = open.filter(i => i.title === title);
+  if (matches.length === 0) {
+    const unfiltered = await ghApi(token, `/repos/${repo}/issues?state=open&per_page=100`);
+    matches = unfiltered.filter(i => i.title === title);
+  }
+  return matches.sort((a, b) => a.number - b.number)[0] || null;
 }
 
 /** Open a watchdog issue unless an open one with the same title already exists. */

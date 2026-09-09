@@ -13,7 +13,9 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(
   path.join(REPO_ROOT, 'tools', 'ci', 'record-validated-versions.mjs')
 ).href;
-const {collectLegVersions, UPDATER_LEG_OSES} = await import(scriptUrl);
+const {collectLegVersions, planRollingComment, UPDATER_LEG_OSES, VALIDATION_MARKER} = await import(
+  scriptUrl
+);
 const watchdogUrl = pathToFileURL(
   path.join(REPO_ROOT, 'tools', 'check-browser-downloads.mjs')
 ).href;
@@ -102,4 +104,53 @@ test('collectLegVersions: an extra unvalidated-browser artifact is ignored', () 
   } finally {
     fs.rmSync(tmp, {recursive: true, force: true});
   }
+});
+
+test('planRollingComment: posts when no validation comment exists yet', () => {
+  const plan = planRollingComment([{id: 1, body: 'unrelated discussion'}], 'b');
+  assert.deepEqual(plan, {mode: 'post', deleteIds: []});
+  assert.deepEqual(planRollingComment([], 'b'), {mode: 'post', deleteIds: []});
+});
+
+test('planRollingComment: patches in place when versions changed', () => {
+  const plan = planRollingComment(
+    [{id: 7, body: `${VALIDATION_MARKER} firefox=155.0.1 — [run](old)`}],
+    `${VALIDATION_MARKER} firefox=155.0.2 — [run](new)`
+  );
+  assert.deepEqual(plan, {mode: 'patch', commentId: 7, deleteIds: []});
+});
+
+test('planRollingComment: noop only when the single comment is byte-identical', () => {
+  const body = `${VALIDATION_MARKER} firefox=155.0.1 · firefox-dev=156.0b4 — [run](r)`;
+  const plan = planRollingComment([{id: 7, body}], body);
+  assert.deepEqual(plan, {mode: 'noop', commentId: 7, deleteIds: []});
+  // Same versions but a different run link → still patch (body must match exactly).
+  const changed = planRollingComment([{id: 7, body}], body.replace('(r)', '(r2)'));
+  assert.equal(changed.mode, 'patch');
+});
+
+test('planRollingComment: collapses duplicates, keeping the oldest as primary', () => {
+  const comments = [
+    {id: 31, body: `${VALIDATION_MARKER} firefox=155.0.1 — [run](dup2)`}, // newer dup
+    {id: 5, body: 'unrelated'},
+    {id: 30, body: `${VALIDATION_MARKER} firefox=155.0.1 — [run](dup1)`}, // oldest — kept
+  ];
+  const plan = planRollingComment(comments, `${VALIDATION_MARKER} firefox=155.0.1 — [run](new)`);
+  assert.equal(plan.mode, 'patch');
+  assert.equal(plan.commentId, 30); // permalink stays stable
+  assert.deepEqual(plan.deleteIds, [31]);
+});
+
+test('planRollingComment: duplicate collapse works even when content already matches', () => {
+  const body = `${VALIDATION_MARKER} firefox=155.0.1 — [run](r)`;
+  const plan = planRollingComment(
+    [
+      {id: 2, body},
+      {id: 1, body},
+    ],
+    body
+  );
+  assert.equal(plan.mode, 'patch'); // not noop — the duplicate must go
+  assert.equal(plan.commentId, 1);
+  assert.deepEqual(plan.deleteIds, [2]);
 });
