@@ -451,6 +451,23 @@ jobs:
             macOS) make -C installer dist_mac MODE=dev ;;
             Windows) make -C installer dist_win MODE=dev ;;
           esac
+          # Universal-binary check (#132): dist_mac now builds x86_64 + arm64 in
+          # one fat installer_mac — assert both slices are really present and
+          # executable, not just that the file exists.
+          if [ "${{ runner.os }}" = macOS ]; then
+            LIPO_ARCHS=$(lipo -archs dist/installer/installer_mac-dev)
+            echo "installer_mac architectures: $LIPO_ARCHS"
+            for arch in x86_64 arm64; do
+              case " $LIPO_ARCHS " in
+                *" $arch "*) ;;
+                *) echo "::error::installer_mac-dev is missing the $arch slice (universal build broken)"; exit 1 ;;
+              esac
+            done
+            lipo -thin x86_64 -output /tmp/installer_mac_x64 dist/installer/installer_mac-dev
+            lipo -thin arm64 -output /tmp/installer_mac_arm dist/installer/installer_mac-dev
+            echo "x86_64 slice: $(/tmp/installer_mac_x64 --version)"
+            echo "arm64 slice:  $(/tmp/installer_mac_arm --version)"
+          fi
           case "${{ runner.os }}" in
             Linux) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_linux-dev" >> "$GITHUB_ENV" ;;
             macOS) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_mac-dev" >> "$GITHUB_ENV" ;;
