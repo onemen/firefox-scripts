@@ -88,6 +88,7 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {
@@ -663,6 +664,21 @@ async function publishToGitHub({
       });
     }
     info(`  ${bold('latest')} tag: ${dim(shortHash(oldSha))} → ${green(shortHash(headSha))}`);
+  }
+
+  // Date-stamped component releases alongside `latest` (issue #72, ADR 0019):
+  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers +
+  // helpers. Prerelease=true so the date tags can never take GitHub's
+  // "Latest" badge; skipped on idle runs (nothing rebuilt → tags stay frozen).
+  if (PUBLISH_MODE === 'prod' && anythingUploaded) {
+    await syncComponentReleases(octokit, {
+      builtZips,
+      builtInstallers,
+      builtHelpers,
+      zipPath,
+      installerPath,
+      helperPath,
+    });
   }
 }
 

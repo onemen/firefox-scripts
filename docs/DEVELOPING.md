@@ -685,6 +685,13 @@ The unified flow (`upload`):
    through jsDelivr, which is also CORS-enabled). The branch is created automatically on first run.
    Only the artifacts rebuilt this run are pushed, so an unchanged package keeps its live artifact.
 5. Publishes the hash manifest (`hashes.json`) to the same branch.
+6. Prod only, when something was rebuilt: syncs the date-stamped **component releases**
+   (`scripts-<date>` for rebuilt package zips, `installer-<date>` for rebuilt installers + helpers,
+   incl. the helper `.sha256` sidecars) alongside `latest` — created with `prerelease: true` so they
+   can never take GitHub's "Latest" badge, which stays on `latest` (issue #72, ADR 0019). The tags
+   are frozen per-component snapshots for humans to browse; artifacts are always fetched by the
+   permanent unversioned names from `latest`/gh-pages, and `hashes.json` stays the machine source of
+   truth. An idle run (nothing rebuilt) leaves the date tags untouched.
 
 Prod mode refuses to publish unless the current git branch is `main`; dev mode works from any branch
 (dev URLs are baked into the regenerated generated files on purpose). `upload:local` runs on any
