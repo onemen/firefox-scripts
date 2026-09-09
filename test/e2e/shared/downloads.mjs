@@ -47,7 +47,7 @@ import {discoverFirefoxBinary} from './browsers.mjs';
  * - `manual: true` → no automated install; `page` is the official download page
  *   (informational, for the manual legs).
  *
- * The E2E workflow installs what CI needs today (firefox, firefox-dev,
+ * The E2E workflow installs what CI needs today (firefox, firefox-dev, nightly,
  * librewolf, floorp, zen, waterfox on Windows); the waterfox leg is advisory
  * during its soak period (ADR 0021).
  */
@@ -92,6 +92,30 @@ export const DOWNLOADS = {
       },
     },
     page: 'https://www.mozilla.org/firefox/developer/',
+  },
+  'nightly': {
+    install: {
+      // Nightly is a first-party Mozilla channel, so it is a required leg on
+      // ALL 3 OSes like stable and Dev Edition (#4 plan section). It is
+      // deliberately NOT in the url-watchdog ledger or VALIDATED_BROWSERS: the
+      // version changes DAILY, which would put permanent drift between weekly
+      // watchdog runs and make the publish gates unsatisfiable (ADR 0021
+      // tiering). The PR-time hard-gate legs are the nightly coverage.
+      win: {
+        url: 'https://download.mozilla.org/?product=firefox-nightly-latest&os=win64&lang=en-US',
+        args: ['/S'], // NSIS silent install → %LOCALAPPDATA%\Firefox Nightly
+      },
+      mac: {
+        url: 'https://download.mozilla.org/?product=firefox-nightly-latest&os=osx&lang=en-US',
+        app: 'Firefox Nightly.app', // dmg → copy into /Applications
+      },
+      // Official tarball like stable — CI never uses the Snap wrapper (BiDi).
+      linux: {
+        tarball:
+          'https://download.mozilla.org/?product=firefox-nightly-latest&os=linux64&lang=en-US',
+      },
+    },
+    page: 'https://www.mozilla.org/firefox/channel/desktop/#nightly',
   },
   // Snap-packaged Firefox (Linux only) — issue #55. Installs through the snap
   // store (`snap install firefox --classic` needs no extra flags on the
