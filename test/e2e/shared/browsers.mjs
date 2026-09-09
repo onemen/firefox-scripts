@@ -128,6 +128,12 @@ export const BROWSERS = {
     linux: ['firefox-developer-edition'],
     choco: 'firefox-dev',
   },
+  'nightly': {
+    win: ['Firefox Nightly', 'firefox.exe'],
+    mac: ['Firefox Nightly.app'],
+    linux: ['firefox-nightly'],
+    choco: 'firefox-nightly',
+  },
   'waterfox': {
     win: ['Waterfox', 'waterfox.exe'],
     mac: ['Waterfox.app'],
