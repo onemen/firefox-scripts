@@ -14,9 +14,8 @@ process.argv.push('--mode=prod');
 const moduleUrl = pathToFileURL(
   fileURLToPath(new URL('../../../tools/publish/componentReleases.mjs', import.meta.url))
 ).href;
-const {componentDate, scriptsTag, installerTag, groupBuilt, renderComponentBody} = await import(
-  moduleUrl
-);
+const {componentDate, scriptsTag, installerTag, groupBuilt, renderComponentBody, componentAssets} =
+  await import(moduleUrl);
 
 test('componentDate: YYYY-MM-DD UTC, injectable clock', () => {
   assert.equal(componentDate(new Date('2026-09-09T23:30:00Z')), '2026-09-09');
@@ -63,4 +62,40 @@ test('renderComponentBody: lists artifacts and points back at latest', () => {
 
   const empty = renderComponentBody('installer', '2026-09-09', []);
   assert.match(empty, /no artifacts this date/);
+});
+
+// The CodeRabbit Major finding on the first draft: groupBuilt unions
+// installers+helpers, so a partial rebuild (helper leg skipped) must not
+// touch the helper accessor — the old inline loop read the staged helper path
+// for every unioned platform and threw ENOENT, silently dropping the whole
+// installer- release.
+test('componentAssets: partial rebuild contributes only artifacts actually built', () => {
+  const access = {
+    installer: p => `installer_${p}.exe`,
+    helper: p => `helper_${p}.exe`,
+    helperSha: p => `helper_${p}.exe.sha256`,
+    installerPath: p => `staged/installer-${p}`, // throws for unstaged in real life
+    helperPath: p => {
+      if (p !== 'win') throw new Error(`ENOENT: ${p} helper not staged`);
+      return `staged/helper-${p}`;
+    },
+    sidecar: () => Buffer.from('abc'),
+  };
+  const built = {builtInstallers: ['win', 'linux'], builtHelpers: ['win']};
+  const assets = componentAssets(['win', 'linux'], built, access);
+  assert.deepEqual([...assets.keys()].sort(), [
+    'helper_win.exe',
+    'helper_win.exe.sha256',
+    'installer_linux.exe',
+    'installer_win.exe',
+  ]);
+});
+
+test('componentAssets: nothing built → empty map', () => {
+  const assets = componentAssets(
+    [],
+    {builtInstallers: [], builtHelpers: []},
+    {installer: p => p, helper: p => p, helperSha: p => p}
+  );
+  assert.equal(assets.size, 0);
 });

@@ -65,6 +65,43 @@ export function groupBuilt(built) {
 }
 
 /**
+ * Build the installer component release's asset map, contributing only the
+ * artifacts this run actually built: a platform's installer is added only when
+ * the installer leg built it, its helper + sha256 sidecar only when the helper
+ * leg did. Per-artifact (not per-platform) because a run can rebuild one leg
+ * without the other, and the staged-path accessors throw for anything not
+ * staged.
+ *
+ * @param {string[]} installer platform keys (the groupBuilt union)
+ * @param {{builtInstallers: string[]; builtHelpers: string[]}} built what the
+ *   run rebuilt
+ * @param {object} access
+ * @param {(p: string) => string} access.installer platform → installer asset
+ *   name
+ * @param {(p: string) => string} access.helper platform → helper asset name
+ * @param {(p: string) => string} access.helperSha platform → sidecar asset name
+ * @param {(p: string) => string} access.installerPath platform → staged path
+ * @param {(p: string) => string} access.helperPath platform → staged path
+ * @param {(p: string) => Buffer} access.sidecar platform → sidecar bytes
+ * @returns {Map<string, string | Buffer>} asset name → path or bytes
+ */
+export function componentAssets(installer, built, access) {
+  const assets = new Map();
+  for (const p of installer) {
+    if (built.builtInstallers.includes(p)) {
+      assets.set(access.installer(p), access.installerPath(p));
+    }
+    if (built.builtHelpers.includes(p)) {
+      const helper = access.helper(p);
+      assets.set(helper, access.helperPath(p));
+      // Sidecar regenerated from the staged bytes (issue #33 contract).
+      assets.set(access.helperSha(p), access.sidecar(p));
+    }
+  }
+  return assets;
+}
+
+/**
  * Render the release body for one component release: what's in it, and the
  * pointer back to `latest` + hashes.json (the machines' source of truth).
  */
@@ -154,17 +191,23 @@ export async function syncComponentReleases(
     }
 
     if (installer.length > 0) {
-      const assets = new Map();
       const {helperSha256Sidecar} = await import('./hashUtils.mjs');
       const {readFileSync} = await import('fs');
-      for (const p of installer) {
-        const inst = installerAssetName(p);
-        const helper = helperAssetName(p);
-        const sidecar = helperShaAssetName(p);
-        assets.set(inst, installerPath(p));
-        assets.set(helper, helperPath(p));
-        // Sidecar regenerated from the staged bytes (issue #33 contract).
-        assets.set(sidecar, helperSha256Sidecar(readFileSync(helperPath(p)), helper));
+      const assets = componentAssets(
+        installer,
+        {builtInstallers, builtHelpers},
+        {
+          installer: installerAssetName,
+          helper: helperAssetName,
+          helperSha: helperShaAssetName,
+          installerPath,
+          helperPath,
+          sidecar: p => helperSha256Sidecar(readFileSync(helperPath(p)), helperAssetName(p)),
+        }
+      );
+      if (assets.size === 0) {
+        console.log(dim('  component releases: installer bucket empty — date tag unchanged'));
+        return;
       }
       await syncComponentRelease(octokit, installerTag(date), date, assets, {kind: 'installer'});
     }
