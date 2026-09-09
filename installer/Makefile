@@ -186,7 +186,6 @@ AARCH64_CC ?= aarch64-linux-gnu-gcc
 dist_linux_aarch64: resources config
 	$(MKDIR)
 	$(AARCH64_CC) $(SRC_DIR)/*.c $(MINIZ_SRC) -o $(DIST_DIR)/installer_linux_aarch64$(ASSET_SUFFIX) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS)
-
 # macOS build (requires macOS with clang). Universal (x86_64 + arm64) so one
 # installer_mac asset serves Apple Silicon and Intel — mirrors helper_mac's
 # -arch pair (see #132).
