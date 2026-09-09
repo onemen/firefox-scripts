@@ -6,16 +6,6 @@
 
 const Services = globalThis.Services;
 
-// Waterfox bundles its own legacy-extension BootstrapLoader, so our copy must
-// never run there — config.js skips loading this file on Waterfox. If a
-// user-modified config.js loads it unconditionally anyway, the top-level
-// patches below would double-register observers, double-patch the add-ons UI
-// and register the external loader a second time. Guard them all with this
-// flag so the whole file stays a no-op on Waterfox (userChrome.js and the
-// updater still load normally there — userChrome.js registers its own
-// updater-init observer).
-const waterfoxBrand = /waterfox/i.test(Services.appinfo.name);
-
 ChromeUtils.defineESModuleGetters(this, {
   Blocklist: 'resource://gre/modules/Blocklist.sys.mjs',
   ConsoleAPI: 'resource://gre/modules/Console.sys.mjs',
@@ -23,98 +13,11 @@ ChromeUtils.defineESModuleGetters(this, {
   NetUtil: 'resource://gre/modules/NetUtil.sys.mjs',
 });
 
-// Initialize scripts updater on window startup if available
-// (importESModule + call — the module is idempotent, so userChrome.js may
-// also init it without double-checking).
-try {
-  if (!waterfoxBrand) {
-    // NOTE: doc.location.protocol is 'chrome:' and pathname is
-    // '/browser/content/browser.xhtml' — concatenated this gives a SINGLE slash
-    // (chrome:/browser/...), matching the about:addons check below.
-    Services.obs.addObserver(doc => {
-      if (doc.documentURI === 'chrome://browser/content/browser.xhtml') {
-        const win = doc.defaultView;
-        try {
-          const {initScriptsUpdater} = ChromeUtils.importESModule(
-            'chrome://firefox-scripts/content/scriptsUpdater.sys.mjs'
-          );
-          initScriptsUpdater(win);
-        } catch (e2) {
-          logger.warn('Firefox Scripts updater not available', e2);
-        }
-      }
-    }, 'chrome-document-loaded');
-  }
-} catch (e) {
-  logger.warn('Firefox Scripts updater init failed', e);
-}
-
-if (!waterfoxBrand) {
-  Services.obs.addObserver(doc => {
-    if (
-      doc.location.protocol + doc.location.pathname === 'about:addons' ||
-      doc.location.protocol + doc.location.pathname ===
-        'chrome:/content/extensions/aboutaddons.html'
-    ) {
-      const win = doc.defaultView;
-      const handleEvent_orig = win.customElements.get('addon-card').prototype.handleEvent;
-      win.customElements.get('addon-card').prototype.handleEvent = function (e) {
-        if (
-          e.type === 'click' &&
-          e.target.getAttribute('action') === 'preferences' &&
-          this.addon.__AddonInternal__.optionsType == 1 /*AddonManager.OPTIONS_TYPE_DIALOG*/ &&
-          !!this.addon.optionsURL
-        ) {
-          const windows = Services.wm.getEnumerator(null);
-          while (windows.hasMoreElements()) {
-            const win2 = windows.getNext();
-            if (win2.closed) {
-              continue;
-            }
-            if (win2.document.documentURI == this.addon.optionsURL) {
-              win2.focus();
-              return;
-            }
-          }
-          const features = 'chrome,titlebar,toolbar,centerscreen';
-          win.docShell.rootTreeItem.domWindow.openDialog(
-            this.addon.optionsURL,
-            this.addon.id,
-            features
-          );
-        } else {
-          handleEvent_orig.apply(this, arguments);
-        }
-      };
-      const update_orig = win.customElements.get('addon-options').prototype.update;
-      win.customElements.get('addon-options').prototype.update = function (card, addon) {
-        update_orig.apply(this, arguments);
-        if (
-          addon.__AddonInternal__?.optionsType == 1 /*AddonManager.OPTIONS_TYPE_DIALOG*/ &&
-          !!addon.optionsURL
-        )
-          this.querySelector('panel-item[data-l10n-id="preferences-addon-button"]').hidden = false;
-      };
-    }
-  }, 'chrome-document-loaded');
-}
-
 const {AddonManager} = ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
 const {XPIDatabase, AddonInternal} = ChromeUtils.importESModule(
   'resource://gre/modules/addons/XPIDatabase.sys.mjs'
 );
 const {XPIExports} = ChromeUtils.importESModule('resource://gre/modules/addons/XPIExports.sys.mjs');
-
-if (!waterfoxBrand) {
-  XPIDatabase.isDisabledLegacy = () => false;
-
-  const orig_verifyBundleSignedState = XPIExports.verifyBundleSignedState;
-  XPIExports.verifyBundleSignedState = async (aBundle, aAddon) => {
-    if ((!aAddon.isWebExtension && aAddon.type === 'extension') || aAddon.id.includes('_N_SIGN_'))
-      return {signedState: undefined, signedTypes: []};
-    return orig_verifyBundleSignedState(aBundle, aAddon);
-  };
-}
 
 ChromeUtils.defineLazyGetter(this, 'BOOTSTRAP_REASONS', () => {
   const {XPIProvider} = ChromeUtils.importESModule(
@@ -131,6 +34,44 @@ ChromeUtils.defineLazyGetter(this, 'logger', () => {
   };
   return new ConsoleAPI(consoleOptions);
 });
+
+/**
+ * True when a legacy-extension loader equivalent to this file is already
+ * provided by the browser itself.
+ *
+ * Waterfox bundles its own BootstrapLoader, so this copy must stay inert there
+ * (config.js skips loading this file on Waterfox for the same reason; this
+ * guard also covers a user-modified config.js that loads it unconditionally).
+ * The brand regex is the primary, deterministic signal — autoconfig execution
+ * timing relative to AddonManager startup is not guaranteed. The
+ * external-loader registry (public Map getter on AddonManager, Gecko >= 102,
+ * keyed by loader.name) is the secondary, name-independent signal: it catches
+ * rebranded forks, and because addExternalExtensionLoader registers under the
+ * key 'bootstrap' as well, it also makes a second evaluation of this file
+ * inert.
+ */
+function bootstrapLoaderBundled() {
+  if (/waterfox/i.test(Services.appinfo.name)) {
+    return true;
+  }
+  try {
+    const registry = AddonManager.externalExtensionLoaders;
+    if (!registry) {
+      return false;
+    }
+    if (registry.get('bootstrap')) {
+      return true;
+    }
+    for (const loader of registry.values()) {
+      if (loader && loader.manifestFile === 'install.rdf') {
+        return true;
+      }
+    }
+  } catch {
+    // Registry unavailable (older Gecko): brand check only.
+  }
+  return false;
+}
 
 /** Valid IDs fit this pattern. */
 const gIDTest =
@@ -487,7 +428,7 @@ const BootstrapLoader = {
         style: 2, // style uri uri/to/files/ [flags]
       };
       const isRelative = loc => {
-        // Not absolute if doesn't start with \, or protocol (chrome://, resource://, etc)
+        // Not absolute if doesn't start with \\, or protocol (chrome://, resource://, etc)
         return typeof loc === 'string' && !loc.match(/^(?:[a-zA-Z]+:|\\)/);
       };
 
@@ -587,7 +528,87 @@ const BootstrapLoader = {
   },
 };
 
-if (!waterfoxBrand) {
+/**
+ * All top-level side effects of this file. Kept in one function so the
+ * bundled-loader decision (bootstrapLoaderBundled) happens in exactly one
+ * place, and so none of these blocks leak new global bindings on any browser.
+ */
+function initBootstrapLoader() {
+  try {
+    Services.obs.addObserver(doc => {
+      if (doc.documentURI === 'chrome://browser/content/browser.xhtml') {
+        const win = doc.defaultView;
+        try {
+          const {initScriptsUpdater} = ChromeUtils.importESModule(
+            'chrome://firefox-scripts/content/scriptsUpdater.sys.mjs'
+          );
+          initScriptsUpdater(win);
+        } catch (e2) {
+          logger.warn('Firefox Scripts updater not available', e2);
+        }
+      }
+    }, 'chrome-document-loaded');
+  } catch (e) {
+    logger.warn('Firefox Scripts updater init failed', e);
+  }
+
+  Services.obs.addObserver(doc => {
+    if (
+      doc.location.protocol + doc.location.pathname === 'about:addons' ||
+      doc.location.protocol + doc.location.pathname ===
+        'chrome:/content/extensions/aboutaddons.html'
+    ) {
+      const win = doc.defaultView;
+      const handleEvent_orig = win.customElements.get('addon-card').prototype.handleEvent;
+      win.customElements.get('addon-card').prototype.handleEvent = function (e) {
+        if (
+          e.type === 'click' &&
+          e.target.getAttribute('action') === 'preferences' &&
+          this.addon.__AddonInternal__.optionsType == 1 /*AddonManager.OPTIONS_TYPE_DIALOG*/ &&
+          !!this.addon.optionsURL
+        ) {
+          const windows = Services.wm.getEnumerator(null);
+          while (windows.hasMoreElements()) {
+            const win2 = windows.getNext();
+            if (win2.closed) {
+              continue;
+            }
+            if (win2.document.documentURI == this.addon.optionsURL) {
+              win2.focus();
+              return;
+            }
+          }
+          const features = 'chrome,titlebar,toolbar,centerscreen';
+          win.docShell.rootTreeItem.domWindow.openDialog(
+            this.addon.optionsURL,
+            this.addon.id,
+            features
+          );
+        } else {
+          handleEvent_orig.apply(this, arguments);
+        }
+      };
+      const update_orig = win.customElements.get('addon-options').prototype.update;
+      win.customElements.get('addon-options').prototype.update = function (card, addon) {
+        update_orig.apply(this, arguments);
+        if (
+          addon.__AddonInternal__?.optionsType == 1 /*AddonManager.OPTIONS_TYPE_DIALOG*/ &&
+          !!addon.optionsURL
+        )
+          this.querySelector('panel-item[data-l10n-id="preferences-addon-button"]').hidden = false;
+      };
+    }
+  }, 'chrome-document-loaded');
+
+  XPIDatabase.isDisabledLegacy = () => false;
+
+  const orig_verifyBundleSignedState = XPIExports.verifyBundleSignedState;
+  XPIExports.verifyBundleSignedState = async (aBundle, aAddon) => {
+    if ((!aAddon.isWebExtension && aAddon.type === 'extension') || aAddon.id.includes('_N_SIGN_'))
+      return {signedState: undefined, signedTypes: []};
+    return orig_verifyBundleSignedState(aBundle, aAddon);
+  };
+
   AddonManager.addExternalExtensionLoader(BootstrapLoader);
 
   if (AddonManager.isReady) {
@@ -599,4 +620,8 @@ if (!waterfoxBrand) {
       });
     });
   }
+}
+
+if (!bootstrapLoaderBundled()) {
+  initBootstrapLoader();
 }
