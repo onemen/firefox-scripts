@@ -47,14 +47,10 @@ export function getLatestCommitDate(dir, patterns) {
 
     const relativePaths = files.map(f => path.relative(REPO_ROOT, f).replace(/\\/g, '/'));
 
-    const date = execFileSync(
-      'git',
-      ['log', '-1', '--format=%as', '--', ...relativePaths],
-      {
-        encoding: 'utf-8',
-        cwd: REPO_ROOT,
-      }
-    ).trim();
+    const date = execFileSync('git', ['log', '-1', '--format=%as', '--', ...relativePaths], {
+      encoding: 'utf-8',
+      cwd: REPO_ROOT,
+    }).trim();
     return date;
   } catch {
     return new Date().toISOString().split('T')[0];
