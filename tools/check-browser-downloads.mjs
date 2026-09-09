@@ -698,13 +698,28 @@ async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   return json;
 }
 
-/** Find an open url-watchdog issue by exact title (null when absent). */
+/**
+ * Find an open url-watchdog issue by exact title (null when absent).
+ *
+ * The label-filtered list serves from GitHub's label index, which can be
+ * momentarily stale — on 2026-09-09 it transiently omitted the open, labeled
+ * meta issue minutes after comments on it were deleted, and the watchdog
+ * created a duplicate status issue instead of PATCHing it (issue #173, closed
+ * as a duplicate of #136). So a miss falls back to one unfiltered open-issues
+ * query (title match only, no label index) before concluding "absent", and the
+ * OLDEST match wins so a stable target accumulates history.
+ */
 async function findOpenIssueByTitle(token, repo, title) {
   const open = await ghApi(
     token,
     `/repos/${repo}/issues?state=open&labels=${WATCHDOG_LABEL}&per_page=100`
   );
-  return open.find(i => i.title === title) || null;
+  let matches = open.filter(i => i.title === title);
+  if (matches.length === 0) {
+    const unfiltered = await ghApi(token, `/repos/${repo}/issues?state=open&per_page=100`);
+    matches = unfiltered.filter(i => i.title === title);
+  }
+  return matches.sort((a, b) => a.number - b.number)[0] || null;
 }
 
 /** Open a watchdog issue unless an open one with the same title already exists. */
