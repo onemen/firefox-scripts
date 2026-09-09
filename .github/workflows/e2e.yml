@@ -145,6 +145,13 @@ jobs:
     steps:
       - uses: $/.github/actions/setup-repo
 
+      # 'linux' implies the aarch64 twin in upload.mjs — install its
+      # cross-compiler first (also validates the cross-compile on every PR).
+      - name: Install aarch64 cross toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
 
@@ -168,6 +175,13 @@ jobs:
 
     steps:
       - uses: $/.github/actions/setup-repo
+
+      # 'linux' implies the aarch64 twin in upload.mjs (Linux runners only).
+      - name: Install aarch64 cross toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
 
       - name: Build snapshot
         run: pnpm upload:local --mode=dev
@@ -219,9 +233,10 @@ jobs:
           rm /tmp/test_src.txt
 
   # ── Updater E2E ────────────────────────────────────────────────────────────
-  # Every leg is required: the updater must work on Firefox stable AND Firefox
-  # Developer Edition across the supported OS matrix (#35 — Dev Edition is
-  # first-party Mozilla, so it is hard-gated like stable, unlike the forks).
+  # Every leg is required: the updater must work on Firefox stable, Firefox
+  # Developer Edition AND Nightly across the supported OS matrix (#35 — Dev
+  # Edition and Nightly are first-party Mozilla channels, hard-gated like
+  # stable, unlike the forks; Nightly per the #4 plan section).
   updater:
     name: 'updater E2E · ${{ matrix.browser }} · ${{ matrix.os }}'
     needs: [changes, snapshot]
@@ -237,6 +252,9 @@ jobs:
           - {browser: firefox-dev, os: ubuntu-latest}
           - {browser: firefox-dev, os: macos-latest}
           - {browser: firefox-dev, os: windows-latest}
+          - {browser: nightly, os: ubuntu-latest}
+          - {browser: nightly, os: macos-latest}
+          - {browser: nightly, os: windows-latest}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
@@ -451,6 +469,23 @@ jobs:
             macOS) make -C installer dist_mac MODE=dev ;;
             Windows) make -C installer dist_win MODE=dev ;;
           esac
+          # Universal-binary check (#132): dist_mac now builds x86_64 + arm64 in
+          # one fat installer_mac — assert both slices are really present and
+          # executable, not just that the file exists.
+          if [ "${{ runner.os }}" = macOS ]; then
+            LIPO_ARCHS=$(lipo -archs dist/installer/installer_mac-dev)
+            echo "installer_mac architectures: $LIPO_ARCHS"
+            for arch in x86_64 arm64; do
+              case " $LIPO_ARCHS " in
+                *" $arch "*) ;;
+                *) echo "::error::installer_mac-dev is missing the $arch slice (universal build broken)"; exit 1 ;;
+              esac
+            done
+            lipo -thin x86_64 -output /tmp/installer_mac_x64 dist/installer/installer_mac-dev
+            lipo -thin arm64 -output /tmp/installer_mac_arm dist/installer/installer_mac-dev
+            echo "x86_64 slice: $(/tmp/installer_mac_x64 --version)"
+            echo "arm64 slice:  $(/tmp/installer_mac_arm --version)"
+          fi
           case "${{ runner.os }}" in
             Linux) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_linux-dev" >> "$GITHUB_ENV" ;;
             macOS) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_mac-dev" >> "$GITHUB_ENV" ;;
@@ -799,8 +834,8 @@ jobs:
           skip-guard: snapshot installer helper updater portable-firefox snap-firefox browser-matrix
 
   # ── Record validated browser versions (#4) ────────────────────────────────
-  # After the updater matrix legs (firefox/firefox-dev × 3 OSes) ran and
-  # passed, record the EXACT versions those legs installed into
+  # After the updater matrix legs (firefox/firefox-dev/nightly × 3 OSes) ran
+  # and passed, record the EXACT versions those legs installed into
   # .watchdog-validated/ (Actions cache, rotating key — same pattern as the
   # watchdog baseline; a dedicated dir so the publish pre-flight's baseline
   # restore can never clobber it). The prod publish pre-flight requires the
@@ -811,7 +846,10 @@ jobs:
     name: record validated browser versions
     # `updater` is needed directly because this job must prove the legs
     # ACTUALLY RAN: needs.updater.result aggregates the whole matrix, so a
-    # 'success' means all six firefox/firefox-dev legs ran and passed. A
+    # 'success' means all nine updater legs (firefox/firefox-dev/nightly × 3
+    # OSes) ran and passed. Nightly's artifacts are intentionally ignored by
+    # the recorder (VALIDATED_BROWSERS — Nightly changes daily and must never
+    # gate the publish pre-flight). A
     # core-only main push (updater legs path-skipped → result 'skipped') no
     # longer records — without a test run, re-resolving live versions would
     # claim untested releases as E2E-validated (#134 review finding 5).

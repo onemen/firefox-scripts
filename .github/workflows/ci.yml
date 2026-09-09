@@ -91,6 +91,15 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-gcc make
 
+      # ARM64 cross-compiler for the aarch64 Linux binaries (the 'linux'
+      # platform implies the aarch64 twin in upload.mjs).
+      - name: Install aarch64 cross toolchain (Linux)
+        if: runner.os == 'Linux' && needs.changes.outputs.publish == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-gcc --version | head -1
+
       - name: Build all packages and binaries
         if: needs.changes.outputs.publish == 'true'
         shell: bash

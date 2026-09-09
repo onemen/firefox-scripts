@@ -78,6 +78,7 @@ import {
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
+import {REF_NAME, REF_SHA} from './publishMode.mjs';
 import {
   createOctokit,
   enforcePublishBranch,
@@ -108,10 +109,11 @@ import {
   getRelease,
   uploadAsset,
 } from './uploadUtilsZip.mjs';
-import {REF_NAME, REF_SHA} from './publishMode.mjs';
 import {assertCleanWorktree} from './gitUtils.mjs';
 import {linkNodeModules, unlinkNodeModules} from './refNodeModules.mjs';
 import {cleanGenerated} from './syncGeneratedFiles.mjs';
+import {PLATFORM, expandPlatforms, helperAssetName, installerAssetName} from './platforms.mjs';
+import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
 const FORCE = process.argv.includes('--force');
@@ -158,6 +160,12 @@ const PLATFORMS = process.argv
   .filter(a => a.startsWith('--platform='))
   .map(a => a.slice('--platform='.length));
 
+// Staging-target guard (#33): environment variables that redirect the publish
+// target abort a prod run before anything is built (warn in dev; --local
+// snapshots touch no GitHub target and are exempt). Escaping to a real staging
+// rehearsal requires the explicit FIREFOX_SCRIPTS_ALLOW_STAGING=1.
+runStagingGuard({mode: PUBLISH_MODE, local: LOCAL});
+
 const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
 const INSTALLER_WEB = path.join(INSTALLER_DIR, 'web');
@@ -193,43 +201,44 @@ const PACKAGES = [
   {name: 'updater-ui', dir: UI_SOURCE},
 ];
 
-const PLATFORM = {
-  win: {makeInstaller: 'dist_win', makeHelper: 'helper_win', ext: 'exe'},
-  linux: {makeInstaller: 'dist_linux', makeHelper: 'helper_linux', ext: ''},
-  mac: {makeInstaller: 'dist_mac', makeHelper: 'helper_mac', ext: ''},
-};
+// Platform registry, asset naming and the linux→aarch64 expansion live in
+// ./platforms.mjs (imported at the top) — dependency-free and unit-tested.
 const VALID_PLATFORMS = new Set(Object.keys(PLATFORM));
 
 const zipFileName = name => `${name}${ASSET_SUFFIX}.zip`;
 const zipPath = name => path.join(SCRIPTS_DIST, zipFileName(name));
-// linux/mac binaries have no extension (Makefile: `installer_linux$(ASSET_SUFFIX)`);
-// only win carries `.exe` — no trailing dot for the others.
-const withExt = (base, p) =>
-  `${base}${ASSET_SUFFIX}${PLATFORM[p].ext ? `.${PLATFORM[p].ext}` : ''}`;
-const installerAssetName = p => withExt(`installer_${p}`, p);
-const helperAssetName = p => withExt(`helper_${p}`, p);
-const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p));
-const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p));
+const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p, ASSET_SUFFIX));
+const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p, ASSET_SUFFIX));
 
-/** Expand the effective build platform set: explicit list > --ci > native. */
+/**
+ * Expand the effective build platform set: explicit list > --ci > native.
+ * 'linux' pulls in the aarch64 twin automatically (see platforms.mjs).
+ */
 function resolvePlatforms() {
+  let selected;
   if (PLATFORMS.length > 0) {
     for (const p of PLATFORMS) {
       if (!VALID_PLATFORMS.has(p)) {
-        throw new Error(`Unknown platform '${p}' (expected win|linux|mac)`);
+        throw new Error(`Unknown platform '${p}' (expected ${Object.keys(PLATFORM).join('|')})`);
       }
     }
-    return PLATFORMS;
+    selected = PLATFORMS;
+  } else if (IS_CI) {
+    selected = ['win', 'linux', 'mac'];
+  } else {
+    switch (process.platform) {
+      case 'win32':
+        selected = ['win'];
+        break;
+      case 'darwin':
+        selected = ['mac'];
+        break;
+      default:
+        selected = ['linux'];
+        break;
+    }
   }
-  if (IS_CI) return ['win', 'linux', 'mac'];
-  switch (process.platform) {
-    case 'win32':
-      return ['win'];
-    case 'darwin':
-      return ['mac'];
-    default:
-      return ['linux'];
-  }
+  return expandPlatforms(selected);
 }
 
 /** Run a make target in the installer dir, streaming output. */
@@ -245,6 +254,10 @@ function runMake(target) {
   // Redirect the Makefile's hardcoded ../dist/installer into the transient
   // staging tree, so dist/ never accumulates a persistent installer/ dir.
   const distVar = ' DIST_DIR=' + path.posix.join('..', 'dist', '.build', 'installer');
+  // The ARM64 cross-compiler override is passed through the inherited
+  // environment: the Makefile reads AARCH64_CC with ?= (env wins over the
+  // aarch64-linux-gnu-gcc default), so no shell interpolation into the
+  // command string is needed — a path with spaces or metacharacters is safe.
   // The Makefile's $(MKDIR) probe falls back to cmd's `mkdir` under a Windows
   // spawn, which cannot create the two-level ../dist/.build/installer path (no
   // parent creation).  Pre-create it from Node so the link step always has a

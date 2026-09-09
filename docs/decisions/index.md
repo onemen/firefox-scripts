@@ -80,6 +80,8 @@ Open these before proposing a new primitive, surface, or storage home.
   `skills-lock.json`, no second `.agent/` root; drift = watchdog issue → reviewed PR
 - [0023](./0023-e2e-browser-version-pinning.md) — E2E browser versions track latest at run time;
   explicit pin escape hatch with strict pin semantics (version-embedded sources + `ci-downloads`)
+- [0024](./0024-release-asset-set.md) — Release asset set: ARM64 Linux installer/helper pair +
+  universal macOS installer; additive platform growth under [0019]'s naming rules
 
 ## Historical
 

@@ -72,6 +72,12 @@ const HELPER_FILENAMES = {
   macosx: `helper_mac${ASSET_SUFFIX}`,
   linux: `helper_linux${ASSET_SUFFIX}`,
 };
+// ARM64 Linux builds download their own helper: the elevated-copy binary must
+// match the running architecture (an x86_64 helper fails or loses elevation
+// semantics on aarch64 kernels without the 32-bit compat layer).
+const HELPER_FILENAMES_AARCH64 = {
+  linux: `helper_linux_aarch64${ASSET_SUFFIX}`,
+};
 
 // The standalone native installer — published next to the zips (release assets
 // in prod, the dev-build-* branch in dev; see generateUpdaterConfig.mjs). The
@@ -82,9 +88,10 @@ const INSTALLER_FILENAMES = {
   macosx: `installer_mac${ASSET_SUFFIX}`,
   linux: `installer_linux${ASSET_SUFFIX}`,
 };
-const INSTALLER_URL = `${ZIP_BASE_URL}/${
-  INSTALLER_FILENAMES[AppConstants.platform] || INSTALLER_FILENAMES.linux
-}`;
+// ARM64 Linux twin asset (see HELPER_FILENAMES_AARCH64).
+const INSTALLER_FILENAMES_AARCH64 = {
+  linux: `installer_linux_aarch64${ASSET_SUFFIX}`,
+};
 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
@@ -239,7 +246,7 @@ function stateSnapshot() {
     utilsUrl: UTILS_URL,
     // The installer the manual panel recommends for Snap users, and the host
     // config dir (fxFolderDir) that in-tab installs would target.
-    installerUrl: INSTALLER_URL,
+    installerUrl: installerUrl(),
     configDir: fxFolderDir(),
     installing,
     restartEnabled,
@@ -290,7 +297,7 @@ function downloadPackage(kind) {
   const url =
     kind === 'config' ? FX_FOLDER_URL
     : kind === 'utils' ? UTILS_URL
-    : kind === 'installer' ? INSTALLER_URL
+    : kind === 'installer' ? installerUrl()
     : '';
   if (!url) {
     return;
@@ -369,8 +376,38 @@ function remindTomorrow() {
 
 /* ---------------- elevated-copy helper ---------------- */
 
+/**
+ * X86_64-emulation probe: a native arm64 Firefox reports 'aarch64' in the
+ * hardware/oscpu string; x86_64 Firefox under Rosetta-style emulation does not.
+ * Firefox on Linux has no Rosetta equivalent today, so this is a cheap,
+ * reliable native-arm64 signal.
+ */
+function isAarch64() {
+  return /aarch64/i.test(`${Services.appinfo.XPCOMABI || ''} ${Services.appinfo.oscpu || ''}`);
+}
+
+/**
+ * Arch-qualified filename maps: the aarch64 variant only when running natively
+ * on arm64; every other platform falls back to the base maps.
+ */
+function installerFilename() {
+  const base = INSTALLER_FILENAMES[AppConstants.platform] || INSTALLER_FILENAMES.linux;
+  if (!isAarch64()) return base;
+  return INSTALLER_FILENAMES_AARCH64[AppConstants.platform] || base;
+}
+
+/**
+ * The manual-install download URL, arch-qualified (aarch64 Linux users get the
+ * arm64 installer asset).
+ */
+function installerUrl() {
+  return `${ZIP_BASE_URL}/${installerFilename()}`;
+}
+
 function helperFilename() {
-  return HELPER_FILENAMES[AppConstants.platform] || HELPER_FILENAMES.linux;
+  const base = HELPER_FILENAMES[AppConstants.platform] || HELPER_FILENAMES.linux;
+  if (!isAarch64()) return base;
+  return HELPER_FILENAMES_AARCH64[AppConstants.platform] || base;
 }
 
 function helperUrl() {
