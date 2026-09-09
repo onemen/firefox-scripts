@@ -18,6 +18,33 @@ import {warn} from './log.mjs';
 export const HASHES_FILE = 'hashes.json';
 
 /**
+ * Render a helper checksum sidecar: `<hex sha256> <filename>\n` — sha256sum -c
+ * compatible (two spaces), and exactly the format the updater tab parses back
+ * before executing a freshly downloaded helper (issue #33).
+ *
+ * @param {Buffer | Uint8Array} bytes the helper binary bytes
+ * @param {string} filename the helper's published asset name
+ * @returns {Buffer} sidecar bytes
+ */
+export function helperSha256Sidecar(bytes, filename) {
+  const hex = crypto.createHash('sha256').update(bytes).digest('hex');
+  return Buffer.from(`${hex}  ${filename}\n`, 'utf-8');
+}
+
+/**
+ * Extract the expected hex sha256 from a sidecar's text. Tolerates a missing
+ * filename column, trailing whitespace/CRLF; returns null when the text does
+ * not carry a 64-hex-char digest (an HTML error page, a truncated write).
+ *
+ * @param {string} text sidecar body
+ * @returns {string | null}
+ */
+export function parseHelperSha256(text) {
+  const m = /\b([0-9a-f]{64})\b/i.exec(String(text).trim());
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
  * Newest completed snapshot dir for the current mode (`prod-*`/`prod-copy-*` in
  * prod, `dev-*`/`dev-copy-*` in dev). This is the local change-detection
  * baseline: every snapshot carries its own hashes.json, so the old dist/hashes/

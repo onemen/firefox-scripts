@@ -69,3 +69,17 @@ export function installerAssetName(p, suffix = '') {
 export function helperAssetName(p, suffix = '') {
   return withExt(`helper_${assetPlatform(p)}`, p, suffix);
 }
+
+/**
+ * Name of the checksum sidecar published next to each helper
+ * (`helper_<platform>.sha256`, hex SHA-256 of the binary). The updater tab
+ * verifies the freshly downloaded helper against it before executing — the
+ * helper is the one artifact that runs outside the browser sandbox (issue
+ * #33).
+ */
+export function helperShaAssetName(p, suffix = '') {
+  // Derived from the helper's own name (including the .exe extension on win)
+  // — the updater fetches `<helperFilename()>.sha256`, so the sidecar must be
+  // the full binary name + .sha256, never a re-derivation from the base.
+  return `${helperAssetName(p, suffix)}.sha256`;
+}

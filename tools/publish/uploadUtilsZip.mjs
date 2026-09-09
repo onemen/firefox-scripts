@@ -79,6 +79,29 @@ export async function deleteExistingAsset(octokit, releaseId, assetName) {
   }
 }
 
+/**
+ * Upload in-memory bytes as a release asset (the derived sha256 sidecars are
+ * buffers, never staged files).
+ */
+export async function uploadAssetBuffer(octokit, releaseId, data, assetName) {
+  try {
+    const {data: asset} = await octokit.repos.uploadReleaseAsset({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      release_id: releaseId,
+      name: assetName,
+      data,
+    });
+    console.log(
+      `  ${green('+')} ${bold(assetName)}  ${(data.length / 1024).toFixed(1)} KB` +
+        dim(` → ${asset.browser_download_url}`)
+    );
+    return asset;
+  } catch (error) {
+    throw new Error(`Failed to upload asset: ${error.message}`, {cause: error});
+  }
+}
+
 /** Upload asset to release */
 export async function uploadAsset(octokit, releaseId, filePath, assetName) {
   try {

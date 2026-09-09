@@ -196,7 +196,8 @@ updater.js:
   2. extract (flatten top-level fx-folder/ prefix)
   3. verify: hash of extracted file set == manifest hash   ← integrity gate
   4a. utils  → copy into ProfD/chrome/utils (plain IOUtils copy)
-  4b. config → download+unblock elevated-copy helper into the SAME temp dir,
+  4b. config → download elevated-copy helper + its <helper>.sha256 sidecar,
+               verify the binary hash (abort on mismatch — issue #33), unblock,
                Subprocess.call(helper <src> <dst> ...) → single UAC prompt
   5. per-file progress; on success show "Restart to apply"
         │
@@ -236,9 +237,13 @@ standalone helper binary (sources at `installer/src/helper/`) self-elevates:
 | macOS    | `helper_mac`     | `osascript` "with administrator privileges"     |
 
 CLI: `helper <src1> <dst1> <src2> <dst2> ...` — creates parent dirs, copies each pair, exits `0` on
-success, `1` bad args, `2` elevation failed, `3` copy failed. The updater tries a direct `IOUtils`
-copy first (portable/user-owned installs), then the helper; exit code `2` maps to "elevation
-cancelled".
+success, `1` bad args, `2` elevation failed, `3` copy failed. Since the helper is the one artifact
+that executes **outside** the browser sandbox (it self-elevates), every publish also ships a
+`helper_<platform>.sha256` sidecar (`<hex>  <name>` per sha256sum; `upload.mjs`), and the updater
+verifies the freshly downloaded helper's bytes against it **before executing** — a mismatch aborts
+the elevated copy (issue #33). A missing sidecar (publishes older than the scheme) is logged and
+skipped, never treated as a pass. The updater tries a direct `IOUtils` copy first
+(portable/user-owned installs), then the helper; exit code `2` maps to "elevation cancelled".
 
 ## 7. Reuse summary
 
