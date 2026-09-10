@@ -147,10 +147,13 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
     runs-on: ubuntu-latest
     steps:
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
 
       # 'linux' implies the aarch64 twin in upload.mjs — install its
       # cross-compiler first (also validates the cross-compile on every PR).
+      - name: Harden apt sources
+        uses: ./.github/actions/harden-apt
+
       - name: Install aarch64 cross toolchain
         run: |
           sudo apt-get update -qq
@@ -178,9 +181,13 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
 
       # 'linux' implies the aarch64 twin in upload.mjs (Linux runners only).
+      - name: Harden apt sources
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/harden-apt
+
       - name: Install aarch64 cross toolchain
         if: runner.os == 'Linux'
         run: |
@@ -193,6 +200,10 @@ jobs:
       # The UI layer launches a real Firefox (even headless it needs a display
       # server on Linux runners), so install xvfb and run under it — same as
       # the updater job below.
+      - name: Harden apt sources
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -221,7 +232,7 @@ jobs:
         os: [ubuntu-latest]
 
     steps:
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
 
       - name: Build helper binary
         run: |
@@ -263,7 +274,7 @@ jobs:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
     steps:
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
 
       # The ~100 MB official Firefox download is the bulk of the install step;
       # cache it keyed on the exact download URL (which embeds the release
@@ -290,6 +301,10 @@ jobs:
       # from downloads.mjs's official recipe (apt's Snap wrapper breaks BiDi);
       # it downloads via the official channel redirect and exports
       # FIREFOX_BINARY through $GITHUB_ENV.
+      - name: Harden apt sources
+        if: matrix.os == 'ubuntu-latest'
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -378,7 +393,7 @@ jobs:
     steps:
       # $/ prefix: the runner materializes the local action from the triggering
       # commit — a ./ local action would need a checkout step first.
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
 
       - name: Set portable browser directory (Linux/macOS)
         if: ${{ runner.os != 'Windows' }}
@@ -499,6 +514,10 @@ jobs:
           esac
           chmod +x dist/installer/installer_* 2>/dev/null || true
 
+      - name: Harden apt sources
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -552,7 +571,7 @@ jobs:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
     steps:
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
 
       # Availability gate: skip the whole leg when the runner has no working
       # snapd (advisory — availability varies by runner image, #55).
@@ -566,6 +585,10 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::warning::snapd unavailable on this runner — snap E2E leg skipped (#55)"
           fi
+
+      - name: Harden apt sources
+        if: steps.snapd.outputs.available == 'true'
+        uses: ./.github/actions/harden-apt
 
       - name: Install Linux test prerequisites
         if: steps.snapd.outputs.available == 'true'
@@ -730,7 +753,7 @@ jobs:
       BROWSER_PIN_VERSION: ${{ inputs.version }}
 
     steps:
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
 
       # The ~100 MB installers dominate the job; cache them keyed on the
       # resolved download URL (embeds the version for LibreWolf/Waterfox).

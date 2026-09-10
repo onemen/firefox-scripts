@@ -52,7 +52,7 @@ jobs:
     name: lint + format
     runs-on: ubuntu-latest
     steps:
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
       - run: pnpm lint
       - run: pnpm format
       - run: pnpm test
@@ -79,7 +79,7 @@ jobs:
       - name: Skip publish gate — no publish-relevant changes
         if: needs.changes.outputs.publish != 'true'
         run: echo "::notice::no publish-relevant changes — publish gate skipped"
-      - uses: $/.github/actions/setup-repo
+      - uses: ./.github/actions/setup-repo
         if: needs.changes.outputs.publish == 'true'
 
       - name: Set up MSYS2 toolchain (make + gcc)
@@ -90,6 +90,12 @@ jobs:
           update: true
           install: >-
             mingw-w64-ucrt-x86_64-gcc make
+
+      # The runner image's third-party apt sources can churn out-of-band and
+      # break `apt-get update` for everyone (2026-09-09 Google Chrome index).
+      - name: Harden apt sources
+        if: runner.os == 'Linux' && needs.changes.outputs.publish == 'true'
+        uses: ./.github/actions/harden-apt
 
       # ARM64 cross-compiler for the aarch64 Linux binaries (the 'linux'
       # platform implies the aarch64 twin in upload.mjs).
