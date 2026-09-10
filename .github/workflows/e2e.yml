@@ -839,7 +839,7 @@ jobs:
       BROWSER_PIN_VERSION: ${{ inputs.version }}
 
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       # Same URL-keyed installer cache as the fork legs — the CDN setup URL
       # embeds the version, so each release gets its own cache entry.
