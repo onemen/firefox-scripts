@@ -59,6 +59,7 @@ import {
   computeFileSetHash,
   findLatestSnapshot,
   getStoredHashes,
+  helperSha256Sidecar,
   HASHES_FILE,
 } from './hashUtils.mjs';
 import {
@@ -88,6 +89,7 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {
@@ -112,7 +114,13 @@ import {
 import {assertCleanWorktree} from './gitUtils.mjs';
 import {linkNodeModules, unlinkNodeModules} from './refNodeModules.mjs';
 import {cleanGenerated} from './syncGeneratedFiles.mjs';
-import {PLATFORM, expandPlatforms, helperAssetName, installerAssetName} from './platforms.mjs';
+import {
+  PLATFORM,
+  expandPlatforms,
+  helperAssetName,
+  helperShaAssetName,
+  installerAssetName,
+} from './platforms.mjs';
 import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
@@ -587,7 +595,17 @@ async function publishToGitHub({
       }
     }
   }
-  for (const p of builtHelpers) pagesFiles[helperAssetName(p)] = fs.readFileSync(helperPath(p));
+  for (const p of builtHelpers) {
+    const helperBytes = fs.readFileSync(helperPath(p));
+    pagesFiles[helperAssetName(p)] = helperBytes;
+    // Checksum sidecar (issue #33): the updater tab verifies the freshly
+    // downloaded helper against it before executing — the helper is the one
+    // artifact that runs outside the browser sandbox.
+    pagesFiles[helperShaAssetName(p)] = helperSha256Sidecar(
+      helperBytes,
+      helperAssetName(p, ASSET_SUFFIX)
+    );
+  }
 
   if (manifestChanged) {
     pagesFiles[HASHES_FILE] = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf-8');
@@ -623,6 +641,9 @@ async function publishToGitHub({
     }
     for (const p of builtHelpers) {
       await deleteExistingAsset(octokit, devRelease.id, helperAssetName(p));
+      // Helpers stay branch-only, but a stale sidecar from an older publish
+      // must not linger on the dev release either.
+      await deleteExistingAsset(octokit, devRelease.id, helperShaAssetName(p));
     }
   }
 
@@ -664,6 +685,21 @@ async function publishToGitHub({
     }
     info(`  ${bold('latest')} tag: ${dim(shortHash(oldSha))} → ${green(shortHash(headSha))}`);
   }
+
+  // Date-stamped component releases alongside `latest` (issue #72, ADR 0019):
+  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers +
+  // helpers. Prerelease=true so the date tags can never take GitHub's
+  // "Latest" badge; skipped on idle runs (nothing rebuilt → tags stay frozen).
+  if (PUBLISH_MODE === 'prod' && anythingUploaded) {
+    await syncComponentReleases(octokit, {
+      builtZips,
+      builtInstallers,
+      builtHelpers,
+      zipPath,
+      installerPath,
+      helperPath,
+    });
+  }
 }
 
 /** Assemble a complete snapshot dir: zips + binaries + UI + manifest. */
@@ -698,16 +734,24 @@ function writeSnapshot({merged, platforms, dir, label}) {
     }
   }
 
-  // Binaries for the in-scope platforms.
+  // Binaries + helper checksum sidecars for the in-scope platforms.
   for (const p of platforms) {
-    for (const [asset, src] of [
-      [installerAssetName(p), installerPath(p)],
-      [helperAssetName(p), helperPath(p)],
-    ]) {
-      if (fs.existsSync(src)) {
-        fs.copyFileSync(src, path.join(dir, asset));
-        info(`    ${green('+')} ${asset}`);
-      }
+    const helperSrc = helperPath(p);
+    if (fs.existsSync(helperSrc)) {
+      // Sidecar is derived, never reused: regenerated from the staged bytes so
+      // it cannot drift from the binary it vouches for.
+      const helperBytes = fs.readFileSync(helperSrc);
+      fs.copyFileSync(helperSrc, path.join(dir, helperAssetName(p)));
+      fs.writeFileSync(
+        path.join(dir, helperShaAssetName(p)),
+        helperSha256Sidecar(helperBytes, helperAssetName(p, ASSET_SUFFIX))
+      );
+      info(`    ${green('+')} ${helperAssetName(p)} (+ .sha256)`);
+    }
+    const instSrc = installerPath(p);
+    if (fs.existsSync(instSrc)) {
+      fs.copyFileSync(instSrc, path.join(dir, installerAssetName(p)));
+      info(`    ${green('+')} ${installerAssetName(p)}`);
     }
   }
 

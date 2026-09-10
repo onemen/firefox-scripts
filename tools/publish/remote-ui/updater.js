@@ -414,14 +414,63 @@ function helperUrl() {
   return `${HELPER_BASE_URL}/${helperFilename()}`;
 }
 
+function helperShaUrl() {
+  return `${HELPER_BASE_URL}/${helperFilename()}.sha256`;
+}
+
+/**
+ * SHA-256 of a downloaded file via nsICryptoHash (streaming, constant
+ * comparison against the expected hex happens in ensureHelper).
+ *
+ * @param {string} path absolute native path
+ * @returns {Promise<string>} hex digest
+ */
+async function fileSha256Hex(path) {
+  const data = await IOUtils.read(path);
+  const hasher = Cc['@mozilla.org/security/hash;1'].createInstance(Ci.nsICryptoHash);
+  hasher.init(Ci.nsICryptoHash.SHA256);
+  hasher.update(data, data.length);
+  const binary = hasher.finish(false);
+  return [...binary].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 /**
  * Download the elevated-copy helper into tmpDir (the same temp dir used for the
  * package zips) and return its path. No persistent cache in the profile: fresh
  * download each run, removed when installConfig cleans up tmpDir.
+ *
+ * The helper is the one artifact that runs OUTSIDE the browser sandbox (it
+ * self-elevates), so before it is executed its bytes are verified against the
+ * published `<helper>.sha256` sidecar (issue #33). A mismatch aborts the
+ * elevated copy — a tampered or corrupted binary never runs. A MISSING sidecar
+ * is tolerated exactly once for bootstrapping off publishes older than the
+ * sidecar scheme (the transport is still HTTPS to the same origin as
+ * hashes.json); it is logged, not silent.
  */
 async function ensureHelper(tmpDir) {
   const targetPath = PathUtils.join(tmpDir, helperFilename());
   await Downloads.fetch(helperUrl(), targetPath);
+
+  let expected = null;
+  try {
+    const text = new TextDecoder().decode(await fetchBytes(helperShaUrl()));
+    const match = /\b([0-9a-f]{64})\b/i.exec(String(text).trim());
+    if (match) expected = match[1].toLowerCase();
+  } catch (ex) {
+    logError('helper sha256 sidecar fetch failed', ex);
+  }
+  if (expected) {
+    const actual = await fileSha256Hex(targetPath);
+    if (actual !== expected) {
+      throw new Error(
+        `Downloaded helper failed checksum verification (${helperFilename()}: ` +
+          `expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}…) — refusing to execute.`
+      );
+    }
+  } else {
+    logError('helper sha256 sidecar unavailable — skipping verification (pre-#33 publish?)');
+  }
+
   await unblockFile(targetPath);
   return targetPath;
 }

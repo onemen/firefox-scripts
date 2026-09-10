@@ -109,6 +109,10 @@ jobs:
             updater:
               - 'core/chrome/utils/updater/**'
               - 'installer/src/helper/**'
+              # updater-ui.zip sources — remote-ui/updater.js IS the updater's
+              # runtime engine (shipped inside the ui package), so engine
+              # changes must run the updater legs (#174 skip audit).
+              - 'tools/publish/remote-ui/**'
               - 'test/e2e/updater/**'
               - 'test/e2e/shared/**'
               - '.github/workflows/e2e.yml'
