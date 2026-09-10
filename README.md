@@ -95,6 +95,27 @@ by hand. After your first install from this repository, the browser will notify 
 version is available (see
 [How the updater keeps your scripts up to date](#how-the-updater-keeps-your-scripts-up-to-date)).
 
+### Finding your version and reverting
+
+The packages are dated, not version-numbered: every publish stamps each package with the date its
+content last changed (`YYYY-MM-DD`, UTC). To find what you have:
+
+- **Updater tab** — open the updater from the browser menu. Next to each package's manual-download
+  link it shows the date of the current published package; "Up to Date" means your installed copy
+  matches it.
+- **Installer** — re-running the installer shows the same per-package dates next to the
+  manual-download links, plus each browser's Up to Date / Update Available status.
+
+To **revert** a package to an earlier build, open the
+[releases page](https://github.com/onemen/firefox-scripts/releases): the `latest` release always
+holds the newest build of every file, and the frozen `scripts-<date>` (package zips) and
+`installer-<date>` (installer binaries + helpers) releases hold each past publish. Download the
+package zip from the dated release you want and install it by hand (updater tab → manual download
+link, or unpack into your profile's `chrome/utils/` — see the
+[original scripts](#original-scripts-and-core-folders) section for the layout). The next daily check
+will offer the newer version again; use the tab's skip option if you want to stay on the older build
+for that update.
+
 The original scripts are governed by the
 [Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/); the in-browser updater
 (`core/chrome/utils/updater/`) is custom to this project and licensed under the
