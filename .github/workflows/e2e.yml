@@ -754,15 +754,15 @@ jobs:
     runs-on: windows-latest
     strategy:
       fail-fast: false
-    # Manual escape: a `browser` input collapses the matrix to that one leg
-    # (dynamic JSON matrix — the canonical fromJSON pattern). Empty input
-    # (or any non-dispatch event, where `inputs` is empty) = the full matrix.
-    # waterfox stays selectable here for pinned single-browser escapes even
-    # though its steady-state leg is the required `updater-waterfox` job.
-    matrix:
-      browser:
-        ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
-        inputs.browser) || '["librewolf", "floorp", "zen"]') }}
+      # Manual escape: a `browser` input collapses the matrix to that one leg
+      # (dynamic JSON matrix — the canonical fromJSON pattern). Empty input
+      # (or any non-dispatch event, where `inputs` is empty) = the full matrix.
+      # waterfox stays selectable here for pinned single-browser escapes even
+      # though its steady-state leg is the required `updater-waterfox` job.
+      matrix:
+        browser:
+          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
+          inputs.browser) || '["librewolf", "floorp", "zen"]') }}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
       # Manual escape: pin the resolver to the requested version (empty input
