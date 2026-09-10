@@ -23,6 +23,7 @@ import {spawn} from 'node:child_process';
 import {existsSync, readdirSync, statSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {killStrayProcesses} from '../shared/processHygiene.mjs';
 
 // test/e2e/installer/smoke-security.mjs → repo root
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
@@ -136,6 +137,11 @@ async function waitForServer(token, child) {
 async function main() {
   const installer = findInstaller();
   console.log(`\nSecurity smoke test — ${installer}\n`);
+
+  // Process hygiene (issue #130): a leftover installer from a previous run
+  // would still own port 8777 and the smoke test would probe the wrong
+  // process. Sweep first (best-effort, never throws).
+  await killStrayProcesses();
 
   const child = spawn(installer, ['--smoke-test'], {
     cwd: REPO_ROOT,

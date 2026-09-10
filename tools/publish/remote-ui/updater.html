@@ -502,6 +502,48 @@
           </section>
         </div>
       </main>
+
+      <!-- Persistent footer (issue #4): copyright/license + links. Static
+           markup + shared CSS (this tab is XML-parsed XHTML — no innerHTML).
+           License split: this updater/updater-ui is this repo's own work
+           (MIT, LICENSE.md); the core scripts it manages are upstream-derived
+           (MPL-2.0, core/LICENSE). -->
+      <footer class="app-footer">
+        <span class="app-footer-text"
+          ><svg
+            class="app-footer-icon"
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+          © 2026 ONEMEN · Updater: MIT License · Core scripts: MPL-2.0</span
+        >
+        <span class="app-footer-links">
+          <a href="https://github.com/onemen/firefox-scripts/issues" target="_blank" rel="noopener"
+            >Issues</a
+          >
+          <a
+            href="https://github.com/onemen/firefox-scripts/discussions"
+            target="_blank"
+            rel="noopener"
+            >Discussions</a
+          >
+          <a href="https://github.com/onemen/firefox-scripts#readme" target="_blank" rel="noopener"
+            >Docs</a
+          >
+        </span>
+      </footer>
     </div>
 
     <!-- Privileged engine — exposes window.UpdaterEngine (see updater.js). -->

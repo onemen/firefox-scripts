@@ -59,6 +59,7 @@ import {
   computeFileSetHash,
   findLatestSnapshot,
   getStoredHashes,
+  helperSha256Sidecar,
   HASHES_FILE,
 } from './hashUtils.mjs';
 import {
@@ -78,6 +79,7 @@ import {
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
+import {REF_NAME, REF_SHA} from './publishMode.mjs';
 import {
   createOctokit,
   enforcePublishBranch,
@@ -87,6 +89,7 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {
@@ -108,10 +111,17 @@ import {
   getRelease,
   uploadAsset,
 } from './uploadUtilsZip.mjs';
-import {REF_NAME, REF_SHA} from './publishMode.mjs';
 import {assertCleanWorktree} from './gitUtils.mjs';
 import {linkNodeModules, unlinkNodeModules} from './refNodeModules.mjs';
 import {cleanGenerated} from './syncGeneratedFiles.mjs';
+import {
+  PLATFORM,
+  expandPlatforms,
+  helperAssetName,
+  helperShaAssetName,
+  installerAssetName,
+} from './platforms.mjs';
+import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
 const FORCE = process.argv.includes('--force');
@@ -158,6 +168,12 @@ const PLATFORMS = process.argv
   .filter(a => a.startsWith('--platform='))
   .map(a => a.slice('--platform='.length));
 
+// Staging-target guard (#33): environment variables that redirect the publish
+// target abort a prod run before anything is built (warn in dev; --local
+// snapshots touch no GitHub target and are exempt). Escaping to a real staging
+// rehearsal requires the explicit FIREFOX_SCRIPTS_ALLOW_STAGING=1.
+runStagingGuard({mode: PUBLISH_MODE, local: LOCAL});
+
 const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
 const INSTALLER_WEB = path.join(INSTALLER_DIR, 'web');
@@ -193,43 +209,44 @@ const PACKAGES = [
   {name: 'updater-ui', dir: UI_SOURCE},
 ];
 
-const PLATFORM = {
-  win: {makeInstaller: 'dist_win', makeHelper: 'helper_win', ext: 'exe'},
-  linux: {makeInstaller: 'dist_linux', makeHelper: 'helper_linux', ext: ''},
-  mac: {makeInstaller: 'dist_mac', makeHelper: 'helper_mac', ext: ''},
-};
+// Platform registry, asset naming and the linux→aarch64 expansion live in
+// ./platforms.mjs (imported at the top) — dependency-free and unit-tested.
 const VALID_PLATFORMS = new Set(Object.keys(PLATFORM));
 
 const zipFileName = name => `${name}${ASSET_SUFFIX}.zip`;
 const zipPath = name => path.join(SCRIPTS_DIST, zipFileName(name));
-// linux/mac binaries have no extension (Makefile: `installer_linux$(ASSET_SUFFIX)`);
-// only win carries `.exe` — no trailing dot for the others.
-const withExt = (base, p) =>
-  `${base}${ASSET_SUFFIX}${PLATFORM[p].ext ? `.${PLATFORM[p].ext}` : ''}`;
-const installerAssetName = p => withExt(`installer_${p}`, p);
-const helperAssetName = p => withExt(`helper_${p}`, p);
-const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p));
-const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p));
+const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p, ASSET_SUFFIX));
+const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p, ASSET_SUFFIX));
 
-/** Expand the effective build platform set: explicit list > --ci > native. */
+/**
+ * Expand the effective build platform set: explicit list > --ci > native.
+ * 'linux' pulls in the aarch64 twin automatically (see platforms.mjs).
+ */
 function resolvePlatforms() {
+  let selected;
   if (PLATFORMS.length > 0) {
     for (const p of PLATFORMS) {
       if (!VALID_PLATFORMS.has(p)) {
-        throw new Error(`Unknown platform '${p}' (expected win|linux|mac)`);
+        throw new Error(`Unknown platform '${p}' (expected ${Object.keys(PLATFORM).join('|')})`);
       }
     }
-    return PLATFORMS;
+    selected = PLATFORMS;
+  } else if (IS_CI) {
+    selected = ['win', 'linux', 'mac'];
+  } else {
+    switch (process.platform) {
+      case 'win32':
+        selected = ['win'];
+        break;
+      case 'darwin':
+        selected = ['mac'];
+        break;
+      default:
+        selected = ['linux'];
+        break;
+    }
   }
-  if (IS_CI) return ['win', 'linux', 'mac'];
-  switch (process.platform) {
-    case 'win32':
-      return ['win'];
-    case 'darwin':
-      return ['mac'];
-    default:
-      return ['linux'];
-  }
+  return expandPlatforms(selected);
 }
 
 /** Run a make target in the installer dir, streaming output. */
@@ -245,6 +262,10 @@ function runMake(target) {
   // Redirect the Makefile's hardcoded ../dist/installer into the transient
   // staging tree, so dist/ never accumulates a persistent installer/ dir.
   const distVar = ' DIST_DIR=' + path.posix.join('..', 'dist', '.build', 'installer');
+  // The ARM64 cross-compiler override is passed through the inherited
+  // environment: the Makefile reads AARCH64_CC with ?= (env wins over the
+  // aarch64-linux-gnu-gcc default), so no shell interpolation into the
+  // command string is needed — a path with spaces or metacharacters is safe.
   // The Makefile's $(MKDIR) probe falls back to cmd's `mkdir` under a Windows
   // spawn, which cannot create the two-level ../dist/.build/installer path (no
   // parent creation).  Pre-create it from Node so the link step always has a
@@ -574,7 +595,17 @@ async function publishToGitHub({
       }
     }
   }
-  for (const p of builtHelpers) pagesFiles[helperAssetName(p)] = fs.readFileSync(helperPath(p));
+  for (const p of builtHelpers) {
+    const helperBytes = fs.readFileSync(helperPath(p));
+    pagesFiles[helperAssetName(p)] = helperBytes;
+    // Checksum sidecar (issue #33): the updater tab verifies the freshly
+    // downloaded helper against it before executing — the helper is the one
+    // artifact that runs outside the browser sandbox.
+    pagesFiles[helperShaAssetName(p)] = helperSha256Sidecar(
+      helperBytes,
+      helperAssetName(p, ASSET_SUFFIX)
+    );
+  }
 
   if (manifestChanged) {
     pagesFiles[HASHES_FILE] = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf-8');
@@ -610,6 +641,9 @@ async function publishToGitHub({
     }
     for (const p of builtHelpers) {
       await deleteExistingAsset(octokit, devRelease.id, helperAssetName(p));
+      // Helpers stay branch-only, but a stale sidecar from an older publish
+      // must not linger on the dev release either.
+      await deleteExistingAsset(octokit, devRelease.id, helperShaAssetName(p));
     }
   }
 
@@ -651,6 +685,21 @@ async function publishToGitHub({
     }
     info(`  ${bold('latest')} tag: ${dim(shortHash(oldSha))} → ${green(shortHash(headSha))}`);
   }
+
+  // Date-stamped component releases alongside `latest` (issue #72, ADR 0019):
+  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers +
+  // helpers. Prerelease=true so the date tags can never take GitHub's
+  // "Latest" badge; skipped on idle runs (nothing rebuilt → tags stay frozen).
+  if (PUBLISH_MODE === 'prod' && anythingUploaded) {
+    await syncComponentReleases(octokit, {
+      builtZips,
+      builtInstallers,
+      builtHelpers,
+      zipPath,
+      installerPath,
+      helperPath,
+    });
+  }
 }
 
 /** Assemble a complete snapshot dir: zips + binaries + UI + manifest. */
@@ -685,16 +734,24 @@ function writeSnapshot({merged, platforms, dir, label}) {
     }
   }
 
-  // Binaries for the in-scope platforms.
+  // Binaries + helper checksum sidecars for the in-scope platforms.
   for (const p of platforms) {
-    for (const [asset, src] of [
-      [installerAssetName(p), installerPath(p)],
-      [helperAssetName(p), helperPath(p)],
-    ]) {
-      if (fs.existsSync(src)) {
-        fs.copyFileSync(src, path.join(dir, asset));
-        info(`    ${green('+')} ${asset}`);
-      }
+    const helperSrc = helperPath(p);
+    if (fs.existsSync(helperSrc)) {
+      // Sidecar is derived, never reused: regenerated from the staged bytes so
+      // it cannot drift from the binary it vouches for.
+      const helperBytes = fs.readFileSync(helperSrc);
+      fs.copyFileSync(helperSrc, path.join(dir, helperAssetName(p)));
+      fs.writeFileSync(
+        path.join(dir, helperShaAssetName(p)),
+        helperSha256Sidecar(helperBytes, helperAssetName(p, ASSET_SUFFIX))
+      );
+      info(`    ${green('+')} ${helperAssetName(p)} (+ .sha256)`);
+    }
+    const instSrc = installerPath(p);
+    if (fs.existsSync(instSrc)) {
+      fs.copyFileSync(instSrc, path.join(dir, installerAssetName(p)));
+      info(`    ${green('+')} ${installerAssetName(p)}`);
     }
   }
 

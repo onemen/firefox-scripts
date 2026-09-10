@@ -110,6 +110,12 @@ Explorer does not open a terminal. Verify with:
 sudo apt install gcc
 make all                      # builds dist/installer/installer_linux
 
+# ARM64 (cross-compile; a native aarch64 host can pass AARCH64_CC=cc)
+sudo apt install gcc-aarch64-linux-gnu
+make dist_linux_aarch64 helper_linux_aarch64
+#   builds dist/installer/installer_linux_aarch64 + helper_linux_aarch64
+#   upload.mjs builds both automatically: 'linux' implies the aarch64 twin
+
 # Windows cross-compile from Linux/WSL
 sudo apt install gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
 make dist_win CC=x86_64-w64-mingw32-gcc WINDRES=x86_64-w64-mingw32-windres
@@ -122,6 +128,11 @@ make dist_win CC=x86_64-w64-mingw32-gcc WINDRES=x86_64-w64-mingw32-windres
 xcode-select --install
 make dist_mac   # builds dist/installer/installer_mac
 ```
+
+The macOS build is **universal** (x86_64 + arm64 in one binary, mirroring `helper_mac`), so the
+single `installer_mac` asset serves Apple Silicon and Intel Macs — verify with
+`lipo -archs dist/installer/installer_mac` (the E2E macOS runner asserts both slices and executes
+each one; #132).
 
 ## AV false positives and the AV scan gate
 
@@ -265,6 +276,16 @@ node test/e2e/installer/installer-e2e.mjs --snapshot dist/dev-main-abc1234
 node test/e2e/updater/updater-e2e.mjs --firefox "/path/to/firefox" --snapshot dist/dev-main-abc1234
 ```
 
+Repeat runs need no manual cleanup (issue #130): each script sweeps stray browser/installer
+processes from a previous run before starting (anything whose command line references the harness's
+temp dirs or the built installer binaries), profiles are created fresh per scenario with
+`compatibility.ini` removed, and `closeBrowser` waits for the OS process to exit before the next
+scenario starts. To prove determinism, run the updater selection twice in a row with one command:
+
+```bash
+node test/e2e/updater/updater-e2e.mjs --snapshot dist/dev-main-abc1234 --repeat 2
+```
+
 ### Installer E2E
 
 Starts the installer in `--smoke-test` mode and exercises every state-changing `/api` route: token
@@ -363,6 +384,21 @@ resolver's expected name, and dispatches `e2e.yml` with `browser` (+ optional `v
 single-browser updater-E2E run. CI's `cleanup-ci-downloads` job deletes the consumed asset
 afterwards and the release + tag once empty, so the steady state is "the release does not exist".
 Extra flags: `--no-dispatch` (upload only), `--clean` (delete release + tag now).
+
+### Browser version pinning (ADR 0023)
+
+The E2E matrix resolves the _latest_ browser release at run time — by design (ADR 0023): the URL
+watchdog → E2E dispatch → validated-versions → drift-gate chain exists to validate each new vendor
+release, so a vendor update flipping CI is signal. To reproduce or test a specific version, pin a
+single-browser dispatch with a `version` input (`pnpm ci:download -- <installer> --version <v>` does
+it as part of the manual escape; it sets `BROWSER_PIN_VERSION`). Pin semantics are strict: a pinned
+run is served only by sources that can express the exact version — version-embedded mirror URLs and
+the `ci-downloads` asset. Version-agnostic sources (floorp/zen's `/releases/latest/download/` URLs)
+are skipped under a pin, so a pinned floorp/zen leg requires the exact installer uploaded to
+`ci-downloads` and fails loudly otherwise. Firefox stable / Dev Edition / Nightly are not pinnable
+(their official endpoints are version-agnostic redirects). Whatever a leg installed,
+`downloads.mjs --installed-version` reads the version from the binary itself — the recorded ground
+truth.
 
 A partial (single-browser) dispatch deliberately skips the validated-versions recorder — it cannot
 fabricate E2E coverage for firefox/firefox-dev, so it can never satisfy the publish gate on its own.
@@ -649,6 +685,13 @@ The unified flow (`upload`):
    through jsDelivr, which is also CORS-enabled). The branch is created automatically on first run.
    Only the artifacts rebuilt this run are pushed, so an unchanged package keeps its live artifact.
 5. Publishes the hash manifest (`hashes.json`) to the same branch.
+6. Prod only, when something was rebuilt: syncs the date-stamped **component releases**
+   (`scripts-<date>` for rebuilt package zips, `installer-<date>` for rebuilt installers + helpers,
+   incl. the helper `.sha256` sidecars) alongside `latest` — created with `prerelease: true` so they
+   can never take GitHub's "Latest" badge, which stays on `latest` (issue #72, ADR 0019). The tags
+   are frozen per-component snapshots for humans to browse; artifacts are always fetched by the
+   permanent unversioned names from `latest`/gh-pages, and `hashes.json` stays the machine source of
+   truth. An idle run (nothing rebuilt) leaves the date tags untouched.
 
 Prod mode refuses to publish unless the current git branch is `main`; dev mode works from any branch
 (dev URLs are baked into the regenerated generated files on purpose). `upload:local` runs on any
@@ -659,8 +702,8 @@ unchanged.
 The same run compiles the installer and helper binaries when their source (`installer/src/`,
 `installer/src/helper/`) changes:
 
-- `installer_win.exe` / `installer_linux` / `installer_mac` — uploaded as assets of the release
-  tagged by `RELEASE_NAME` (`installer_win-dev.exe` etc. in dev mode).
+- `installer_win.exe` / `installer_linux` / `installer_linux_aarch64` / `installer_mac` — uploaded
+  as assets of the release tagged by `RELEASE_NAME` (`installer_win-dev.exe` etc. in dev mode).
 - `helper_win.exe` / `helper_linux` / `helper_mac` — pushed to the publish branch (the in-browser
   updater fetches them from there).
 - By default it builds only the current OS. Use `--ci` to cover all three platforms, or

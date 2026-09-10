@@ -24,8 +24,7 @@ static int is_elevated(void) {
 
 /** Strip the file name off dst_path, leaving the trailing dir (may not exist). */
 static void get_dst_dir(const char *dst_path, char *out, size_t out_size) {
-    strncpy(out, dst_path, out_size - 1);
-    out[out_size - 1] = '\0';
+    snprintf(out, out_size, "%s", dst_path);
     char *p = out + strlen(out);
     while (p > out && p[-1] != '\\' && p[-1] != '/') p--;
     if (p > out) p[-1] = '\0';
@@ -279,8 +278,7 @@ static int copy_file_content(const char *src, const char *dst) {
 
 static void create_parent_dirs(const char *dst_path) {
     char dir[MAX_PATH_LEN];
-    strncpy(dir, dst_path, sizeof(dir) - 1);
-    dir[sizeof(dir) - 1] = '\0';
+    snprintf(dir, sizeof(dir), "%s", dst_path);
     char *p = dir + strlen(dir);
     while (p > dir && p[-1] != '/') p--;
     if (p > dir) p[-1] = '\0';
@@ -421,8 +419,7 @@ static int can_write_to(const char *dst_path) {
 
 static void create_parent_dirs(const char *dst_path) {
     char dir[MAX_PATH_LEN];
-    strncpy(dir, dst_path, sizeof(dir) - 1);
-    dir[sizeof(dir) - 1] = '\0';
+    snprintf(dir, sizeof(dir), "%s", dst_path);
     char *p = dir + strlen(dir);
     while (p > dir && p[-1] != '/') p--;
     if (p > dir) p[-1] = '\0';

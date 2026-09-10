@@ -35,6 +35,11 @@ import {
   summary,
 } from '../shared/helpers.mjs';
 import {findSnapshot, discoverFirefoxBinary} from '../shared/browsers.mjs';
+import {
+  closeBrowser,
+  killStrayProcesses,
+  removeProfileCompatibilityIni,
+} from '../shared/processHygiene.mjs';
 
 const PORT = 8777;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -539,6 +544,8 @@ async function runUiLayer(counter, opts, snapshotDir) {
 
   // 1. Create a fresh profile for the test browser
   const testProfile = tempDir('fxs-installer-ui');
+  // Profile hygiene (issue #130): never reuse stale GRE-compatibility state.
+  removeProfileCompatibilityIni(testProfile);
 
   // 2. Launch Firefox via puppeteer
   let browser;
@@ -716,7 +723,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
     // Single cleanup path: every exit (success, early return, throw) closes
     // Firefox and the detached installer before the profile is removed.
     try {
-      await browser?.close();
+      await closeBrowser(browser);
     } catch {
       /* ignore */
     }
@@ -738,6 +745,11 @@ async function runUiLayer(counter, opts, snapshotDir) {
 async function run() {
   const opts = parseArgs();
   const counter = createCounter();
+
+  // Process hygiene (issue #130): a cancelled previous run can leave the
+  // detached installer holding port 8777 — the HTTP layer below would then
+  // probe the DEAD run's server. Sweep first.
+  await killStrayProcesses();
 
   // Snapshot discovery
   let snapshotDir = opts.snapshot;

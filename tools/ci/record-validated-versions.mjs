@@ -179,11 +179,52 @@ async function ghJson(token, pathname, {method = 'GET', body} = {}) {
 }
 
 /**
- * Comment the validated firefox / firefox-dev versions on the watchdog meta
- * issue, so the dashboard also shows hard-gate validation status. Deduped: a
- * comment is posted only when the versions differ from the last validation
- * comment (the run link changes every run, so the comparison is on the versions
- * segment only). Non-fatal — a notification failure must not fail the
+ * Marker prefix of the rolling validation comment on the meta issue. Exactly
+ * one comment with this prefix is kept on the issue at all times.
+ */
+export const VALIDATION_MARKER = 'Validated by E2E:';
+
+/**
+ * Plan the rolling-comment update from the issue's existing comments: exactly
+ * ONE `${VALIDATION_MARKER}` comment stays on the meta issue — posted when
+ * missing, PATCHed in place when stale (the run link changes every successful
+ * run), duplicates collapsed. A pure function so the tri-state (post / patch /
+ * noop) and the duplicate cleanup are unit-testable without network.
+ *
+ * @param {{id: number; body?: string}[]} comments the issue's comments (any
+ *   order; the OLDEST match is kept so the comment's permalink stays stable)
+ * @param {string} body the fully rendered comment body for this run
+ * @returns {{
+ *   mode: 'post' | 'patch' | 'noop';
+ *   commentId?: number;
+ *   deleteIds: number[];
+ * }}
+ *   deleteIds accompanies 'post' only in the impossible edge where matches exist
+ *   without a primary (defensive) and 'patch' (the duplicates minus primary);
+ *   always safe to execute before mode's write.
+ */
+export function planRollingComment(comments, body) {
+  // Sort by id ascending (issue-comment ids are monotonic with creation) so the
+  // primary — and its permalink — is the OLDEST match regardless of the order
+  // the API returned the page in.
+  const matches = comments
+    .filter(c => c.body?.startsWith(VALIDATION_MARKER))
+    .sort((a, b) => a.id - b.id);
+  const primary = matches[0];
+  if (!primary) return {mode: 'post', deleteIds: []};
+  return {
+    mode: primary.body === body && matches.length === 1 ? 'noop' : 'patch',
+    commentId: primary.id,
+    deleteIds: matches.slice(1).map(c => c.id),
+  };
+}
+
+/**
+ * Keep the meta issue's rolling validation comment current — one comment that
+ * is edited in place after every successful record instead of a growing comment
+ * thread (per-push E2E runs on main would otherwise spam the issue: two
+ * identical comments landed 27 min apart under the old last-comment dedup when
+ * runs overlapped). Non-fatal — a notification failure must not fail the
  * record-validation job.
  */
 async function notifyMetaIssue(record) {
@@ -196,7 +237,7 @@ async function notifyMetaIssue(record) {
   const versions = VALIDATED_BROWSERS.map(b => `${b}=${record.browsers[b]?.version ?? '?'}`).join(
     ' · '
   );
-  const body = `Validated by E2E: ${versions} — [run](${record.runUrl || 'n/a'})`;
+  const body = `${VALIDATION_MARKER} ${versions} — [run](${record.runUrl || 'n/a'})`;
   try {
     const issues = await ghJson(
       token,
@@ -210,21 +251,34 @@ async function notifyMetaIssue(record) {
     }
     // The comment endpoints are scoped under /repos/{owner}/{repo}/issues/{n}
     // (issue comments, not repository comments) — matching the watchdog's own
-    // GitHub calls in check-browser-downloads.mjs.
+    // GitHub calls in check-browser-downloads.mjs. The full page (100) so the
+    // duplicate collapse reaches older leftovers, not just the newest few.
     const comments = await ghJson(
       token,
-      `/repos/${repo}/issues/${meta.number}/comments?per_page=5&sort=created&direction=desc`
+      `/repos/${repo}/issues/${meta.number}/comments?per_page=100`
     );
-    const last = comments.find(c => c.body?.startsWith('Validated by E2E:'));
-    if (last && last.body.includes(versions)) {
-      console.log(`meta issue already shows ${versions} — no comment`);
+    const plan = planRollingComment(comments, body);
+    for (const id of plan.deleteIds) {
+      await ghJson(token, `/repos/${repo}/issues/comments/${id}`, {method: 'DELETE'});
+      console.log(`deleted duplicate validation comment ${id}`);
+    }
+    if (plan.mode === 'noop') {
+      console.log(`rolling comment already current on #${meta.number} — no write`);
+      return;
+    }
+    if (plan.mode === 'patch') {
+      await ghJson(token, `/repos/${repo}/issues/comments/${plan.commentId}`, {
+        method: 'PATCH',
+        body: {body},
+      });
+      console.log(`updated rolling validation comment on #${meta.number}: ${versions}`);
       return;
     }
     await ghJson(token, `/repos/${repo}/issues/${meta.number}/comments`, {
       method: 'POST',
       body: {body},
     });
-    console.log(`commented validated versions on meta issue #${meta.number}: ${versions}`);
+    console.log(`posted rolling validation comment on #${meta.number}: ${versions}`);
   } catch (err) {
     console.log(`meta issue notification failed (non-fatal): ${err.message}`);
   }

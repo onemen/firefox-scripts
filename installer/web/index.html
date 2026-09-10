@@ -191,6 +191,47 @@
       <main>
         <div id="browser-list" class="browser-list"></div>
       </main>
+
+      <!-- Persistent footer: copyright/license + links (issue #4). Static
+           markup — the installer is part of this repo (MIT); external links
+           open a new tab, which never navigates this one (the beforeunload
+           shutdown only fires on navigation/close of THIS tab). -->
+      <footer class="app-footer">
+        <span class="app-footer-text"
+          ><svg
+            class="app-footer-icon"
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+          © 2026 ONEMEN · Firefox Scripts Installer — MIT License</span
+        >
+        <span class="app-footer-links">
+          <a href="https://github.com/onemen/firefox-scripts/issues" target="_blank" rel="noopener"
+            >Issues</a
+          >
+          <a
+            href="https://github.com/onemen/firefox-scripts/discussions"
+            target="_blank"
+            rel="noopener"
+            >Discussions</a
+          >
+          <a href="https://github.com/onemen/firefox-scripts#readme" target="_blank" rel="noopener"
+            >Docs</a
+          >
+        </span>
+      </footer>
     </div>
 
     <script src="/script.js"></script>

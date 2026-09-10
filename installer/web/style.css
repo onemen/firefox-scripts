@@ -97,6 +97,11 @@ body {
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   padding: 24px;
+  min-height: 100vh; /* short content: the app still fills the viewport, so .app-footer's margin-top:auto rests it on the page bottom (issue #4) */
+  /* The footer's divider strip breaks out of the 820px grid with 50vw
+     margins; 50vw includes the scrollbar width, so clip the (invisible)
+     horizontal overshoot instead of growing a horizontal scrollbar. */
+  overflow-x: clip;
   display: flex;
   justify-content: center;
 }
@@ -904,7 +909,7 @@ body {
 /* ==========================================================================
    Reveal Animation (validated content fades/steps in — no state flash)
    The browser-list content is only painted once validation completes; the
-   .revealed class (added by revealCardsAndScroll) triggers a staggered
+   .revealed class (added by revealCards in script.js) triggers a staggered
    entrance for the cards instead of an abrupt swap.
    ========================================================================== */
 @keyframes card-in {
@@ -1073,4 +1078,58 @@ body {
 }
 .conn-indicator:not([data-ok]) {
   color: #b91c1c;
+}
+
+/* ==========================================================================
+   App Footer (issue #4) — persistent license/links line shared by the
+   installer web UI and the updater tab (updater.css is generated from this
+   file, so both UIs render the same footer from one source).
+
+   In-flow content, never sticky/fixed: it sits after the page content (below
+   the fold on long pages is fine) and margin-top:auto rests it on the page
+   bottom when the content is short. The divider strip breaks out of the
+   820px grid to span the full window width; the CONTENT is re-padded back
+   into the grid. The body's own 24px padding is the space below the footer —
+   the footer itself carries no bottom padding.
+   ========================================================================== */
+.app-footer {
+  margin-top: auto;
+  /* Full-width divider strip: break out of the 820px grid, then re-pad so the
+     CONTENT stays aligned to it (the scrollbar-width overshoot of the 50vw
+     breakout is clipped by body{overflow-x: clip}). */
+  margin-inline: calc(50% - 50vw);
+  padding-inline: calc(50vw - 50%);
+  padding-block: 24px 0;
+  background: var(--bg-body);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  font-size: 12px;
+  color: var(--text-muted); /* copyright text recedes; links stay full-strength */
+}
+.app-footer-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.app-footer-icon {
+  flex: none;
+  color: var(--text-muted); /* monochrome brand mark, follows the text */
+}
+.app-footer-links {
+  display: inline-flex;
+  gap: 22px;
+}
+.app-footer a {
+  color: var(--accent-primary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.app-footer a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }

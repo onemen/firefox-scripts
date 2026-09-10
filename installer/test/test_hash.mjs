@@ -92,7 +92,7 @@ function getInstallerPath(snapshotDir) {
   let name;
   if (process.platform === 'win32') name = 'installer_win';
   else if (process.platform === 'darwin') name = 'installer_mac';
-  else name = 'installer_linux';
+  else name = process.arch === 'arm64' ? 'installer_linux_aarch64' : 'installer_linux';
   // Dev snapshots name binaries installer_win-dev.exe; prod keeps the plain
   // name.  Accept either so a dev snapshot from CI's publish gate works.
   const plain = path.join(snapshotDir, `${name}${ext}`);
