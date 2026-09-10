@@ -161,7 +161,7 @@ jobs:
     steps:
       # Node + pnpm here; dependencies install AFTER the MSYS2 toolchain
       # step (make needs MSYS2, pnpm install does not care about order).
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
         with:
           install: 'false'
       - name: Set up MSYS2 toolchain (make + gcc)
@@ -204,7 +204,7 @@ jobs:
     environment: ${{ inputs.mode == 'prod' && 'release' || null }}
     runs-on: ubuntu-latest
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: baseline-hashes
@@ -237,7 +237,7 @@ jobs:
     environment: ${{ inputs.mode == 'prod' && 'release' || null }}
     runs-on: macos-latest
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: baseline-hashes

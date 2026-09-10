@@ -147,7 +147,7 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
     runs-on: ubuntu-latest
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       # 'linux' implies the aarch64 twin in upload.mjs — install its
       # cross-compiler first (also validates the cross-compile on every PR).
@@ -181,7 +181,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       # 'linux' implies the aarch64 twin in upload.mjs (Linux runners only).
       - name: Harden apt sources
@@ -232,7 +232,7 @@ jobs:
         os: [ubuntu-latest]
 
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       - name: Build helper binary
         run: |
@@ -274,7 +274,7 @@ jobs:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       # The ~100 MB official Firefox download is the bulk of the install step;
       # cache it keyed on the exact download URL (which embeds the release
@@ -393,7 +393,7 @@ jobs:
     steps:
       # $/ prefix: the runner materializes the local action from the triggering
       # commit — a ./ local action would need a checkout step first.
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       - name: Set portable browser directory (Linux/macOS)
         if: ${{ runner.os != 'Windows' }}
@@ -571,7 +571,7 @@ jobs:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       # Availability gate: skip the whole leg when the runner has no working
       # snapd (advisory — availability varies by runner image, #55).
@@ -753,7 +753,7 @@ jobs:
       BROWSER_PIN_VERSION: ${{ inputs.version }}
 
     steps:
-      - uses: ./.github/actions/setup-repo
+      - uses: $/.github/actions/setup-repo
 
       # The ~100 MB installers dominate the job; cache them keyed on the
       # resolved download URL (embeds the version for LibreWolf/Waterfox).
