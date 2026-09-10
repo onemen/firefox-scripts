@@ -734,12 +734,14 @@ jobs:
 
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
   # Each browser resolves its installer through test/e2e/shared/browserResolver.mjs:
+  # ── Fork-browser matrix (advisory) ─────────────────────────────────────
   # LibreWolf (Codeberg bsys6 → packages API; librewolf.dev → dl.librewolf.net
   # → bsys6 asset → ci-downloads → cached installer), Floorp and Zen (GitHub
-  # stable latest asset URLs), Waterfox (its CDN versioned setup URL — the leg
-  # is ADVISORY during its soak period, ADR 0021). Firefox Dev Edition is NOT
-  # here — it is first-party Mozilla and runs as a required leg of the
-  # `updater` job above.
+  # stable latest asset URLs). Waterfox is NOT here anymore — it graduated to
+  # the required `updater-waterfox` job above (ADR 0025); a `browser=waterfox`
+  # dispatch still collapses the matrix to it for the BROWSER_PIN_VERSION
+  # escape (ADR 0021/0023). Firefox Dev Edition is NOT here — it is
+  # first-party Mozilla and runs as a required leg of the `updater` job above.
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
     # Same updater E2E test as the `updater` job, so it is gated on the same
@@ -752,13 +754,15 @@ jobs:
     runs-on: windows-latest
     strategy:
       fail-fast: false
-      # Manual escape: a `browser` input collapses the matrix to that one leg
-      # (dynamic JSON matrix — the canonical fromJSON pattern). Empty input
-      # (or any non-dispatch event, where `inputs` is empty) = the full matrix.
-      matrix:
-        browser:
-          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
-          inputs.browser) || '["librewolf", "floorp", "zen", "waterfox"]') }}
+    # Manual escape: a `browser` input collapses the matrix to that one leg
+    # (dynamic JSON matrix — the canonical fromJSON pattern). Empty input
+    # (or any non-dispatch event, where `inputs` is empty) = the full matrix.
+    # waterfox stays selectable here for pinned single-browser escapes even
+    # though its steady-state leg is the required `updater-waterfox` job.
+    matrix:
+      browser:
+        ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
+        inputs.browser) || '["librewolf", "floorp", "zen"]') }}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
       # Manual escape: pin the resolver to the requested version (empty input
@@ -815,6 +819,85 @@ jobs:
           path: dist/updater-e2e-*.png
           if-no-files-found: ignore
 
+  # ── Waterfox hard gate (ADR 0025, amends ADR 0021) ────────────────────────
+  # Waterfox is ≈40% of the user base; after a 4-green-run soak (ADR 0021's
+  # flip criterion) its updater E2E leg is REQUIRED, not advisory. Windows-only
+  # because its download recipe is the Windows NSIS installer. Kept OUT of the
+  # `updater` matrix so one browser's recipe cannot fail the firefox/firefox-dev
+  # /nightly legs wholesale — this job carries its own retry/mirror chain.
+  # Version artifact: uploaded like the `updater` legs so record-validation
+  # records the exact waterfox build the leg validated (single-OS set).
+  updater-waterfox:
+    name: 'updater E2E · waterfox · windows-latest'
+    needs: [changes, snapshot]
+    if: needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'
+    runs-on: windows-latest
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      # Manual escape (ADR 0021/0023): pin the resolver to the requested
+      # version when a dispatch pins one (empty on push/PR events).
+      BROWSER_PIN_VERSION: ${{ inputs.version }}
+
+    steps:
+      - uses: ./.github/actions/setup-repo
+
+      # Same URL-keyed installer cache as the fork legs — the CDN setup URL
+      # embeds the version, so each release gets its own cache entry.
+      - name: Resolve download URL
+        id: dlurl
+        shell: bash
+        run: |
+          URL=$(node test/e2e/shared/downloads.mjs waterfox --url)
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          echo "key=browser-dl-${{ runner.os }}-waterfox-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
+      - name: Cache waterfox installer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.BROWSER_DL_DIR }}
+          key: ${{ steps.dlurl.outputs.key }}
+          save-always: true
+
+      - name: Install waterfox
+        run: node test/e2e/shared/downloads.mjs waterfox
+
+      - name: Download dev snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-snapshot
+          path: dist/
+
+      - name: Run updater E2E
+        run: node test/e2e/updater/updater-e2e.mjs
+
+      # Same artifact contract as the `updater` matrix legs: the exact tested
+      # version travels to record-validation as a file (GitHub limitation
+      # #17245). Consumed with a waterfox-specific single-OS expected set.
+      - name: Capture installed waterfox version
+        id: instver
+        shell: bash
+        run: |
+          VER="$(node test/e2e/shared/downloads.mjs waterfox --installed-version)"
+          echo "Tested waterfox $VER on windows-latest"
+          printf '{"browser":"%s","os":"%s","version":"%s"}\n' \
+            "waterfox" "windows-latest" "$VER" \
+            > "e2e-version-waterfox-windows-latest.json"
+
+      - name: Upload waterfox version artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-version-waterfox-windows-latest
+          path: e2e-version-waterfox-windows-latest.json
+          if-no-files-found: error
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-waterfox
+          path: dist/updater-e2e-*.png
+          if-no-files-found: ignore
+
   # ── E2E gate ─────────────────────────────────────────────────────────────
   # Single branch-protection check. Every upstream job is a hard gate, so a
   # green aggregate check cannot hide a failed, cancelled, or skipped matrix
@@ -832,6 +915,7 @@ jobs:
         installer,
         helper,
         updater,
+        updater-waterfox,
         portable-firefox,
         snap-firefox,
         browser-matrix,
@@ -856,6 +940,7 @@ jobs:
             installer:${{ needs.changes.outputs.installer == 'true' }}
             helper:${{ needs.changes.outputs.updater == 'true' }}
             updater:${{ needs.changes.outputs.updater == 'true' }}
+            updater-waterfox:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
             snap-firefox:${{ needs.changes.outputs.updater == 'true' }}
             browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
@@ -867,12 +952,15 @@ jobs:
             installer:${{ needs.installer.result }}
             helper:${{ needs.helper.result }}
             updater:${{ needs.updater.result }}
+            updater-waterfox:${{ needs.updater-waterfox.result }}
             portable-firefox:${{ needs.portable-firefox.result }}
             snap-firefox:${{ needs.snap-firefox.result }}
             browser-matrix:${{ needs.browser-matrix.result }}
-          required: snapshot installer helper updater portable-firefox
+          required: snapshot installer helper updater updater-waterfox portable-firefox
           advisory: snap-firefox browser-matrix
-          skip-guard: snapshot installer helper updater portable-firefox snap-firefox browser-matrix
+          skip-guard:
+            snapshot installer helper updater updater-waterfox portable-firefox snap-firefox
+            browser-matrix
 
   # ── Record validated browser versions (#4) ────────────────────────────────
   # After the updater matrix legs (firefox/firefox-dev/nightly × 3 OSes) ran

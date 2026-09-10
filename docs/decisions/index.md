@@ -82,6 +82,8 @@ Open these before proposing a new primitive, surface, or storage home.
   explicit pin escape hatch with strict pin semantics (version-embedded sources + `ci-downloads`)
 - [0024](./0024-release-asset-set.md) — Release asset set: ARM64 Linux installer/helper pair +
   universal macOS installer; additive platform growth under [0019]'s naming rules
+- [0025](./0025-waterfox-hard-gate.md) — Waterfox joins the hard gate after its 4-green-run soak:
+  required Windows leg + publish-drift coverage; pin-first break-glass runbook (extends [0021])
 
 ## Historical
 

@@ -383,10 +383,19 @@ const CONTRACTS = [
       'installer': "needs.changes.outputs.installer == 'true'",
       'helper': "needs.changes.outputs.updater == 'true'",
       'updater': "needs.changes.outputs.updater == 'true'",
+      'updater-waterfox':
+        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'",
       'browser-matrix':
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
     },
-    applicability: ['snapshot', 'installer', 'helper', 'updater', 'browser-matrix'],
+    applicability: [
+      'snapshot',
+      'installer',
+      'helper',
+      'updater',
+      'updater-waterfox',
+      'browser-matrix',
+    ],
     // Runs after e2e-gate: records the validated browser versions (#4) only
     // when every browser leg passed, and cleans up the temporary
     // ci-downloads release after a single-browser manual escape (ADR 0021).

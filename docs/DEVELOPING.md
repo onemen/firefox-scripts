@@ -473,8 +473,10 @@ run, so the required checks keep reporting. The aggregate gates share one engine
 `browser-matrix` fork legs (LibreWolf, Floorp, Zen — downloaded from third-party hosts:
 librewolf.dev's package registry and GitHub release assets) are advisory when they run: failures
 warn in the gate instead of failing the PR. Firefox Developer Edition is first-party Mozilla, so it
-runs as a required leg of the `updater` job (#35), not in the advisory matrix. Waterfox has no
-direct download URL and stays manual (tracked by version only in the URL watchdog).
+runs as a required leg of the `updater` job (#35), not in the advisory matrix. Waterfox graduated
+from the advisory matrix to its own required `updater-waterfox` leg (Windows-only, ADR 0025) after
+its soak; its current version must also be covered by the validated-versions record before a prod
+publish, and the pin-first break-glass runbook for vendor-flake days lives in that ADR.
 
 **Agent file-change hooks (recommended, per-workstation)** — agent clients (Codebuff, Claude Code,
 …) can run a command after each file edit and feed the output back to the agent in the same turn.
