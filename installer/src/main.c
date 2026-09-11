@@ -1455,6 +1455,7 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
     }
 
     RunningBrowser *b = &detected_browsers[browser_idx];
+    char pkill_pattern[MAX_PATH_LEN];  // POSIX: install-dir pkill pattern
     verbose_printf("[close-browser] Closing %s (PID: %lu, binary: %s)\n",
                    b->identified_browser, b->pid, b->binary_path);
 
@@ -1479,8 +1480,14 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
                        (unsigned long)b->pid);
     send_json_response(client_fd, json, pos);
 #else
-    // SIGTERM first (graceful), then SIGKILL leftovers — both matched by FULL
-    // binary path, which is unique per install, unlike the bare process name.
+    // Signal every process of THIS install: matched by the INSTALL DIRECTORY
+    // (dirname of the binary + "/"), not the binary file path.  On Linux the
+    // launched binary and its real image can differ (firefox is a symlink/
+    // loader whose /proc/exe resolves to firefox-bin) while the cmdline keeps
+    // the invoked path — only the install directory is guaranteed to appear
+    // in EVERY process cmdline of this install, and it is unique per install
+    // (/usr/lib/firefox/ vs /usr/lib/firefox-esr/ never cross-match).
+    //
     // Reject paths with the shell-dangerous characters inside double quotes
     // (", ', `, $, backslash) instead of escaping them: pkill -f runs via the
     // shell, and such a character would otherwise break out of the quoting
@@ -1488,16 +1495,22 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
     // are literal inside double quotes, so ordinary paths still match — only
     // an exotic path gets no sweep.
     int swept = 0;
-    if (strlen(b->binary_path) > 0 &&
+    const char *last_slash = strrchr(b->binary_path, '/');
+    if (last_slash && last_slash != b->binary_path &&
         strpbrk(b->binary_path, "\"'`$\\\n") == NULL) {
-        char pkill_cmd[4096];
-        snprintf(pkill_cmd, sizeof(pkill_cmd),
-                 "pkill -TERM -f \"%s\" 2>/dev/null", b->binary_path);
-        (void)system(pkill_cmd);
-        sleep_ms(800);
-        snprintf(pkill_cmd, sizeof(pkill_cmd),
-                 "pkill -9 -f \"%s\" 2>/dev/null", b->binary_path);
-        swept = (system(pkill_cmd) == 0);
+        size_t dir_len = (size_t)(last_slash - b->binary_path) + 1;
+        if (dir_len < sizeof(pkill_pattern) - 2) {
+            memcpy(pkill_pattern, b->binary_path, dir_len);
+            pkill_pattern[dir_len] = '\0';
+            char pkill_cmd[4096];
+            snprintf(pkill_cmd, sizeof(pkill_cmd),
+                     "pkill -TERM -f \"%s\" 2>/dev/null", pkill_pattern);
+            (void)system(pkill_cmd);
+            sleep_ms(800);
+            snprintf(pkill_cmd, sizeof(pkill_cmd),
+                     "pkill -9 -f \"%s\" 2>/dev/null", pkill_pattern);
+            swept = (system(pkill_cmd) == 0);
+        }
     }
 
     char json[512];
