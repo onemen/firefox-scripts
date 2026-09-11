@@ -12,7 +12,12 @@
  *    reported via env.json), `--server-only` (no scan, no UI tab) and the
  *    second-instance path (a second installer on the same port refuses to
  *    serve, the first keeps answering). No browser needed.
- * 3. UI layer (--ui flag): launches a real Firefox, starts the installer (normal
+ * 3. Restart-scope layer (#180, default on; --no-restart-scope to skip): two
+ *    copies of the discovered Firefox install (same image name, different
+ *    binary dirs) run at once, a config install targets copy B, Restart — copy
+ *    A must survive (the old image-name kill killed it). Needs a real
+ *    (non-snap) Firefox; skips otherwise.
+ * 4. UI layer (--ui flag): launches a real Firefox, starts the installer (normal
  *    mode, so it detects the browser), navigates to the web UI, and asserts
  *    cards render with expected statuses.
  *
@@ -22,7 +27,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawn} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
 import {
   REPO_ROOT,
   check,
@@ -32,9 +37,10 @@ import {
   waitForProcessExit,
   screenshotPrivileged,
   tempDir,
+  rmDir,
   summary,
 } from '../shared/helpers.mjs';
-import {findSnapshot, discoverFirefoxBinary} from '../shared/browsers.mjs';
+import {findSnapshot, discoverFirefoxBinary, findZip, isSnapBinary} from '../shared/browsers.mjs';
 import {
   closeBrowser,
   killStrayProcesses,
@@ -49,16 +55,17 @@ const TIMEOUT_MS = 15_000;
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const opts = {ui: false, testSurface: true};
+  const opts = {ui: false, testSurface: true, restartScope: true};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--snapshot' && args[i + 1]) opts.snapshot = args[++i];
     else if (args[i] === '--headless') opts.headless = true;
     else if (args[i] === '--ui') opts.ui = true;
     else if (args[i] === '--no-test-surface') opts.testSurface = false;
+    else if (args[i] === '--no-restart-scope') opts.restartScope = false;
     else if (args[i] === '--ui-fallback-open') opts.uiFallbackOpen = true;
     else if (args[i] === '--help') {
       console.log(
-        'Usage: node installer-e2e.mjs --snapshot <dir> [--ui] [--headless] [--no-test-surface] [--ui-fallback-open]'
+        'Usage: node installer-e2e.mjs --snapshot <dir> [--ui] [--headless] [--no-test-surface] [--no-restart-scope] [--ui-fallback-open]'
       );
       process.exit(0);
     }
@@ -526,6 +533,486 @@ async function waitForServerOn(port, maxWaitMs = 15_000) {
   return false;
 }
 
+// ── Restart-scope layer (#180) ─────────────────────────────────────────
+//
+// Issue #180: after a config install, the restart worker closed EVERY process
+// of the image name (firefox.exe) instead of the target install's processes.
+// With ESR and Nightly running at once (both firefox.exe), restarting ESR
+// closed Nightly too. The fix matches processes by full binary path
+// (close_browser_binary); this leg is the regression test.
+//
+// Hermetic setup: the discovered Firefox install is copied into two temp
+// dirs. Both copies share ONE image name (exactly the bug's precondition)
+// but have different binary paths. Copy A (the bystander) and copy B (the
+// target) each run a profile. The installer (in --smoke-test mode so it
+// never opens a UI tab) scans them, a config zip is uploaded via /api/upload,
+// /api/install runs a real config install for B (temp dirs are user-writable,
+// so admin_copy_tree needs no elevation), and /api/restart is triggered.
+// Assertions: copy A's processes survive throughout, copy B's old processes
+// are gone and its profile relaunches with a new PID, and the installer
+// server stays up.
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+/** Poll fn (sync or async) until it returns truthy or the timeout passes. */
+async function pollUntil(fn, timeoutMs, intervalMs = 500) {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() >= end) return null;
+    await sleep(intervalMs);
+  }
+}
+
+function readJsonIfExists(p) {
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const norm = p => path.resolve(p);
+  return process.platform === 'win32' ?
+      norm(a).toLowerCase() === norm(b).toLowerCase()
+    : norm(a) === norm(b);
+}
+
+/** Launch a Firefox binary+profile as a detached OS process. */
+function launchDetachedFirefox(firefoxBin, profileDir, headless) {
+  const args = ['--profile', profileDir, '--no-remote'];
+  if (headless) args.push('-headless');
+  // detached + unref'd: the browser must outlive harness steps that throw.
+  const child = spawn(firefoxBin, args, {detached: true, stdio: 'ignore'});
+  child.unref();
+  return child;
+}
+
+/**
+ * Copy the discovered Firefox install into a temp dir so two instances can run
+ * under one image name with different binary paths (the bug's exact
+ * precondition). Windows: robocopy of the install dir. Linux: cp -a of the
+ * resolved binary's dir (discovered paths like /usr/bin/firefox are symlinks).
+ * macOS: cp -a of the whole .app bundle so the Contents/Resources GreD layout
+ * survives (config installs and detection both key on it). Returns {bin, dir}
+ * or null on failure.
+ */
+function copyFirefoxInstall(firefoxBin, destDir) {
+  if (process.platform === 'win32') {
+    const src = path.dirname(firefoxBin);
+    fs.mkdirSync(destDir, {recursive: true});
+    // Exit codes < 8 are success (1 = files copied, 3 = copied + extra);
+    // /R:1 /W:1 keeps a locked file from retrying for minutes.
+    const r = spawnSync(
+      'robocopy',
+      [
+        src,
+        destDir,
+        '/E',
+        '/R:1',
+        '/W:1',
+        '/XD',
+        'gtest',
+        'xpcshell',
+        'crashreporter',
+        'uninstall',
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NP',
+      ],
+      {stdio: 'ignore'}
+    );
+    if ((r.status ?? 99) >= 8) return null;
+    const bin = path.join(destDir, 'firefox.exe');
+    return fs.existsSync(bin) ? {bin, dir: destDir} : null;
+  }
+
+  const real = fs.realpathSync(firefoxBin);
+  if (process.platform === 'darwin') {
+    // .../FirefoxA.app/Contents/MacOS/firefox → the .app root two levels up.
+    const macosIdx = real.lastIndexOf('/Contents/MacOS/');
+    if (macosIdx === -1) return null;
+    const appRoot = real.slice(0, macosIdx);
+    const appName = path.basename(appRoot);
+    const r = spawnSync('cp', ['-a', appRoot, path.join(destDir, appName)], {
+      stdio: 'pipe',
+    });
+    if (r.status !== 0) return null;
+    const bin = path.join(destDir, appName, 'Contents', 'MacOS', path.basename(real));
+    return fs.existsSync(bin) ? {bin, dir: path.join(destDir, appName)} : null;
+  }
+  // Linux: copy the binary's real dir (a tarball/system install layout).
+  const src = path.dirname(real);
+  fs.mkdirSync(destDir, {recursive: true});
+  const r = spawnSync('cp', ['-a', src + '/.', destDir], {stdio: 'pipe'});
+  if (r.status !== 0) return null;
+  const bin = path.join(destDir, path.basename(real));
+  return fs.existsSync(bin) ? {bin, dir: destDir} : null;
+}
+
+/**
+ * Raw PID list of firefox.exe processes whose command line contains profileDir
+ * (may contain a bogus 0 parsed from an empty tooling line). Returns null only
+ * when the OS tooling itself failed.
+ */
+function rawFirefoxPidsForProfile(workDir, profileDir) {
+  if (process.platform === 'win32') {
+    const script = path.join(workDir, 'rs-list.ps1');
+    fs.writeFileSync(
+      script,
+      [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        'Get-CimInstance Win32_Process -Filter "Name=\'firefox.exe\'" |',
+        "  Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:RS_PROFILE) -and $_.CommandLine -notmatch '-contentproc' } |",
+        '  ForEach-Object { "$($_.ProcessId)" }',
+      ].join('\n')
+    );
+    const r = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+      {encoding: 'utf8', timeout: 30_000, env: {...process.env, RS_PROFILE: profileDir}}
+    );
+    if (r.error || (r.status !== 0 && !r.stdout)) return null;
+    return (r.stdout || '')
+      .split(/\r?\n/)
+      .map(s => Number(s.trim()))
+      .filter(Number.isFinite);
+  }
+  // POSIX: pgrep -a prints "PID cmdline" lines; drop contentproc children
+  // (they are spawned/exit independently) and parse the leading PID.
+  const pattern = profileDir.replace(/[\\^$.|?*+()[\]{}]/g, '\\$&');
+  const r = spawnSync('pgrep', ['-af', pattern], {encoding: 'utf8', timeout: 15_000});
+  if (r.error) return null;
+  return (r.stdout || '')
+    .split(/\r?\n/)
+    .filter(line => !line.includes('-contentproc'))
+    .map(line => Number(line.trim().split(/\s+/)[0]))
+    .filter(Number.isFinite);
+}
+
+/**
+ * PIDs of firefox.exe MAIN processes for a profile: content processes are
+ * spawned and exit independently, so survivor assertions track mains only.
+ * Filters the raw list (drops the bogus 0). Returns null only when the OS
+ * tooling itself failed.
+ */
+function firefoxPidsForProfile(workDir, profileDir) {
+  const raw = rawFirefoxPidsForProfile(workDir, profileDir);
+  if (!raw) return null;
+  return raw.filter(pid => pid > 0);
+}
+
+/** Force-kill every firefox.exe whose command line matches one of the paths. */
+function killFirefoxMatching(workDir, pathPatterns) {
+  if (process.platform === 'win32') {
+    const script = path.join(workDir, 'rs-kill.ps1');
+    const env = {...process.env};
+    pathPatterns.forEach((p, i) => {
+      env[`RS_P${i}`] = p;
+    });
+    const clauses = pathPatterns
+      .map((_, i) => `$_.CommandLine.Contains($env:RS_P${i})`)
+      .join(' -or ');
+    fs.writeFileSync(
+      script,
+      [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        'Get-CimInstance Win32_Process -Filter "Name=\'firefox.exe\'" |',
+        `  Where-Object { $_.CommandLine -and (${clauses}) } |`,
+        '  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
+      ].join('\n')
+    );
+    spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+      {encoding: 'utf8', timeout: 30_000, env}
+    );
+    return;
+  }
+  for (const p of pathPatterns) {
+    const pattern = p.replace(/[\\^$.|?*+()[\]{}]/g, '\\$&');
+    spawnSync('pkill', ['-f', pattern], {encoding: 'utf8', timeout: 15_000});
+  }
+}
+
+async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
+  console.log(
+    '\nRestart-scope layer (#180): config restart must not close other same-image installs'
+  );
+
+  const firefoxBin = opts.firefox || process.env.FIREFOX_BINARY || discoverFirefoxBinary();
+  if (!firefoxBin || isSnapBinary(firefoxBin)) {
+    console.log('  SKIP: no non-snap Firefox binary found (restart-scope layer needs one)');
+    check(
+      counter,
+      process.env.FXS_REQUIRE_RESTART_SCOPE !== '1',
+      'RS-00 non-snap Firefox available (skip tolerated unless FXS_REQUIRE_RESTART_SCOPE=1)'
+    );
+    return;
+  }
+
+  // 'fxs-e2e' prefix so the shared stray-process sweep also cleans up after a
+  // crashed run (leftover copies/profiles + the --env-file installer).
+  const workDir = tempDir('fxs-e2e');
+  const dirA = path.join(workDir, 'install-a');
+  const dirB = path.join(workDir, 'install-b');
+  const profA = path.join(workDir, 'profile-a');
+  const profB = path.join(workDir, 'profile-b');
+  fs.mkdirSync(profA, {recursive: true});
+  fs.mkdirSync(profB, {recursive: true});
+  removeProfileCompatibilityIni(profA);
+  removeProfileCompatibilityIni(profB);
+
+  // Headless relaunch: the restart worker spawns the browser without a
+  // -headless flag, so the env var is what keeps a display-less runner alive.
+  // The spawned installer inherits it, and the relaunched browser inherits
+  // it from the installer. Restored in finally so a headed --ui run after
+  // this layer is unaffected.
+  const prevHeadless = process.env.MOZ_HEADLESS;
+  let installer = null;
+  try {
+    if (opts.headless) process.env.MOZ_HEADLESS = '1';
+
+    console.log('  copying the Firefox install into two temp dirs...');
+    const copyA = copyFirefoxInstall(firefoxBin, dirA);
+    const copyB = copyFirefoxInstall(firefoxBin, dirB);
+    check(
+      counter,
+      Boolean(copyA && copyB),
+      'RS-01 two temp copies of the Firefox install created (same image name, distinct binary paths)'
+    );
+    if (!copyA || !copyB) return;
+
+    console.log(`  launching bystander A (${copyA.bin})`);
+    launchDetachedFirefox(copyA.bin, profA, opts.headless);
+    console.log(`  launching target B (${copyB.bin})`);
+    launchDetachedFirefox(copyB.bin, profB, opts.headless);
+
+    const setA = await pollUntil(() => {
+      const s = firefoxPidsForProfile(workDir, profA);
+      return s && s.length > 0 ? s : null;
+    }, 30_000);
+    check(counter, Boolean(setA), 'RS-02 bystander A is running');
+    const setB = await pollUntil(() => {
+      const s = firefoxPidsForProfile(workDir, profB);
+      return s && s.length > 0 ? s : null;
+    }, 30_000);
+    check(counter, Boolean(setB), 'RS-03 target B is running');
+    if (!setA || !setB) throw new Error('copied Firefox instances did not start');
+
+    // Installer in smoke mode: scans browsers, serves, never opens a tab.
+    const envFile = path.join(workDir, 'env.json');
+    installer = spawn(installerBin, ['--smoke-test', '--env-file', envFile], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    installer.stdout.on('data', d => console.log(`  [installer] ${d}`.trimEnd()));
+    installer.stderr.on('data', d => console.log(`  [installer-err] ${d}`.trimEnd()));
+
+    const manifest = await pollUntil(() => readJsonIfExists(envFile), 20_000, 200);
+    check(
+      counter,
+      Boolean(manifest?.token && manifest?.port),
+      'RS-04 installer env manifest written (token + port)'
+    );
+    if (!manifest) throw new Error('installer did not write its env manifest');
+    const base = `http://127.0.0.1:${manifest.port}`;
+    const tq = `?t=${encodeURIComponent(manifest.token)}`;
+
+    // Detection must see both copies as distinct rows (strong cmdline profile
+    // match; rows selected by profile path — C returns the cmdline value
+    // verbatim, immune to GetModuleFileName casing/short-path differences).
+    const rows = await pollUntil(async () => {
+      try {
+        const res = await fetch(`${base}/api/browsers`, {signal: AbortSignal.timeout(3000)});
+        const arr = JSON.parse(await res.text());
+        const a = arr.find(r => samePath(r.profilePath, profA));
+        const b = arr.find(r => samePath(r.profilePath, profB));
+        return a && b ? {a, b} : null;
+      } catch {
+        return null;
+      }
+    }, 20_000);
+    check(
+      counter,
+      Boolean(rows),
+      'RS-05 installer detected both installs as distinct rows (same image name, different binary paths)'
+    );
+    if (!rows) throw new Error('installer did not detect both copies');
+    check(
+      counter,
+      !samePath(rows.a.binaryPath, rows.b.binaryPath),
+      'RS-06 detected rows have distinct binary paths'
+    );
+
+    // Real config install for B (drives exactly what the UI tab drives).
+    const fxZip = findZip(snapshotDir, ['fx-folder-dev.zip', 'fx-folder.zip']);
+    check(counter, Boolean(fxZip), 'RS-07 fx-folder zip present in the snapshot');
+    if (!fxZip) throw new Error('no fx-folder zip in snapshot');
+    const up = await fetch(`${base}/api/upload${tq}`, {
+      method: 'POST',
+      body: fs.readFileSync(fxZip),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    check(counter, up.ok, 'RS-08 config zip uploaded to the installer');
+
+    const started = await fetch(
+      `${base}/api/install?browser=${rows.b.index}&config=1${tq.replace('?t=', '&t=')}`,
+      {method: 'POST', signal: AbortSignal.timeout(TIMEOUT_MS)}
+    );
+    const startedBody = await started.json().catch(() => null);
+    check(
+      counter,
+      startedBody?.status === 'started',
+      'RS-09 config install started for target B',
+      JSON.stringify(startedBody)?.slice(0, 80)
+    );
+
+    const done = await pollUntil(
+      async () => {
+        try {
+          const res = await fetch(`${base}/api/status${tq}`, {signal: AbortSignal.timeout(3000)});
+          const j = JSON.parse(await res.text());
+          if (j.step === 'done') return j;
+          if (j.step === 'error') return {error: j.message};
+        } catch {
+          /* transient */
+        }
+        return null;
+      },
+      45_000,
+      400
+    );
+    check(
+      counter,
+      Boolean(done) && !done.error,
+      'RS-10 config install completed (no elevation needed: temp dir is user-writable)',
+      done?.error || ''
+    );
+    if (!done || done.error) throw new Error('config install did not complete');
+
+    // Restart B. On Windows the worker is async (response returns first); on
+    // POSIX the work runs inside the request.
+    //
+    // Baselines are sampled AFTER the launch has settled: Firefox may fork a
+    // launcher process at startup that hands off and exits, so the exact PID
+    // set churns in the first seconds. The anti-bug invariant (#180) is not
+    // "same PIDs" — an image-name kill closed EVERY instance, so the fixed
+    // behavior is: bystander A never drops to zero main processes, and B
+    // comes back with a fresh main-PID set.
+    const stablePids = async profile => {
+      for (let i = 0; i < 5; i++) {
+        const s1 = firefoxPidsForProfile(workDir, profile) || [];
+        await sleep(2500);
+        const s2 = firefoxPidsForProfile(workDir, profile) || [];
+        if (
+          s1.length > 0 &&
+          s2.length > 0 &&
+          s1.length === s2.length &&
+          s1.every(pid => s2.includes(pid))
+        )
+          return s2;
+      }
+      return firefoxPidsForProfile(workDir, profile) || [];
+    };
+    const preA = await stablePids(profA);
+    const preB = await stablePids(profB);
+    check(counter, preA.length > 0, 'RS-12a bystander A baseline stable before the restart');
+    const rres = await fetch(
+      `${base}/api/restart?browser=${rows.b.index}${tq.replace('?t=', '&t=')}`,
+      {method: 'POST', signal: AbortSignal.timeout(60_000)}
+    );
+    const rbody = await rres.json().catch(() => null);
+    check(
+      counter,
+      rbody?.status === 'restarted',
+      'RS-11 restart accepted for target B',
+      JSON.stringify(rbody)?.slice(0, 80)
+    );
+
+    // The window: A must keep running the whole time (the bug killed it here),
+    // and B must come back with a fresh process set. The worker may take a
+    // few seconds (WM_CLOSE + wait) before B's relaunch appears.
+    //
+    // The close+fresh-PID behavior is Windows-specific: the pre-fix kill was
+    // Windows-only (EnumWindows/taskkill), and the POSIX config branch has
+    // never closed processes (pre-existing behavior, outside #180). So the
+    // full window poll runs on Windows only; POSIX asserts A was untouched.
+    if (process.platform === 'win32') {
+      const deadline = Date.now() + 45_000;
+      let survived = true;
+      let relaunched = false;
+      let sawBClosed = false;
+      let detail = '';
+      while (Date.now() < deadline) {
+        const nowA = firefoxPidsForProfile(workDir, profA) || [];
+        if (nowA.length === 0) {
+          survived = false;
+          detail = `bystander A dropped to zero main processes (baseline was ${preA.join(',')})`;
+          break;
+        }
+        const nowB = firefoxPidsForProfile(workDir, profB) || [];
+        if (nowB.length === 0) {
+          sawBClosed = true;
+        } else if (sawBClosed || nowB.every(pid => !preB.includes(pid))) {
+          // Closed then something reappeared, or fresh PIDs right away.
+          // (PID-reuse safe: a recycled PID alone doesn't count unless we
+          // saw B fully closed first.)
+          relaunched = true;
+          break;
+        }
+        await sleep(500);
+      }
+      check(
+        counter,
+        survived,
+        'RS-12 bystander A (same image name) kept running through the whole restart',
+        detail
+      );
+      check(counter, relaunched, 'RS-13 target B was closed and relaunched with a fresh PID');
+    } else {
+      const nowA = firefoxPidsForProfile(workDir, profA);
+      check(
+        counter,
+        Boolean(nowA) && nowA.length > 0,
+        'RS-12 bystander A (same image name) survived the restart (POSIX)'
+      );
+      console.log(
+        '  (POSIX: the config restart has no process-close step — fresh-PID assertion is Windows-only)'
+      );
+    }
+
+    const ping = await fetch(`${base}/api/ping`, {signal: AbortSignal.timeout(3000)});
+    check(counter, ping.ok, 'RS-14 installer server still answering after the restart');
+  } catch (err) {
+    check(counter, false, 'RS-FIN restart-scope layer completed', err.message);
+  } finally {
+    try {
+      installer?.kill();
+      if (installer) await waitForProcessExit(installer, 5000);
+    } catch {
+      /* ignore */
+    }
+    // Kill both copies (and any worker-relaunched instance) before the tree
+    // is removed — Windows keeps dir handles open otherwise.
+    try {
+      killFirefoxMatching(workDir, [dirA, dirB, profA, profB]);
+    } catch {
+      /* ignore */
+    }
+    await sleep(1500);
+    if (prevHeadless === undefined) delete process.env.MOZ_HEADLESS;
+    else process.env.MOZ_HEADLESS = prevHeadless;
+    rmDir(workDir);
+  }
+}
+
 // ── UI layer tests (optional, --ui flag) ───────────────────────────────────
 
 async function runUiLayer(counter, opts, snapshotDir) {
@@ -823,6 +1310,12 @@ async function run() {
   // be gone first.
   if (opts.testSurface) {
     await runTestSurfaceLayer(counter, bin);
+  }
+
+  // Restart-scope layer (#180, default on) — needs a real Firefox + the
+  // snapshot's fx-folder zip; skips gracefully when neither is available.
+  if (opts.restartScope) {
+    await runRestartScopeLayer(counter, opts, snapshotDir, bin);
   }
 
   // UI layer (optional) — spawns a fresh installer that now owns the port.

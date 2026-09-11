@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 #ifdef _WIN32
 #include <tlhelp32.h>
 #include <bcrypt.h>
@@ -1741,14 +1742,27 @@ static void close_browser_by_pid(unsigned long pid, int wait_ms) {
 }
 
 /**
- * Gracefully close every process of the given executable image.
- * Used when a config update happened — all instances share the config dir,
- * so they all need to be restarted with a clean cache.
+ * Gracefully close every running MAIN process of the given install (matched by
+ * full binary path), plus its child processes.  Used when a config update
+ * happened: all profiles of THIS install share the config dir, so they all
+ * need to be restarted with a clean cache.
+ *
+ * Matching is by full image path, not by executable name — several Firefox
+ * family installs can run at once under the same image name (e.g. ESR and
+ * Nightly are both firefox.exe); an image-name kill would close all of them
+ * (#180).
  */
-static void close_browser_image(const char *exe_name, int wait_ms) {
+static void close_browser_binary(const char *binary_path, int wait_ms) {
 #ifdef _WIN32
-    wchar_t wexe[MAX_PATH];
-    MultiByteToWideChar(CP_UTF8, 0, exe_name, -1, wexe, MAX_PATH);
+    if (strlen(binary_path) == 0) return;
+    wchar_t wbin[MAX_PATH];
+    if (MultiByteToWideChar(CP_UTF8, 0, binary_path, -1, wbin, MAX_PATH) == 0) return;
+    // szExeFile is only the image NAME, so pre-filter on the basename of the
+    // binary path; the full-path check below is what actually scopes the kill.
+    const wchar_t *wbase = wbin;
+    const wchar_t *slash = wcsrchr(wbin, L'\\');
+    if (slash && slash[1]) wbase = slash + 1;
+
     DWORD pids[256];
     int npids = 0;
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -1757,18 +1771,31 @@ static void close_browser_image(const char *exe_name, int wait_ms) {
         pe.dwSize = sizeof(pe);
         if (Process32FirstW(hSnapshot, &pe)) {
             do {
-                if (npids < 256 && _wcsicmp(pe.szExeFile, wexe) == 0)
+                if (npids >= 256 || _wcsicmp(pe.szExeFile, wbase) != 0) continue;
+                HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                                       pe.th32ProcessID);
+                if (!h) continue;  // cannot verify the path — leave it alone
+                char path[MAX_PATH] = "";
+                DWORD sz = (DWORD)sizeof(path);
+                BOOL ok = QueryFullProcessImageNameA(h, 0, path, &sz);
+                CloseHandle(h);
+                // Case-insensitive compare: Windows paths are case-preserving,
+                // and Firefox itself may differ in case from detection's copy.
+                if (ok && _stricmp(path, binary_path) == 0)
                     pids[npids++] = pe.th32ProcessID;
             } while (Process32NextW(hSnapshot, &pe));
         }
         CloseHandle(hSnapshot);
     }
+    verbose_printf("[restart] close_browser_binary(%s): %d matching process(es)\n",
+                   binary_path, npids);
+    log_msg("[restart] closing %d process(es) of %s\n", npids, binary_path);
     // Ask them all to close, then wait/force each (two phases so multi-instance
     // cases shut down in parallel instead of serially).
     for (int i = 0; i < npids; i++) EnumWindows(close_window_enum_proc, (LPARAM)pids[i]);
     for (int i = 0; i < npids; i++) wait_close_or_force(pids[i], wait_ms);
 #else
-    (void)exe_name;
+    (void)binary_path;
 #endif
 }
 
@@ -2029,8 +2056,8 @@ static void open_url_in_profile(const char *binary, const char *profile, const c
 
 typedef struct {
     int config_changed;
-    int ui_host_killed;  // the profile hosting the UI tab is being killed
-    char exe_name[MAX_PATH_LEN];
+    int ui_host_killed;              // the profile hosting the UI tab is being killed
+    char binary_path[MAX_PATH_LEN];  // install (binary) the restart targets
     int restart_idx[MAX_BROWSERS];
     int restart_count;
 } restart_plan_t;
@@ -2039,12 +2066,15 @@ static volatile int g_restart_worker_running = 0;
 
 static int do_restart_work(const restart_plan_t *plan) {
     if (plan->config_changed) {
-        // Gracefully close every instance of the exe (they all share the config
-        // dir).  WM_CLOSE lets Firefox write a valid session store.
-        verbose_printf("[restart] Config updated -> closing ALL instances of %s\n",
-                       plan->exe_name);
-        log_msg("[restart] closing ALL instances of %s\n", plan->exe_name);
-        close_browser_image(plan->exe_name, 8000);
+        // Close every running instance of THIS install (matched by full binary
+        // path — they all share the config dir).  WM_CLOSE lets Firefox write a
+        // valid session store.  Never kill by image name: ESR and Nightly both
+        // run as firefox.exe, so an image-name kill would close unrelated
+        // installs too (#180).
+        verbose_printf("[restart] Config updated -> closing all instances of %s\n",
+                       plan->binary_path);
+        log_msg("[restart] closing all instances of %s\n", plan->binary_path);
+        close_browser_binary(plan->binary_path, 8000);
     } else {
         // Targeted: close only the profiles whose utils were updated.
         for (int i = 0; i < plan->restart_count; i++) {
@@ -2223,8 +2253,8 @@ int handle_api_restart(int client_fd, const char *query, const char *body, size_
     restart_plan_t plan;
     memset(&plan, 0, sizeof(plan));
     plan.config_changed = config_changed;
-    strncpy(plan.exe_name, target->exe_name, MAX_PATH_LEN - 1);
-    plan.exe_name[MAX_PATH_LEN - 1] = '\0';
+    strncpy(plan.binary_path, target->binary_path, MAX_PATH_LEN - 1);
+    plan.binary_path[MAX_PATH_LEN - 1] = '\0';
     memcpy(plan.restart_idx, restart_idx, sizeof(int) * (size_t)restart_count);
     plan.restart_count = restart_count;
 
