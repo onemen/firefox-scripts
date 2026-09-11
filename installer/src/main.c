@@ -1427,6 +1427,11 @@ int handle_api_hg_tags(int client_fd, const char *query, const char *body, size_
     return 0;
 }
 
+// Restart/close helpers defined further down (used by the close-browser
+// endpoint).
+static void close_browser_by_pid(unsigned long pid, int wait_ms);
+static void close_browser_binary(const char *binary_path, int wait_ms);
+
 int handle_api_close_browser(int client_fd, const char *query, const char *body, size_t body_len) {
     (void)body;
     (void)body_len;
@@ -1450,93 +1455,43 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
     }
 
     RunningBrowser *b = &detected_browsers[browser_idx];
-    verbose_printf("[close-browser] Killing %s (PID: %lu, exe: %s)\n",
-                   b->identified_browser, b->pid, b->exe_name);
+    verbose_printf("[close-browser] Closing %s (PID: %lu, binary: %s)\n",
+                   b->identified_browser, b->pid, b->binary_path);
 
+    // Close THIS install only (#180 follow-up: the old fallbacks matched by
+    // image name — taskkill /f /im + Get-Process — which also killed every
+    // other same-image install, e.g. ESR and Nightly are both firefox.exe).
+    // 1) Graceful close of the detected main process (WM_CLOSE, then tree
+    //    force-kill if it stalls).
+    // 2) Sweep any stragglers of the SAME binary path (orphaned children).
 #ifdef _WIN32
-    // Use up to three kill methods in sequence to handle multi-process browsers.
-    DWORD pid_exit = 1, im_exit = 1, ps_exit = 1;
-
-    // 1) Kill by specific PID (most targeted)
-    {
-        char cmd[512];
-        snprintf(cmd, sizeof(cmd), "taskkill /f /pid %lu", (unsigned long)b->pid);
-        STARTUPINFOA si = { sizeof(si) };
-        PROCESS_INFORMATION pi;
-        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
-                           CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 5000);
-            GetExitCodeProcess(pi.hProcess, &pid_exit);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-        Sleep(500);
-    }
-
-    // 2) Kill by image name with process tree
-    {
-        char cmd[512];
-        snprintf(cmd, sizeof(cmd), "taskkill /f /im \"%s\" /t", b->exe_name);
-        STARTUPINFOA si = { sizeof(si) };
-        PROCESS_INFORMATION pi;
-        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
-                           CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 5000);
-            GetExitCodeProcess(pi.hProcess, &im_exit);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-        Sleep(500);
-    }
-
-    // 3) PowerShell backup (kills by any means)
-    {
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd),
-                 "powershell -NoProfile -NonInteractive -Command \"Get-Process %s | Stop-Process -Force\"",
-                 b->exe_name);
-        STARTUPINFOA si = { sizeof(si) };
-        PROCESS_INFORMATION pi;
-        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
-                           CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 10000);
-            GetExitCodeProcess(pi.hProcess, &ps_exit);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-        Sleep(500);
-    }
+    close_browser_by_pid(b->pid, 8000);
+    close_browser_binary(b->binary_path, 8000);
 
     char json[1024];
     int pos = snprintf(json, sizeof(json),
-                       "{\"status\":\"kill_attempted\",\"pid_kill_exit\":%lu,"
-                       "\"taskkill_im_exit\":%lu,\"powershell_exit\":%lu,"
-                       "\"message\":\"All kill methods completed\"}",
-                       pid_exit, im_exit, ps_exit);
+                       "{\"status\":\"closed\",\"pid\":%lu,"
+                       "\"method\":\"binary-scoped\","
+                       "\"message\":\"Closed this install only (matched by binary path)\"}",
+                       (unsigned long)b->pid);
     send_json_response(client_fd, json, pos);
 #else
-    // POSIX: try SIGTERM first (gentle), then pkill -9 (aggressive)
-    int sigterm_ret = -1;
-    if (kill((pid_t)b->pid, SIGTERM) == 0) {
-        sigterm_ret = 0;
-        sleep_ms(300);
+    close_browser_by_pid(b->pid, 8000);
+    // Force-kill leftover processes of this install by FULL binary path —
+    // the path is unique per install, unlike the bare process name.
+    int swept = 0;
+    if (strlen(b->binary_path) > 0) {
+        char pkill_cmd[4096];
+        snprintf(pkill_cmd, sizeof(pkill_cmd), "pkill -9 -f \"%s\" 2>/dev/null",
+                 b->binary_path);
+        swept = (system(pkill_cmd) == 0);
     }
-
-    char proc_name[256];
-    strncpy(proc_name, b->exe_name, sizeof(proc_name) - 1);
-    proc_name[sizeof(proc_name) - 1] = '\0';
-#ifdef __linux__
-    char *dot = strstr(proc_name, ".exe");
-    if (dot) *dot = '\0';
-#endif
-    char pkill_cmd[4096];
-    snprintf(pkill_cmd, sizeof(pkill_cmd), "pkill -9 -f \"%s\" 2>/dev/null", proc_name);
-    int pkill_ret = system(pkill_cmd);
 
     char json[512];
     int pos = snprintf(json, sizeof(json),
-                       "{\"status\":\"kill_attempted\",\"sigterm_ret\":%d,\"pkill_ret\":%d,\"message\":\"pkill completed\"}",
-                       sigterm_ret, pkill_ret);
+                       "{\"status\":\"closed\",\"pid\":%lu,\"swept\":%d,"
+                       "\"message\":\"Closed this install only (matched by binary path)\"}",
+                       (unsigned long)b->pid, swept);
     send_json_response(client_fd, json, pos);
 #endif
 

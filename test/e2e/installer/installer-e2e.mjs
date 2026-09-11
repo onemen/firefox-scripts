@@ -990,6 +990,43 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
 
     const ping = await fetch(`${base}/api/ping`, {signal: AbortSignal.timeout(3000)});
     check(counter, ping.ok, 'RS-14 installer server still answering after the restart');
+
+    // ── /api/close-browser binary scoping (#180 follow-up) ──────────────
+    // Same invariant as the restart path: closing B must not touch A.
+    // Close B via the endpoint, wait for its processes to be gone, then
+    // assert A is still running with its main PIDs unchanged.
+    const postRestartA = await stablePids(profA);
+    const closeRes = await fetch(
+      `${base}/api/close-browser?browser=${rows.b.index}${tq.replace('?t=', '&t=')}`,
+      {method: 'POST', signal: AbortSignal.timeout(60_000)}
+    );
+    const closeBody = await closeRes.json().catch(() => null);
+    check(
+      counter,
+      closeRes.ok && closeBody?.status === 'closed',
+      'RS-15 close-browser accepted for target B (binary-scoped response)',
+      JSON.stringify(closeBody)?.slice(0, 80)
+    );
+    const closedB = await pollUntil(
+      async () => {
+        const pids = firefoxPidsForProfile(workDir, profB) || [];
+        return pids.length === 0 ? pids : null;
+      },
+      30_000,
+      500
+    );
+    check(counter, Boolean(closedB), 'RS-16 target B fully closed by /api/close-browser');
+    const survivorA = firefoxPidsForProfile(workDir, profA) || [];
+    check(
+      counter,
+      survivorA.length > 0,
+      'RS-17 bystander A (same image name) still running after close-browser'
+    );
+    check(
+      counter,
+      postRestartA.length > 0 && postRestartA.every(pid => survivorA.includes(pid)),
+      'RS-18 bystander A main PIDs unchanged across close-browser'
+    );
   } catch (err) {
     check(counter, false, 'RS-FIN restart-scope layer completed', err.message);
   } finally {
