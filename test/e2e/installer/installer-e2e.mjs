@@ -793,10 +793,16 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     );
     if (!copyA || !copyB) return;
 
-    console.log(`  launching bystander A (${copyA.bin})`);
-    launchDetachedFirefox(copyA.bin, profA, opts.headless);
-    console.log(`  launching target B (${copyB.bin})`);
-    launchDetachedFirefox(copyB.bin, profB, opts.headless);
+    // Launch with the RESOLVED binary path: detection captures the resolved
+    // form (e.g. macOS /private/var instead of /var, Linux /proc/exe), and
+    // /api/close-browser's pkill matches against the cmdline — an unresolved
+    // launch path would make the two forms disagree and the sweep miss.
+    const launchA = fs.realpathSync(copyA.bin);
+    const launchB = fs.realpathSync(copyB.bin);
+    console.log(`  launching bystander A (${launchA})`);
+    launchDetachedFirefox(launchA, profA, opts.headless);
+    console.log(`  launching target B (${launchB})`);
+    launchDetachedFirefox(launchB, profB, opts.headless);
 
     const setA = await pollUntil(() => {
       const s = firefoxPidsForProfile(workDir, profA);
@@ -1004,6 +1010,7 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
       {method: 'POST', signal: AbortSignal.timeout(60_000)}
     );
     const closeBody = await closeRes.json().catch(() => null);
+    console.log(`  [close-browser response] ${JSON.stringify(closeBody)}`);
     check(
       counter,
       closeRes.ok && closeBody?.status === 'closed',
@@ -1018,6 +1025,17 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
       30_000,
       500
     );
+    if (!closedB) {
+      // Diagnostics: show the raw pgrep matches so a surviving process's
+      // cmdline is visible in the CI log.
+      if (process.platform !== 'win32') {
+        const raw = spawnSync('pgrep', ['-af', profB.replace(/[\\^$.|?*+()[\]{}]/g, '\\$&')], {
+          encoding: 'utf8',
+          timeout: 15_000,
+        });
+        console.log(`  [rs16-diag] pgrep -af profile-b:\n${raw.stdout || '(no matches)'}`);
+      }
+    }
     check(counter, Boolean(closedB), 'RS-16 target B fully closed by /api/close-browser');
     const survivorA = firefoxPidsForProfile(workDir, profA) || [];
     check(
