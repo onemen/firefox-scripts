@@ -1478,9 +1478,13 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
 #else
     close_browser_by_pid(b->pid, 8000);
     // Force-kill leftover processes of this install by FULL binary path —
-    // the path is unique per install, unlike the bare process name.
+    // the path is unique per install, unlike the bare process name.  Reject
+    // paths with shell metacharacters instead of quoting them: pkill -f runs
+    // via the shell, and a " or ` inside the path would otherwise inject a
+    // command (an exotic path then simply gets no sweep).
     int swept = 0;
-    if (strlen(b->binary_path) > 0) {
+    if (strlen(b->binary_path) > 0 &&
+        strpbrk(b->binary_path, "\"'`$&;|<>\n\\t ") == NULL) {
         char pkill_cmd[4096];
         snprintf(pkill_cmd, sizeof(pkill_cmd), "pkill -9 -f \"%s\" 2>/dev/null",
                  b->binary_path);
@@ -1736,6 +1740,9 @@ static void close_browser_binary(const char *binary_path, int wait_ms) {
                 CloseHandle(h);
                 // Case-insensitive compare: Windows paths are case-preserving,
                 // and Firefox itself may differ in case from detection's copy.
+                // Both APIs return long ANSI paths, but detection captured the
+                // path via GetModuleFileNameExA — an 8.3-form capture would just
+                // fail to match here ("no close"), never close a wrong install.
                 if (ok && _stricmp(path, binary_path) == 0)
                     pids[npids++] = pe.th32ProcessID;
             } while (Process32NextW(hSnapshot, &pe));
