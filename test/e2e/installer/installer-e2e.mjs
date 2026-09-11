@@ -641,6 +641,9 @@ function copyFirefoxInstall(firefoxBin, destDir) {
     if (macosIdx === -1) return null;
     const appRoot = real.slice(0, macosIdx);
     const appName = path.basename(appRoot);
+    // cp does not create intermediate directories — destDir (install-a/b)
+    // must exist before the .app copy lands inside it.
+    fs.mkdirSync(destDir, {recursive: true});
     const r = spawnSync('cp', ['-a', appRoot, path.join(destDir, appName)], {
       stdio: 'pipe',
     });

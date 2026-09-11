@@ -1461,11 +1461,14 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
     // Close THIS install only (#180 follow-up: the old fallbacks matched by
     // image name — taskkill /f /im + Get-Process — which also killed every
     // other same-image install, e.g. ESR and Nightly are both firefox.exe).
-    // 1) Graceful close of the detected main process (WM_CLOSE, then tree
-    //    force-kill if it stalls).
-    // 2) Sweep any stragglers of the SAME binary path (orphaned children).
+    //
+    // Everything here matches by FULL BINARY PATH, never by the detection-time
+    // PID: after a restart the detected PID is stale, and acting on a recycled
+    // PID could hit an unrelated process.  The path-scoped close covers the
+    // install's CURRENT main process and all its children.
 #ifdef _WIN32
-    close_browser_by_pid(b->pid, 8000);
+    // WM_CLOSE to every process of this binary (graceful session write), then
+    // wait/force-kill each — close_browser_by_pid semantics, path-scoped.
     close_browser_binary(b->binary_path, 8000);
 
     char json[1024];
@@ -1476,18 +1479,24 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
                        (unsigned long)b->pid);
     send_json_response(client_fd, json, pos);
 #else
-    close_browser_by_pid(b->pid, 8000);
-    // Force-kill leftover processes of this install by FULL binary path —
-    // the path is unique per install, unlike the bare process name.  Reject
-    // paths with shell metacharacters instead of quoting them: pkill -f runs
-    // via the shell, and a " or ` inside the path would otherwise inject a
-    // command (an exotic path then simply gets no sweep).
+    // SIGTERM first (graceful), then SIGKILL leftovers — both matched by FULL
+    // binary path, which is unique per install, unlike the bare process name.
+    // Reject paths with the shell-dangerous characters inside double quotes
+    // (", ', `, $, backslash) instead of escaping them: pkill -f runs via the
+    // shell, and such a character would otherwise break out of the quoting
+    // and inject a command.  Other characters (spaces, semicolons, pipes)
+    // are literal inside double quotes, so ordinary paths still match — only
+    // an exotic path gets no sweep.
     int swept = 0;
     if (strlen(b->binary_path) > 0 &&
-        strpbrk(b->binary_path, "\"'`$&;|<>\n\\t ") == NULL) {
+        strpbrk(b->binary_path, "\"'`$\\\n") == NULL) {
         char pkill_cmd[4096];
-        snprintf(pkill_cmd, sizeof(pkill_cmd), "pkill -9 -f \"%s\" 2>/dev/null",
-                 b->binary_path);
+        snprintf(pkill_cmd, sizeof(pkill_cmd),
+                 "pkill -TERM -f \"%s\" 2>/dev/null", b->binary_path);
+        (void)system(pkill_cmd);
+        sleep_ms(800);
+        snprintf(pkill_cmd, sizeof(pkill_cmd),
+                 "pkill -9 -f \"%s\" 2>/dev/null", b->binary_path);
         swept = (system(pkill_cmd) == 0);
     }
 
