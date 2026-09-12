@@ -651,14 +651,18 @@ See ADR [0009](./decisions/0009-unified-publish-modes.md) for the decision behin
 
 `dev` publishes to a per-run branch and release tag (`dev-build-<id>`, where `<id>` defaults to
 `<current-branch>-<short-sha>` or `DEV_BUILD_ID`), so a test build never touches the live `latest`
-release or the `gh-pages` site. The release is marked **pre-release**, its body links the branch,
-and it carries the manual-download artifacts: the `utils` + `fx-folder` zips and the installer
-binary (the `updater-ui` zip and helper binaries stay branch-only — the updater fetches `updater-ui`
-itself and helpers are installer-side). Dev URLs are baked into the built artifacts and served from
+release or the `gh-pages` site. Publishes are **branch-only** by default (ADR
+[0026](./decisions/0026-publish-channels-and-dead-channel-fallback.md)); `--note="<label>"`
+additionally creates a pre-release page (title `dev-build-<id> — <label>`, body with the note, a
+test-build warning and provenance) for RC-style announcements. Its body links the branch, and it
+carries the manual-download artifacts: the `utils` + `fx-folder` zips and the installer binary (the
+`updater-ui` zip and helper binaries stay branch-only — the updater fetches `updater-ui` itself and
+helpers are installer-side). Dev URLs are baked into the built artifacts and served from
 `cdn.jsdelivr.net` for the browser-facing pieces (installer web UI, remote updater UI) and
 `raw.githubusercontent.com` for the privileged engine fetches (chrome:// context has no CORS).
-Delete the dev branch after testing: `git push origin --delete dev-build-<id>` (CI test runs delete
-it automatically in a `finally`).
+Delete the dev branch only after its users have received the fallback logic (ADR 0026 — republish
+into the same `DEV_BUILD_ID` first so installed test builds auto-update while the branch lives):
+`git push origin --delete dev-build-<id>` (CI test runs delete it automatically in a `finally`).
 
 ### Run
 

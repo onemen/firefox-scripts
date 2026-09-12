@@ -84,6 +84,9 @@ Open these before proposing a new primitive, surface, or storage home.
   universal macOS installer; additive platform growth under [0019]'s naming rules
 - [0025](./0025-waterfox-hard-gate.md) — Waterfox joins the hard gate after its 4-green-run soak:
   required Windows leg + publish-drift coverage; pin-first break-glass runbook (extends [0021])
+- [0026](./0026-publish-channels-and-dead-channel-fallback.md) — Publish channels: stable (CI-only,
+  full cross-OS asset set) vs test (`--mode=dev`, branch-only, optional RC note); dead-test-channel
+  daily check falls back to the stable manifest (extends [0009])
 
 ## Historical
 
