@@ -162,14 +162,17 @@ if (BUILD_ONLY && SKIP_BUILD) {
 }
 // Removed flags fail loudly: an old --dry-run / --packages-only /
 // --binaries-only invocation must never silently turn into a real upload.
-// The offline check is now `--local` (upload:local).
-const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only'].filter(f =>
+// The offline check is now `--local` (upload:local). --ci was removed with
+// the workflow-only prod guard: it only widened the platform set, so a local
+// `--ci` prod run would still have published a partial release.
+const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only', '--ci'].filter(f =>
   process.argv.includes(f)
 );
 if (REMOVED_FLAGS.length > 0) {
   throw new Error(
     `Unknown flag ${REMOVED_FLAGS.join(', ')} — the offline check is now ` +
-      `'upload:local' (node tools/publish/upload.mjs --local --mode=prod|dev).`
+      `'upload:local' (node tools/publish/upload.mjs --local --mode=prod|dev); ` +
+      `prod publishes are workflow-only (gh workflow run pages.yml -f mode=prod).`
   );
 }
 // --mode=dev always rebuilds + re-uploads; a hash match never suppresses it.

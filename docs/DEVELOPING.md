@@ -22,7 +22,7 @@ one goal: installing and updating Firefox scripts for legacy extension support.
 ├── tools/publish/          Release-publishing scripts (Node.js)
 │   ├── upload.mjs          upload / upload:local: hash diff → rebuild changed zips +
 │   │                       binaries → upload release assets + Pages → update hash
-│   │                       manifest (--mode=prod|dev, --local/--force, --ci/--platform=)
+│   │                       manifest (--mode=prod|dev, --local/--force, --platform=)
 │   ├── createZip.mjs       Zip creation helpers (fx-folder.zip, utils.zip, updater-ui.zip)
 │   ├── generateUpdaterConfig.mjs  Regenerates updater-config.sys.mjs from installer.conf
 │   ├── syncGeneratedFiles.mjs     Regenerates the generated files (untracked, on demand)
@@ -779,8 +779,8 @@ The same run compiles the installer and helper binaries when their source (`inst
   as assets of the release tagged by `RELEASE_NAME` (`installer_win-dev.exe` etc. in dev mode).
 - `helper_win.exe` / `helper_linux` / `helper_mac` — pushed to the publish branch (the in-browser
   updater fetches them from there).
-- By default it builds only the current OS. Use `--ci` to cover all three platforms, or
-  `--platform=win|linux|mac` for an explicit set (each platform needs its own build machine).
+- By default it builds only the current OS, or `--platform=win|linux|mac` for an explicit set (each
+  platform needs its own build machine — which is why prod publishes are workflow-only).
 
 ### Run from CI
 
