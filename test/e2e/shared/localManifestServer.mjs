@@ -148,18 +148,6 @@ function buildMatchingManifest(chromeUtilsDir, snapshotDir) {
   };
 }
 
-/** Find a free port. */
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const s = http.createServer();
-    s.listen(0, () => {
-      const addr = s.address();
-      s.close(() => resolve(addr.port));
-    });
-    s.on('error', reject);
-  });
-}
-
 /** Serve a hashes.json from memory. */
 export async function startLocalManifestServer(snapshotDir, chromeUtilsDir, opts = {}) {
   const {multiRequest = false, manifestOverride = null} = opts;
@@ -177,9 +165,6 @@ export async function startLocalManifestServer(snapshotDir, chromeUtilsDir, opts
     manifest = buildMatchingManifest(staging, snapshotDir);
   }
   const body = JSON.stringify(manifest, null, 2);
-
-  const port = await findFreePort();
-  const url = `http://127.0.0.1:${port}/hashes.json`;
 
   let served = 0;
   const maxServes = multiRequest ? Infinity : 1;
@@ -203,10 +188,15 @@ export async function startLocalManifestServer(snapshotDir, chromeUtilsDir, opts
     }
   });
 
+  // Bind with port 0 and read the OS-assigned port from the bound socket —
+  // never a probe-then-rebind: between closing a probe socket and listening on
+  // its port, another process can claim the port (EADDRINUSE on CI runners).
   await new Promise((resolve, reject) => {
-    server.listen(port, '127.0.0.1', () => resolve());
+    server.listen(0, '127.0.0.1', () => resolve());
     server.on('error', reject);
   });
+  const port = server.address().port;
+  const url = `http://127.0.0.1:${port}/hashes.json`;
 
   // Keep staging alive until the server is closed so the manifest body stays valid.
   let closed = false;
