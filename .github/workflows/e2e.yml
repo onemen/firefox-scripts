@@ -151,6 +151,9 @@ jobs:
 
       # 'linux' implies the aarch64 twin in upload.mjs — install its
       # cross-compiler first (also validates the cross-compile on every PR).
+      - name: Harden apt sources
+        uses: ./.github/actions/harden-apt
+
       - name: Install aarch64 cross toolchain
         run: |
           sudo apt-get update -qq
@@ -181,6 +184,10 @@ jobs:
       - uses: $/.github/actions/setup-repo
 
       # 'linux' implies the aarch64 twin in upload.mjs (Linux runners only).
+      - name: Harden apt sources
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/harden-apt
+
       - name: Install aarch64 cross toolchain
         if: runner.os == 'Linux'
         run: |
@@ -193,6 +200,10 @@ jobs:
       # The UI layer launches a real Firefox (even headless it needs a display
       # server on Linux runners), so install xvfb and run under it — same as
       # the updater job below.
+      - name: Harden apt sources
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -327,6 +338,10 @@ jobs:
       # from downloads.mjs's official recipe (apt's Snap wrapper breaks BiDi);
       # it downloads via the official channel redirect and exports
       # FIREFOX_BINARY through $GITHUB_ENV.
+      - name: Harden apt sources
+        if: matrix.os == 'ubuntu-latest'
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -536,6 +551,10 @@ jobs:
           esac
           chmod +x dist/installer/installer_* 2>/dev/null || true
 
+      - name: Harden apt sources
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -603,6 +622,10 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::warning::snapd unavailable on this runner — snap E2E leg skipped (#55)"
           fi
+
+      - name: Harden apt sources
+        if: steps.snapd.outputs.available == 'true'
+        uses: ./.github/actions/harden-apt
 
       - name: Install Linux test prerequisites
         if: steps.snapd.outputs.available == 'true'
