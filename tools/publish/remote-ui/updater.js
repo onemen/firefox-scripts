@@ -46,6 +46,8 @@ const {
   fetchBytes,
   getZipBaseUrl,
   getHelperBaseUrl,
+  getAssetSuffix,
+  getChannelState,
 } = ChromeUtils.importESModule('chrome://firefox-scripts/content/scriptsUpdater.sys.mjs');
 
 // URL/path configuration — generated from config/installer.conf at publish
@@ -57,41 +59,44 @@ const {CONFIG} = ChromeUtils.importESModule(
 // Resolved through scriptsUpdater.sys.mjs so tests can override the URLs via
 // extensions.firefox-scripts.override.<KEY> prefs without touching hashed
 // files (the config ships inside utils.zip).
-const ZIP_BASE_URL = getZipBaseUrl();
+
 // Asset-name suffix ('' prod / '-dev' dev): dev zips and helpers are
-// published as utils-dev.zip / helper_win-dev.exe etc.
-const ASSET_SUFFIX = CONFIG.ASSET_SUFFIX || '';
-const FX_FOLDER_URL = `${ZIP_BASE_URL}/fx-folder${ASSET_SUFFIX}.zip`;
-const UTILS_URL = `${ZIP_BASE_URL}/utils${ASSET_SUFFIX}.zip`;
+// published as utils-dev.zip / helper_win-dev.exe etc. The suffix and the
+// base URL are resolved per call through the module so a dev install that
+// migrated to the stable channel (dead dev-build branch, ADR 0026) fetches
+// stable's unsuffixed assets instead of the vanished dev ones.
+const FX_FOLDER_URL = () => `${getZipBaseUrl()}/fx-folder${getAssetSuffix()}.zip`;
+const UTILS_URL = () => `${getZipBaseUrl()}/utils${getAssetSuffix()}.zip`;
 
 // Standalone elevated-copy helper — source of the binary is config-driven too
 // (installer.conf HELPER_BASE_URL, generated into updater-config.sys.mjs).
-const HELPER_BASE_URL = getHelperBaseUrl();
-const HELPER_FILENAMES = {
-  win: `helper_win${ASSET_SUFFIX}.exe`,
-  macosx: `helper_mac${ASSET_SUFFIX}`,
-  linux: `helper_linux${ASSET_SUFFIX}`,
-};
+// Resolved per call (not captured at load): a dev install that migrated to the
+// stable channel (ADR 0026) downloads stable's unsuffixed helper binaries.
+const HELPER_FILENAMES = () => ({
+  win: `helper_win${getAssetSuffix()}.exe`,
+  macosx: `helper_mac${getAssetSuffix()}`,
+  linux: `helper_linux${getAssetSuffix()}`,
+});
 // ARM64 Linux builds download their own helper: the elevated-copy binary must
 // match the running architecture (an x86_64 helper fails or loses elevation
 // semantics on aarch64 kernels without the 32-bit compat layer).
-const HELPER_FILENAMES_AARCH64 = {
-  linux: `helper_linux_aarch64${ASSET_SUFFIX}`,
-};
+const HELPER_FILENAMES_AARCH64 = () => ({
+  linux: `helper_linux_aarch64${getAssetSuffix()}`,
+});
 
 // The standalone native installer — published next to the zips (release assets
 // in prod, the dev-build-* branch in dev; see generateUpdaterConfig.mjs). The
 // manual-install panel points Snap users at it: unlike anything the confined
 // browser spawns, the installer runs unconfined and can write /etc/firefox.
-const INSTALLER_FILENAMES = {
-  win: `installer_win${ASSET_SUFFIX}.exe`,
-  macosx: `installer_mac${ASSET_SUFFIX}`,
-  linux: `installer_linux${ASSET_SUFFIX}`,
-};
+const INSTALLER_FILENAMES = () => ({
+  win: `installer_win${getAssetSuffix()}.exe`,
+  macosx: `installer_mac${getAssetSuffix()}`,
+  linux: `installer_linux${getAssetSuffix()}`,
+});
 // ARM64 Linux twin asset (see HELPER_FILENAMES_AARCH64).
-const INSTALLER_FILENAMES_AARCH64 = {
-  linux: `installer_linux_aarch64${ASSET_SUFFIX}`,
-};
+const INSTALLER_FILENAMES_AARCH64 = () => ({
+  linux: `installer_linux_aarch64${getAssetSuffix()}`,
+});
 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
@@ -240,16 +245,23 @@ function stateSnapshot() {
       utils: packageSnapshot('utils', scriptsInfo.utils),
     },
     // Manual-download targets (config + utils zips). The UI fills its
-    // "Download the latest scripts" link hrefs from these; the dev
-    // ASSET_SUFFIX already makes them utils-dev.zip / fx-folder-dev.zip.
-    fxFolderUrl: FX_FOLDER_URL,
-    utilsUrl: UTILS_URL,
+    // "Download the latest scripts" link hrefs from these; a dev build's
+    // suffix makes them utils-dev.zip / fx-folder-dev.zip.
+    fxFolderUrl: FX_FOLDER_URL(),
+    utilsUrl: UTILS_URL(),
     // The installer the manual panel recommends for Snap users, and the host
     // config dir (fxFolderDir) that in-tab installs would target.
     installerUrl: installerUrl(),
     configDir: fxFolderDir(),
     installing,
     restartEnabled,
+    // Dead-channel migration (ADR 0026): `channel` is what the URLs above
+    // resolve against; `migratedFromDev` is true only in the session that
+    // performed the switch. The tab banners a dev build running on the stable
+    // channel (isDev && channel === 'stable'), so a deferred install keeps the
+    // explanation even after the session flag resets.
+    channel: getChannelState().channel,
+    migratedFromDev: getChannelState().migratedFromDev,
   };
 }
 
@@ -295,8 +307,8 @@ function handleSkipCommand(kind, checked) {
  */
 function downloadPackage(kind) {
   const url =
-    kind === 'config' ? FX_FOLDER_URL
-    : kind === 'utils' ? UTILS_URL
+    kind === 'config' ? FX_FOLDER_URL()
+    : kind === 'utils' ? UTILS_URL()
     : kind === 'installer' ? installerUrl()
     : '';
   if (!url) {
@@ -391,9 +403,10 @@ function isAarch64() {
  * on arm64; every other platform falls back to the base maps.
  */
 function installerFilename() {
-  const base = INSTALLER_FILENAMES[AppConstants.platform] || INSTALLER_FILENAMES.linux;
+  const names = INSTALLER_FILENAMES();
+  const base = names[AppConstants.platform] || names.linux;
   if (!isAarch64()) return base;
-  return INSTALLER_FILENAMES_AARCH64[AppConstants.platform] || base;
+  return INSTALLER_FILENAMES_AARCH64()[AppConstants.platform] || base;
 }
 
 /**
@@ -401,21 +414,22 @@ function installerFilename() {
  * arm64 installer asset).
  */
 function installerUrl() {
-  return `${ZIP_BASE_URL}/${installerFilename()}`;
+  return `${getZipBaseUrl()}/${installerFilename()}`;
 }
 
 function helperFilename() {
-  const base = HELPER_FILENAMES[AppConstants.platform] || HELPER_FILENAMES.linux;
+  const names = HELPER_FILENAMES();
+  const base = names[AppConstants.platform] || names.linux;
   if (!isAarch64()) return base;
-  return HELPER_FILENAMES_AARCH64[AppConstants.platform] || base;
+  return HELPER_FILENAMES_AARCH64()[AppConstants.platform] || base;
 }
 
 function helperUrl() {
-  return `${HELPER_BASE_URL}/${helperFilename()}`;
+  return `${getHelperBaseUrl()}/${helperFilename()}`;
 }
 
 function helperShaUrl() {
-  return `${HELPER_BASE_URL}/${helperFilename()}.sha256`;
+  return `${getHelperBaseUrl()}/${helperFilename()}.sha256`;
 }
 
 /**
@@ -563,7 +577,7 @@ async function installUtils() {
   try {
     sendProgress(5, 'Downloading utils.zip...');
     const zipPath = PathUtils.join(tmpDir, 'utils.zip');
-    await Downloads.fetch(UTILS_URL, zipPath);
+    await Downloads.fetch(UTILS_URL(), zipPath);
 
     sendProgress(35, 'Extracting...');
     const extractDir = PathUtils.join(tmpDir, 'extracted');
@@ -599,7 +613,7 @@ async function installConfig() {
   try {
     sendProgress(5, 'Downloading fx-folder.zip...');
     const zipPath = PathUtils.join(tmpDir, 'fx-folder.zip');
-    await Downloads.fetch(FX_FOLDER_URL, zipPath);
+    await Downloads.fetch(FX_FOLDER_URL(), zipPath);
 
     sendProgress(30, 'Extracting...');
     const extractDir = PathUtils.join(tmpDir, 'extracted');

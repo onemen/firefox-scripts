@@ -20,7 +20,10 @@
  * does (rendering, installing utils/config, restarting) lives in updater-ui.zip
  * (chrome://firefox-scripts/content/ui/updater.html). If a package cannot be
  * downloaded, the check fails silently — there is no error UI to show, so the
- * tab is simply not opened.
+ * tab is simply not opened. One exception (ADR 0026): a dev-channel install
+ * whose own manifest is unreachable falls back to the stable channel's manifest
+ * (generated STABLE_* URLs) and auto-migrates; see fetchOwnManifestOrFallback()
+ * below. --local snapshots keep the silent exit.
  *
  * Notification = a new tab, shown at most once per day (pref
  * extensions.firefox-scripts.lastUpdateTabShown). The user-decision date
@@ -57,12 +60,41 @@ function configValue(key) {
   return CONFIG[key];
 }
 
+/**
+ * Stable-channel URL (the STABLE_* keys exist in dev-build configs only; a
+ * stable build's own URLs are its channel, so its empty STABLE_* values fall
+ * back to the own key). Like configValue, the test-local override pref wins —
+ * the e2e harness points the fallback at its local snapshot server the same way
+ * it points the own-channel URLs. Real users never set override prefs, so
+ * behavior is unchanged for them.
+ */
+function stableConfigValue(key) {
+  const stable = configValue(`STABLE_${key}`);
+  return stable || configValue(key);
+}
+
+/**
+ * Resolved against the ACTIVE channel, so a dev build that migrated to stable
+ * keeps resolving stable URLs (the channel functions read the same state
+ * fetchOwnManifestOrFallback writes).
+ */
+function channelValue(key) {
+  // A dev install on its own test channel (and every --local snapshot)
+  // resolves its own baked URLs; anything on the stable channel resolves the
+  // STABLE_* URLs (a migrated dev build) or the own values (a stable build,
+  // whose STABLE_* keys are empty).
+  if (CONFIG.IS_LOCAL || activeChannel() === CHANNEL_DEV) {
+    return configValue(key);
+  }
+  return stableConfigValue(key);
+}
+
 export function getHashesUrl() {
-  return configValue('HASHES_URL');
+  return channelValue('HASHES_URL');
 }
 
 export function getZipBaseUrl() {
-  return configValue('ZIP_BASE_URL');
+  return channelValue('ZIP_BASE_URL');
 }
 
 /**
@@ -72,15 +104,21 @@ export function getZipBaseUrl() {
  * manifest's own host — not ZIP_BASE_URL, which is the release URL and has no
  * updater-ui zip in prod (issue #102).
  */
+/**
+ * Base URL of the updater tab UI package (updater-ui.zip) on the active
+ * channel.
+ */
 export function getUiBaseUrl() {
   // Fall back to ZIP_BASE_URL only when the paired generated config predates
   // UI_BASE_URL (never true for zips built by the same publish run) — it keeps
   // the pre-#102 behavior instead of building an invalid URL.
-  return configValue('UI_BASE_URL') || getZipBaseUrl();
+  // Channel-aware: on the dev channel this is UI_BASE_URL (or the pre-#102
+  // ZIP_BASE_URL fallback); on stable it resolves from the STABLE_* pair.
+  return channelValue('UI_BASE_URL') || getZipBaseUrl();
 }
 
 export function getHelperBaseUrl() {
-  return configValue('HELPER_BASE_URL');
+  return channelValue('HELPER_BASE_URL');
 }
 
 const {Downloads} = ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs');
@@ -93,6 +131,113 @@ const MANIFEST_TIMEOUT_MS = 15000; // dead manifest host -> failed check, not a 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
 const PREF_LAST_SHOWN = 'extensions.firefox-scripts.lastUpdateTabShown';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
+
+/* ---------------- publish channels (ADR 0026) ----------------
+ *
+ * A dev install's generated config points exclusively at its dev-build branch.
+ * When that branch is deleted the install would be stranded forever, so the
+ * generated dev config carries the stable channel's URLs (STABLE_* keys) and
+ * the daily check falls back to the stable manifest when the test channel's
+ * own manifest is unreachable. Installing stable rewrites the installed
+ * updater-config.sys.mjs with prod URLs — the channel migrates itself; the
+ * persisted pref records it.
+ *
+ * --local snapshots keep the silent exit (ephemeral by design, ADR 0026):
+ * their initial channel is 'local' regardless of the build mode.
+ */
+const PREF_ACTIVE_CHANNEL = 'extensions.firefox-scripts.activeChannel';
+// The dev-build branch identity a migration belonged to (`CONFIG.DEV_BRANCH`).
+// A stored stable channel is honored only while this matches the running
+// build — otherwise a different dev build would inherit the migration and be
+// dragged to stable (its own manifest may still be alive).
+const PREF_ACTIVE_CHANNEL_BUILD = 'extensions.firefox-scripts.activeChannelBuild';
+const CHANNEL_STABLE = 'stable';
+const CHANNEL_DEV = 'dev';
+const CHANNEL_LOCAL = 'local';
+
+let gActiveChannel = null;
+// True only for the session in which the daily check actually migrated from
+// the dev channel to stable — the updater tab turns this into its banner.
+let gMigratedFromDev = false;
+
+function initialChannel() {
+  // Local snapshots never channel: a harness profile that once held a real
+  // install must not inherit its stored channel.
+  if (CONFIG.IS_LOCAL) {
+    return CHANNEL_LOCAL;
+  }
+  try {
+    if (Services.prefs.getPrefType(PREF_ACTIVE_CHANNEL) === Services.prefs.PREF_STRING) {
+      const stored = Services.prefs.getCharPref(PREF_ACTIVE_CHANNEL, '');
+      if (stored) {
+        // A persisted stable channel is honored only when it belongs to THIS
+        // dev build. A different dev build evaluates its own IS_DEV branch:
+        // its manifest may still be alive, and if it later dies, the fallback
+        // records its own migration.
+        if (stored === CHANNEL_STABLE) {
+          try {
+            const build = Services.prefs.getCharPref(PREF_ACTIVE_CHANNEL_BUILD, '');
+            if (build && build === CONFIG.DEV_BRANCH) {
+              return CHANNEL_STABLE;
+            }
+          } catch (_) {
+            // unreadable build pref → fall through to build-mode derivation
+          }
+          return CONFIG.IS_DEV ? CHANNEL_DEV : CHANNEL_STABLE;
+        }
+        return stored;
+      }
+    }
+  } catch (_) {
+    // unreadable pref store → derive from the build mode
+  }
+  return CONFIG.IS_DEV ? CHANNEL_DEV : CHANNEL_STABLE;
+}
+
+function activeChannel() {
+  if (gActiveChannel === null) {
+    gActiveChannel = initialChannel();
+  }
+  return gActiveChannel;
+}
+
+function setActiveChannel(channel) {
+  gActiveChannel = channel;
+  try {
+    Services.prefs.setCharPref(PREF_ACTIVE_CHANNEL, channel);
+    if (channel === CHANNEL_STABLE && CONFIG.IS_DEV) {
+      // Record which dev build the migration belonged to (see
+      // initialChannel — a different dev build must not inherit it).
+      Services.prefs.setCharPref(PREF_ACTIVE_CHANNEL_BUILD, CONFIG.DEV_BRANCH || '');
+    }
+  } catch (_) {
+    // A read-only pref store cannot persist the migration; the session flag
+    // still drives the tab banner for this run.
+  }
+}
+
+/**
+ * Channel state for the updater tab: the channel URLs currently resolve
+ * against, and whether THIS session's check migrated from the dev channel (the
+ * tab shows the one-time migration banner from it).
+ */
+export function getChannelState() {
+  return {channel: activeChannel(), migratedFromDev: gMigratedFromDev};
+}
+
+/**
+ * Asset-name suffix for the active channel ('' stable / '-dev' dev). Resolved
+ * at call time — a dev install that migrated to stable must fetch utils.zip,
+ * not utils-dev.zip, even though its baked CONFIG.ASSET_SUFFIX is still '-dev'.
+ * Local snapshots keep their build-mode suffix (the harness snapshot names
+ * carry it; they never fall back).
+ */
+export function getAssetSuffix() {
+  if (CONFIG.IS_LOCAL || activeChannel() === CHANNEL_DEV) {
+    return CONFIG.ASSET_SUFFIX || '';
+  }
+  return '';
+}
 
 let gInitialized = false;
 let gWindow = null;
@@ -246,6 +391,15 @@ export function fxFolderDir() {
 /**
  * Fetch the hash manifest and compare per-package local hashes against it.
  *
+ * Dead-test-channel fallback (ADR 0026): when the active dev channel's own
+ * manifest is unreachable (its dev-build branch was deleted), fetch the stable
+ * channel's manifest from the generated STABLE_* URLs and run the same hash
+ * comparison against it — one attempt, then the normal silent exit. The
+ * migration is recorded (channel pref + session flag) only after the stable
+ * manifest is actually in hand; if stable is also unreachable the install stays
+ * on the dev channel and the check fails silently as before. --local snapshots
+ * never fall back (ephemeral by design).
+ *
  * @returns {Promise<{fxFolder: Object; utils: Object; updaterUi: Object}>}
  */
 export async function checkScriptsUpdateNeeded() {
@@ -255,11 +409,13 @@ export async function checkScriptsUpdateNeeded() {
     updaterUi: {updateNeeded: false, date: '', remoteHash: '', files: []},
   };
 
+  const manifestText = await fetchOwnManifestOrFallback();
+  if (manifestText === null) {
+    return result;
+  }
+
   try {
-    // Never hang on a dead/stalled manifest host: the daily check must fail
-    // fast and leave the tab closed rather than spin.
-    const responseText = await withTimeout(fetchText(getHashesUrl()), MANIFEST_TIMEOUT_MS);
-    const remoteInfo = JSON.parse(responseText);
+    const remoteInfo = JSON.parse(manifestText);
 
     const profileDir = Services.dirsvc.get('ProfD', Ci.nsIFile).path;
     const dirs = {
@@ -310,6 +466,58 @@ export async function checkScriptsUpdateNeeded() {
 }
 
 /**
+ * Fetch the active channel's manifest; on failure, attempt the dead-test-
+ * channel fallback to stable (ADR 0026). --local snapshots never fall back.
+ *
+ * @returns {Promise<string | null>} manifest JSON text, or null when both the
+ *   own channel and (where applicable) the fallback are unreachable
+ */
+async function fetchOwnManifestOrFallback() {
+  const url = getHashesUrl();
+  try {
+    // Never hang on a dead/stalled manifest host: the daily check must fail
+    // fast and leave the tab closed rather than spin.
+    return await withTimeout(fetchText(url), MANIFEST_TIMEOUT_MS);
+  } catch (e) {
+    console.error('Firefox Scripts: manifest fetch failed', e);
+  }
+
+  // Own manifest unreachable. Only a dev-channel install may fall back, and
+  // only when its generated config actually carries the stable URLs.
+  if (CONFIG.IS_LOCAL || activeChannel() !== CHANNEL_DEV) {
+    return null;
+  }
+  if (!CONFIG.STABLE_HASHES_URL) {
+    return null; // pre-0026 dev build: no stable URLs baked in, silent exit
+  }
+  // Resolve through stableConfigValue so the harness override prefs steer the
+  // fallback too (same mechanism as every other URL getter). The baked
+  // CONFIG.STABLE_HASHES_URL above stays the presence check: a pre-0026 build
+  // has no key at all, while the resolved value would just fall back to the
+  // (dead) own URL.
+  const stableHashesUrl = stableConfigValue('HASHES_URL');
+  if (!stableHashesUrl) {
+    return null;
+  }
+
+  console.warn(
+    'Firefox Scripts: dev channel manifest unreachable — falling back to the stable channel'
+  );
+  try {
+    const stableText = await withTimeout(fetchText(stableHashesUrl), MANIFEST_TIMEOUT_MS);
+    // Migration recorded only when stable answered: from here the URLs resolve
+    // against stable and the updater tab shows the migration banner.
+    setActiveChannel(CHANNEL_STABLE);
+    gMigratedFromDev = true;
+    console.warn('Firefox Scripts: dev channel is gone — migrated to the stable channel');
+    return stableText;
+  } catch (stableError) {
+    console.error('Firefox Scripts: stable-channel fallback also failed', stableError);
+    return null;
+  }
+}
+
+/**
  * Keep the updater UI package current. When the installed updater/ui/ files do
  * not hash to the manifest's updater-ui entry, download updater-ui.zip, verify
  * it, and swap it in. Silent and idempotent.
@@ -332,7 +540,7 @@ export async function ensureUpdaterUi(info) {
 
   const tmpDir = PathUtils.join(PathUtils.tempDir, `fxs-updater-ui-${Date.now()}`);
   try {
-    const zipUrl = `${getUiBaseUrl()}/updater-ui${CONFIG.ASSET_SUFFIX || ''}.zip`;
+    const zipUrl = `${getUiBaseUrl()}/updater-ui${getAssetSuffix()}.zip`;
     const zipPath = PathUtils.join(tmpDir, 'updater-ui.zip');
     await Downloads.fetch(zipUrl, zipPath);
 

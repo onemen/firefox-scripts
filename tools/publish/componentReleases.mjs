@@ -125,13 +125,36 @@ export function renderComponentBody(kind, date, names, dates = {}) {
 }
 
 /**
+ * Asset list for a component release's body: this run's files first, then any
+ * assets an earlier same-day run left on the tag that this run did not rebuild
+ * (same-day tags are reused, so assets accumulate across runs). Each name once,
+ * order-stable — the body always lists everything the tag carries.
+ *
+ * @param {string[]} currentNames assets this run uploads
+ * @param {string[]} priorNames assets already on the tag from earlier runs
+ * @returns {string[]}
+ */
+export function bodyAssetNames(currentNames, priorNames) {
+  const out = [];
+  for (const n of currentNames) {
+    if (n && !out.includes(n)) out.push(n);
+  }
+  for (const n of priorNames) {
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
  * Sync one component release: get-or-create the tagged release as a FULL
  * release (no prerelease flag — the maintainer's Latest Scripts scheme,
  * 2026-09-12: date tags are first-class releases), then delete+reupload the
  * given assets (each labelled with its updated-date) and refresh the body. The
- * caller re-pins the Latest badge onto `latest` via make_latest afterwards — a
- * newly created full release briefly holds the badge otherwise. Idempotent:
- * same-day republishes replace assets and rewrite the body.
+ * body lists the union of this run's assets and everything an earlier same-day
+ * run left on the tag (assets are replaced, never swept). The caller re-pins
+ * the Latest badge onto `latest` via make_latest afterwards — a newly created
+ * full release briefly holds the badge otherwise. Idempotent: same-day
+ * republishes replace assets and rewrite the body.
  *
  * @returns {Promise<{created: boolean}>} whether the release was newly created
  */
@@ -152,6 +175,23 @@ export async function syncComponentRelease(
     prerelease: false,
   });
 
+  // Same-day reuse: assets from earlier runs today that this run did not
+  // rebuild stay on the tag — the body must keep listing them.
+  let priorNames = [];
+  if (existed) {
+    try {
+      const {data: prior} = await octokit.repos.listReleaseAssets({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        release_id: release.id,
+      });
+      const current = new Set(assets.keys());
+      priorNames = prior.map(a => a.name).filter(n => !current.has(n));
+    } catch {
+      // Listing failed: the body under-reports rather than failing the sync.
+    }
+  }
+
   for (const [assetName, src] of assets) {
     await deleteExistingAsset(octokit, release.id, assetName);
     if (!src) continue;
@@ -162,6 +202,12 @@ export async function syncComponentRelease(
       await uploadAsset(octokit, release.id, src, assetName, label);
     }
   }
+  await octokit.repos.updateRelease({
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    release_id: release.id,
+    body: renderComponentBody(kind, date, bodyAssetNames([...assets.keys()], priorNames), dates),
+  });
   console.log(green(`  ✓ component release ${tagName} synced`));
   return {created: !existed};
 }
