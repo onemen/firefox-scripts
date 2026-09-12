@@ -43,7 +43,10 @@ break-glass procedure, in order:
    blocked — that is correct behavior; do not bypass it.
 3. Merges stay unblocked throughout: branch protection gates on the E2E aggregate, and a red leg on
    a PR whose filter includes updater paths blocks only that PR — if it must merge regardless, the
-   pin in step 1 revalidates the record without repo changes.
+   pin in step 1 is **diagnostic only**: it distinguishes broken leg code from a broken vendor
+   build, but as a partial dispatch it does NOT revalidate the validated-versions record (ADR 0021
+   excludes partial dispatches from record-validation). Refreshing the record without repo changes
+   takes a **full** `browser=all` dispatch, whose updater legs run and re-record.
 4. **Unpin** on the first green run against a fixed vendor version. No repo state to clean: the pin
    is a dispatch input, never a commit.
 

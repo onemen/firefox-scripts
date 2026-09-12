@@ -384,7 +384,7 @@ const CONTRACTS = [
       'helper': "needs.changes.outputs.updater == 'true'",
       'updater': "needs.changes.outputs.updater == 'true'",
       'updater-waterfox':
-        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true'",
+        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox'",
       'browser-matrix':
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
     },
