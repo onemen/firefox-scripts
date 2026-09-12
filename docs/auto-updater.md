@@ -155,6 +155,15 @@ installed files against the canonical `files` list:
 - `updater-ui` → `ProfD/chrome/utils/updater/ui/`
 - **Missing file = empty content** (path + `"\n"`, no bytes) — same rule as the installer.
 
+**Dead-test-channel fallback (ADR 0026).** A dev-build install's config points exclusively at its
+`dev-build-<id>` branch, so a deleted branch would strand it. Dev configs therefore embed the stable
+channel's URLs (`STABLE_*`, generated); when the dev manifest cannot be fetched, the check tries the
+stable manifest **once** and compares against it — a difference flows through the normal
+auto-install path, and installing stable rewrites the installed `updater-config.sys.mjs` with prod
+URLs, so the channel migrates itself. The switch is recorded in the
+`extensions.firefox-scripts.activeChannel` pref and surfaced through the updater tab's migration
+banner. Stable installs and `--local` snapshots keep the plain silent exit.
+
 ## 5. Workflow
 
 ```
@@ -169,7 +178,8 @@ initScriptsUpdater(win)                     # idempotent
   │                                         #   lastUpdateTabShown == today
   └─ setInterval(checkForUpdates, 24h)
         │
-        ▼ (fetch manifest, compute local hashes, apply skippedHash prefs)
+        ▼ (fetch manifest — with the ADR 0026 stable fallback on a dead dev channel,
+        │   compute local hashes, apply skippedHash prefs)
 utils OR fx-folder needs an update?
         │  no → stay silent
         │  yes
