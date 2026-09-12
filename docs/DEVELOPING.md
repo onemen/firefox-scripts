@@ -689,6 +689,18 @@ nothing leaves the machine).
 | `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                        |
 | `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                  |
 
+A real (non-`--local`) `--mode=prod` run outside CI is **aborted before building**
+(`prodCiGuard.mjs`, ADR 0026): a dev machine builds only its own OS's binaries, while the `latest`
+release contract is the full cross-OS set (ADR 0024). The local front door for the prod publish is
+the **`pnpm release`** wrapper — it dispatches the Pages publish workflow (the same
+`gh workflow run pages.yml -f mode=prod`), optionally `--force`, and `--watch` polls the run to
+completion:
+
+```bash
+pnpm release              # dispatch the prod publish (full cross-OS matrix in CI)
+pnpm release -- --watch   # dispatch, then poll until the run completes
+```
+
 | Environment variable                 | Effect                                                                                                                              |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `DEV_BUILD_ID`                       | dev only — override the branch id, so `dev-build-<id>` (republish into an existing name)                                            |
