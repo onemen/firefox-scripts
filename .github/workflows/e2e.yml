@@ -210,6 +210,43 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
 
+      # The UI layer and the restart-scope leg (#180) launch a real Firefox.
+      # Hosted runners cannot be relied on to ship one, so install Firefox
+      # Release PORTABLY (runner temp — user-writable, unregistered) like the
+      # portable-firefox and updater jobs do; downloads.mjs exports
+      # FIREFOX_BINARY through $GITHUB_ENV.
+      - name: Resolve Firefox download URL
+        id: ffurl
+        shell: bash
+        run: |
+          URL=$(node test/e2e/shared/downloads.mjs firefox --url)
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          echo "key=firefox-dl-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
+      - name: Cache Firefox installer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.BROWSER_DL_DIR }}
+          key: ${{ steps.ffurl.outputs.key }}
+
+      - name: Set portable browser directory (Linux/macOS)
+        if: ${{ !startsWith(matrix.os, 'windows') }}
+        shell: bash
+        run: |
+          echo "PORTABLE_BROWSER_DIR=${{ runner.temp }}/firefox-portable" >> "$GITHUB_ENV"
+          mkdir -p "${{ runner.temp }}/firefox-portable"
+
+      - name: Set portable browser directory (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'firefox-portable'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Firefox Release (portable)
+        run: node test/e2e/shared/downloads.mjs firefox
+
       - name: Run installer E2E (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         # -a picks a free display number, avoiding collisions with the
