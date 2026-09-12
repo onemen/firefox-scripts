@@ -30,8 +30,9 @@ One tool, one classification, one root:
    root `skills-lock.json` is retired.
 2. **Classification is metadata, not location or naming**: a skill with `metadata.github-repo` in
    `SKILL.md` is third-party; without it, authored here. No `vendor-*` prefixes, no nested discovery
-   layouts. 3. **Third-party skills stay pristine** — never linted, never formatted. The gate ignores
-   derive from the frontmatter metadata itself: eslint computes its ignore list at config-load from
+   layouts.
+3. **Third-party skills stay pristine** — never linted, never formatted. The gate ignores derive
+   from the frontmatter metadata itself: eslint computes its ignore list at config-load from
    `metadata.github-repo` (`config/eslint.config.js`), and `.prettierignore` carries a generated
    block (`tools/sync-skill-gates.mjs`, run by the format scripts) that ignores every skill and
    un-ignores the authored ones — so a newly installed third-party skill is ignored automatically
