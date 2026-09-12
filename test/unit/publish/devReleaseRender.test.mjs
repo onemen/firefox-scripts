@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 
 process.argv.push('--mode=dev');
 
-const {renderDevRelease} = await import('../../../tools/publish/devReleasePage.mjs');
+const {renderDevRelease, createsDevRelease} =
+  await import('../../../tools/publish/devReleasePage.mjs');
 
 const BASE = {
   note: '',
@@ -33,4 +34,9 @@ test('--note publish: title carries the label, body leads with it', () => {
   // Still a prerelease page: warning + provenance ride along.
   assert.match(body, /⚠️ Test build/);
   assert.match(body, /releases\/latest/);
+});
+
+test('only an announced (--note) dev publish creates a release (branch-only default)', () => {
+  assert.equal(createsDevRelease({note: ''}), false);
+  assert.equal(createsDevRelease({note: 'v1.0 RC'}), true);
 });

@@ -6,6 +6,15 @@
 import {REPO_OWNER, REPO_NAME} from './paths.js';
 
 /**
+ * A dev publish creates its prerelease page only when announced (--note):
+ * routine test publishes are branch-only (ADR 0026), so a manually deleted
+ * release never resurrects itself on the next publish.
+ */
+export function createsDevRelease({note}) {
+  return Boolean(note);
+}
+
+/**
  * Render the dev release page's title + body. Without a note the title is the
  * bare dev-build branch; `--note="<label>"` turns the page into an RC-style
  * announcement: the label leads the title and body, and the test-build warning
