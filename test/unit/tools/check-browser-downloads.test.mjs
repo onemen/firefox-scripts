@@ -36,6 +36,7 @@ const {
   statusTag,
   updateHistory,
   validatedCell,
+  FORK_BROWSERS,
   VALIDATED_BROWSERS,
 } = await import(scriptUrl);
 
@@ -61,14 +62,22 @@ test('collectDrift: unchanged baseline yields no drift', () => {
 });
 
 test('VALIDATED_BROWSERS: exactly the hard-gate browser legs', () => {
-  assert.deepEqual(VALIDATED_BROWSERS, ['firefox', 'firefox-dev']);
+  assert.deepEqual(VALIDATED_BROWSERS, ['firefox', 'firefox-dev', 'waterfox']);
+});
+
+test('FORK_BROWSERS: waterfox graduated out of the advisory set (ADR 0025)', () => {
+  assert.deepEqual(FORK_BROWSERS, ['librewolf', 'floorp', 'zen']);
 });
 
 test('collectValidatedDrift: matching record yields no drift', () => {
   const validated = {
-    browsers: {'firefox': {version: '154.0.1'}, 'firefox-dev': {version: '155.0b3'}},
+    browsers: {
+      'firefox': {version: '154.0.1'},
+      'firefox-dev': {version: '155.0b3'},
+      'waterfox': {version: '6.7.2'},
+    },
   };
-  const versions = {'firefox': '154.0.1', 'firefox-dev': '155.0b3'};
+  const versions = {'firefox': '154.0.1', 'firefox-dev': '155.0b3', 'waterfox': '6.7.2'};
   assert.deepEqual(collectValidatedDrift(validated.browsers, versions), []);
 });
 
@@ -77,19 +86,26 @@ test('collectValidatedDrift: a new release, a missing record, and a lookup failu
   const versions = {
     'firefox': '154.0.1', // validated 153.0 → drift
     'firefox-dev': '155.0b3', // never validated → drift (even though current)
+    'waterfox': '6.7.2', // never validated → drift (hard gate since ADR 0025)
   };
   const drift = collectValidatedDrift(validated, versions);
   assert.ok(
     drift.some(d => d.includes('firefox: E2E validated 153.0, current release is 154.0.1'))
   );
   assert.ok(drift.some(d => d.includes('firefox-dev: never validated')));
-  assert.equal(drift.length, 2);
+  assert.ok(drift.some(d => d.includes('waterfox: never validated')));
+  assert.equal(drift.length, 3);
 });
 
 test('collectValidatedDrift: version lookup failure is flagged', () => {
   const validated = {'firefox': {version: '154.0.1'}, 'firefox-dev': {version: '155.0b3'}};
+  // waterfox is a hard-gate browser since ADR 0025 — a lookup failure for it
+  // blocks a publish just like firefox/firefox-dev.
   const drift = collectValidatedDrift(validated, {'firefox': '154.0.1', 'firefox-dev': ''});
-  assert.deepEqual(drift, ['firefox-dev: version lookup failed']);
+  assert.deepEqual(drift, [
+    'firefox-dev: version lookup failed',
+    'waterfox: version lookup failed',
+  ]);
 });
 
 test('collectDrift: a new version, a missing baseline, and a lookup failure are flagged', () => {
@@ -299,7 +315,10 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
   const dev = lines.find(l => l.startsWith('| firefox-dev '));
   assert.match(dev, /\| 🆕 new version \|/);
   const waterfox = lines.find(l => l.startsWith('| waterfox '));
-  assert.match(waterfox, /\| — \| — · — \| — \| ✅ up to date \| — \| — \| — \|/);
+  // waterfox is in VALIDATED_BROWSERS since ADR 0025, so its E2E-validated
+  // cell tracks the record (⏳ none until a successful run covers it) — it no
+  // longer renders the fork em dash.
+  assert.match(waterfox, /\| — \| — · — \| — \| ✅ up to date \| — \| — \| ⏳ none \|/);
 });
 
 test('buildStatusTable: fallback shows cached version on green runs, download time when known', () => {
@@ -651,10 +670,18 @@ test('planDispatches: dedupes repeated forks, caps at the fork set', () => {
   // a browser outside FORK_BROWSERS must never reach a fork escape.
   assert.deepEqual(
     planDispatches([
-      {kind: 'new-version', browser: 'waterfox'},
-      {kind: 'new-version', browser: 'waterfox'},
+      {kind: 'new-version', browser: 'zen'},
+      {kind: 'new-version', browser: 'zen'},
     ]),
-    [{browser: 'waterfox', ref: 'main'}]
+    [{browser: 'zen', ref: 'main'}]
   );
   assert.deepEqual(planDispatches([{kind: 'new-version', browser: 'not-a-browser'}]), []);
+});
+
+test('planDispatches: waterfox promotes to the full dispatch (hard gate, ADR 0025)', () => {
+  // waterfox left FORK_BROWSERS for VALIDATED_BROWSERS: a new release gets a
+  // FULL dispatch (browser=all) — it runs the required `updater-waterfox` leg
+  // and record-validation, refreshing the validated-versions record the
+  // publish gate requires. A single-browser fork escape would never re-record.
+  assert.deepEqual(planDispatches([{kind: 'new-version', browser: 'waterfox'}]), [{ref: 'main'}]);
 });
