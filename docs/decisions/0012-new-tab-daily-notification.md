@@ -24,4 +24,6 @@ design review).
 
 No OS notification permissions, no scheduler beyond a `setInterval`, and an ignored update is never
 marked as "checked". If a package cannot be downloaded the check exits silently — there is no
-fallback UI. Revisit-if: OS notifications or a manual check button are ever requested.
+fallback UI. Scoped exception: a test-channel build whose own manifest is unreachable falls back to
+the stable channel per [0026](./0026-publish-channels-and-dead-channel-fallback.md) — still through
+this tab, no new surface. Revisit-if: OS notifications or a manual check button are ever requested.

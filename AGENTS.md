@@ -60,10 +60,14 @@ facts most often cause bugs:
   `b.addTrustedTab(chrome://firefox-scripts/content/ui/updater.html)` → `updater.js` (same package)
   downloads, verifies, extracts and copies; admin-protected dirs use a freshly downloaded standalone
   helper binary (single UAC prompt, exit 2 = cancelled). If a package cannot be downloaded the check
-  exits silently — no fallback UI.
-- **Publishing:** `--mode=prod` → `latest` release + `gh-pages` (branch `main` only); `--mode=dev` →
-  disposable `dev-build-<id>` branch, `-dev` artifact names, served via jsDelivr. Requires a clean
-  worktree; real runs need `GITHUB_TOKEN_VAR`.
+  exits silently — except a **remote test/dev build** (`--mode=dev`, non-`--local`) whose own
+  manifest is unreachable (its dev-build branch was deleted): it falls back to the stable channel's
+  manifest (generated `STABLE_*` URLs, ADR 0026) and auto-migrates to stable. Local snapshots keep
+  the silent exit (ephemeral by design).
+- **Publishing:** `--mode=prod` → `latest` release + `gh-pages` (branch `main` only, CI-only — runs
+  the full cross-OS binary matrix); `--mode=dev` → disposable `dev-build-<id>` branch (branch-only;
+  `--note` adds an RC-style prerelease page), `-dev` artifact names, served via jsDelivr. Requires a
+  clean worktree; real runs need `GITHUB_TOKEN_VAR`.
 - **Gotchas:** Waterfox skips `BootstrapLoader.js` in `config.js`. Per-package skip prefs
   `extensions.firefox-scripts.skippedHash.<pkg>`; daily gate prefs `lastScriptsCheckDate` /
   `lastUpdateTabShown`. `versionInfo.json` is obsolete (excluded from zips; installed copies cleaned
