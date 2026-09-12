@@ -22,9 +22,10 @@
  * of a browser to agree (a live re-resolve could record a release no leg ever
  * tested — #134 review finding 5).
  *
- * Only the hard-gated browsers (firefox, firefox-dev — VALIDATED_BROWSERS in
- * check-browser-downloads.mjs) are recorded: fork legs are advisory, so they
- * stay on the watchdog-baseline drift check.
+ * Only the hard-gated browsers (VALIDATED_BROWSERS in
+ * check-browser-downloads.mjs — firefox, firefox-dev on 3 OSes; waterfox on
+ * Windows since ADR 0025) are recorded: fork legs are advisory, so they stay on
+ * the watchdog-baseline drift check.
  *
  * Usage (inside the E2E workflow's record-validation job):
  *
@@ -46,8 +47,18 @@ import {
   WATCHDOG_LABEL,
 } from '../check-browser-downloads.mjs';
 
-/** Runner OSes of the `updater` matrix legs (e2e.yml) — the full leg set. */
+/**
+ * Runner OSes of the `updater` matrix legs (e2e.yml) — the expected leg set for
+ * the multi-OS validated browsers. Waterfox's required leg is Windows-only (its
+ * download recipe is the Windows NSIS installer, ADR 0025), so its expected set
+ * is that single OS.
+ */
 export const UPDATER_LEG_OSES = ['ubuntu-latest', 'macos-latest', 'windows-latest'];
+export const BROWSER_LEG_OSES = {
+  'firefox': UPDATER_LEG_OSES,
+  'firefox-dev': UPDATER_LEG_OSES,
+  'waterfox': ['windows-latest'],
+};
 
 /**
  * Read the per-leg version artifacts the e2e workflow's updater matrix legs
@@ -60,10 +71,11 @@ export const UPDATER_LEG_OSES = ['ubuntu-latest', 'macos-latest', 'windows-lates
  *
  * @param {string} dir E2E_VERSIONS_DIR (where download-artifact flattened the
  *   e2e-version-* artifacts)
- * @param {string[]} [expectedOses] runner OS labels that must all be present
+ * @param {string} dir directory containing the flattened e2e-version-*.json
+ *   artifacts
  * @returns {Record<string, {version: string}>} per-browser record entries
  */
-export function collectLegVersions(dir, expectedOses = UPDATER_LEG_OSES) {
+export function collectLegVersions(dir) {
   if (!dir || !fs.existsSync(dir)) {
     throw new Error(
       `E2E_VERSIONS_DIR ${JSON.stringify(dir ?? '')} not found — the updater matrix legs ` +
@@ -91,6 +103,7 @@ export function collectLegVersions(dir, expectedOses = UPDATER_LEG_OSES) {
   }
   const out = {};
   for (const browser of VALIDATED_BROWSERS) {
+    const expectedOses = BROWSER_LEG_OSES[browser] ?? UPDATER_LEG_OSES;
     const legs = perBrowser[browser] ?? [];
     const seenOses = legs.map(l => l.os);
     const missing = expectedOses.filter(o => !seenOses.includes(o));
@@ -121,8 +134,9 @@ async function main() {
   const versionsDir = process.env.E2E_VERSIONS_DIR;
   const browsers = collectLegVersions(versionsDir);
   for (const browser of VALIDATED_BROWSERS) {
+    const osCount = (BROWSER_LEG_OSES[browser] ?? UPDATER_LEG_OSES).length;
     console.log(
-      `  ${browser}: ${browsers[browser].version} (all ${UPDATER_LEG_OSES.length} OS legs agreed)`
+      `  ${browser}: ${browsers[browser].version} (all ${osCount} OS leg${osCount === 1 ? '' : 's'} agreed)`
     );
   }
 
@@ -149,7 +163,8 @@ async function main() {
       '| --- | --- |',
       ...VALIDATED_BROWSERS.map(b => `| ${b} | ${record.browsers[b].version} |`),
       '',
-      `Each version was installed and validated on ${UPDATER_LEG_OSES.join(', ')} — all legs agreed.`,
+      `Each version was installed and validated on every leg of its expected ` +
+        `OS set (per BROWSER_LEG_OSES) — all legs agreed.`,
       `Run: ${record.runUrl || 'local'} · commit: ${record.sha || 'n/a'}`,
     ];
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');

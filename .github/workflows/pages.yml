@@ -211,6 +211,9 @@ jobs:
           path: ${{ runner.temp }}/baseline/
       # The 'linux' platform builds the aarch64 twin too (upload.mjs expands
       # it automatically), so the cross toolchain is required here.
+      - name: Harden apt sources
+        uses: ./.github/actions/harden-apt
+
       - name: Install aarch64 cross toolchain
         run: |
           sudo apt-get update -qq

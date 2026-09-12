@@ -473,8 +473,10 @@ run, so the required checks keep reporting. The aggregate gates share one engine
 `browser-matrix` fork legs (LibreWolf, Floorp, Zen — downloaded from third-party hosts:
 librewolf.dev's package registry and GitHub release assets) are advisory when they run: failures
 warn in the gate instead of failing the PR. Firefox Developer Edition is first-party Mozilla, so it
-runs as a required leg of the `updater` job (#35), not in the advisory matrix. Waterfox has no
-direct download URL and stays manual (tracked by version only in the URL watchdog).
+runs as a required leg of the `updater` job (#35), not in the advisory matrix. Waterfox graduated
+from the advisory matrix to its own required `updater-waterfox` leg (Windows-only, ADR 0025) after
+its soak; its current version must also be covered by the validated-versions record before a prod
+publish, and the pin-first break-glass runbook for vendor-flake days lives in that ADR.
 
 **Agent file-change hooks (recommended, per-workstation)** — agent clients (Codebuff, Claude Code,
 …) can run a command after each file edit and feed the output back to the agent in the same turn.
@@ -649,20 +651,25 @@ See ADR [0009](./decisions/0009-unified-publish-modes.md) for the decision behin
 
 `dev` publishes to a per-run branch and release tag (`dev-build-<id>`, where `<id>` defaults to
 `<current-branch>-<short-sha>` or `DEV_BUILD_ID`), so a test build never touches the live `latest`
-release or the `gh-pages` site. The release is marked **pre-release**, its body links the branch,
-and it carries the manual-download artifacts: the `utils` + `fx-folder` zips and the installer
-binary (the `updater-ui` zip and helper binaries stay branch-only — the updater fetches `updater-ui`
-itself and helpers are installer-side). Dev URLs are baked into the built artifacts and served from
+release or the `gh-pages` site. Publishes are **branch-only** by default (ADR
+[0026](./decisions/0026-publish-channels-and-dead-channel-fallback.md)); `--note="<label>"`
+additionally creates a pre-release page (title `dev-build-<id> — <label>`, body with the note, a
+test-build warning and provenance) for RC-style announcements. Its body links the branch, and it
+carries the manual-download artifacts: the `utils` + `fx-folder` zips and the installer binary (the
+`updater-ui` zip and helper binaries stay branch-only — the updater fetches `updater-ui` itself and
+helpers are installer-side). Dev URLs are baked into the built artifacts and served from
 `cdn.jsdelivr.net` for the browser-facing pieces (installer web UI, remote updater UI) and
 `raw.githubusercontent.com` for the privileged engine fetches (chrome:// context has no CORS).
-Delete the dev branch after testing: `git push origin --delete dev-build-<id>` (CI test runs delete
-it automatically in a `finally`).
+Delete the dev branch only after its users have received the fallback logic (ADR 0026 — republish
+into the same `DEV_BUILD_ID` first so installed test builds auto-update while the branch lives):
+`git push origin --delete dev-build-<id>` (CI test runs delete it automatically in a `finally`).
 
 ### Run
 
 ```bash
 npm run upload -- --mode=prod            # hashes → rebuild changed zips + binaries → upload → Pages + manifest + UI
 npm run upload -- --mode=dev             # same, but always rebuild + upload, to the dev-build-<id> branch + release
+npm run upload -- --mode=dev --note="RC 1 for v1.0"   # RC-style: title `dev-build-<id> — RC 1 for v1.0`, note + test-build warning + provenance in the body (ADR 0026)
 npm run upload:local -- --mode=prod      # same, but write a snapshot to dist/prod-<branch>-<hash>/ (no token)
 npm run upload:local -- --mode=dev       # dev snapshot (-dev artifact names), no token
 ```

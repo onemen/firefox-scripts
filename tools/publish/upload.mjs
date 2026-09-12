@@ -26,6 +26,10 @@
 //                      detached worktree (your checkout is left untouched).
 //   --ci               build binaries for all platforms (default: current OS).
 //   --platform=win|linux|mac (repeatable)  explicit binary platform set.
+//   --note="<label>"   (dev only, ADR 0026) announce this dev build as an
+//                      RC-style test build: the prerelease title becomes
+//                      `dev-build-<id> — <label>` and the body leads with the
+//                      note + test-build warning + source-commit provenance.
 //   --no-tag           (prod only) skip moving the 'latest' release tag to the
 //                      uploaded commit (it is force-updated after every
 //                      non-idle prod upload).
@@ -85,11 +89,12 @@ import {
   enforcePublishBranch,
   getGitHubToken,
   getLatestCommitDate,
+  zipEntryDate,
   loadSharedPatterns,
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
-import {syncComponentReleases} from './componentReleases.mjs';
+import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {
@@ -121,6 +126,8 @@ import {
   helperShaAssetName,
   installerAssetName,
 } from './platforms.mjs';
+import {runProdCiGuard} from './prodCiGuard.mjs';
+import {renderDevRelease} from './devReleasePage.mjs';
 import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
@@ -173,6 +180,9 @@ const PLATFORMS = process.argv
 // snapshots touch no GitHub target and are exempt). Escaping to a real staging
 // rehearsal requires the explicit FIREFOX_SCRIPTS_ALLOW_STAGING=1.
 runStagingGuard({mode: PUBLISH_MODE, local: LOCAL});
+// Prod is CI-only (ADR 0026): a local real prod run cannot produce the full
+// cross-OS binary set. --local snapshots and CI runs (explicit --ci) proceed.
+runProdCiGuard({mode: PUBLISH_MODE, local: LOCAL, isCi: IS_CI});
 
 const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
@@ -361,7 +371,10 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
         zipPath(name),
         zipPatterns,
         createZip.zipPrefixFor(name),
-        extraFiles.map(f => f.rel)
+        extraFiles.map(f => f.rel),
+        // Every file inside the zip carries the package's release date (the
+        // same manifest `date` users see) — not each source file's mtime.
+        zipEntryDate(date)
       );
       built.push(name);
     }
@@ -525,14 +538,29 @@ function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
  * never seen (e.g. a local-only HEAD), so target_commitish must be an
  * already-pushed ref.
  */
+// --note="<label>" (dev mode only, ADR 0026): labels this dev publish as an
+// RC-style announced build — the prerelease page's title becomes
+// `dev-build-<id> — <label>` and the body leads with the note, a test-build
+// warning, and source-commit provenance (renderDevRelease in
+// devReleasePage.mjs). Without it, the body still warns but the title stays
+// bare.
+const DEV_NOTE = (() => {
+  const arg = process.argv.find(a => a.startsWith('--note='));
+  return arg ? arg.slice('--note='.length) : '';
+})();
+
 async function getOrCreateDevRelease(octokit) {
-  const body = [
-    'Development build for testing',
-    '',
-    `Files are on the [${DEV_BRANCH}](https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${DEV_BRANCH}) branch.`,
-  ].join('\n');
+  const shortSha = execSync('git rev-parse --short HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'})
+    .trim()
+    .slice(0, 7);
+  const {title, body} = renderDevRelease({
+    note: DEV_NOTE,
+    shortSha,
+    date: new Date().toISOString().slice(0, 10),
+    devBranch: DEV_BRANCH,
+  });
   return getOrCreateRelease(octokit, DEV_BRANCH, {
-    name: DEV_BRANCH,
+    name: title,
     body,
     commitish: DEV_BRANCH,
     // A dev build is a pre-release: it is never the stable download.
@@ -687,18 +715,21 @@ async function publishToGitHub({
   }
 
   // Date-stamped component releases alongside `latest` (issue #72, ADR 0019):
-  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers +
-  // helpers. Prerelease=true so the date tags can never take GitHub's
-  // "Latest" badge; skipped on idle runs (nothing rebuilt → tags stay frozen).
+  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers
+  // (helpers are gh-pages-only — never release assets). Full releases, then the
+  // Latest badge is re-pinned onto `latest` via make_latest (the Latest Scripts
+  // scheme — the badge release renders as the page's hero card). Skipped on
+  // idle runs (nothing rebuilt → tags stay frozen).
   if (PUBLISH_MODE === 'prod' && anythingUploaded) {
     await syncComponentReleases(octokit, {
       builtZips,
       builtInstallers,
       builtHelpers,
+      manifest: merged,
       zipPath,
       installerPath,
-      helperPath,
     });
+    await pinLatestRelease(octokit);
   }
 }
 
