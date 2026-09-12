@@ -11,10 +11,18 @@
 //
 // Usage:
 //   pnpm upload -- --mode=prod            # check hashes, build changed, upload to GitHub
-//   pnpm upload -- --mode=dev             # same, but ALWAYS rebuild + upload
+//   pnpm upload -- --mode=dev             # same, but ALWAYS rebuild + upload, branch-only
 //   pnpm upload:local -- --mode=prod      # offline snapshot: dist/prod-<branch>-<hash>/
 //
 // Flags:
+//   --mode=prod|dev    REQUIRED. prod = latest release + gh-pages (main only,
+//                      CI-only per ADR 0026); dev = disposable dev-build-<id> branch.
+//   --tag              (dev only, ADR 0026) create the RC-style prerelease page
+//                      for this dev build — the only release-creating path; a
+//                      dev publish without it is branch-only.
+//   --note="<label>"   (dev only) label the build: the slug joins the
+//                      dev-build id (--note="RC 1" → dev-build-<branch>-RC-1-<sha>);
+//                      with --tag it leads the page title + body.
 //   --local            write a complete snapshot to dist/<mode>-<branch>-<hash>/
 //                      instead of GitHub (offline; no token, no network).
 //                      Unchanged binaries are reused from the newest snapshot.
@@ -26,10 +34,6 @@
 //                      detached worktree (your checkout is left untouched).
 //   --ci               build binaries for all platforms (default: current OS).
 //   --platform=win|linux|mac (repeatable)  explicit binary platform set.
-//   --note="<label>"   (dev only, ADR 0026) announce this dev build as an
-//                      RC-style test build: the prerelease title becomes
-//                      `dev-build-<id> — <label>` and the body leads with the
-//                      note + test-build warning + source-commit provenance.
 //   --no-tag           (prod only) skip moving the 'latest' release tag to the
 //                      uploaded commit (it is force-updated after every
 //                      non-idle prod upload).
@@ -46,7 +50,8 @@
 //   --quiet            suppress progress output (errors still print).
 //
 // Dev mode never touches the latest release/gh-pages — everything goes to the
-// dev-build-<id> branch.  The generated files (_config.h, resources.h,
+// dev-build-<id> branch, and no release is created without --tag.  The
+// generated files (_config.h, resources.h,
 // updater-config.sys.mjs) are untracked: the Makefile and createZip.mjs
 // regenerate them on demand with the current mode's URLs, and the package /
 // installer hashes cover their true sources (see buildPackages/buildBinaries).
@@ -83,7 +88,7 @@ import {
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
-import {REF_NAME, REF_SHA} from './publishMode.mjs';
+import {DEV_NOTE, DEV_TAG, REF_NAME, REF_SHA} from './publishMode.mjs';
 import {
   createOctokit,
   enforcePublishBranch,
@@ -538,16 +543,13 @@ function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
  * never seen (e.g. a local-only HEAD), so target_commitish must be an
  * already-pushed ref.
  */
-// --note="<label>" (dev only, ADR 0026) announce this dev build as an
-// RC-style test build: creates the prerelease page titled
-// `dev-build-<id> — <label>` whose body leads with the note, a test-build
-// warning, and source-commit provenance (renderDevRelease in
-// devReleasePage.mjs). Without it the publish is branch-only — no release is
-// created, matching the dev row in DEVELOPING.md's mode table.
-const DEV_NOTE = (() => {
-  const arg = process.argv.find(a => a.startsWith('--note='));
-  return arg ? arg.slice('--note='.length) : '';
-})();
+// --tag (dev only, ADR 0026): announce this dev build with the RC-style
+// prerelease page (title `dev-build-<id>[ — <note>]`, body: note if given, a
+// test-build warning, and source-commit provenance — renderDevRelease in
+// devReleasePage.mjs). The only release-creating path: a dev publish without
+// --tag is branch-only, matching DEVELOPING.md's mode table. --note="<label>"
+// labels the build: the slug joins the dev-build id, and with --tag it leads
+// the page title + body. Both flags are rejected outside dev mode.
 
 async function getOrCreateDevRelease(octokit) {
   const shortSha = execSync('git rev-parse --short HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'})
@@ -643,17 +645,17 @@ async function publishToGitHub({
     message: `chore: publish ${PUBLISH_MODE} artifacts (${new Date().toISOString().slice(0, 10)})`,
   });
 
-  // Announced (--note) dev release assets (manual download/testing) — after
+  // Announced (--tag) dev release assets (manual download/testing) — after
   // the push above, so
   // the release tag can be created at the now-existing dev-build branch.  Only
   // the two manual-download packages (utils + fx-folder zips) and the installer
   // binary are attached: updater-ui is fetched by the updater itself and the
   // helpers are branch-only, so neither belongs on the release.  All artifacts
   // stay on the branch (the installer/updater fetch from there via jsDelivr).
-  // Dev release page (ADR 0026): only an announced (--note) publish creates
+  // Dev release page (ADR 0026): only an announced (--tag) publish creates
   // the prerelease — a routine branch-only run touches no release at all, so
   // manually deleting one never resurrects itself on the next test publish.
-  if (PUBLISH_MODE === 'dev' && createsDevRelease({note: DEV_NOTE})) {
+  if (PUBLISH_MODE === 'dev' && createsDevRelease({tag: DEV_TAG})) {
     const devRelease = await getOrCreateDevRelease(octokit);
     // Only the two manual-download packages (utils + fx-folder zips) and the
     // installer binary are attached.  updater-ui is fetched by the updater
