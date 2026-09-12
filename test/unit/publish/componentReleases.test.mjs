@@ -50,7 +50,11 @@ test('renderComponentBody: lists artifacts and points back at latest', () => {
   assert.match(body, /Package zips \(utils, fx-folder\) — 2026-09-09/);
   assert.match(body, /- utils\.zip/);
   assert.match(body, /releases\/latest/);
-  assert.match(body, /hashes\.json/);
+  // User-facing wording: plain English, no internals like hashes.json.
+  assert.doesNotMatch(body, /hashes\.json/);
+  assert.doesNotMatch(body, /unversioned/);
+  assert.doesNotMatch(body, /gh-pages/);
+  assert.match(body, /newest files/);
 
   const installerBody = renderComponentBody('installer', '2026-09-09', [
     'installer_win.exe',
