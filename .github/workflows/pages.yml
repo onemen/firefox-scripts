@@ -185,6 +185,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - shell: bash
         env:
+          # Marks this as a Pages-workflow upload for prodCiGuard.mjs — the
+          # only real-upload prod entry point (a local run can build only its
+          # own OS's binaries). Not a user-facing flag.
+          FXS_INTERNAL_CI: '1'
           # Optional: multi-engine VirusTotal scan of the built binaries before
           # upload (tools/scan-vt.mjs).  Absent ⇒ skipped with a warning.
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
@@ -222,6 +226,8 @@ jobs:
 
       - shell: bash
         env:
+          # Pages-workflow marker for prodCiGuard.mjs (see the win job).
+          FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=linux"
@@ -244,6 +250,8 @@ jobs:
           path: ${{ runner.temp }}/baseline/
       - shell: bash
         env:
+          # Pages-workflow marker for prodCiGuard.mjs (see the win job).
+          FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=mac"

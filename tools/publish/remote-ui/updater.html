@@ -34,6 +34,17 @@
         <p id="build-banner-detail"></p>
       </div>
 
+      <!-- Dead-test-channel migration notice — revealed by updater-ui.js when a
+           dev build's own manifest is gone and the updater switched to the
+           stable channel (ADR 0026). Static text: nothing to fill in. -->
+      <div id="migration-banner" class="build-banner" hidden="hidden">
+        <h1>✓ Switched to stable channel</h1>
+        <p>
+          This test build's update source is no longer available. Updates now come from the stable
+          release. Installing the update below finishes the move; nothing else is required.
+        </p>
+      </div>
+
       <!-- Header — same layout/classes as the installer web UI -->
       <header class="header">
         <div class="header-text">

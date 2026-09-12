@@ -22,7 +22,7 @@ one goal: installing and updating Firefox scripts for legacy extension support.
 ├── tools/publish/          Release-publishing scripts (Node.js)
 │   ├── upload.mjs          upload / upload:local: hash diff → rebuild changed zips +
 │   │                       binaries → upload release assets + Pages → update hash
-│   │                       manifest (--mode=prod|dev, --local/--force, --ci/--platform=)
+│   │                       manifest (--mode=prod|dev, --local/--force, --platform=)
 │   ├── createZip.mjs       Zip creation helpers (fx-folder.zip, utils.zip, updater-ui.zip)
 │   ├── generateUpdaterConfig.mjs  Regenerates updater-config.sys.mjs from installer.conf
 │   ├── syncGeneratedFiles.mjs     Regenerates the generated files (untracked, on demand)
@@ -649,30 +649,103 @@ See ADR [0009](./decisions/0009-unified-publish-modes.md) for the decision behin
 | prod | `latest`         | `gh-pages` (live site)                                        | `utils.zip`, `installer_win.exe`         | must be `main` |
 | dev  | `dev-build-<id>` | `dev-build-<id>` (disposable; served via jsDelivr, not Pages) | `utils-dev.zip`, `installer_win-dev.exe` | any branch     |
 
-`dev` publishes to a per-run branch and release tag (`dev-build-<id>`, where `<id>` defaults to
-`<current-branch>-<short-sha>` or `DEV_BUILD_ID`), so a test build never touches the live `latest`
-release or the `gh-pages` site. Publishes are **branch-only** by default (ADR
-[0026](./decisions/0026-publish-channels-and-dead-channel-fallback.md)); `--note="<label>"`
-additionally creates a pre-release page (title `dev-build-<id> — <label>`, body with the note, a
-test-build warning and provenance) for RC-style announcements. Its body links the branch, and it
-carries the manual-download artifacts: the `utils` + `fx-folder` zips and the installer binary (the
-`updater-ui` zip and helper binaries stay branch-only — the updater fetches `updater-ui` itself and
-helpers are installer-side). Dev URLs are baked into the built artifacts and served from
-`cdn.jsdelivr.net` for the browser-facing pieces (installer web UI, remote updater UI) and
-`raw.githubusercontent.com` for the privileged engine fetches (chrome:// context has no CORS).
-Delete the dev branch only after its users have received the fallback logic (ADR 0026 — republish
-into the same `DEV_BUILD_ID` first so installed test builds auto-update while the branch lives):
-`git push origin --delete dev-build-<id>` (CI test runs delete it automatically in a `finally`).
+`dev` publishes to a per-run branch (`dev-build-<id>`, where `<id>` defaults to
+`<current-branch>[-<note-slug>]-<short-sha>` or `DEV_BUILD_ID`), so a test build never touches the
+live `latest` release or the `gh-pages` site. Publishes are **branch-only** by default (ADR
+[0026](./decisions/0026-publish-channels-and-dead-channel-fallback.md)) — no release is created;
+`--tag` additionally creates the pre-release page (title `dev-build-<id>` or, with a note,
+`dev-build-<id> — <label>`; body with the note, a test-build warning and provenance) for RC-style
+announcements. `--note="<label>"` labels the build either way: the slug joins the branch id
+(`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`), and with `--tag` it leads the page title and
+body. Both flags are dev-only. The release body links the branch and carries the manual-download
+artifacts: the `utils` + `fx-folder` zips and the installer binary (the `updater-ui` zip and helper
+binaries stay branch-only — the updater fetches `updater-ui` itself and helpers are installer-side).
+Dev URLs are baked into the built artifacts and served from `cdn.jsdelivr.net` for the
+browser-facing pieces (installer web UI, remote updater UI) and `raw.githubusercontent.com` for the
+privileged engine fetches (chrome:// context has no CORS). Delete the dev branch only after its
+users have received the fallback logic (ADR 0026 — republish into the same `DEV_BUILD_ID` first so
+installed test builds auto-update while the branch lives): `git push origin --delete dev-build-<id>`
+(CI test runs delete it automatically in a `finally`; `pnpm dev-clean` removes branches and their
+tags).
+
+### `pnpm upload` reference
+
+Complete flag + environment surface of the publish entry point. **On your machine, `pnpm upload` is
+dev-channel-only** — `--mode=dev` publishes a test build, `--mode=prod` aborts (the `latest` release
+needs the full cross-OS binary set, buildable only in CI). The one local prod exception is
+`upload:local`, the offline snapshot: same command, nothing leaves the machine. Everything here
+applies to `pnpm upload:local` too unless noted (its only differences: `--local` is implied, no
+token needed, nothing leaves the machine).
+
+| Flag                            | Modes         | What it does                                                                                                                                                                        |
+| ------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--mode=prod\|dev`              | both          | **Required.** `prod` → `latest` release + `gh-pages` (CI-only, ADR 0026); `dev` → the disposable `dev-build-<id>` branch                                                            |
+| `--tag`                         | dev           | Create the RC-style prerelease page for this dev build. **The only release-creating path** — without it a dev publish touches no release at all                                     |
+| `--note="<label>"`              | dev           | Label the build: the slug joins the branch id (`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`); with `--tag` it leads the page title + body                                      |
+| `--ref=<branch\|commit>`        | both          | Build that ref in a temporary detached worktree — your checkout is left untouched; the ref's own publish scripts run                                                                |
+| `--force`                       | prod          | Rebuild + re-upload even when hashes are unchanged (dev always rebuilds everything)                                                                                                 |
+| `--platform=win\|linux\|mac`    | binary builds | Platform set, repeatable; `linux` also builds the aarch64 twin. Defaults to the current OS — CI passes one per job; a local prod run cannot widen past its own OS (the guard below) |
+| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                                                             |
+| `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                         |
+| `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                 |
+| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                                                            |
+| `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                                                      |
+
+A real (non-`--local`) `--mode=prod` run outside the Pages workflow is **aborted before building**
+(`prodCiGuard.mjs`, ADR 0026): a dev machine builds only its own OS's binaries, while the `latest`
+release contract is the full cross-OS set (ADR 0024) — buildable only by the workflow's per-OS
+matrix. The `--ci` flag is gone: it only ever widened the platform set, so a laptop `--ci` run would
+still have published a partial release. The workflow sets an internal marker env on its upload jobs;
+nothing else passes the guard.
+
+The local front door for the prod publish is the **`pnpm release`** alias — a thin wrapper that runs
+exactly `gh workflow run pages.yml -f mode=prod` (no local build, no watch mode; follow the run in
+the Actions tab):
+
+```bash
+pnpm release              # dispatch the prod publish (full cross-OS matrix in CI)
+pnpm release -- --force   # rebuild even when hashes are unchanged
+```
+
+Prod dispatch never runs from a branch other than `main` (the workflow's own gate), and the run diff
+every OS job against the same pre-run baseline manifest, so the release always ends up the complete
+set or nothing new.
+
+| Environment variable                 | Effect                                                                                                                              |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `DEV_BUILD_ID`                       | dev only — override the branch id, so `dev-build-<id>` (republish into an existing name)                                            |
+| `GITHUB_TOKEN_VAR`                   | Fixed name of the env var holding the GitHub token; read from the root `.env`                                                       |
+| `FIREFOX_SCRIPTS_STORED_HASHES_FILE` | Diff against this manifest instead of the live one (how the CI matrix keeps every OS job diffing against the same pre-run baseline) |
+| `FIREFOX_SCRIPTS_REF_NAME` / `_SHA`  | Internal — set by the `--ref` machinery, not for hand use                                                                           |
+
+What a run publishes (the hash comparison itself is [status-logic.md](./status-logic.md)):
+
+- **Local artifacts** — `dist/` staging: the three zips (`utils`, `fx-folder`, `updater-ui`), the
+  installer + helper binaries for the selected platforms, and `hashes.json`. Unchanged binaries are
+  reused from the newest previous snapshot instead of recompiled; the untracked generated files are
+  regenerated for the run and removed afterwards.
+- **prod → GitHub** — rebuilt zips replace their `latest` release assets; installer binaries are
+  release assets; helpers + `hashes.json` + `updater-ui.zip` go to `gh-pages`; the `latest` tag
+  moves to the published commit (unless idle or `--no-tag`); the component date tags are synced
+  (#72). A run where nothing changed uploads nothing.
+- **dev → GitHub** — the same artifact set (with `-dev` names) to the `dev-build-<id>` branch via
+  the git-data API, content-addressed: unchanged files create no commit. No release unless `--tag`.
 
 ### Run
 
 ```bash
-npm run upload -- --mode=prod            # hashes → rebuild changed zips + binaries → upload → Pages + manifest + UI
-npm run upload -- --mode=dev             # same, but always rebuild + upload, to the dev-build-<id> branch + release
-npm run upload -- --mode=dev --note="RC 1 for v1.0"   # RC-style: title `dev-build-<id> — RC 1 for v1.0`, note + test-build warning + provenance in the body (ADR 0026)
-npm run upload:local -- --mode=prod      # same, but write a snapshot to dist/prod-<branch>-<hash>/ (no token)
-npm run upload:local -- --mode=dev       # dev snapshot (-dev artifact names), no token
+pnpm release                             # prod publish: dispatch the CI cross-OS matrix (gh)
+pnpm upload -- --mode=dev                # always rebuild + upload, to the dev-build-<id> branch (branch-only, no release)
+pnpm upload -- --mode=dev --tag          # + create the RC-style prerelease page for this dev build
+pnpm upload -- --mode=dev --note="RC 1" --tag   # label: branch dev-build-<branch>-RC-1-<sha>, page title `… — RC 1`
+pnpm upload -- --mode=dev --ref=<ref>    # build <ref> in a temp worktree (your checkout untouched)
+DEV_BUILD_ID=main-450468f pnpm upload -- --mode=dev   # republish into an existing dev-build branch name
+pnpm upload:local -- --mode=prod         # offline snapshot to dist/prod-<branch>-<hash>/ (no token)
+pnpm upload:local -- --mode=dev          # dev snapshot (-dev artifact names), no token
 ```
+
+`pnpm upload -- --mode=prod` is CI's command, not a local one — from a dev machine it aborts before
+building (see the guard note under the reference above).
 
 Both commands accept `--ref=<branch|commit>` to build a specific branch or commit without touching
 the current checkout: the tool creates a temporary detached worktree at that ref, re-runs the same
@@ -713,8 +786,8 @@ The same run compiles the installer and helper binaries when their source (`inst
   as assets of the release tagged by `RELEASE_NAME` (`installer_win-dev.exe` etc. in dev mode).
 - `helper_win.exe` / `helper_linux` / `helper_mac` — pushed to the publish branch (the in-browser
   updater fetches them from there).
-- By default it builds only the current OS. Use `--ci` to cover all three platforms, or
-  `--platform=win|linux|mac` for an explicit set (each platform needs its own build machine).
+- By default it builds only the current OS, or `--platform=win|linux|mac` for an explicit set (each
+  platform needs its own build machine — which is why prod publishes are workflow-only).
 
 ### Run from CI
 

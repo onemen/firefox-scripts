@@ -134,12 +134,12 @@ pnpm test:hash
 
 ```bash
 pnpm upload:local -- --mode=prod         # full snapshot to dist/prod-<branch>-<hash>/ (no token)
-pnpm upload -- --mode=prod               # zips + binaries → latest release + gh-pages
+pnpm release                             # prod publish: dispatches the CI cross-OS matrix (gh)
 ```
 
 `--mode=prod|dev` is required; prod publishes the `latest` release + gh-pages from `main` only, dev
-publishes to `dev-build-<id>` (delete the branch after testing). Full walkthrough:
-`docs/DEVELOPING.md`.
+publishes to `dev-build-<id>` **branch-only** — no release unless `--tag` (dev), and `--note` labels
+the branch id. Full flag/env reference: `docs/DEVELOPING.md` → "`pnpm upload` reference".
 
 Installer build (Windows: MSYS2 UCRT64 `mingw32-make`): `make dist_win` / `dist_linux` / `dist_mac`,
 `helper_*`, `resources`, `config`, `verify`.

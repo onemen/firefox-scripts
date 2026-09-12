@@ -11,10 +11,18 @@
 //
 // Usage:
 //   pnpm upload -- --mode=prod            # check hashes, build changed, upload to GitHub
-//   pnpm upload -- --mode=dev             # same, but ALWAYS rebuild + upload
+//   pnpm upload -- --mode=dev             # same, but ALWAYS rebuild + upload, branch-only
 //   pnpm upload:local -- --mode=prod      # offline snapshot: dist/prod-<branch>-<hash>/
 //
 // Flags:
+//   --mode=prod|dev    REQUIRED. prod = latest release + gh-pages (main only,
+//                      CI-only per ADR 0026); dev = disposable dev-build-<id> branch.
+//   --tag              (dev only, ADR 0026) create the RC-style prerelease page
+//                      for this dev build — the only release-creating path; a
+//                      dev publish without it is branch-only.
+//   --note="<label>"   (dev only) label the build: the slug joins the
+//                      dev-build id (--note="RC 1" → dev-build-<branch>-RC-1-<sha>);
+//                      with --tag it leads the page title + body.
 //   --local            write a complete snapshot to dist/<mode>-<branch>-<hash>/
 //                      instead of GitHub (offline; no token, no network).
 //                      Unchanged binaries are reused from the newest snapshot.
@@ -24,12 +32,9 @@
 //                      (prod only — dev always behaves this way).
 //   --ref=<branch|commit>  build a specific branch/commit in a temporary
 //                      detached worktree (your checkout is left untouched).
-//   --ci               build binaries for all platforms (default: current OS).
-//   --platform=win|linux|mac (repeatable)  explicit binary platform set.
-//   --note="<label>"   (dev only, ADR 0026) announce this dev build as an
-//                      RC-style test build: the prerelease title becomes
-//                      `dev-build-<id> — <label>` and the body leads with the
-//                      note + test-build warning + source-commit provenance.
+//   --platform=win|linux|mac (repeatable)  binary platform set (default:
+//                      current OS). CI passes one per job; a local run cannot
+//                      widen it past its own OS in prod (see the guard below).
 //   --no-tag           (prod only) skip moving the 'latest' release tag to the
 //                      uploaded commit (it is force-updated after every
 //                      non-idle prod upload).
@@ -46,7 +51,8 @@
 //   --quiet            suppress progress output (errors still print).
 //
 // Dev mode never touches the latest release/gh-pages — everything goes to the
-// dev-build-<id> branch.  The generated files (_config.h, resources.h,
+// dev-build-<id> branch, and no release is created without --tag.  The
+// generated files (_config.h, resources.h,
 // updater-config.sys.mjs) are untracked: the Makefile and createZip.mjs
 // regenerate them on demand with the current mode's URLs, and the package /
 // installer hashes cover their true sources (see buildPackages/buildBinaries).
@@ -83,7 +89,7 @@ import {
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
-import {REF_NAME, REF_SHA} from './publishMode.mjs';
+import {DEV_NOTE, DEV_TAG, REF_NAME, REF_SHA} from './publishMode.mjs';
 import {
   createOctokit,
   enforcePublishBranch,
@@ -126,8 +132,8 @@ import {
   helperShaAssetName,
   installerAssetName,
 } from './platforms.mjs';
-import {runProdCiGuard} from './prodCiGuard.mjs';
-import {renderDevRelease} from './devReleasePage.mjs';
+import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
+import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
 import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
@@ -156,21 +162,21 @@ if (BUILD_ONLY && SKIP_BUILD) {
 }
 // Removed flags fail loudly: an old --dry-run / --packages-only /
 // --binaries-only invocation must never silently turn into a real upload.
-// The offline check is now `--local` (upload:local).
-const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only'].filter(f =>
+// The offline check is now `--local` (upload:local). --ci was removed with
+// the workflow-only prod guard: it only widened the platform set, so a local
+// `--ci` prod run would still have published a partial release.
+const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only', '--ci'].filter(f =>
   process.argv.includes(f)
 );
 if (REMOVED_FLAGS.length > 0) {
   throw new Error(
     `Unknown flag ${REMOVED_FLAGS.join(', ')} — the offline check is now ` +
-      `'upload:local' (node tools/publish/upload.mjs --local --mode=prod|dev).`
+      `'upload:local' (node tools/publish/upload.mjs --local --mode=prod|dev); ` +
+      `prod publishes are workflow-only (gh workflow run pages.yml -f mode=prod).`
   );
 }
 // --mode=dev always rebuilds + re-uploads; a hash match never suppresses it.
 const ALWAYS = PUBLISH_MODE === 'dev' || FORCE;
-// Explicit --ci only (never ambient env): local shells often export CI=true,
-// which must not widen a local run beyond the current OS.
-const IS_CI = process.argv.includes('--ci');
 const PLATFORMS = process.argv
   .filter(a => a.startsWith('--platform='))
   .map(a => a.slice('--platform='.length));
@@ -181,8 +187,11 @@ const PLATFORMS = process.argv
 // rehearsal requires the explicit FIREFOX_SCRIPTS_ALLOW_STAGING=1.
 runStagingGuard({mode: PUBLISH_MODE, local: LOCAL});
 // Prod is CI-only (ADR 0026): a local real prod run cannot produce the full
-// cross-OS binary set. --local snapshots and CI runs (explicit --ci) proceed.
-runProdCiGuard({mode: PUBLISH_MODE, local: LOCAL, isCi: IS_CI});
+// cross-OS binary set. --local snapshots proceed. Real prod uploads are
+// admitted only for workflow runs — the guard reads the pages.yml-set env
+// marker via isWorkflowRun(), so a local `--ci` (which only widens the
+// platform set, still yielding a partial release) cannot pass.
+runProdCiGuard({mode: PUBLISH_MODE, local: LOCAL, isCi: isWorkflowRun()});
 
 const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
@@ -229,8 +238,8 @@ const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p, ASSET
 const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p, ASSET_SUFFIX));
 
 /**
- * Expand the effective build platform set: explicit list > --ci > native.
- * 'linux' pulls in the aarch64 twin automatically (see platforms.mjs).
+ * Expand the effective build platform set: explicit list > native. 'linux'
+ * pulls in the aarch64 twin automatically (see platforms.mjs).
  */
 function resolvePlatforms() {
   let selected;
@@ -241,8 +250,6 @@ function resolvePlatforms() {
       }
     }
     selected = PLATFORMS;
-  } else if (IS_CI) {
-    selected = ['win', 'linux', 'mac'];
   } else {
     switch (process.platform) {
       case 'win32':
@@ -538,16 +545,13 @@ function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
  * never seen (e.g. a local-only HEAD), so target_commitish must be an
  * already-pushed ref.
  */
-// --note="<label>" (dev mode only, ADR 0026): labels this dev publish as an
-// RC-style announced build — the prerelease page's title becomes
-// `dev-build-<id> — <label>` and the body leads with the note, a test-build
-// warning, and source-commit provenance (renderDevRelease in
-// devReleasePage.mjs). Without it, the body still warns but the title stays
-// bare.
-const DEV_NOTE = (() => {
-  const arg = process.argv.find(a => a.startsWith('--note='));
-  return arg ? arg.slice('--note='.length) : '';
-})();
+// --tag (dev only, ADR 0026): announce this dev build with the RC-style
+// prerelease page (title `dev-build-<id>[ — <note>]`, body: note if given, a
+// test-build warning, and source-commit provenance — renderDevRelease in
+// devReleasePage.mjs). The only release-creating path: a dev publish without
+// --tag is branch-only, matching DEVELOPING.md's mode table. --note="<label>"
+// labels the build: the slug joins the dev-build id, and with --tag it leads
+// the page title + body. Both flags are rejected outside dev mode.
 
 async function getOrCreateDevRelease(octokit) {
   const shortSha = execSync('git rev-parse --short HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'})
@@ -643,13 +647,17 @@ async function publishToGitHub({
     message: `chore: publish ${PUBLISH_MODE} artifacts (${new Date().toISOString().slice(0, 10)})`,
   });
 
-  // Dev release assets (manual download/testing) — after the push above, so
+  // Announced (--tag) dev release assets (manual download/testing) — after
+  // the push above, so
   // the release tag can be created at the now-existing dev-build branch.  Only
   // the two manual-download packages (utils + fx-folder zips) and the installer
   // binary are attached: updater-ui is fetched by the updater itself and the
   // helpers are branch-only, so neither belongs on the release.  All artifacts
   // stay on the branch (the installer/updater fetch from there via jsDelivr).
-  if (PUBLISH_MODE === 'dev') {
+  // Dev release page (ADR 0026): only an announced (--tag) publish creates
+  // the prerelease — a routine branch-only run touches no release at all, so
+  // manually deleting one never resurrects itself on the next test publish.
+  if (PUBLISH_MODE === 'dev' && createsDevRelease({tag: DEV_TAG})) {
     const devRelease = await getOrCreateDevRelease(octokit);
     // Only the two manual-download packages (utils + fx-folder zips) and the
     // installer binary are attached.  updater-ui is fetched by the updater

@@ -255,6 +255,27 @@ function showBuildBanner() {
   banner.hidden = false;
 }
 
+/**
+ * Reveal the dead-test-channel migration notice (ADR 0026): a dev build whose
+ * own branch is gone now resolves the stable channel — either this very check
+ * migrated (engine's session flag) or a previous session already did (channel
+ * state, e.g. the user deferred the install). Static text, nothing to fill in.
+ */
+function showMigrationBanner() {
+  const banner = $('migration-banner');
+  if (!banner) {
+    return;
+  }
+  const info = window.UpdaterEngine && window.UpdaterEngine.buildInfo;
+  const onStable = Boolean(state && state.channel === 'stable');
+  const isDevBuild = Boolean(info && info.isDev);
+  const migratedNow = Boolean(state && state.migratedFromDev);
+  if (!(isDevBuild && (onStable || migratedNow))) {
+    return;
+  }
+  banner.hidden = false;
+}
+
 function init() {
   if (!window.UpdaterEngine) {
     // Engine missing (utils.zip absent): nothing the page can do — never spin
@@ -266,6 +287,9 @@ function init() {
   UpdaterEngine.onState = snapshot => {
     state = snapshot;
     render();
+    // The migration can complete during the engine's init check, so the
+    // reveal rides every state push (idempotent; hidden stays hidden).
+    showMigrationBanner();
   };
   UpdaterEngine.onProgress = showProgress;
   bindEvents();
