@@ -670,9 +670,12 @@ a`finally`; `pnpm dev-clean` removes | | branches and their tags). |
 
 ### `pnpm upload` reference
 
-Complete flag + environment surface of the publish entry point. Everything here applies to
-`pnpm upload:local` too unless noted (its only differences: `--local` is implied, no token needed,
-nothing leaves the machine).
+Complete flag + environment surface of the publish entry point. **On your machine, `pnpm upload` is
+dev-channel-only** — `--mode=dev` publishes a test build, `--mode=prod` aborts (the `latest` release
+needs the full cross-OS binary set, buildable only in CI). The one local prod exception is
+`upload:local`, the offline snapshot: same command, nothing leaves the machine. Everything here
+applies to `pnpm upload:local` too unless noted (its only differences: `--local` is implied, no
+token needed, nothing leaves the machine).
 
 | Flag                            | Modes         | What it does                                                                                                                                                                        |
 | ------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -695,12 +698,13 @@ matrix. The `--ci` flag is gone: it only ever widened the platform set, so a lap
 still have published a partial release. The workflow sets an internal marker env on its upload jobs;
 nothing else passes the guard.
 
-The local front door for the prod publish is the workflow itself — dispatch it with `gh` (no repo
-script needed):
+The local front door for the prod publish is the **`pnpm release`** alias — a thin wrapper that runs
+exactly `gh workflow run pages.yml -f mode=prod` (no local build, no watch mode; follow the run in
+the Actions tab):
 
 ```bash
-gh workflow run pages.yml -f mode=prod            # full cross-OS matrix in CI
-gh workflow run pages.yml -f mode=prod -f force=true   # rebuild even when hashes are unchanged
+pnpm release              # dispatch the prod publish (full cross-OS matrix in CI)
+pnpm release -- --force   # rebuild even when hashes are unchanged
 ```
 
 Prod dispatch never runs from a branch other than `main` (the workflow's own gate), and the run diff
