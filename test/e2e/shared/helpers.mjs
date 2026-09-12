@@ -89,7 +89,7 @@ export async function launchFirefox(
   {headless = false, extraPrefsFirefox = {}} = {}
 ) {
   const puppeteer = await import('puppeteer-core');
-  return puppeteer.launch({
+  const browser = await puppeteer.launch({
     browser: 'firefox',
     executablePath: binary,
     userDataDir: profileDir,
@@ -99,9 +99,20 @@ export async function launchFirefox(
     // (createProfile -> syncPreferences), so any prefs the caller needs must
     // be injected through this option — a caller-written user.js would be
     // silently replaced and never reach Firefox.
-    extraPrefsFirefox,
+    extraPrefsFirefox: {
+      // Never register a Windows startup entry (HKCU Run
+      // "Mozilla-Firefox-<hash>" → this firefox.exe -os-autostart) — a temp
+      // test install must not appear in the user's Startup apps. Callers can
+      // still override for the rare test that needs the real behavior.
+      'toolkit.winRegisterApplicationRestart': false,
+      ...extraPrefsFirefox,
+    },
     args: ['-remote-allow-system-access', '--new-instance'],
   });
+  // closeBrowser's startup sweep keys off this (puppeteer's Browser keeps no
+  // executable path of its own).
+  browser._fxsBinaryPath = binary;
+  return browser;
 }
 
 /**
