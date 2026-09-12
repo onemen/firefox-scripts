@@ -47,6 +47,7 @@ import {
   summary,
   localConfigOverrides,
 } from '../shared/helpers.mjs';
+import {startLocalManifestServer, serverOverridePrefs} from '../shared/localManifestServer.mjs';
 import {
   findSnapshot,
   findZip,
@@ -461,6 +462,16 @@ async function waitForFirstPage(browser, timeoutMs = 15_000) {
   return false;
 }
 
+/** Timing helper: log scenario duration. */
+function logScenarioTime(label, startMs, phases) {
+  const total = Date.now() - startMs;
+  const parts = [`total=${total}ms`];
+  for (const [name, ms] of Object.entries(phases)) {
+    parts.push(`${name}=${ms}ms`);
+  }
+  console.log(`  [timing] ${label}: ${parts.join(' ')}`);
+}
+
 /**
  * True when prefs.js records lastUpdateTabShown = today — the scheduler writes
  * it immediately before addTrustedTab, so it proves the tab was opened even
@@ -695,6 +706,11 @@ async function runStaleScenario(
 /**
  * Launch Firefox with both packages up to date (or skipped), assert the updater
  * tab does NOT open within the timeout.
+ *
+ * Uses a local manifest server for fast, deterministic "no update" checks: the
+ * scheduler fetches HASHES_URL from localhost instead of the network, so the
+ * check completes in ~1ms instead of network latency. The 3s blind margin is
+ * cut to 500ms (enough for the scheduler to run after the window is up).
  */
 async function runNoTabScenario(
   counter,
@@ -707,37 +723,72 @@ async function runNoTabScenario(
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error('Firefox not found');
 
+  const t0 = Date.now();
+  const phases = {};
+
   const seeded = seedProfile(snapshotDir, {
     forceConfigStale: false,
     forceUtilsStale,
     skipUtils,
     skipConfig,
   });
+  phases.seed = Date.now() - t0;
 
   const greDir = findGreDir(firefoxBin);
   const greSeed = installFxFolder(snapshotDir, greDir);
   check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
-  if (!greSeed.ok) return seeded.profileDir;
+  if (!greSeed.ok) {
+    phases.total = Date.now() - t0;
+    logScenarioTime(label, t0, phases);
+    return seeded.profileDir;
+  }
+  phases.seedGreD = Date.now() - t0;
 
+  let server = null;
   let browser;
   try {
+    // Start local manifest server for fast, deterministic "no update" check.
+    // The server serves the snapshot's real hashes.json — the scheduler's
+    // local hash computation will match, so it correctly decides "up to date"
+    // without hitting the network.
+    server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
+      multiRequest: true, // scheduler may fetch more than once (retry logic)
+    });
+    phases.serverStart = Date.now() - t0;
+    // Override HASHES_URL to point at the local server
+    Object.assign(seeded.prefs, serverOverridePrefs(server.url));
+
+    const launchStart = Date.now();
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {
       headless: opts.headless,
       extraPrefsFirefox: seeded.prefs,
     });
     attachProcessLogging(browser, label);
+    phases.launch = Date.now() - launchStart;
+
     // No-tab scenarios assert absence. The scheduler runs at startup and
     // decides within a couple of seconds of the window being up (manifest
-    // fetch + hash). Wait for the main window via BiDi page enumeration,
-    // allow a short margin for the async check to complete, then assert the
-    // tab never appeared. No blind fixed wait. (The GreD config probe cannot
-    // be used here: it changes config.js, which breaks the fx-folder hash and
-    // makes the scheduler open the tab.)
+    // fetch + hash). With the local manifest server the fetch is ~1ms, so the
+    // check completes quickly. Wait for the main window via BiDi page
+    // enumeration, allow a short margin for the async check to complete, then
+    // assert the tab never appeared. (The GreD config probe cannot be used
+    // here: it changes config.js, which breaks the fx-folder hash and makes
+    // the scheduler open the tab.)
+    const waitStart = Date.now();
     const browserReady = await waitForFirstPage(browser, 15_000);
+    phases.waitBrowser = Date.now() - waitStart;
     check(counter, browserReady, `browser ready (${label})`, 'BiDi did not report an open page');
-    if (!browserReady) return seeded.profileDir;
-    await new Promise(r => setTimeout(r, 3_000));
+    if (!browserReady) {
+      phases.total = Date.now() - t0;
+      logScenarioTime(label, t0, phases);
+      return seeded.profileDir;
+    }
+    // Short margin: the local server makes the fetch fast, but we still need
+    // to let the scheduler run after the window is up (it's async).
+    await new Promise(r => setTimeout(r, 500));
+    phases.postWait = 500;
     const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
+    phases.checkTab = Date.now() - t0;
     // The tab opened when it should not — say WHICH package the scheduler
     // thinks is stale so a misfire (e.g. the snap leg's fx-folder GreD) is
     // attributable instead of a bare assertion failure.
@@ -761,12 +812,18 @@ async function runNoTabScenario(
         .catch(() => 'could not read the updater tab DOM');
     }
     check(counter, !page, `tab does NOT open (${label})`, tabDiag || '');
+
+    phases.total = Date.now() - t0;
+    logScenarioTime(label, t0, phases);
     return seeded.profileDir;
   } finally {
     try {
       await closeBrowser(browser);
     } catch {
       /* ignore */
+    }
+    if (server) {
+      await server.close().catch(() => {});
     }
     // BiDi cannot reliably enumerate trusted chrome:// tabs; the persisted
     // lastUpdateTabShown pref is the ground truth that the tab did NOT open.
@@ -1164,6 +1221,12 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   appendConfigProbe(greDir);
 
   // ── Phase 1: old utils → no updater ──
+  // NOTE: no local manifest server here (unlike runNoTabScenario). Phase 2
+  // relaunches on the SAME profile: a HASHES_URL override pref handed to
+  // extraPrefsFirefox is written to prefs.js on launch and FLUSHED BACK on
+  // close, so it would survive into phase 2 — the dead localhost URL then
+  // fails the manifest fetch, the check exits as "no update", and the updater
+  // never activates. Only seed prefs that must persist across both phases.
   let browser;
   try {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {
@@ -1174,6 +1237,8 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
     const browserReady = await waitForFirstPage(browser, 15_000);
     check(counter, browserReady, `old-utils browser ready (${label})`);
     if (browserReady) {
+      // Negative assertion: with no updater module the scheduler cannot run at
+      // all, so a short blind margin + tab poll is sufficient evidence.
       await new Promise(r => setTimeout(r, 3_000));
       const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
       check(counter, !page, `no updater tab with old utils (${label})`);
