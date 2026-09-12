@@ -91,6 +91,33 @@ test('generated module: dev mode — jsDelivr URLs, IS_DEV true, -dev suffix', (
   assert.match(module, /ASSET_SUFFIX: '-dev'/);
 });
 
+test('generated module: STABLE_* fallback URLs only in dev mode (ADR 0026)', () => {
+  // Stable builds get empty values — the stable channel is their own.
+  const prod = probe();
+  assert.match(prod.module, /STABLE_HASHES_URL: ''/);
+  assert.match(prod.module, /STABLE_ZIP_BASE_URL: ''/);
+  assert.match(prod.module, /STABLE_UI_BASE_URL: ''/);
+  assert.match(prod.module, /STABLE_HELPER_BASE_URL: ''/);
+  assert.doesNotMatch(prod.module, /STABLE_[A-Z_]+: '[^']+'/);
+
+  // Dev builds embed the stable channel's URLs (derived from installer.conf),
+  // so a dead test channel can fall back to the stable manifest.
+  const dev = probe('--mode=dev');
+  assert.match(
+    dev.module,
+    /STABLE_HASHES_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts\/hashes\.json'/
+  );
+  assert.match(
+    dev.module,
+    /STABLE_ZIP_BASE_URL: 'https:\/\/github\.com\/onemen\/firefox-scripts\/releases\/download\/latest'/
+  );
+  assert.match(dev.module, /STABLE_UI_BASE_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts'/);
+  assert.match(
+    dev.module,
+    /STABLE_HELPER_BASE_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts'/
+  );
+});
+
 test('generated module: prod-local — IS_LOCAL true, file:// URLs, no suffix change', () => {
   const {module} = probe('--mode=prod', '--local');
   assert.match(module, /IS_DEV: false/);
