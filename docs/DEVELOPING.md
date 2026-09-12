@@ -674,32 +674,38 @@ Complete flag + environment surface of the publish entry point. Everything here 
 `pnpm upload:local` too unless noted (its only differences: `--local` is implied, no token needed,
 nothing leaves the machine).
 
-| Flag                            | Modes         | What it does                                                                                                                                    |
-| ------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--mode=prod\|dev`              | both          | **Required.** `prod` → `latest` release + `gh-pages` (CI-only, ADR 0026); `dev` → the disposable `dev-build-<id>` branch                        |
-| `--tag`                         | dev           | Create the RC-style prerelease page for this dev build. **The only release-creating path** — without it a dev publish touches no release at all |
-| `--note="<label>"`              | dev           | Label the build: the slug joins the branch id (`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`); with `--tag` it leads the page title + body  |
-| `--ref=<branch\|commit>`        | both          | Build that ref in a temporary detached worktree — your checkout is left untouched; the ref's own publish scripts run                            |
-| `--force`                       | prod          | Rebuild + re-upload even when hashes are unchanged (dev always rebuilds everything)                                                             |
-| `--ci`                          | binary builds | Build binaries for **all** platforms (what the prod CI matrix runs) instead of the current OS only                                              |
-| `--platform=win\|linux\|mac`    | binary builds | Explicit platform set, repeatable; `linux` also builds the aarch64 twin                                                                         |
-| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                         |
-| `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                     |
-| `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                             |
-| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                        |
-| `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                  |
+| Flag                            | Modes         | What it does                                                                                                                                                                        |
+| ------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--mode=prod\|dev`              | both          | **Required.** `prod` → `latest` release + `gh-pages` (CI-only, ADR 0026); `dev` → the disposable `dev-build-<id>` branch                                                            |
+| `--tag`                         | dev           | Create the RC-style prerelease page for this dev build. **The only release-creating path** — without it a dev publish touches no release at all                                     |
+| `--note="<label>"`              | dev           | Label the build: the slug joins the branch id (`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`); with `--tag` it leads the page title + body                                      |
+| `--ref=<branch\|commit>`        | both          | Build that ref in a temporary detached worktree — your checkout is left untouched; the ref's own publish scripts run                                                                |
+| `--force`                       | prod          | Rebuild + re-upload even when hashes are unchanged (dev always rebuilds everything)                                                                                                 |
+| `--platform=win\|linux\|mac`    | binary builds | Platform set, repeatable; `linux` also builds the aarch64 twin. Defaults to the current OS — CI passes one per job; a local prod run cannot widen past its own OS (the guard below) |
+| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                                                             |
+| `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                         |
+| `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                 |
+| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                                                            |
+| `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                                                      |
 
-A real (non-`--local`) `--mode=prod` run outside CI is **aborted before building**
+A real (non-`--local`) `--mode=prod` run outside the Pages workflow is **aborted before building**
 (`prodCiGuard.mjs`, ADR 0026): a dev machine builds only its own OS's binaries, while the `latest`
-release contract is the full cross-OS set (ADR 0024). The local front door for the prod publish is
-the **`pnpm release`** wrapper — it dispatches the Pages publish workflow (the same
-`gh workflow run pages.yml -f mode=prod`), optionally `--force`, and `--watch` polls the run to
-completion:
+release contract is the full cross-OS set (ADR 0024) — buildable only by the workflow's per-OS
+matrix. The `--ci` flag is gone: it only ever widened the platform set, so a laptop `--ci` run would
+still have published a partial release. The workflow sets an internal marker env on its upload jobs;
+nothing else passes the guard.
+
+The local front door for the prod publish is the workflow itself — dispatch it with `gh` (no repo
+script needed):
 
 ```bash
-pnpm release              # dispatch the prod publish (full cross-OS matrix in CI)
-pnpm release -- --watch   # dispatch, then poll until the run completes
+gh workflow run pages.yml -f mode=prod            # full cross-OS matrix in CI
+gh workflow run pages.yml -f mode=prod -f force=true   # rebuild even when hashes are unchanged
 ```
+
+Prod dispatch never runs from a branch other than `main` (the workflow's own gate), and the run diff
+every OS job against the same pre-run baseline manifest, so the release always ends up the complete
+set or nothing new.
 
 | Environment variable                 | Effect                                                                                                                              |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |

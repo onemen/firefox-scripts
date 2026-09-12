@@ -134,7 +134,7 @@ pnpm test:hash
 
 ```bash
 pnpm upload:local -- --mode=prod         # full snapshot to dist/prod-<branch>-<hash>/ (no token)
-pnpm release                             # prod publish: dispatches the Pages publish workflow (CI-only)
+gh workflow run pages.yml -f mode=prod   # prod publish: dispatches the CI cross-OS matrix
 ```
 
 `--mode=prod|dev` is required; prod publishes the `latest` release + gh-pages from `main` only, dev

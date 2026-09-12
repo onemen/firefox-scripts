@@ -32,8 +32,9 @@
 //                      (prod only — dev always behaves this way).
 //   --ref=<branch|commit>  build a specific branch/commit in a temporary
 //                      detached worktree (your checkout is left untouched).
-//   --ci               build binaries for all platforms (default: current OS).
-//   --platform=win|linux|mac (repeatable)  explicit binary platform set.
+//   --platform=win|linux|mac (repeatable)  binary platform set (default:
+//                      current OS). CI passes one per job; a local run cannot
+//                      widen it past its own OS in prod (see the guard below).
 //   --no-tag           (prod only) skip moving the 'latest' release tag to the
 //                      uploaded commit (it is force-updated after every
 //                      non-idle prod upload).
@@ -131,7 +132,7 @@ import {
   helperShaAssetName,
   installerAssetName,
 } from './platforms.mjs';
-import {runProdCiGuard} from './prodCiGuard.mjs';
+import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
 import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
 import {runStagingGuard} from './stagingGuard.mjs';
 
@@ -173,9 +174,6 @@ if (REMOVED_FLAGS.length > 0) {
 }
 // --mode=dev always rebuilds + re-uploads; a hash match never suppresses it.
 const ALWAYS = PUBLISH_MODE === 'dev' || FORCE;
-// Explicit --ci only (never ambient env): local shells often export CI=true,
-// which must not widen a local run beyond the current OS.
-const IS_CI = process.argv.includes('--ci');
 const PLATFORMS = process.argv
   .filter(a => a.startsWith('--platform='))
   .map(a => a.slice('--platform='.length));
@@ -186,8 +184,11 @@ const PLATFORMS = process.argv
 // rehearsal requires the explicit FIREFOX_SCRIPTS_ALLOW_STAGING=1.
 runStagingGuard({mode: PUBLISH_MODE, local: LOCAL});
 // Prod is CI-only (ADR 0026): a local real prod run cannot produce the full
-// cross-OS binary set. --local snapshots and CI runs (explicit --ci) proceed.
-runProdCiGuard({mode: PUBLISH_MODE, local: LOCAL, isCi: IS_CI});
+// cross-OS binary set. --local snapshots proceed. Real prod uploads are
+// admitted only for workflow runs — the guard reads the pages.yml-set env
+// marker via isWorkflowRun(), so a local `--ci` (which only widens the
+// platform set, still yielding a partial release) cannot pass.
+runProdCiGuard({mode: PUBLISH_MODE, local: LOCAL, isCi: isWorkflowRun()});
 
 const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
@@ -234,8 +235,8 @@ const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p, ASSET
 const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p, ASSET_SUFFIX));
 
 /**
- * Expand the effective build platform set: explicit list > --ci > native.
- * 'linux' pulls in the aarch64 twin automatically (see platforms.mjs).
+ * Expand the effective build platform set: explicit list > native. 'linux'
+ * pulls in the aarch64 twin automatically (see platforms.mjs).
  */
 function resolvePlatforms() {
   let selected;
@@ -246,8 +247,6 @@ function resolvePlatforms() {
       }
     }
     selected = PLATFORMS;
-  } else if (IS_CI) {
-    selected = ['win', 'linux', 'mac'];
   } else {
     switch (process.platform) {
       case 'win32':
