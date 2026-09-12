@@ -28,27 +28,34 @@ test('tags: date-stamped, per component', () => {
   assert.equal(installerTag('2026-09-09'), 'installer-2026-09-09');
 });
 
-test('groupBuilt: updater-ui excluded from scripts; helpers ride with installer; deduped', () => {
+test('groupBuilt: updater-ui excluded from scripts; helpers never join a release', () => {
   const {scripts, installer} = groupBuilt({
     builtZips: ['utils', 'fx-folder', 'updater-ui'],
     builtInstallers: ['win', 'linux'],
     builtHelpers: ['linux', 'aarch64', 'linux'],
   });
   assert.deepEqual(scripts, ['utils', 'fx-folder']);
-  assert.deepEqual(installer, ['win', 'linux', 'aarch64']);
+  // Helpers are gh-pages-only (updater fetches them + sidecars) — a rebuilt
+  // helper never lands on a release page, and a helper-only rebuild creates
+  // no installer-<date> tag at all.
+  assert.deepEqual(installer, ['win', 'linux']);
 });
 
-test('groupBuilt: empty buckets stay empty', () => {
-  assert.deepEqual(groupBuilt({builtZips: ['updater-ui'], builtInstallers: [], builtHelpers: []}), {
-    scripts: [],
-    installer: [],
+test('groupBuilt: helper-only rebuild produces no component release', () => {
+  assert.deepEqual(
+    groupBuilt({builtZips: ['updater-ui'], builtInstallers: [], builtHelpers: ['win']}),
+    {scripts: [], installer: []}
+  );
+});
+
+test('renderComponentBody: lists artifacts with per-file dates, points back at latest', () => {
+  const body = renderComponentBody('scripts', '2026-09-09', ['utils.zip', 'fx-folder.zip'], {
+    'utils.zip': '2026-09-02',
   });
-});
-
-test('renderComponentBody: lists artifacts and points back at latest', () => {
-  const body = renderComponentBody('scripts', '2026-09-09', ['utils.zip', 'fx-folder.zip']);
   assert.match(body, /Package zips \(utils, fx-folder\) — 2026-09-09/);
-  assert.match(body, /- utils\.zip/);
+  // Per-file dates: manifest date when known, else the release's own date.
+  assert.match(body, /- utils\.zip — updated 2026-09-02/);
+  assert.match(body, /- fx-folder\.zip — updated 2026-09-09/);
   assert.match(body, /releases\/latest/);
   // User-facing wording: plain English, no internals like hashes.json.
   assert.doesNotMatch(body, /hashes\.json/);
@@ -56,50 +63,29 @@ test('renderComponentBody: lists artifacts and points back at latest', () => {
   assert.doesNotMatch(body, /gh-pages/);
   assert.match(body, /newest files/);
 
-  const installerBody = renderComponentBody('installer', '2026-09-09', [
-    'installer_win.exe',
-    'helper_win.exe',
-    'helper_win.exe.sha256',
-  ]);
-  assert.match(installerBody, /Installer \+ helper binaries — 2026-09-09/);
+  const installerBody = renderComponentBody('installer', '2026-09-09', ['installer_win.exe']);
+  assert.match(installerBody, /Installer binaries — 2026-09-09/);
   assert.match(installerBody, /- installer_win\.exe/);
 
   const empty = renderComponentBody('installer', '2026-09-09', []);
   assert.match(empty, /no artifacts this date/);
 });
 
-// The CodeRabbit Major finding on the first draft: groupBuilt unions
-// installers+helpers, so a partial rebuild (helper leg skipped) must not
-// touch the helper accessor — the old inline loop read the staged helper path
-// for every unioned platform and threw ENOENT, silently dropping the whole
-// installer- release.
-test('componentAssets: partial rebuild contributes only artifacts actually built', () => {
+test('componentAssets: exactly the installers built — never helpers', () => {
   const access = {
     installer: p => `installer_${p}.exe`,
-    helper: p => `helper_${p}.exe`,
-    helperSha: p => `helper_${p}.exe.sha256`,
-    installerPath: p => `staged/installer-${p}`, // throws for unstaged in real life
-    helperPath: p => {
-      if (p !== 'win') throw new Error(`ENOENT: ${p} helper not staged`);
-      return `staged/helper-${p}`;
-    },
-    sidecar: () => Buffer.from('abc'),
+    installerPath: p => `staged/installer-${p}`,
   };
-  const built = {builtInstallers: ['win', 'linux'], builtHelpers: ['win']};
+  const built = {builtInstallers: ['win', 'linux']};
   const assets = componentAssets(['win', 'linux'], built, access);
-  assert.deepEqual([...assets.keys()].sort(), [
-    'helper_win.exe',
-    'helper_win.exe.sha256',
-    'installer_linux.exe',
-    'installer_win.exe',
-  ]);
+  assert.deepEqual([...assets.keys()].sort(), ['installer_linux.exe', 'installer_win.exe']);
 });
 
 test('componentAssets: nothing built → empty map', () => {
   const assets = componentAssets(
     [],
-    {builtInstallers: [], builtHelpers: []},
-    {installer: p => p, helper: p => p, helperSha: p => p}
+    {builtInstallers: []},
+    {installer: p => p, installerPath: p => p}
   );
   assert.equal(assets.size, 0);
 });
