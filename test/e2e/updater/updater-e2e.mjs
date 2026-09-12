@@ -1221,96 +1221,44 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   appendConfigProbe(greDir);
 
   // ── Phase 1: old utils → no updater ──
-  // Start local manifest server to make the "no update" check fast and
-  // deterministic (the old utils has no updater module, so the scheduler
-  // should not open a tab regardless).
-  const t0 = Date.now();
-  const phases = {};
-  let server = null;
+  // NOTE: no local manifest server here (unlike runNoTabScenario). Phase 2
+  // relaunches on the SAME profile: a HASHES_URL override pref handed to
+  // extraPrefsFirefox is written to prefs.js on launch and FLUSHED BACK on
+  // close, so it would survive into phase 2 — the dead localhost URL then
+  // fails the manifest fetch, the check exits as "no update", and the updater
+  // never activates. Only seed prefs that must persist across both phases.
   let browser;
   try {
-    server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
-      multiRequest: true,
-    });
-    phases.serverStart = Date.now() - t0;
-    Object.assign(seeded.prefs, serverOverridePrefs(server.url));
-
-    const launchStart = Date.now();
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {
       headless: opts.headless,
       extraPrefsFirefox: seeded.prefs,
     });
     attachProcessLogging(browser, label);
-    phases.launch = Date.now() - launchStart;
-
     const browserReady = await waitForFirstPage(browser, 15_000);
-    phases.waitBrowser = Date.now() - t0;
     check(counter, browserReady, `old-utils browser ready (${label})`);
     if (browserReady) {
-      // Short margin: local server makes fetch fast; just wait for scheduler to run.
-      await new Promise(r => setTimeout(r, 500));
-      phases.postWait = 500;
+      // Negative assertion: with no updater module the scheduler cannot run at
+      // all, so a short blind margin + tab poll is sufficient evidence.
+      await new Promise(r => setTimeout(r, 3_000));
       const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
-      phases.checkTab = Date.now() - t0;
       check(counter, !page, `no updater tab with old utils (${label})`);
     }
-    phases.total = Date.now() - t0;
-    logScenarioTime(`${label} (phase 1)`, t0, phases);
   } finally {
     try {
       await closeBrowser(browser);
     } catch {
       /* ignore */
     }
-    if (server) {
-      await server.close().catch(() => {});
-    }
-  } // The scheduler's ensureUpdaterUi extracts updater-ui.zip into
+  }
+  // The scheduler's ensureUpdaterUi extracts updater-ui.zip into
   // chrome/utils/updater/ui — with the old utils (no updater) it never runs,
   // so the ui dir cannot exist.
   const uiDir = path.join(seeded.chromeUtils, 'updater', 'ui');
-  const HASHES_OVERRIDE = 'extensions.firefox-scripts.override.HASHES_URL';
   check(
     counter,
     !fs.existsSync(path.join(uiDir, 'updater.html')),
     `no updater-ui with old utils (${label})`
   );
-  // Phase 1 used the local manifest server for HASHES_URL. Clear that override
-  // so Phase 2 uses the real snapshot URL (via localConfigOverrides) — the
-  // server is closed and Phase 2 needs the updater to actually fetch the
-  // manifest, see the stale hash, and open the tab.
-  //
-  // seedProfile returns prefs as a map of pref-name → value, not the
-  // user_pref(...) serialization. launchFirefox converts them when writing
-  // prefs.js. We use the plain pref-name key.  const HASHES_OVERRIDE = 'extensions.firefox-scripts.override.HASHES_URL';
-  const hadOverride = Object.prototype.hasOwnProperty.call(seeded.prefs, HASHES_OVERRIDE);
-  if (hadOverride) {
-    console.log(
-      `  [diag:phase2] clearing HASHES_URL override: ${JSON.stringify(seeded.prefs[HASHES_OVERRIDE])}`
-    );
-    delete seeded.prefs[HASHES_OVERRIDE];
-  } else {
-    console.log(
-      `  [diag:phase2] HASHES_URL override not present in seeded.prefs — keys: ${
-        Object.keys(seeded.prefs)
-          .filter(k => k.includes('override'))
-          .join(', ') || '(none)'
-      }`
-    );
-  }
-  // Sanity: re-read the prefs object after the delete to confirm the key is gone.
-  const overrideKeysAfter = Object.keys(seeded.prefs)
-    .filter(k => k.includes('override'))
-    .sort();
-  console.log(
-    `  [diag:phase2] prefs after delete — override keys: ${overrideKeysAfter.join(', ') || '(none)'}`
-  );
-  console.log(
-    `  [diag:phase2] HASHES_OVERRIDE still present? ${Object.prototype.hasOwnProperty.call(seeded.prefs, HASHES_OVERRIDE)}`
-  );
-  // (HASHES_OVERRIDE is defined above; this line is intentionally after the delete
-  // so the log reflects the post-delete state.)
-
   // Let the old process fully release the profile lock before relaunching on
   // the SAME profile (unlike the other scenarios, phase 2 reuses this dir).
   await new Promise(r => setTimeout(r, 2_000));
@@ -1321,67 +1269,9 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
     check(counter, false, `utils zip available (${label})`);
     return seeded.profileDir;
   }
-  // Log the zip and the target dir before extracting, so a bad path is visible.
-  console.log(`  [diag:phase2] extracting utils zip: ${utilsZip}`);
-  console.log(`  [diag:phase2] target dir: ${seeded.chromeUtils}`);
-  console.log(`  [diag:phase2] target dir exists: ${fs.existsSync(seeded.chromeUtils)}`);
-  if (fs.existsSync(seeded.chromeUtils)) {
-    try {
-      const before = fs.readdirSync(seeded.chromeUtils).sort().join(', ');
-      console.log(`  [diag:phase2] chromeUtils BEFORE extract: ${before}`);
-    } catch (err) {
-      console.log(`  [diag:phase2] could not list chromeUtils before extract: ${err.message}`);
-    }
-  }
   extractZip(utilsZip, seeded.chromeUtils); // overwrite: restores updater/ + mapping
-  console.log(`  [diag:phase2] extract done; chromeUtils AFTER extract (relative):`);
-  try {
-    let after = null;
-    try {
-      after = fs.readdirSync(seeded.chromeUtils).sort().join(', ');
-      console.log(`    ${after}`);
-    } catch (err) {
-      console.log(`    (could not list: ${err.message})`);
-    }
-    // Re-list using the profile-relative path to confirm resolve() agrees.
-    const chromeUtilsViaProfile = path.join(seeded.profileDir, 'chrome', 'utils');
-    console.log(`  [diag:phase2] re-list chromeUtils via profile path (${chromeUtilsViaProfile}):`);
-    try {
-      const after2 = fs.readdirSync(chromeUtilsViaProfile).sort().join(', ');
-      console.log(`    ${after2}`);
-      console.log(`  [diag:phase2] dir stems match? ${String(after2) === String(after)}`);
-    } catch (err) {
-      console.log(`    (could not list: ${err.message})`);
-    }
-    // after is defined in the earlier try/catch; if listing failed, after is undefined.
-  } catch (err) {
-    console.log(`    (could not list: ${err.message})`);
-  }
-  // Fresh read of chromeUtils dir after extract — prove it really has updater/.
-  const postExtractUtilsDir = path.join(seeded.profileDir, 'chrome', 'utils');
-  try {
-    const postListing =
-      fs.existsSync(postExtractUtilsDir) ?
-        fs.readdirSync(postExtractUtilsDir).sort().join(', ')
-      : '(dir missing)';
-    console.log(
-      `  [diag:phase2] post-extract chromeUtils dir (${postExtractUtilsDir}): ${postListing}`
-    );
-  } catch (err) {
-    console.log(`  [diag:phase2] could not list post-extract chromeUtils: ${err.message}`);
-  }
   const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
-  console.log(`  [diag:phase2] stale file: ${stale} exists=${fs.existsSync(stale)}`);
   fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
-
-  // Diagnostic: log the prefs that will reach Firefox in phase 2, before launch.
-  // This catches whether the HASHES_URL override was correctly cleared.
-  console.log('  [diag:phase2] prefs heading into phase-2 launch:');
-  for (const key of Object.keys(seeded.prefs).sort()) {
-    if (key.includes('extensions.firefox-scripts')) {
-      console.log(`    ${key} = ${JSON.stringify(seeded.prefs[key])}`);
-    }
-  }
 
   let page = null;
   try {
@@ -1428,43 +1318,13 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
     } catch {
       /* ignore */
     }
-  } // Post-mortem (phase 2): dump the on-disk reality so a miss is identifiable
-  // from CI logs alone. seeded.chromeUtils is the value returned by seedProfile().
-  // Re-resolve chromeUtils from the profile dir to be certain we're looking at
-  // the same dir Firefox actually reads.
-  const chromeUtilsResolved = path.join(seeded.profileDir, 'chrome', 'utils');
-  const uiDirForCheck = path.join(chromeUtilsResolved, 'updater', 'ui');
-  try {
-    const listing =
-      fs.existsSync(uiDirForCheck) ?
-        fs.readdirSync(uiDirForCheck).sort().join(', ')
-      : '(dir missing)';
-    console.log(`  [diag:phase2-post] chromeUtils/updater/ui contents: ${listing}`);
-    console.log(`  [diag:phase2-post] resolve(cross-ref): uiDir=${path.resolve(uiDirForCheck)}`);
-  } catch (err) {
-    console.log(`  [diag:phase2-post] could not list chromeUtils/updater/ui: ${err.message}`);
-  }
-  try {
-    console.log(
-      `  [diag:phase2-post] stale marker present: ${fs.existsSync(stale)} (marker in file: ${fs.existsSync(stale) && fs.readFileSync(stale, 'utf-8').includes(FORCE_UTILS_STALE_MARKER)})`
-    );
-  } catch (err) {
-    console.log(`  [diag:phase2-post] could not check stale marker: ${err.message}`);
-  }
-  try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, 'hashes.json'), 'utf-8'));
-    console.log(
-      `  [diag:phase2-post] manifest has utils.hash=${manifest.utils?.hash ? 'yes' : 'no'} files=${Array.isArray(manifest.utils?.files) ? manifest.utils.files.length : 'n/a'}`
-    );
-  } catch (err) {
-    console.log(`  [diag:phase2-post] could not read manifest: ${err.message}`);
   }
   // Updater ACTIVATED: ensureUpdaterUi ran (extracting updater-ui) and the
   // scheduler opened the tab. The ui-dir check is flush/BiDi-independent — a
   // tab can be missed by BiDi and a pref can be lost on a killed close, but
   // the extracted ui files persist on disk. The tab-open check passes via the
   // disk signal when BiDi missed the chrome tab on the relaunch.
-  const uiExtracted = fs.existsSync(path.join(uiDirForCheck, 'updater.html'));
+  const uiExtracted = fs.existsSync(path.join(uiDir, 'updater.html'));
   check(
     counter,
     Boolean(page) || uiExtracted,

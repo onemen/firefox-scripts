@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-/** test/e2e/shared/localManifestServer.mjs — tiny HTTP server that serves a
+/**
+ * test/e2e/shared/localManifestServer.mjs — tiny HTTP server that serves a
  * pre-baked hashes.json for fast, deterministic "no update" E2E scenarios.
  *
  * The updater scheduler fetches HASHES_URL on every check. For scenarios where
@@ -8,12 +9,11 @@
  * server lets the test serve a known-good manifest from localhost so the
  * scheduler's check completes in ~1ms instead of network time.
  *
- * Usage (inside a test scenario):
- *   const server = await startLocalManifestServer(snapshotDir, profileDir);
- *   // server.port, server.url, server.hash are available
- *   // ... launch Firefox with HASHES_URL override pointing at server.url ...
- *   // ... run assertions ...
- *   await server.close();
+ * Usage (inside a test scenario): const server = await
+ * startLocalManifestServer(snapshotDir, profileDir); // server.port,
+ * server.url, server.hash are available // ... launch Firefox with HASHES_URL
+ * override pointing at server.url ... // ... run assertions ... await
+ * server.close();
  *
  * The server is single-request by default (it serves one manifest then stops)
  * unless multiRequest: true is passed — most scenarios only need one fetch.
@@ -58,14 +58,10 @@ function extractZip(zipPath, destDir) {
 /** Minimal zip listing — reads central directory entries. */
 function listZipEntries(buf) {
   const entries = [];
-  let offset = 0;
   // Find end of central directory
-  const eocdSig = 0x06054b50;
-  let eocdPos = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const eocdPos = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   if (eocdPos === -1) return entries;
 
-  const eocd = buf.readUInt32LE(eocdPos + 6);
-  const commentLen = buf.readUInt16LE(eocdPos + 8);
   const centralDirOffset = buf.readUInt32LE(eocdPos + 16);
   const centralDirSize = buf.readUInt32LE(eocdPos + 12);
 
@@ -92,7 +88,6 @@ function listZipEntries(buf) {
 
 /** Read a zip entry's bytes from the buffer. */
 function readZipEntry(buf, entry) {
-  let offset = 0;
   const eocdPos = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   const centralDirOffset = buf.readUInt32LE(eocdPos + 16);
 
@@ -143,7 +138,7 @@ function buildMatchingManifest(chromeUtilsDir, snapshotDir) {
     hash.update(fs.readFileSync(path.join(utilsDir, rel)));
   }
   return {
-    utils: {
+    'utils': {
       hash: hash.digest('hex'),
       files,
       date: new Date().toISOString().slice(0, 10),
@@ -218,10 +213,12 @@ export async function startLocalManifestServer(snapshotDir, chromeUtilsDir, opts
   const close = () => {
     if (closed) return Promise.resolve();
     closed = true;
-    return new Promise(resolve => server.close(() => {
-      fs.rmSync(staging, {recursive: true, force: true});
-      resolve();
-    }));
+    return new Promise(resolve =>
+      server.close(() => {
+        fs.rmSync(staging, {recursive: true, force: true});
+        resolve();
+      })
+    );
   };
 
   return {
