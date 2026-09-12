@@ -85,6 +85,7 @@ import {
   enforcePublishBranch,
   getGitHubToken,
   getLatestCommitDate,
+  zipEntryDate,
   loadSharedPatterns,
   REPO_ROOT,
 } from './publishCommon.mjs';
@@ -361,7 +362,10 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
         zipPath(name),
         zipPatterns,
         createZip.zipPrefixFor(name),
-        extraFiles.map(f => f.rel)
+        extraFiles.map(f => f.rel),
+        // Every file inside the zip carries the package's release date (the
+        // same manifest `date` users see) — not each source file's mtime.
+        zipEntryDate(date)
       );
       built.push(name);
     }
