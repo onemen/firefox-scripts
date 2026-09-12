@@ -121,6 +121,7 @@ import {
   helperShaAssetName,
   installerAssetName,
 } from './platforms.mjs';
+import {runProdCiGuard} from './prodCiGuard.mjs';
 import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
@@ -173,6 +174,9 @@ const PLATFORMS = process.argv
 // snapshots touch no GitHub target and are exempt). Escaping to a real staging
 // rehearsal requires the explicit FIREFOX_SCRIPTS_ALLOW_STAGING=1.
 runStagingGuard({mode: PUBLISH_MODE, local: LOCAL});
+// Prod is CI-only (ADR 0026): a local real prod run cannot produce the full
+// cross-OS binary set. --local snapshots and CI runs (explicit --ci) proceed.
+runProdCiGuard({mode: PUBLISH_MODE, local: LOCAL, isCi: IS_CI});
 
 const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
