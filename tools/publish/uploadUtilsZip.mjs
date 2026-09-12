@@ -81,15 +81,18 @@ export async function deleteExistingAsset(octokit, releaseId, assetName) {
 
 /**
  * Upload in-memory bytes as a release asset (the derived sha256 sidecars are
- * buffers, never staged files).
+ * buffers, never staged files). `label` is the optional human-readable label
+ * GitHub renders next to the asset name (≤50 chars, e.g. "Updated
+ * 2026-09-12").
  */
-export async function uploadAssetBuffer(octokit, releaseId, data, assetName) {
+export async function uploadAssetBuffer(octokit, releaseId, data, assetName, label) {
   try {
     const {data: asset} = await octokit.repos.uploadReleaseAsset({
       owner: REPO_OWNER,
       repo: REPO_NAME,
       release_id: releaseId,
       name: assetName,
+      label,
       data,
     });
     console.log(
@@ -102,8 +105,8 @@ export async function uploadAssetBuffer(octokit, releaseId, data, assetName) {
   }
 }
 
-/** Upload asset to release */
-export async function uploadAsset(octokit, releaseId, filePath, assetName) {
+/** Upload asset to release (`label` — optional, GitHub renders it by the name) */
+export async function uploadAsset(octokit, releaseId, filePath, assetName, label) {
   try {
     if (!fs.existsSync(filePath)) {
       throw new Error(`File not found: ${filePath}`);
@@ -117,6 +120,7 @@ export async function uploadAsset(octokit, releaseId, filePath, assetName) {
       repo: REPO_NAME,
       release_id: releaseId,
       name: assetName,
+      label,
       data: fileData,
     });
 

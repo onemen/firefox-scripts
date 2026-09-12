@@ -23,12 +23,17 @@ communicates freshness without pretending every package changed.
   `installer_linux`. `updater-ui.zip` and `helper_<os>` are gh-pages-branch artifacts — never
   release assets.
 - Releases are tagged **per component + date**: `scripts-<YYYY-MM-DD>` (the zips) and
-  `installer-<YYYY-MM-DD>` (installer + helper binaries). A component release is created only when
-  that component changed.
+  `installer-<YYYY-MM-DD>` (installer binaries; helpers are gh-pages-only — they never appear on a
+  release page, and a helper-only rebuild creates no tag). A component release is created only when
+  that component changed. Component releases are **full releases** (not prereleases); after each
+  publish the Latest badge is re-pinned onto `latest` with `make_latest=true` on Update-a-release —
+  GitHub renders the badge-holding release as the page's hero card, so the page reads: latest hero
+  first, frozen date tags below (amended 2026-09-12, Latest Scripts scheme: the earlier
+  `prerelease=true` badge-guard and the `make_latest=false` wording predate the verified
+  availability of `make_latest` on Update-a-release).
 - `latest` (existing moving tag) always carries the **complete release asset set** — both package
-  zips + the installers — and stays GitHub's "Latest"; component releases are created with
-  `make_latest=false`. README, docs and the updater point only at `latest` — never at versioned
-  URLs.
+  zips + the installers — and stays GitHub's "Latest". README, docs and the updater point only at
+  `latest` — never at versioned URLs.
 
 ## Consequences
 
