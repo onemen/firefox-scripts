@@ -506,7 +506,7 @@ export async function ensureUpdaterUi(info) {
 
   const tmpDir = PathUtils.join(PathUtils.tempDir, `fxs-updater-ui-${Date.now()}`);
   try {
-    const zipUrl = `${getUiBaseUrl()}/updater-ui${CONFIG.ASSET_SUFFIX || ''}.zip`;
+    const zipUrl = `${getUiBaseUrl()}/updater-ui${getAssetSuffix()}.zip`;
     const zipPath = PathUtils.join(tmpDir, 'updater-ui.zip');
     await Downloads.fetch(zipUrl, zipPath);
 
