@@ -114,9 +114,8 @@ export function renderComponentBody(kind, date, names) {
   return (
     `${title} — ${date}.\n\n` +
     `${list}\n\n` +
-    `Frozen per-component snapshot for browsing only: fetch artifacts by their permanent ` +
-    `unversioned names from the [latest release](${base}/latest) or the gh-pages branch ` +
-    `(integrity: \`hashes.json\`).`
+    `This release is an archived snapshot: the files above are from that date and will not ` +
+    `change. Always download the newest files from the [Latest Scripts release](${base}/latest).`
   );
 }
 
