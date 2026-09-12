@@ -69,9 +69,12 @@ export function getLatestCommitDate(dir, patterns) {
  * @returns {Date}
  */
 export function zipEntryDate(date) {
-  const m = /^\d{4}-\d{2}-\d{2}$/.exec(date || '');
-  if (!m) return new Date();
-  return new Date(`${date}T12:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return new Date();
+  const d = new Date(`${date}T12:00:00Z`);
+  // Reject well-formed but impossible calendar dates (2026-02-30 — JS rolls
+  // them forward instead of returning NaN): the round-trip must match.
+  if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) return new Date();
+  return d;
 }
 
 // Both publish scripts call loadSharedPatterns twice (zip + hash variants,

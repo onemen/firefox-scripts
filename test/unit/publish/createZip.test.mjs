@@ -84,6 +84,8 @@ test('zipEntryDate: YYYY-MM-DD → 12:00 UTC, invalid → now', () => {
   const nowish = zipEntryDate(undefined);
   assert.ok(Math.abs(nowish.getTime() - Date.now()) < 60_000);
   assert.ok(Math.abs(zipEntryDate('garbage').getTime() - Date.now()) < 60_000);
+  // Well-formed but impossible calendar dates fall back too (no JS roll-over).
+  assert.ok(Math.abs(zipEntryDate('2026-02-30').getTime() - Date.now()) < 60_000);
 });
 
 test('createZip: entryDate stamps every entry with the release date (12:00 UTC)', async () => {
