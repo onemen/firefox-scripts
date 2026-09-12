@@ -99,7 +99,14 @@ export function zipPrefixFor(name) {
  *   updater config is untracked/gitignored but MUST ship inside utils.zip and
  *   appear in the manifest `files` list so the hash check stays consistent).
  */
-export async function createZip(sourceDir, outputPath, patterns, prefix = null, extraFiles = []) {
+export async function createZip(
+  sourceDir,
+  outputPath,
+  patterns,
+  prefix = null,
+  extraFiles = [],
+  entryDate = null
+) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(OUTPUT_DIR)) {
       fs.mkdirSync(OUTPUT_DIR, {recursive: true});
@@ -135,7 +142,13 @@ export async function createZip(sourceDir, outputPath, patterns, prefix = null, 
 
     for (const file of files) {
       const relativePath = path.relative(sourceDir, file).replace(/\\/g, '/');
-      archive.file(file, {name: prefix ? `${prefix}/${relativePath}` : relativePath});
+      archive.file(file, {
+        name: prefix ? `${prefix}/${relativePath}` : relativePath,
+        // Every entry reads as the release's date (zipEntryDate normalizes to
+        // 12:00 UTC for timezone-proof display + reproducible builds); null →
+        // the source file's own mtime (previous behavior).
+        date: entryDate || undefined,
+      });
     }
 
     archive.finalize();

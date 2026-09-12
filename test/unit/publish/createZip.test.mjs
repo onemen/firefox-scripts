@@ -17,7 +17,8 @@ process.argv.push('--mode=prod');
 
 const {createZip, loadAllGitignorePatterns, zipPrefixFor} =
   await import('../../../tools/publish/createZip.mjs');
-import {listZipEntries, readZipEntry} from '../../shared/zipReader.mjs';
+const {zipEntryDate} = await import('../../../tools/publish/publishCommon.mjs');
+import {dosDateTimeToUtc, listZipEntries, readZipEntry} from '../../shared/zipReader.mjs';
 
 /** Make a temp source tree with a fixed set of files. */
 function makeSourceTree(files) {
@@ -72,6 +73,53 @@ test('createZip: fx-folder package wraps entries under a top-level folder', asyn
       .map(e => e.name)
       .sort();
     assert.deepEqual(names, ['fx-folder/chrome/fx.js', 'fx-folder/user.js']);
+  } finally {
+    fs.rmSync(src, {recursive: true, force: true});
+    fs.rmSync(out, {force: true});
+  }
+});
+
+test('zipEntryDate: YYYY-MM-DD → 12:00 UTC, invalid → now', () => {
+  assert.equal(zipEntryDate('2026-09-12').toISOString(), '2026-09-12T12:00:00.000Z');
+  const nowish = zipEntryDate(undefined);
+  assert.ok(Math.abs(nowish.getTime() - Date.now()) < 60_000);
+  assert.ok(Math.abs(zipEntryDate('garbage').getTime() - Date.now()) < 60_000);
+  // Well-formed but impossible calendar dates fall back too (no JS roll-over).
+  assert.ok(Math.abs(zipEntryDate('2026-02-30').getTime() - Date.now()) < 60_000);
+});
+
+test('createZip: entryDate stamps every entry with the release date (12:00 UTC)', async () => {
+  const src = makeSourceTree({
+    'a.js': '// a',
+    'b.js': '// b',
+  });
+  const out = path.join(os.tmpdir(), `out-${Date.now()}.zip`);
+  try {
+    const patterns = loadAllGitignorePatterns(src, [], []);
+    await createZip(src, out, patterns, null, [], zipEntryDate('2026-09-12'));
+    const entries = listZipEntries(fs.readFileSync(out));
+    assert.equal(entries.length, 2);
+    for (const e of entries) {
+      // Every entry reads as the package's release date, regardless of each
+      // source file's own mtime.
+      assert.equal(dosDateTimeToUtc(e).toISOString(), '2026-09-12T12:00:00.000Z', e.name);
+    }
+  } finally {
+    fs.rmSync(src, {recursive: true, force: true});
+    fs.rmSync(out, {force: true});
+  }
+});
+
+test('createZip: no entryDate → source mtimes (previous behavior)', async () => {
+  const src = makeSourceTree({'a.js': '// a'});
+  const out = path.join(os.tmpdir(), `out-${Date.now()}.zip`);
+  try {
+    const patterns = loadAllGitignorePatterns(src, [], []);
+    await createZip(src, out, patterns, null, []);
+    const [e] = listZipEntries(fs.readFileSync(out));
+    const decoded = dosDateTimeToUtc(e);
+    // Not pinned to a fixed date — just sanity: decodes near now (± 1 day).
+    assert.ok(Math.abs(decoded.getTime() - Date.now()) < 24 * 3600_000, String(decoded));
   } finally {
     fs.rmSync(src, {recursive: true, force: true});
     fs.rmSync(out, {force: true});
