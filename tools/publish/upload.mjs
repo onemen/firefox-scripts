@@ -90,7 +90,7 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
-import {syncComponentReleases} from './componentReleases.mjs';
+import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {
@@ -691,18 +691,21 @@ async function publishToGitHub({
   }
 
   // Date-stamped component releases alongside `latest` (issue #72, ADR 0019):
-  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers +
-  // helpers. Prerelease=true so the date tags can never take GitHub's
-  // "Latest" badge; skipped on idle runs (nothing rebuilt → tags stay frozen).
+  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers
+  // (helpers are gh-pages-only — never release assets). Full releases, then the
+  // Latest badge is re-pinned onto `latest` via make_latest (the Latest Scripts
+  // scheme — the badge release renders as the page's hero card). Skipped on
+  // idle runs (nothing rebuilt → tags stay frozen).
   if (PUBLISH_MODE === 'prod' && anythingUploaded) {
     await syncComponentReleases(octokit, {
       builtZips,
       builtInstallers,
       builtHelpers,
+      manifest: merged,
       zipPath,
       installerPath,
-      helperPath,
     });
+    await pinLatestRelease(octokit);
   }
 }
 
