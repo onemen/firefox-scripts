@@ -697,7 +697,7 @@ async function publishToGitHub({
       builtZips,
       builtInstallers,
       builtHelpers,
-      merged,
+      manifest: merged,
       zipPath,
       installerPath,
     });
