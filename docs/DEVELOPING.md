@@ -669,6 +669,7 @@ into the same `DEV_BUILD_ID` first so installed test builds auto-update while th
 ```bash
 npm run upload -- --mode=prod            # hashes → rebuild changed zips + binaries → upload → Pages + manifest + UI
 npm run upload -- --mode=dev             # same, but always rebuild + upload, to the dev-build-<id> branch + release
+npm run upload -- --mode=dev --note="RC 1 for v1.0"   # RC-style: title `dev-build-<id> — RC 1 for v1.0`, note + test-build warning + provenance in the body (ADR 0026)
 npm run upload:local -- --mode=prod      # same, but write a snapshot to dist/prod-<branch>-<hash>/ (no token)
 npm run upload:local -- --mode=dev       # dev snapshot (-dev artifact names), no token
 ```

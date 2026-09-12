@@ -26,6 +26,10 @@
 //                      detached worktree (your checkout is left untouched).
 //   --ci               build binaries for all platforms (default: current OS).
 //   --platform=win|linux|mac (repeatable)  explicit binary platform set.
+//   --note="<label>"   (dev only, ADR 0026) announce this dev build as an
+//                      RC-style test build: the prerelease title becomes
+//                      `dev-build-<id> — <label>` and the body leads with the
+//                      note + test-build warning + source-commit provenance.
 //   --no-tag           (prod only) skip moving the 'latest' release tag to the
 //                      uploaded commit (it is force-updated after every
 //                      non-idle prod upload).
@@ -123,6 +127,7 @@ import {
   installerAssetName,
 } from './platforms.mjs';
 import {runProdCiGuard} from './prodCiGuard.mjs';
+import {renderDevRelease} from './devReleasePage.mjs';
 import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
@@ -533,14 +538,29 @@ function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
  * never seen (e.g. a local-only HEAD), so target_commitish must be an
  * already-pushed ref.
  */
+// --note="<label>" (dev mode only, ADR 0026): labels this dev publish as an
+// RC-style announced build — the prerelease page's title becomes
+// `dev-build-<id> — <label>` and the body leads with the note, a test-build
+// warning, and source-commit provenance (renderDevRelease in
+// devReleasePage.mjs). Without it, the body still warns but the title stays
+// bare.
+const DEV_NOTE = (() => {
+  const arg = process.argv.find(a => a.startsWith('--note='));
+  return arg ? arg.slice('--note='.length) : '';
+})();
+
 async function getOrCreateDevRelease(octokit) {
-  const body = [
-    'Development build for testing',
-    '',
-    `Files are on the [${DEV_BRANCH}](https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${DEV_BRANCH}) branch.`,
-  ].join('\n');
+  const shortSha = execSync('git rev-parse --short HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'})
+    .trim()
+    .slice(0, 7);
+  const {title, body} = renderDevRelease({
+    note: DEV_NOTE,
+    shortSha,
+    date: new Date().toISOString().slice(0, 10),
+    devBranch: DEV_BRANCH,
+  });
   return getOrCreateRelease(octokit, DEV_BRANCH, {
-    name: DEV_BRANCH,
+    name: title,
     body,
     commitish: DEV_BRANCH,
     // A dev build is a pre-release: it is never the stable download.
