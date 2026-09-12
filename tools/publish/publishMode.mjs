@@ -125,7 +125,9 @@ export const DEV_TAG = process.argv.includes('--tag');
 
 /**
  * Slugify a --note label for embedding in the dev-build id: whitespace runs
- * become single '-', characters outside [\w.-] are dropped.
+ * become single '-', characters outside [\w.-] are dropped, and repeated
+ * separators collapse — `..` never reaches a git refname (forbidden in
+ * refnames, would fail the branch push).
  */
 export function slugifyDevNote(note) {
   return (
@@ -135,6 +137,8 @@ export function slugifyDevNote(note) {
       // spaces that the next step collapses), then fold whitespace to '-'.
       .replace(/[^\w\s.-]/g, '')
       .replace(/\s+/g, '-')
+      // Collapse leftover separator runs ("v1..RC" → "v1-RC").
+      .replace(/[-.]{2,}/g, '-')
   );
 }
 

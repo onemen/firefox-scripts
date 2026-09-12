@@ -650,23 +650,23 @@ See ADR [0009](./decisions/0009-unified-publish-modes.md) for the decision behin
 | dev  | `dev-build-<id>` | `dev-build-<id>` (disposable; served via jsDelivr, not Pages) | `utils-dev.zip`, `installer_win-dev.exe` | any branch     |
 
 `dev` publishes to a per-run branch (`dev-build-<id>`, where `<id>` defaults to
-`<current-branch>[-<note-slug>]-<short-sha>` or `DEV_BUILD_ID`), so a test build never touches the |
-| live `latest` release or the `gh-pages` site. Publishes are **branch-only** by default (ADR | |
-[0026](./decisions/0026-publish-channels-and-dead-channel-fallback.md)) — no release is created; | |
-`--tag` additionally creates the pre-release page (title `dev-build-<id>` or, with a note, | |
-`dev-build-<id> — <label>`; body with the note, a test-build warning and provenance) for RC-style |
-| announcements. `--note="<label>"` labels the build either way: the slug joins the branch id | |
-(`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`), and with `--tag` it leads the page title and |
-| body. Both flags are dev-only. The release body links the branch and carries the manual-download |
-| artifacts: the `utils` + `fx-folder` zips and the installer binary (the `updater-ui` zip and
-helper | | binaries stay branch-only — the updater fetches `updater-ui` itself and helpers are | |
-installer-side). Dev URLs are baked into the built artifacts and served from `cdn.jsdelivr.net` for
-| | the browser-facing pieces (installer web UI, remote updater UI) and `raw.githubusercontent.com`
-| | for the privileged engine fetches (chrome:// context has no CORS). Delete the dev branch only |
-| after its users have received the fallback logic (ADR 0026 — republish into the same
-`DEV_BUILD_ID` | | first so installed test builds auto-update while the branch lives):
-`git push origin --delete       | | dev-build-<id>`(CI test runs delete it automatically in
-a`finally`; `pnpm dev-clean` removes | | branches and their tags). |
+`<current-branch>[-<note-slug>]-<short-sha>` or `DEV_BUILD_ID`), so a test build never touches the
+live `latest` release or the `gh-pages` site. Publishes are **branch-only** by default (ADR
+[0026](./decisions/0026-publish-channels-and-dead-channel-fallback.md)) — no release is created;
+`--tag` additionally creates the pre-release page (title `dev-build-<id>` or, with a note,
+`dev-build-<id> — <label>`; body with the note, a test-build warning and provenance) for RC-style
+announcements. `--note="<label>"` labels the build either way: the slug joins the branch id
+(`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`), and with `--tag` it leads the page title and
+body. Both flags are dev-only. The release body links the branch and carries the manual-download
+artifacts: the `utils` + `fx-folder` zips and the installer binary (the `updater-ui` zip and helper
+binaries stay branch-only — the updater fetches `updater-ui` itself and helpers are installer-side).
+Dev URLs are baked into the built artifacts and served from `cdn.jsdelivr.net` for the
+browser-facing pieces (installer web UI, remote updater UI) and `raw.githubusercontent.com` for the
+privileged engine fetches (chrome:// context has no CORS). Delete the dev branch only after its
+users have received the fallback logic (ADR 0026 — republish into the same `DEV_BUILD_ID` first so
+installed test builds auto-update while the branch lives): `git push origin --delete dev-build-<id>`
+(CI test runs delete it automatically in a `finally`; `pnpm dev-clean` removes branches and their
+tags).
 
 ### `pnpm upload` reference
 
@@ -734,15 +734,18 @@ What a run publishes (the hash comparison itself is [status-logic.md](./status-l
 ### Run
 
 ```bash
-npm run upload -- --mode=prod            # hashes → rebuild changed zips + binaries → upload → Pages + manifest + UI
-npm run upload -- --mode=dev             # same, but always rebuild + upload, to the dev-build-<id> branch (branch-only, no release)
-npm run upload -- --mode=dev --tag       # + create the RC-style prerelease page for this dev build
-npm run upload -- --mode=dev --note="RC 1" --tag   # label: branch dev-build-<branch>-RC-1-<sha>, page title `… — RC 1`
-npm run upload -- --mode=dev --ref=<ref> # build <ref> in a temp worktree (your checkout untouched)
-DEV_BUILD_ID=main-450468f npm run upload -- --mode=dev   # republish into an existing dev-build branch name
-npm run upload:local -- --mode=prod      # same, but write a snapshot to dist/prod-<branch>-<hash>/ (no token)
-npm run upload:local -- --mode=dev       # dev snapshot (-dev artifact names), no token
+pnpm release                             # prod publish: dispatch the CI cross-OS matrix (gh)
+pnpm upload -- --mode=dev                # always rebuild + upload, to the dev-build-<id> branch (branch-only, no release)
+pnpm upload -- --mode=dev --tag          # + create the RC-style prerelease page for this dev build
+pnpm upload -- --mode=dev --note="RC 1" --tag   # label: branch dev-build-<branch>-RC-1-<sha>, page title `… — RC 1`
+pnpm upload -- --mode=dev --ref=<ref>    # build <ref> in a temp worktree (your checkout untouched)
+DEV_BUILD_ID=main-450468f pnpm upload -- --mode=dev   # republish into an existing dev-build branch name
+pnpm upload:local -- --mode=prod         # offline snapshot to dist/prod-<branch>-<hash>/ (no token)
+pnpm upload:local -- --mode=dev          # dev snapshot (-dev artifact names), no token
 ```
+
+`pnpm upload -- --mode=prod` is CI's command, not a local one — from a dev machine it aborts before
+building (see the guard note under the reference above).
 
 Both commands accept `--ref=<branch|commit>` to build a specific branch or commit without touching
 the current checkout: the tool creates a temporary detached worktree at that ref, re-runs the same

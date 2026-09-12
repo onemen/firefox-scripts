@@ -146,6 +146,11 @@ const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
  * their initial channel is 'local' regardless of the build mode.
  */
 const PREF_ACTIVE_CHANNEL = 'extensions.firefox-scripts.activeChannel';
+// The dev-build branch identity a migration belonged to (`CONFIG.DEV_BRANCH`).
+// A stored stable channel is honored only while this matches the running
+// build — otherwise a different dev build would inherit the migration and be
+// dragged to stable (its own manifest may still be alive).
+const PREF_ACTIVE_CHANNEL_BUILD = 'extensions.firefox-scripts.activeChannelBuild';
 const CHANNEL_STABLE = 'stable';
 const CHANNEL_DEV = 'dev';
 const CHANNEL_LOCAL = 'local';
@@ -165,6 +170,21 @@ function initialChannel() {
     if (Services.prefs.getPrefType(PREF_ACTIVE_CHANNEL) === Services.prefs.PREF_STRING) {
       const stored = Services.prefs.getCharPref(PREF_ACTIVE_CHANNEL, '');
       if (stored) {
+        // A persisted stable channel is honored only when it belongs to THIS
+        // dev build. A different dev build evaluates its own IS_DEV branch:
+        // its manifest may still be alive, and if it later dies, the fallback
+        // records its own migration.
+        if (stored === CHANNEL_STABLE) {
+          try {
+            const build = Services.prefs.getCharPref(PREF_ACTIVE_CHANNEL_BUILD, '');
+            if (build && build === CONFIG.DEV_BRANCH) {
+              return CHANNEL_STABLE;
+            }
+          } catch (_) {
+            // unreadable build pref → fall through to build-mode derivation
+          }
+          return CONFIG.IS_DEV ? CHANNEL_DEV : CHANNEL_STABLE;
+        }
         return stored;
       }
     }
@@ -185,6 +205,11 @@ function setActiveChannel(channel) {
   gActiveChannel = channel;
   try {
     Services.prefs.setCharPref(PREF_ACTIVE_CHANNEL, channel);
+    if (channel === CHANNEL_STABLE && CONFIG.IS_DEV) {
+      // Record which dev build the migration belonged to (see
+      // initialChannel — a different dev build must not inherit it).
+      Services.prefs.setCharPref(PREF_ACTIVE_CHANNEL_BUILD, CONFIG.DEV_BRANCH || '');
+    }
   } catch (_) {
     // A read-only pref store cannot persist the migration; the session flag
     // still drives the tab banner for this run.
@@ -465,12 +490,21 @@ async function fetchOwnManifestOrFallback() {
   if (!CONFIG.STABLE_HASHES_URL) {
     return null; // pre-0026 dev build: no stable URLs baked in, silent exit
   }
+  // Resolve through stableConfigValue so the harness override prefs steer the
+  // fallback too (same mechanism as every other URL getter). The baked
+  // CONFIG.STABLE_HASHES_URL above stays the presence check: a pre-0026 build
+  // has no key at all, while the resolved value would just fall back to the
+  // (dead) own URL.
+  const stableHashesUrl = stableConfigValue('HASHES_URL');
+  if (!stableHashesUrl) {
+    return null;
+  }
 
   console.warn(
     'Firefox Scripts: dev channel manifest unreachable — falling back to the stable channel'
   );
   try {
-    const stableText = await withTimeout(fetchText(CONFIG.STABLE_HASHES_URL), MANIFEST_TIMEOUT_MS);
+    const stableText = await withTimeout(fetchText(stableHashesUrl), MANIFEST_TIMEOUT_MS);
     // Migration recorded only when stable answered: from here the URLs resolve
     // against stable and the updater tab shows the migration banner.
     setActiveChannel(CHANNEL_STABLE);

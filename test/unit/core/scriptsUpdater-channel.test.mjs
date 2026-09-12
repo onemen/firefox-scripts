@@ -36,6 +36,7 @@ const MODULE_PATH = path.join(
 );
 
 const PREF_CHANNEL = 'extensions.firefox-scripts.activeChannel';
+const PREF_CHANNEL_BUILD = 'extensions.firefox-scripts.activeChannelBuild';
 const PREF_OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
 
 const DEV_HASHES =
@@ -57,6 +58,7 @@ function devConfig(overrides = {}) {
     STABLE_ZIP_BASE_URL: STABLE_ZIP,
     STABLE_UI_BASE_URL: STABLE_UI,
     STABLE_HELPER_BASE_URL: STABLE_HELPER,
+    DEV_BRANCH: 'dev-build-main-abc1',
     IS_DEV: true,
     IS_LOCAL: false,
     ASSET_SUFFIX: '-dev',
@@ -282,12 +284,39 @@ test('dev build on its own channel: dev URLs, -dev suffix, manifest compared', a
 
 test('stored channel pref wins over the build mode (persisted migration)', () => {
   const u = loadUpdater({
-    config: devConfig(), // IS_DEV true, but a previous session migrated
-    store: {[PREF_CHANNEL]: 'stable'},
+    config: devConfig(), // IS_DEV true, but this build previously migrated
+    store: {
+      [PREF_CHANNEL]: 'stable',
+      [PREF_CHANNEL_BUILD]: 'dev-build-main-abc1', // ...and the pref names it
+    },
   });
   assert.equal(u.getHashesUrl(), STABLE_HASHES);
   assert.equal(u.getAssetSuffix(), '');
   assertChannel(u, 'stable', false);
+});
+
+test('a different dev build does not inherit a previous migration', async () => {
+  // Build A migrated to stable and its branch died; the profile then installs
+  // a fresh dev build B — B must evaluate its own dev channel (its manifest
+  // may still be alive), not ride A's migration.
+  const BUILD_B_HASHES =
+    'https://cdn.jsdelivr.net/gh/onemen/firefox-scripts@dev-build-main-abc2/hashes.json';
+  const u = loadUpdater({
+    config: devConfig({
+      HASHES_URL: BUILD_B_HASHES,
+      DEV_BRANCH: 'dev-build-main-abc2',
+    }),
+    store: {
+      [PREF_CHANNEL]: 'stable',
+      [PREF_CHANNEL_BUILD]: 'dev-build-main-abc1', // belongs to build A
+    },
+    routes: {[BUILD_B_HASHES]: {status: 200, body: MISMATCH_MANIFEST}},
+  });
+  assert.equal(u.getHashesUrl(), BUILD_B_HASHES); // own dev URLs
+  assert.equal(u.getAssetSuffix(), '-dev');
+  const result = await u.checkScriptsUpdateNeeded();
+  assert.equal(result.utils.updateNeeded, true);
+  assertChannel(u, 'dev', false);
 });
 
 test('--local snapshot: never channels, keeps the build-mode suffix', () => {
@@ -307,6 +336,16 @@ test('override prefs still steer the own-channel URLs (harness mechanism)', () =
     store: {[`${PREF_OVERRIDE_PREFIX}HASHES_URL`]: 'http://127.0.0.1:8999/hashes.json'},
   });
   assert.equal(u.getHashesUrl(), 'http://127.0.0.1:8999/hashes.json');
+});
+
+test('stable build with a stored stable channel pref stays stable (no build pref)', () => {
+  const u = loadUpdater({
+    config: stableConfig(),
+    store: {[PREF_CHANNEL]: 'stable'}, // no activeChannelBuild — a stable
+    // build's stored channel is its own regardless.
+  });
+  assert.equal(u.getHashesUrl(), STABLE_HASHES);
+  assertChannel(u, 'stable', false);
 });
 
 test('getUiBaseUrl keeps the pre-#102 zip-base fallback for dev configs', () => {
@@ -331,6 +370,7 @@ test('dead dev manifest: falls back to stable, migrates, resolves stable URLs', 
   // ...the migration is recorded (session flag + persisted pref)...
   assertChannel(u, 'stable', true);
   assert.equal(store[PREF_CHANNEL], 'stable');
+  assert.equal(store[PREF_CHANNEL_BUILD], 'dev-build-main-abc1');
   // ...each manifest was consulted exactly once...
   assert.equal(routes[DEV_HASHES].hits, 1);
   assert.equal(routes[STABLE_HASHES].hits, 1);
@@ -363,6 +403,25 @@ test('pre-0026 dev build (no STABLE_HASHES_URL): silent exit, no stable attempt'
   assert.equal(result.utils.updateNeeded, false);
   assertChannel(u, 'dev', false);
   assert.equal(routes[STABLE_HASHES].hits, 0); // never consulted
+});
+
+test('fallback fetch honors the STABLE_HASHES_URL override pref (harness mechanism)', async () => {
+  const LOCAL_STABLE = 'http://127.0.0.1:8999/hashes.json';
+  const routes = {
+    [DEV_HASHES]: {error: true},
+    [LOCAL_STABLE]: {status: 200, body: MISMATCH_MANIFEST},
+    [STABLE_HASHES]: {status: 200, body: MISMATCH_MANIFEST},
+  };
+  const u = loadUpdater({
+    config: devConfig(),
+    store: {[`${PREF_OVERRIDE_PREFIX}STABLE_HASHES_URL`]: LOCAL_STABLE},
+    routes,
+  });
+  const result = await u.checkScriptsUpdateNeeded();
+  assert.equal(result.utils.updateNeeded, true); // the override served the manifest
+  assertChannel(u, 'stable', true);
+  assert.equal(routes[LOCAL_STABLE].hits, 1);
+  assert.equal(routes[STABLE_HASHES].hits, 0); // the baked URL was never hit
 });
 
 test('--local snapshot: own manifest failure never falls back', async () => {

@@ -46,6 +46,9 @@ test('--note slugifies into the dev-build id; DEV_BUILD_ID env still wins', asyn
   const {slugifyDevNote, devBuildId} = await import('../../../tools/publish/publishMode.mjs');
   assert.equal(slugifyDevNote('v1.0 RC — community'), 'v1.0-RC-community');
   assert.equal(slugifyDevNote('  spaced   out  '), 'spaced-out');
+  // `..` is forbidden in git refnames — separator runs must collapse.
+  assert.equal(slugifyDevNote('v1.0..RC'), 'v1.0-RC');
+  assert.equal(slugifyDevNote('a -- b'), 'a-b');
   assert.equal(
     devBuildId({branch: 'main', sha: '450468f', note: 'v1.0 RC'}),
     'dev'.slice(0, 0) || 'main-v1.0-RC-450468f'
