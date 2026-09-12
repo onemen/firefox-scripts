@@ -40,6 +40,11 @@ installation flows. Its helper E2E remains a separate job, but shares the update
 Unit tests remain part of the always-running `CI / lint + format` job because they are fast and do
 not justify another filter.
 
+Every Linux job that runs `apt-get update` first calls the shared `harden-apt` composite action
+(`.github/actions/harden-apt`), which deletes the runner image's unused third-party apt sources
+(Google Chrome): their indexes churn out-of-band and a mismatch breaks `apt-get update` for every
+open PR and the next `main` push at once (2026-09-09 incident).
+
 ## Scheduled and manual workflows
 
 | Workflow / job name                             | Schedule / trigger                                              | Purpose                                                                                                                                                                                                                      | Download behavior / filter                                                                                                                                                                                |

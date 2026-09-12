@@ -91,6 +91,12 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-gcc make
 
+      # The runner image's third-party apt sources can churn out-of-band and
+      # break `apt-get update` for everyone (2026-09-09 Google Chrome index).
+      - name: Harden apt sources
+        if: runner.os == 'Linux' && needs.changes.outputs.publish == 'true'
+        uses: ./.github/actions/harden-apt
+
       # ARM64 cross-compiler for the aarch64 Linux binaries (the 'linux'
       # platform implies the aarch64 twin in upload.mjs).
       - name: Install aarch64 cross toolchain (Linux)
