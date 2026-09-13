@@ -433,6 +433,7 @@ test('runInstallerWithRetry: retries the AV file-lock error then succeeds', () =
   const runs = [lockedErr(), lockedErr(), 'ok'];
   const sleeps = [];
   runInstallerWithRetry('cmd', {
+    platform: 'win32', // the lock signature is Windows-only; pin it on any OS
     run: () => {
       const r = runs.shift();
       if (r !== 'ok') throw r;
@@ -449,6 +450,7 @@ test('runInstallerWithRetry: rethrows a non-lock failure immediately (no retry)'
   assert.throws(
     () =>
       runInstallerWithRetry('cmd', {
+        platform: 'win32',
         run: () => {
           runs += 1;
           throw boom;
@@ -466,6 +468,7 @@ test('runInstallerWithRetry: gives up after the last attempt (persistent lock)',
     () =>
       runInstallerWithRetry('cmd', {
         attempts: 3,
+        platform: 'win32',
         run: () => {
           runs += 1;
           throw lockedErr();
@@ -489,8 +492,12 @@ test('runInstallerWithRetry: success on the first try never sleeps', () => {
 });
 
 test('isFileLockError: matches the AV signatures, only on Windows', () => {
-  assert.equal(isFileLockError(lockedErr()), process.platform === 'win32');
-  assert.equal(isFileLockError(lockedErr('os error 32')), process.platform === 'win32');
-  assert.equal(isFileLockError(Object.assign(new Error('x'), {stderr: 'x'})), false);
+  assert.equal(isFileLockError(lockedErr(), {platform: 'win32'}), true);
+  assert.equal(isFileLockError(lockedErr('os error 32'), {platform: 'win32'}), true);
+  assert.equal(isFileLockError(lockedErr(), {platform: 'linux'}), false);
+  assert.equal(
+    isFileLockError(Object.assign(new Error('x'), {stderr: 'x'}), {platform: 'win32'}),
+    false
+  );
   assert.equal(isFileLockError(null), false);
 });

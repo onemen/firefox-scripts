@@ -486,16 +486,22 @@ function findCachedInstaller(browser) {
  * leg, 2026-09-13). A short backoff-and-retry is enough — the scanner releases
  * the file, it is not a broken installer. Retries only that error signature;
  * every other failure surfaces as before.
+ *
+ * `platform` is injectable so unit tests can exercise the Windows-only
+ * signature from any OS runner; production callers get `process.platform`.
  */
-export function isFileLockError(err) {
-  if (process.platform !== 'win32') return false;
+export function isFileLockError(err, {platform = process.platform} = {}) {
+  if (platform !== 'win32') return false;
   const out = String(err?.stderr || err?.message || '');
   return /cannot access the file because it is being used by another process|The file is locked|os error 32/i.test(
     out
   );
 }
 
-export function runInstallerWithRetry(cmd, {attempts = 4, delayMs = 4000, run, sleep} = {}) {
+export function runInstallerWithRetry(
+  cmd,
+  {attempts = 4, delayMs = 4000, platform, run, sleep} = {}
+) {
   const runCmd = run ?? (c => execSync(c, {stdio: 'inherit'}));
   const wait = sleep ?? (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
   let lastErr;
@@ -505,7 +511,7 @@ export function runInstallerWithRetry(cmd, {attempts = 4, delayMs = 4000, run, s
       return;
     } catch (err) {
       lastErr = err;
-      if (!isFileLockError(err) || attempt === attempts) throw err;
+      if (!isFileLockError(err, platform ? {platform} : {}) || attempt === attempts) throw err;
       console.log(
         `  installer file locked (AV scan?) — retry ${attempt}/${attempts - 1} in ${delayMs / 1000}s`
       );
