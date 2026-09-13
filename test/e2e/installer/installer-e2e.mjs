@@ -33,6 +33,7 @@ import {
   check,
   createCounter,
   launchFirefox,
+  seedStartupHygienePrefs,
   waitForCondition,
   waitForProcessExit,
   screenshotPrivileged,
@@ -585,6 +586,10 @@ function samePath(a, b) {
 
 /** Launch a Firefox binary+profile as a detached OS process. */
 function launchDetachedFirefox(firefoxBin, profileDir, headless) {
+  // Fresh profile + official build = the launch-on-login auto-enable's exact
+  // trigger (issue #191). This spawn bypasses puppeteer, so the prefs must
+  // already be in the profile's user.js before Firefox starts.
+  seedStartupHygienePrefs(profileDir);
   const args = ['--profile', profileDir, '--no-remote'];
   if (headless) args.push('-headless');
   // detached + unref'd: the browser must outlive harness steps that throw.
