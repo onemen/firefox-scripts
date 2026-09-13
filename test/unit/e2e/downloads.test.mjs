@@ -24,9 +24,12 @@ const {
   DOWNLOADS,
   downloadDir,
   downloadTo,
+  isFileLockError,
   nsisPortableArgs,
   parseFirefoxVersion,
+  portableBinaryPath,
   resolveDownloadUrl,
+  runInstallerWithRetry,
 } = await import(downloadsUrl);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
@@ -450,4 +453,123 @@ test('parseFirefoxVersion: unbranded dotted-numeric fallback, null on garbage', 
   assert.equal(parseFirefoxVersion('Mozilla Firefox'), null);
   assert.equal(parseFirefoxVersion(''), null);
   assert.equal(parseFirefoxVersion('cannot open display'), null);
+});
+
+// ── runInstallerWithRetry (AV file-lock race, floorp leg 2026-09-13) ──────
+
+function lockedErr(
+  message = 'The process cannot access the file because it is being used by another process.'
+) {
+  return Object.assign(
+    new Error(`Command failed
+${message}`),
+    {stderr: message}
+  );
+}
+
+test('runInstallerWithRetry: retries the AV file-lock error then succeeds', () => {
+  const runs = [lockedErr(), lockedErr(), 'ok'];
+  const sleeps = [];
+  runInstallerWithRetry('cmd', {
+    platform: 'win32', // the lock signature is Windows-only; pin it on any OS
+    run: () => {
+      const r = runs.shift();
+      if (r !== 'ok') throw r;
+    },
+    sleep: ms => sleeps.push(ms),
+  });
+  assert.equal(runs.length, 0, 'all lock errors consumed');
+  assert.equal(sleeps.length, 2, 'slept between retries');
+});
+
+test('runInstallerWithRetry: rethrows a non-lock failure immediately (no retry)', () => {
+  const boom = Object.assign(new Error('NSIS exited 1627'), {stderr: 'exited with code 1627'});
+  let runs = 0;
+  assert.throws(
+    () =>
+      runInstallerWithRetry('cmd', {
+        platform: 'win32',
+        run: () => {
+          runs += 1;
+          throw boom;
+        },
+        sleep: () => assert.fail('must not sleep'),
+      }),
+    /1627/
+  );
+  assert.equal(runs, 1);
+});
+
+test('runInstallerWithRetry: gives up after the last attempt (persistent lock)', () => {
+  let runs = 0;
+  assert.throws(
+    () =>
+      runInstallerWithRetry('cmd', {
+        attempts: 3,
+        platform: 'win32',
+        run: () => {
+          runs += 1;
+          throw lockedErr();
+        },
+        sleep: () => {},
+      }),
+    /being used by another process/
+  );
+  assert.equal(runs, 3);
+});
+
+test('runInstallerWithRetry: success on the first try never sleeps', () => {
+  let runs = 0;
+  runInstallerWithRetry('cmd', {
+    run: () => {
+      runs += 1;
+    },
+    sleep: () => assert.fail('must not sleep'),
+  });
+  assert.equal(runs, 1);
+});
+test('isFileLockError: matches the AV signatures, only on Windows', () => {
+  assert.equal(isFileLockError(lockedErr(), {platform: 'win32'}), true);
+  assert.equal(isFileLockError(lockedErr('os error 32'), {platform: 'win32'}), true);
+  assert.equal(isFileLockError(lockedErr(), {platform: 'linux'}), false);
+  assert.equal(
+    isFileLockError(Object.assign(new Error('x'), {stderr: 'x'}), {platform: 'win32'}),
+    false
+  );
+  assert.equal(isFileLockError(null), false);
+});
+
+// ── portableBinaryPath (extracted-portable cache, A1) ───────────────────
+// The skip-if-cached check must target the launcher FILE. The Linux tarball's
+// top-level entry is a `firefox/` DIRECTORY — a path/basename collision that
+// existsSync-based checking cannot survive (ubuntu portable leg, 2026-09-13).
+
+test('portableBinaryPath: launcher file per platform (not the top-level dir)', () => {
+  assert.equal(portableBinaryPath('/p', 'linux'), path.join('/p', 'firefox', 'firefox'));
+  assert.equal(
+    portableBinaryPath('/p', 'darwin'),
+    path.join('/p', 'Firefox.app', 'Contents', 'MacOS', 'firefox')
+  );
+  assert.equal(portableBinaryPath('/p', 'win32'), path.join('/p', 'firefox.exe'));
+});
+
+test('installPortableFirefox skip check: only a regular launcher file counts', async () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-portable-'));
+  try {
+    // Simulate the colliding Linux cache layout: firefox/ is a directory.
+    // The predicate installPortableFirefox uses is statSync().isFile() —
+    // assert it rejects the directory and accepts the launcher file.
+    fs.mkdirSync(path.join(dest, 'firefox'));
+    const stat = fs.statSync(portableBinaryPath(dest, 'linux'), {throwIfNoEntry: false});
+    assert.notEqual(
+      stat?.isFile(),
+      true,
+      'directory-only layout (the old buggy path) must not count as cached'
+    );
+    fs.writeFileSync(path.join(dest, 'firefox', 'firefox'), '#!/bin/sh\n');
+    const stat2 = fs.statSync(portableBinaryPath(dest, 'linux'), {throwIfNoEntry: false});
+    assert.equal(stat2?.isFile(), true, 'launcher file counts as cached');
+  } finally {
+    fs.rmSync(dest, {recursive: true, force: true});
+  }
 });

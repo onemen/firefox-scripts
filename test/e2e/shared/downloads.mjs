@@ -492,6 +492,49 @@ function findCachedInstaller(browser) {
   return found ? path.join(dir, found) : null;
 }
 
+/**
+ * Run a downloaded installer synchronously, retrying the Windows AV-lock race:
+ * Defender (or any scanner) can hold the freshly-written exe open for seconds
+ * after the download returns, and NSIS /S fails immediately with "The process
+ * cannot access the file because it is being used by another process" (floorp
+ * leg, 2026-09-13). A short backoff-and-retry is enough — the scanner releases
+ * the file, it is not a broken installer. Retries only that error signature;
+ * every other failure surfaces as before.
+ *
+ * `platform` is injectable so unit tests can exercise the Windows-only
+ * signature from any OS runner; production callers get `process.platform`.
+ */
+export function isFileLockError(err, {platform = process.platform} = {}) {
+  if (platform !== 'win32') return false;
+  const out = String(err?.stderr || err?.message || '');
+  return /cannot access the file because it is being used by another process|The file is locked|os error 32/i.test(
+    out
+  );
+}
+
+export function runInstallerWithRetry(
+  cmd,
+  {attempts = 4, delayMs = 4000, platform, run, sleep} = {}
+) {
+  const runCmd = run ?? (c => execSync(c, {stdio: 'inherit'}));
+  const wait = sleep ?? (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      runCmd(cmd);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isFileLockError(err, platform ? {platform} : {}) || attempt === attempts) throw err;
+      console.log(
+        `  installer file locked (AV scan?) — retry ${attempt}/${attempts - 1} in ${delayMs / 1000}s`
+      );
+      wait(delayMs);
+    }
+  }
+  throw lastErr;
+}
+
 /** Download an official installer and run it with args (e.g. NSIS `/S`). */
 async function installInstaller(url, browser, args) {
   const exe = path.join(downloadDir(), `${browser}-setup.exe`);
@@ -509,7 +552,16 @@ async function installInstaller(url, browser, args) {
     }
     throw err;
   }
-  execSync(`"${exe}" ${args.join(' ')}`, {stdio: 'inherit'});
+  runInstallerWithRetry(`"${exe}" ${args.join(' ')}`);
+}
+
+/** The launcher file each portable install produces, per platform. */
+export function portableBinaryPath(dest, platform) {
+  return (
+    platform === 'linux' ? path.join(dest, 'firefox', 'firefox')
+    : platform === 'darwin' ? path.join(dest, 'Firefox.app', 'Contents', 'MacOS', 'firefox')
+    : path.join(dest, 'firefox.exe')
+  );
 }
 
 /** Download Firefox Release into a custom, non-registered directory. */
@@ -517,6 +569,17 @@ async function installPortableFirefox(url, platform) {
   const dest = process.env.PORTABLE_BROWSER_DIR;
   if (!dest) throw new Error('PORTABLE_BROWSER_DIR is required for portable Firefox');
   fs.mkdirSync(dest, {recursive: true});
+
+  // The E2E workflow caches the extracted dir alongside the installer (same
+  // URL-derived key, so it can only match this browser version). When the
+  // launcher file is already in place, skip the extract/install work entirely.
+  // statSync (not existsSync): a directory at that path must not count — the
+  // Linux tarball's top-level `firefox/` dir shares the launcher's basename.
+  const portableBinary = portableBinaryPath(dest, platform);
+  if (fs.statSync(portableBinary, {throwIfNoEntry: false})?.isFile()) {
+    console.log(`  reusing cached portable dir (${path.basename(dest)})`);
+    return portableBinary;
+  }
 
   if (platform === 'linux') {
     const binary = await installTarball(url, 'firefox-portable', dest);
