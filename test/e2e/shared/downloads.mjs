@@ -561,6 +561,9 @@ export function runInstallerWithRetry(
 export function runNsisInstallerWithRetry(exe, args, label = 'installer', {spawn, sleep} = {}) {
   let last;
   runInstallerWithRetry(exe, {
+    // The NSIS spawn path only ever runs on Windows — pin the platform so the
+    // EBUSY/lock signature is honored regardless of where the unit tests run.
+    platform: 'win32',
     sleep,
     run: exePath => {
       const result = (spawn ?? spawnSync)(exePath, args, {
