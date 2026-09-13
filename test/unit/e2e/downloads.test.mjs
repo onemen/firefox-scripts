@@ -30,6 +30,7 @@ const {
   portableBinaryPath,
   resolveDownloadUrl,
   runInstallerWithRetry,
+  runNsisInstallerWithRetry,
 } = await import(downloadsUrl);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
@@ -537,6 +538,70 @@ test('isFileLockError: matches the AV signatures, only on Windows', () => {
     false
   );
   assert.equal(isFileLockError(null), false);
+});
+
+test('isFileLockError: spawnSync-shape EBUSY (libuv sharing violation) matches on Windows', () => {
+  // spawnSync failures surface as {error: Error with code EBUSY} — the same
+  // os error 32 sharing violation, different shape than execSync's stderr.
+  const err = Object.assign(new Error('spawn EBUSY'), {code: 'EBUSY'});
+  assert.equal(isFileLockError(err, {platform: 'win32'}), true);
+  assert.equal(isFileLockError(err, {platform: 'linux'}), false);
+  // A non-lock spawn error (e.g. ENOENT for a missing exe) must not match.
+  assert.equal(
+    isFileLockError(Object.assign(new Error('spawn ENOENT'), {code: 'ENOENT'}), {
+      platform: 'win32',
+    }),
+    false
+  );
+});
+
+test('runNsisInstallerWithRetry: retries spawnSync EBUSY then succeeds', () => {
+  const attempts = [];
+  const result = runNsisInstallerWithRetry('setup.exe', ['/S', '/D=C:\\x'], 'test installer', {
+    spawn: (exe, args) => {
+      attempts.push([exe, args]);
+      if (attempts.length < 3) {
+        return {error: Object.assign(new Error('spawn EBUSY'), {code: 'EBUSY'})};
+      }
+      return {status: 0};
+    },
+    sleep: () => {},
+  });
+  assert.equal(result.status, 0);
+  assert.equal(attempts.length, 3);
+  assert.deepEqual(attempts[0][1], ['/S', '/D=C:\\x'], 'args passed through verbatim');
+});
+
+test('runNsisInstallerWithRetry: rethrows a real installer failure (non-zero exit)', () => {
+  let attempts = 0;
+  assert.throws(
+    () =>
+      runNsisInstallerWithRetry('setup.exe', ['/S'], 'test installer', {
+        spawn: () => {
+          attempts += 1;
+          return {status: 1627};
+        },
+        sleep: () => assert.fail('must not sleep'),
+      }),
+    /exited with code 1627/
+  );
+  assert.equal(attempts, 1, 'non-lock failure must not be retried');
+});
+
+test('runNsisInstallerWithRetry: gives up after the last attempt (persistent EBUSY)', () => {
+  let attempts = 0;
+  assert.throws(
+    () =>
+      runNsisInstallerWithRetry('setup.exe', ['/S'], 'test installer', {
+        spawn: () => {
+          attempts += 1;
+          return {error: Object.assign(new Error('spawn EBUSY'), {code: 'EBUSY'})};
+        },
+        sleep: () => {},
+      }),
+    /EBUSY/
+  );
+  assert.equal(attempts, 4, 'default attempts = 4');
 });
 
 // ── portableBinaryPath (extracted-portable cache, A1) ───────────────────

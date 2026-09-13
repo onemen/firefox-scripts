@@ -506,8 +506,10 @@ function findCachedInstaller(browser) {
  */
 export function isFileLockError(err, {platform = process.platform} = {}) {
   if (platform !== 'win32') return false;
-  const out = String(err?.stderr || err?.message || '');
-  return /cannot access the file because it is being used by another process|The file is locked|os error 32/i.test(
+  const out = String(err?.stderr || err?.message || err?.code || '');
+  // execSync failures carry the scanner's message in stderr/message;
+  // spawnSync surfaces the same sharing violation (os error 32) as code EBUSY.
+  return /cannot access the file because it is being used by another process|The file is locked|os error 32|EBUSY/i.test(
     out
   );
 }
@@ -516,7 +518,13 @@ export function runInstallerWithRetry(
   cmd,
   {attempts = 4, delayMs = 4000, platform, run, sleep} = {}
 ) {
-  const runCmd = run ?? (c => execSync(c, {stdio: 'inherit'}));
+  const runCmd =
+    run ??
+    (c => {
+      // execSync throws on a non-zero exit; the error's stderr/message carry
+      // the lock signature (see isFileLockError).
+      execSync(c, {stdio: 'inherit'});
+    });
   const wait = sleep ?? (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
   let lastErr;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -533,6 +541,42 @@ export function runInstallerWithRetry(
     }
   }
   throw lastErr;
+}
+
+/**
+ * Run a silent NSIS installer via spawnSync (verbatim args — /D= must never be
+ * quoted), retrying the Windows AV file-lock race: a spawnSync failure surfaces
+ * as `error` with libuv code EBUSY (the sharing violation), which
+ * isFileLockError matches. The runner receives {error, status} so the predicate
+ * sees either shape.
+ *
+ * @param {string} exe
+ * @param {string[]} args
+ * @param {string} [label] browser name for the failure message
+ * @param {object} [opts] test seams
+ * @param {Function} [opts.spawn] spawnSync replacement (unit tests)
+ * @param {Function} [opts.sleep] sleep replacement (unit tests)
+ * @returns {{error?: Error; status: number | null}} the last spawn result
+ */
+export function runNsisInstallerWithRetry(exe, args, label = 'installer', {spawn, sleep} = {}) {
+  let last;
+  runInstallerWithRetry(exe, {
+    sleep,
+    run: exePath => {
+      const result = (spawn ?? spawnSync)(exePath, args, {
+        stdio: 'inherit',
+        windowsVerbatimArguments: true,
+      });
+      last = result;
+      if (result.error) {
+        throw Object.assign(result.error, {code: result.error.code || 'EBUSY'});
+      }
+      if (result.status !== 0) {
+        throw new Error(`${label} exited with code ${result.status}`);
+      }
+    },
+  });
+  return last ?? {status: 0};
 }
 
 /** Download an official installer and run it with args (e.g. NSIS `/S`). */
@@ -590,18 +634,10 @@ async function installPortableFirefox(url, platform) {
     const exe = path.join(downloadDir(), 'firefox-portable-setup.exe');
     await downloadTo(url, exe);
     // NSIS /D must be the final argument and uses a custom directory instead
-    // of the registered Program Files location.
-    // Pass the final /D= option directly to NSIS. PowerShell launches this
-    // Node process with native Windows paths, and verbatim arguments prevent
-    // MSYS/Git Bash path rewriting when the same helper is used locally.
-    const result = spawnSync(exe, ['/S', `/D=${dest}`], {
-      stdio: 'inherit',
-      windowsVerbatimArguments: true,
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      throw new Error(`Firefox portable installer exited with code ${result.status}`);
-    }
+    // of the registered Program Files location. Verbatim args keep the /D=
+    // path unquoted; the retry wrapper rides out the AV file-lock race
+    // (spawnSync failure surfaces as error.code EBUSY).
+    runNsisInstallerWithRetry(exe, nsisPortableArgs(dest), 'Firefox portable installer');
     const binary = path.join(dest, 'firefox.exe');
     if (!fs.existsSync(binary)) throw new Error(`portable Firefox binary not found: ${binary}`);
     return binary;
@@ -717,15 +753,9 @@ async function installForkPortable(browser, recipe) {
     await verifySha256(exe, sha256Url);
   }
   // NSIS /D= consumes the rest of the command line (no quotes allowed), so
-  // spawn with verbatim args exactly like the Firefox portable recipe.
-  const result = spawnSync(exe, nsisPortableArgs(dest), {
-    stdio: 'inherit',
-    windowsVerbatimArguments: true,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${browser} portable installer exited with code ${result.status}`);
-  }
+  // spawn with verbatim args exactly like the Firefox portable recipe — and
+  // through the same AV file-lock retry (run 34741552124, floorp leg).
+  runNsisInstallerWithRetry(exe, nsisPortableArgs(dest), `${browser} portable installer`);
   const binary = path.join(dest, recipe.portableExe);
   // statSync (not existsSync): a directory at that path must not count.
   if (!fs.statSync(binary, {throwIfNoEntry: false})?.isFile()) {
