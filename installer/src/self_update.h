@@ -4,7 +4,7 @@
 #include "platform.h"
 
 /**
- * Check for a newer installer build (date-based, ADR 0027).
+ * Check for a newer installer build (date-based, ADR 0019 amendment).
  * Parses the latest-release JSON that the web UI fetched and POSTed via
  * POST /api/self-update (the installer itself never touches the network).
  * The release body carries a managed block written by the publish

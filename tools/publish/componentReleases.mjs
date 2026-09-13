@@ -92,12 +92,50 @@ export function renderSelfUpdateBlock(date, urlByAsset) {
  */
 export function parseSelfUpdateBlock(body) {
   if (!body) return null;
-  const fenced = body.match(/```json\s*([\s\S]*?)```/);
+  /** Balanced-brace JSON object starting at `start` (an opening brace). */
+  const extractObject = start => {
+    let depth = 0;
+    for (let i = start; i < body.length; i++) {
+      if (body[i] === '{') {
+        depth++;
+        if (depth === 1) start = i;
+      } else if (body[i] === '}') {
+        depth--;
+        if (depth === 0) return body.slice(start, i + 1);
+      }
+    }
+    return null;
+  };
+  const keyAt = body.indexOf('"installerDate"');
+  if (keyAt === -1) return null;
+  // The block sits in a ```json fence in normal bodies; a bare occurrence
+  // (body embedded as a plain JSON string value, unescaped by GitHub's API)
+  // is accepted too.  Walk BACKWARDS from the key to the block's opening
+  // brace (the key sits above the nested download map, so a forward scan
+  // from the key itself would latch onto the inner brace), then extract the
+  // balanced object — a regex `[^{}]*` would truncate the map and same-day
+  // merges would lose prior platforms' URLs.
+  let openAt = -1;
+  let depth = 0;
+  for (let i = keyAt; i >= 0; i--) {
+    if (body[i] === '}') depth++;
+    else if (body[i] === '{') {
+      if (depth === 0) {
+        openAt = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  const fencedAt = body.lastIndexOf('```json', keyAt);
   const candidates = [];
-  if (fenced) candidates.push(fenced[1]);
-  const bare = body.match(/\{[^{}]*"installerDate"[\s\S]*?\}/);
-  if (bare) candidates.push(bare[0]);
+  if (fencedAt !== -1) {
+    const fenceEnd = body.indexOf('```', fencedAt + 7);
+    if (fenceEnd !== -1) candidates.push(body.slice(fencedAt + 7, fenceEnd));
+  }
+  candidates.push(openAt === -1 ? null : extractObject(openAt));
   for (const c of candidates) {
+    if (!c) continue;
     try {
       const parsed = JSON.parse(c);
       if (parsed && typeof parsed.installerDate === 'string') return parsed;
@@ -431,6 +469,10 @@ export async function syncComponentReleases(
       // points at its permanent `latest`-tag download URL.
       const downloadBase = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download`;
       const selfUpdateUrlByAsset = {};
+      // The managed URL intentionally targets the `latest` RELEASE download
+      // (the user-facing artifact; the banner downloads via an anchor click
+      // and needs no CORS).  The gh-pages mirror exists for any future
+      // fetch-based flow, not as the banner's target.
       for (const assetName of assets.keys()) {
         selfUpdateUrlByAsset[assetName] = `${downloadBase}/latest/${assetName}`;
       }

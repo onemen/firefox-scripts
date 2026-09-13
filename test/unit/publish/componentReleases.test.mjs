@@ -153,3 +153,15 @@ test('mergeSelfUpdateBlock: prior entries from a DIFFERENT date are dropped', ()
 test('mergeSelfUpdateBlock: no prior → just this run', () => {
   assert.deepEqual(mergeSelfUpdateBlock('2026-09-13', {a: 'u'}), {a: 'u'});
 });
+
+test('parseSelfUpdateBlock: bare (unfenced) block keeps the nested download map', () => {
+  // A body where GitHub serves the block unescaped/outside a fence: the
+  // balanced-brace extractor must keep the nested map — a [^{}]* regex
+  // would truncate it and the same-day merge would lose prior URLs.
+  const body =
+    'Installer binaries — 2026-09-13.\n{"installerDate":"2026-09-13","download":{"installer_win.exe":"https://x/win","installer_mac":"https://x/mac"}}\ntext after';
+  const parsed = parseSelfUpdateBlock(body);
+  assert.equal(parsed.installerDate, '2026-09-13');
+  assert.equal(parsed.download['installer_win.exe'], 'https://x/win');
+  assert.equal(parsed.download.installer_mac, 'https://x/mac');
+});

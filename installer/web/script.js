@@ -443,13 +443,11 @@
           .catch(function (err) {
             console.error('[ingest] waterfox releases fetch failed: ' + (err && err.message));
           }),
-        fetchRaw(urls.selfUpdateUrl)
-          .then(function (buf) {
-            return postRaw('/api/self-update', buf);
-          })
-          .catch(function (err) {
-            console.error('[ingest] self-update fetch failed: ' + (err && err.message));
-          }),
+        // NOTE: the self-update release JSON is NOT ingested here — it is
+        // owned by ingestSelfUpdateSources() (releases-list first, latest
+        // fallback).  A POST of the raw latest-release body here would
+        // overwrite the managed installer payload with a block-less one and
+        // the banner would silently never show.
       ].concat(ingestHgTags)
     );
 

@@ -269,15 +269,43 @@ async function runHttpLayer(counter, sessionToken) {
         : process.platform === 'darwin' ? 'installer_mac'
         : 'installer_linux';
       const asset = `${plainBase}-dev${process.platform === 'win32' ? '.exe' : ''}`;
+      // Read the binary's baked build date FIRST and derive every fixture
+      // date from it — the binary bakes BUILD_DATE at build time, so a
+      // hard-coded fixture date would eventually become equal to (or newer
+      // than) the binary's date and flip the expected verdicts.
+      const emptyPost = await httpPostRaw('/api/self-update', '{}', sessionToken);
+      check(counter, emptyPost.status === 200, 'empty payload stored');
+      const probe = await httpGet('/api/self-update', sessionToken);
+      let buildDate = null;
+      try {
+        buildDate = JSON.parse(probe.body).buildDate ?? null;
+      } catch {
+        /* handled by the check below */
+      }
+      check(
+        counter,
+        typeof buildDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(buildDate),
+        `binary build date reported: ${buildDate}`
+      );
+      check(counter, buildDate !== '1.0.0', 'no version constant leaks (date-based contract)');
+      const dayBefore = new Date(new Date(`${buildDate}T12:00:00Z`) - 24 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      const dayAfter = new Date(new Date(`${buildDate}T12:00:00Z`) + 24 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 10);
+
       const block = date =>
         JSON.stringify({
           installerDate: date,
           download: {[asset]: 'https://example.invalid/installer-download'},
         });
-      // Real-world shape: managed block embedded in the release body.
+      // Real-world shape: managed block embedded in the release body, with
+      // an OLDER published date than the binary → update + managed URL (the
+      // assets[] decoy must be ignored).
       const releaseJson = JSON.stringify({
         tag_name: 'latest',
-        body: '```json\n' + block('2026-09-13') + '\n```',
+        body: '```json\n' + block(dayBefore) + '\n```',
         assets: [
           {name: 'helper_win-dev.exe', browser_download_url: 'https://example.invalid/decoy'},
         ],
@@ -297,28 +325,20 @@ async function runHttpLayer(counter, sessionToken) {
       }
       check(counter, Boolean(su), 'GET /api/self-update returns JSON', got.body.slice(0, 80));
       if (su) {
-        // The E2E binary bakes today's BUILD_DATE; the fixture's published
-        // date (2026-09-13, fixed) is strictly older → update flagged, URL
-        // from the managed map (the assets[] decoy must be ignored).
-        check(counter, su.updateAvailable === true, 'newer published date → update available');
-        check(counter, su.latestDate === '2026-09-13', `published date parsed: ${su.latestDate}`);
+        check(counter, su.updateAvailable === true, 'older published date → update available');
+        check(counter, su.latestDate === dayBefore, `published date parsed: ${su.latestDate}`);
         check(
           counter,
           su.downloadUrl === 'https://example.invalid/installer-download',
           `managed download URL extracted: ${su.downloadUrl}`
         );
-        check(
-          counter,
-          /^\d{4}-\d{2}-\d{2}$/.test(su.buildDate),
-          `binary build date reported: ${su.buildDate}`
-        );
-        check(counter, su.buildDate !== '1.0.0', 'no version constant leaks (date-based contract)');
+        check(counter, su.buildDate === buildDate, 'buildDate matches the probed value');
       }
 
       // Up-to-date path: publish a date equal to the binary's build date.
       const todayJson = JSON.stringify({
         tag_name: 'latest',
-        body: '```json\n' + block(su?.buildDate ?? '2026-01-01') + '\n```',
+        body: '```json\n' + block(buildDate) + '\n```',
       });
       await httpPostRaw('/api/self-update', todayJson, sessionToken);
       const got2 = await httpGet('/api/self-update', sessionToken);
@@ -327,6 +347,22 @@ async function runHttpLayer(counter, sessionToken) {
         counter,
         su2.updateAvailable === false && su2.latestDate === su2.buildDate,
         'same published date → up to date'
+      );
+
+      // Published date AHEAD of the binary (a same-day republish moved the
+      // tag forward): the banner must flag even though the binary is
+      // brand-new.
+      const aheadJson = JSON.stringify({
+        tag_name: 'latest',
+        body: '```json\n' + block(dayAfter) + '\n```',
+      });
+      await httpPostRaw('/api/self-update', aheadJson, sessionToken);
+      const gotAhead = await httpGet('/api/self-update', sessionToken);
+      const suAhead = JSON.parse(gotAhead.body);
+      check(
+        counter,
+        suAhead.updateAvailable === true && suAhead.latestDate === dayAfter,
+        'published date ahead of the binary → update flagged'
       );
 
       // No managed block → silently no update (older-format bodies).

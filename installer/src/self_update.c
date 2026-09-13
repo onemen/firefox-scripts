@@ -7,7 +7,7 @@
  * release JSON (api.github.com sends CORS *) and POSTs the raw bytes here
  * (POST /api/self-update).  check_self_update() parses that stored buffer.
  *
- * Update detection is DATE-based (ADR 0027), not version-based: the release
+ * Update detection is DATE-based (ADR 0019 amendment), not version-based: the release
  * body carries a managed JSON block (written by the publish automation,
  * tools/publish/componentReleases.mjs) of the shape
  *
