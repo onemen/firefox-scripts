@@ -89,7 +89,7 @@ export async function launchFirefox(
   {headless = false, extraPrefsFirefox = {}} = {}
 ) {
   const puppeteer = await import('puppeteer-core');
-  const browser = await puppeteer.launch({
+  return puppeteer.launch({
     browser: 'firefox',
     executablePath: binary,
     userDataDir: profileDir,
@@ -100,10 +100,23 @@ export async function launchFirefox(
     // be injected through this option — a caller-written user.js would be
     // silently replaced and never reach Firefox.
     extraPrefsFirefox: {
-      // Never register a Windows startup entry (HKCU Run
-      // "Mozilla-Firefox-<hash>" → this firefox.exe -os-autostart) — a temp
-      // test install must not appear in the user's Startup apps. Callers can
-      // still override for the rare test that needs the real behavior.
+      // Never let a throwaway test install appear in the user's Windows
+      // Startup apps. The HKCU Run value ("Mozilla-Firefox-<installHash>" =
+      // '"<exe>" -os-autostart') is written by Firefox's launch-on-login
+      // AUTO-ENABLE, which fires on the first run of a fresh profile of an
+      // official build — exactly what every E2E leg launches (fresh %TEMP%
+      // install dir → a new Run name each time, hence the accumulating
+      // debris on the dev machine; persistent-profile puppeteer use never
+      // triggers it). Gates, best first:
+      //   defaultEnabled  — the Nimbus pref DefaultLaunchOnLogin consults;
+      //                     a user pref here overrides any experiment value
+      //   alreadyApplied  — skips the auto-enable entirely (also skips its
+      //                     Remote Settings wait)
+      //   winRegisterApplicationRestart — the Restart Manager registration
+      //                     (invisible on the Startup page); off as a belt
+      // Callers can still override for a test that needs the real behavior.
+      'browser.startup.windowsLaunchOnLogin.defaultEnabled': false,
+      'browser.startup.windowsLaunchOnLogin.alreadyApplied': true,
       'toolkit.winRegisterApplicationRestart': false,
       ...extraPrefsFirefox,
     },
@@ -111,8 +124,6 @@ export async function launchFirefox(
   });
   // closeBrowser's startup sweep keys off this (puppeteer's Browser keeps no
   // executable path of its own).
-  browser._fxsBinaryPath = binary;
-  return browser;
 }
 
 /**

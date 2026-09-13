@@ -149,79 +149,32 @@ export function removeProfileCompatibilityIni(profileDir, {log = console.log} = 
 }
 
 /**
- * Remove any HKCU Run / StartupApproved startup registration that points at
- * `binary` (exact path match). Windows-only belt-and-suspenders behind the
- * `toolkit.winRegisterApplicationRestart=false` default in launchFirefox: if
- * Firefox registered itself anyway (older builds, overridden pref, crash
- * timing), the throwaway test install must not survive in the user's Startup
- * apps. Deletes only values whose data references this exact executable — never
- * the user's real browser registrations.
- *
- * @param {string} binary - the launched firefox.exe path
- * @param {{log?: (msg: string) => void}} [opts]
- */
-export function removeStartupRegistration(binary, {log = console.log} = {}) {
-  if (process.platform !== 'win32' || !binary) return;
-  const ps =
-    `$rk='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';` +
-    `$exe='${String(binary).replace(/'/g, "''")}';` +
-    `$removed=@();` +
-    `foreach($p in (Get-ItemProperty -Path $rk).PSObject.Properties){` +
-    `  if($p.Value -is [string] -and $p.Value.Contains($exe)){` +
-    `    Remove-ItemProperty -Path $rk -Name $p.Name;` +
-    `    Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run' -Name $p.Name;` +
-    `    $removed+=$p.Name } };` +
-    `if($removed.Count -gt 0){ 'removed startup debris: ' + ($removed -join ', ') } else { 'startup clean' }`;
-  try {
-    const res = spawnSync('powershell', ['-NoProfile', '-Command', ps], {
-      encoding: 'utf8',
-      timeout: 30_000,
-    });
-    const out = (res.stdout || '').trim();
-    if (out) log(`  [hygiene] ${out}`);
-  } catch {
-    /* best effort — the pref default already prevents the registration */
-  }
-}
-
-/**
  * Close a puppeteer browser and wait for its OS process to actually exit, so
  * the next scenario starts with the port and profile genuinely free. Falls back
  * to a hard kill when the process does not exit in time. Safe on null/undefined
- * (the `browser?` call sites) and on already-closed browsers. Afterwards sweeps
- * any Windows startup registration the browser may have created for its own
- * executable (see removeStartupRegistration).
+ * (the `browser?` call sites) and on already-closed browsers.
  *
  * @param {import('puppeteer-core').Browser | null | undefined} browser
  * @param {{timeoutMs?: number; log?: (msg: string) => void}} [opts]
  */
 export async function closeBrowser(browser, {timeoutMs = 10_000, log = console.log} = {}) {
   if (!browser) return;
-  const binary = typeof browser._fxsBinaryPath === 'string' ? browser._fxsBinaryPath : null;
   try {
     await browser.close();
   } catch {
     /* already disconnected */
   }
   const proc = typeof browser.process === 'function' ? browser.process() : null;
-  if (proc && proc.exitCode === null && proc.signalCode === null) {
-    const deadline = Date.now() + timeoutMs;
-    let exited = false;
-    while (Date.now() < deadline) {
-      if (proc.exitCode !== null || proc.signalCode !== null) {
-        exited = true;
-        break;
-      }
-      await new Promise(r => setTimeout(r, 100));
-    }
-    if (!exited) {
-      log('  [hygiene] browser process did not exit in time — killing');
-      try {
-        proc.kill();
-      } catch {
-        /* already gone */
-      }
-    }
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null || proc.signalCode !== null) return;
+    await new Promise(r => setTimeout(r, 100));
   }
-  removeStartupRegistration(binary, {log});
+  log('  [hygiene] browser process did not exit in time — killing');
+  try {
+    proc.kill();
+  } catch {
+    /* already gone */
+  }
 }

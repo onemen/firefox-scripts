@@ -3,9 +3,9 @@
 // repo gate): drives the ADR 0026 dead-dev-channel fallback in a real Firefox.
 //
 // Installs NOTHING: it uses the machine's existing Firefox (discovered, or
-// FIREFOX_BINARY) with a throwaway profile in %TEMP%, and sets
-// toolkit.winRegisterApplicationRestart=false so the browser never registers
-// itself in the user's Windows startup (HKCU Run) on exit.
+// FIREFOX_BINARY) with a throwaway profile in %TEMP%; launchFirefox launches
+// it so it can never register itself in the user's Windows startup (see
+// test/e2e/shared/helpers.mjs).
 //
 // Setup:
 //   - discovered local Firefox + disposable %TEMP% profile
@@ -185,9 +185,8 @@ async function main() {
   const prefs = {
     'extensions.firefox-scripts.lastUpdateTabShown': '',
     'extensions.firefox-scripts.lastScriptsCheckDate': '',
-    // NEVER register a Windows startup entry (HKCU Run "Mozilla-Firefox-*")
-    // for this throwaway run — the leak that polluted the user's startup list.
-    'toolkit.winRegisterApplicationRestart': false,
+    // Windows startup hygiene comes from launchFirefox's defaults; NEVER
+    // register a Windows startup entry for this throwaway run.
     // The deleted dev channel — its manifest must be unreachable.
     'extensions.firefox-scripts.override.HASHES_URL': dead,
     // The stable channel resolves HERE (proves the fallback + URL getters).
