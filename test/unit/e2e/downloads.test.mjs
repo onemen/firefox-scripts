@@ -20,9 +20,15 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const downloadsUrl = pathToFileURL(
   path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'downloads.mjs')
 ).href;
-const {DOWNLOADS, downloadDir, downloadTo, parseFirefoxVersion, resolveDownloadUrl} = await import(
-  downloadsUrl
-);
+const {
+  DOWNLOADS,
+  downloadDir,
+  downloadTo,
+  isFileLockError,
+  parseFirefoxVersion,
+  resolveDownloadUrl,
+  runInstallerWithRetry,
+} = await import(downloadsUrl);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
 
@@ -409,4 +415,82 @@ test('parseFirefoxVersion: unbranded dotted-numeric fallback, null on garbage', 
   assert.equal(parseFirefoxVersion('Mozilla Firefox'), null);
   assert.equal(parseFirefoxVersion(''), null);
   assert.equal(parseFirefoxVersion('cannot open display'), null);
+});
+
+// ── runInstallerWithRetry (AV file-lock race, floorp leg 2026-09-13) ──────
+
+function lockedErr(
+  message = 'The process cannot access the file because it is being used by another process.'
+) {
+  return Object.assign(
+    new Error(`Command failed
+${message}`),
+    {stderr: message}
+  );
+}
+
+test('runInstallerWithRetry: retries the AV file-lock error then succeeds', () => {
+  const runs = [lockedErr(), lockedErr(), 'ok'];
+  const sleeps = [];
+  runInstallerWithRetry('cmd', {
+    run: () => {
+      const r = runs.shift();
+      if (r !== 'ok') throw r;
+    },
+    sleep: ms => sleeps.push(ms),
+  });
+  assert.equal(runs.length, 0, 'all lock errors consumed');
+  assert.equal(sleeps.length, 2, 'slept between retries');
+});
+
+test('runInstallerWithRetry: rethrows a non-lock failure immediately (no retry)', () => {
+  const boom = Object.assign(new Error('NSIS exited 1627'), {stderr: 'exited with code 1627'});
+  let runs = 0;
+  assert.throws(
+    () =>
+      runInstallerWithRetry('cmd', {
+        run: () => {
+          runs += 1;
+          throw boom;
+        },
+        sleep: () => assert.fail('must not sleep'),
+      }),
+    /1627/
+  );
+  assert.equal(runs, 1);
+});
+
+test('runInstallerWithRetry: gives up after the last attempt (persistent lock)', () => {
+  let runs = 0;
+  assert.throws(
+    () =>
+      runInstallerWithRetry('cmd', {
+        attempts: 3,
+        run: () => {
+          runs += 1;
+          throw lockedErr();
+        },
+        sleep: () => {},
+      }),
+    /being used by another process/
+  );
+  assert.equal(runs, 3);
+});
+
+test('runInstallerWithRetry: success on the first try never sleeps', () => {
+  let runs = 0;
+  runInstallerWithRetry('cmd', {
+    run: () => {
+      runs += 1;
+    },
+    sleep: () => assert.fail('must not sleep'),
+  });
+  assert.equal(runs, 1);
+});
+
+test('isFileLockError: matches the AV signatures, only on Windows', () => {
+  assert.equal(isFileLockError(lockedErr()), process.platform === 'win32');
+  assert.equal(isFileLockError(lockedErr('os error 32')), process.platform === 'win32');
+  assert.equal(isFileLockError(Object.assign(new Error('x'), {stderr: 'x'})), false);
+  assert.equal(isFileLockError(null), false);
 });

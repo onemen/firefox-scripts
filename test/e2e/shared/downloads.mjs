@@ -478,6 +478,43 @@ function findCachedInstaller(browser) {
   return found ? path.join(dir, found) : null;
 }
 
+/**
+ * Run a downloaded installer synchronously, retrying the Windows AV-lock race:
+ * Defender (or any scanner) can hold the freshly-written exe open for seconds
+ * after the download returns, and NSIS /S fails immediately with "The process
+ * cannot access the file because it is being used by another process" (floorp
+ * leg, 2026-09-13). A short backoff-and-retry is enough — the scanner releases
+ * the file, it is not a broken installer. Retries only that error signature;
+ * every other failure surfaces as before.
+ */
+export function isFileLockError(err) {
+  if (process.platform !== 'win32') return false;
+  const out = String(err?.stderr || err?.message || '');
+  return /cannot access the file because it is being used by another process|The file is locked|os error 32/i.test(
+    out
+  );
+}
+
+export function runInstallerWithRetry(cmd, {attempts = 4, delayMs = 4000, run, sleep} = {}) {
+  const runCmd = run ?? (c => execSync(c, {stdio: 'inherit'}));
+  const wait = sleep ?? (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      runCmd(cmd);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isFileLockError(err) || attempt === attempts) throw err;
+      console.log(
+        `  installer file locked (AV scan?) — retry ${attempt}/${attempts - 1} in ${delayMs / 1000}s`
+      );
+      wait(delayMs);
+    }
+  }
+  throw lastErr;
+}
+
 /** Download an official installer and run it with args (e.g. NSIS `/S`). */
 async function installInstaller(url, browser, args) {
   const exe = path.join(downloadDir(), `${browser}-setup.exe`);
@@ -495,7 +532,7 @@ async function installInstaller(url, browser, args) {
     }
     throw err;
   }
-  execSync(`"${exe}" ${args.join(' ')}`, {stdio: 'inherit'});
+  runInstallerWithRetry(`"${exe}" ${args.join(' ')}`);
 }
 
 /** Download Firefox Release into a custom, non-registered directory. */
