@@ -302,17 +302,21 @@ async function runHttpLayer(counter, sessionToken) {
         typeof buildDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(buildDate),
         `binary build date reported: ${buildDate}`
       );
-      check(counter, buildDate !== '1.0.0', 'no version constant leaks (date-based contract)');
-      // Stale-binary guard: a snapshot built before the assetName/buildDate
+      check(counter, buildDate !== '1.0.0', 'no version constant leaks (date-based contract)'); // Stale-binary guard: a snapshot built before the assetName/buildDate
       // contract leaves assetName/buildDate null — Date.parse would yield NaN
       // and toISOString would throw RangeError, killing the whole runner.
       // Fail one check and skip the date fixtures instead (a stale snapshot
-      // is a harness problem, not a self-update result).
-      if (
-        typeof assetName !== 'string' ||
-        typeof buildDate !== 'string' ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(buildDate)
-      ) {
+      // is a harness problem, not a self-update result). The full contract:
+      // a real asset name AND a date that parses to a finite timestamp that
+      // round-trips to the same UTC day (2026-99-99 passes the regex but
+      // parses to NaN).
+      const buildTsProbe = Date.parse(`${buildDate}T12:00:00Z`);
+      const contractOk =
+        typeof assetName === 'string' &&
+        assetName.startsWith(plainBase) &&
+        Number.isFinite(buildTsProbe) &&
+        new Date(buildTsProbe).toISOString().slice(0, 10) === buildDate;
+      if (!contractOk) {
         check(
           counter,
           false,
