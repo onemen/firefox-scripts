@@ -36,7 +36,8 @@ const BRANCH = 'dev-build-main-450468f';
 const RAW = `https://raw.githubusercontent.com/onemen/firefox-scripts/${BRANCH}`;
 const PORT = 8791;
 const HEADLESS = process.argv.includes('--headless');
-const FIREFOX_FLAG = process.argv[process.argv.indexOf('--firefox') + 1];
+const FIREFOX_FLAG_INDEX = process.argv.indexOf('--firefox');
+const FIREFOX_FLAG = FIREFOX_FLAG_INDEX === -1 ? '' : process.argv[FIREFOX_FLAG_INDEX + 1];
 const STALE_FILE = 'RDFDataSource.sys.mjs';
 const STALE_MARKER = '\n// fxs-smoke: forced stale\n';
 
@@ -108,7 +109,10 @@ try {
     notify() {
       try {
         if (++polls > 45) { watcher.cancel();
-          if (!bannerLogged) fos.write('BANNER_VISIBLE unknown (timeout)\\n', 34);
+          if (!bannerLogged) {
+            const msg = 'BANNER_VISIBLE unknown (timeout)\n';
+            fos.write(msg, msg.length);
+          }
           return; }
         const win = Services.wm.getMostRecentWindow('navigator:browser');
         for (const tab of win?.gBrowser?.tabs || []) {
@@ -116,7 +120,8 @@ try {
           if (!spec.startsWith('chrome://firefox-scripts/content/ui/')) continue;
           if (!tabFound) {
             tabFound = true;
-            fos.write('TAB_OPENED ' + spec + '\\n', ('TAB_OPENED ' + spec).length + 2);
+            const tag = 'TAB_OPENED ' + spec + '\\n';
+            fos.write(tag, tag.length);
           }
           // Trusted-tab DOM: only reachable from this privileged scope —
           // WebDriver BiDi cannot enumerate chrome:// pages at all.
