@@ -475,6 +475,18 @@ jobs:
           path: ${{ env.BROWSER_DL_DIR }}
           key: ${{ steps.portable-url-unix.outputs.key || steps.portable-url-windows.outputs.key }}
 
+      # The extracted portable dir is cached too (same URL-derived key, so it
+      # invalidates with the browser version): the installer is the cheap part
+      # on a cache hit, the extract/install step is not — especially the
+      # Windows exe re-extract and the macOS dmg mount+copy. install-portable
+      # skips its work when the expected binary is already present.
+      - name: Cache extracted portable Firefox
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PORTABLE_BROWSER_DIR }}
+          key:
+            ${{ steps.portable-url-unix.outputs.key || steps.portable-url-windows.outputs.key }}-x
+
       - name: Install Firefox Release portably (Linux/macOS)
         if: ${{ runner.os != 'Windows' }}
         shell: bash

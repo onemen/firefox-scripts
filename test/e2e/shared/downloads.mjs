@@ -541,6 +541,18 @@ async function installPortableFirefox(url, platform) {
   if (!dest) throw new Error('PORTABLE_BROWSER_DIR is required for portable Firefox');
   fs.mkdirSync(dest, {recursive: true});
 
+  // The E2E workflow caches the extracted dir alongside the installer (same
+  // URL-derived key, so it can only match this browser version). When the
+  // binary is already in place, skip the extract/install work entirely.
+  const portableBinary =
+    platform === 'linux' ? path.join(dest, 'firefox')
+    : platform === 'darwin' ? path.join(dest, 'Firefox.app', 'Contents', 'MacOS', 'firefox')
+    : path.join(dest, 'firefox.exe');
+  if (fs.existsSync(portableBinary)) {
+    console.log(`  reusing cached portable dir (${path.basename(dest)})`);
+    return portableBinary;
+  }
+
   if (platform === 'linux') {
     const binary = await installTarball(url, 'firefox-portable', dest);
     return binary;
