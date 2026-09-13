@@ -10,6 +10,10 @@ minimumReleaseAgeExclude:
   - 'typescript-eslint'
   - '@typescript-eslint/*'
   - '@typescript/native-preview*'
+  - smol-toml@1.8.0
+
+overrides:
+  smol-toml: '>=1.7.1'
 
 trustPolicy: no-downgrade
 
