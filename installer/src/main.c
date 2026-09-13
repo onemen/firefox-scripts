@@ -655,6 +655,15 @@ int handle_api_package_urls(int client_fd, const char *query, const char *body, 
              "https://api.github.com/repos/%s/%s/releases/tags/%s",
              INSTALLER_REPO_OWNER, INSTALLER_REPO_NAME, INSTALLER_RELEASE_NAME);
 
+    // Releases listing (per_page=10, newest first) — the self-update ingest
+    // prefers the newest managed installer-<date> body over the latest
+    // release body (the badge-holder), so a fresh installer publish is never
+    // masked by a scripts-only republish of `latest` (ADR 0019 amendment).
+    char releases_url[512];
+    snprintf(releases_url, sizeof(releases_url),
+             "https://api.github.com/repos/%s/%s/releases?per_page=10",
+             INSTALLER_REPO_OWNER, INSTALLER_REPO_NAME);
+
     // Last-update dates from the remote manifest, for the manual-download
     // links ("last update ..." annotation).  Empty when the manifest was
     // unreachable.
@@ -672,10 +681,12 @@ int handle_api_package_urls(int client_fd, const char *query, const char *body, 
                        "\"utilsDate\":\"%s\","
                        "\"hashesUrl\":\"%s\","
                        "\"selfUpdateUrl\":\"%s\","
+                       "\"releasesUrl\":\"%s\","
                        "\"waterfoxUrl\":\"%s\""
                        "}",
                        utils_url, fx_url, updater_ui_url, esc_fx_date, esc_utils_date,
-                       INSTALLER_HASHES_URL, self_update_url, WATERFOX_RELEASES_URL);
+                       INSTALLER_HASHES_URL, self_update_url, releases_url,
+                       WATERFOX_RELEASES_URL);
 
     send_json_response(client_fd, json, pos);
     return 0;
@@ -691,9 +702,10 @@ int handle_api_build_info(int client_fd, const char *query, const char *body, si
     (void)body;
     (void)body_len;
 
-    char esc_dist[MAX_PATH_LEN * 2], esc_branch[256];
+    char esc_dist[MAX_PATH_LEN * 2], esc_branch[256], esc_release[128];
     json_escape(esc_dist, sizeof(esc_dist), INSTALLER_LOCAL_DIST_PATH);
     json_escape(esc_branch, sizeof(esc_branch), INSTALLER_DEV_BRANCH);
+    json_escape(esc_release, sizeof(esc_release), INSTALLER_RELEASE_NAME);
 
     char json[2048];
     int pos = snprintf(json, sizeof(json),
@@ -701,12 +713,16 @@ int handle_api_build_info(int client_fd, const char *query, const char *body, si
                        "\"isLocal\":%d,"
                        "\"isDev\":%d,"
                        "\"distPath\":\"%s\","
-                       "\"devBranch\":\"%s\""
+                       "\"devBranch\":\"%s\","
+                       "\"selfUpdateDisabled\":%d,"
+                       "\"releaseName\":\"%s\""
                        "}",
                        INSTALLER_LOCAL ? 1 : 0,
                        INSTALLER_DEV ? 1 : 0,
                        esc_dist,
-                       esc_branch);
+                       esc_branch,
+                       INSTALLER_SELF_UPDATE_DISABLED ? 1 : 0,
+                       esc_release);
 
     send_json_response(client_fd, json, pos);
     return 0;
@@ -1231,14 +1247,15 @@ int handle_api_self_update(int client_fd, const char *query, const char *body, s
         return 0;
     }
 
-    char latest_version[64] = "";
+    char latest_date[64] = "";
     char download_url[512] = "";
 
-    int ret = check_self_update(INSTALLER_VERSION,
-                                INSTALLER_REPO_OWNER,
-                                INSTALLER_REPO_NAME,
+    // Date-based self-update (ADR 0019 amendment): compare this binary's
+    // baked build date against the managed installerDate block in the latest
+    // release body.  No version numbers anywhere.
+    int ret = check_self_update(INSTALLER_BUILD_DATE,
                                 INSTALLER_BINARY_NAME,
-                                latest_version, sizeof(latest_version),
+                                latest_date, sizeof(latest_date),
                                 download_url, sizeof(download_url));
 
     char json[1024];
@@ -1246,16 +1263,16 @@ int handle_api_self_update(int client_fd, const char *query, const char *body, s
 
     if (ret < 0) {
         pos = snprintf(json, sizeof(json),
-                       "{\"error\":\"Could not check for updates\",\"currentVersion\":\"%s\"}",
-                       INSTALLER_VERSION);
+                       "{\"error\":\"Could not check for updates\",\"buildDate\":\"%s\"}",
+                       INSTALLER_BUILD_DATE);
     } else if (ret == 0) {
         pos = snprintf(json, sizeof(json),
-                       "{\"updateAvailable\":false,\"currentVersion\":\"%s\",\"latestVersion\":\"%s\"}",
-                       INSTALLER_VERSION, latest_version);
+                       "{\"updateAvailable\":false,\"buildDate\":\"%s\",\"latestDate\":\"%s\"}",
+                       INSTALLER_BUILD_DATE, latest_date);
     } else {
         pos = snprintf(json, sizeof(json),
-                       "{\"updateAvailable\":true,\"currentVersion\":\"%s\",\"latestVersion\":\"%s\",\"downloadUrl\":\"%s\"}",
-                       INSTALLER_VERSION, latest_version, download_url);
+                       "{\"updateAvailable\":true,\"buildDate\":\"%s\",\"latestDate\":\"%s\",\"downloadUrl\":\"%s\"}",
+                       INSTALLER_BUILD_DATE, latest_date, download_url);
     }
 
     char header[512];
@@ -2351,7 +2368,7 @@ int handle_api_restart(int client_fd, const char *query, const char *body, size_
 // ===== Main =====
 
 static void print_help(void) {
-    printf("Firefox Scripts Installer v%s\n\n", INSTALLER_VERSION);
+    printf("Firefox Scripts Installer (build %s)\n\n", INSTALLER_BUILD_DATE);
     printf("Usage: installer [OPTIONS]\n\n");
     printf("Options:\n");
     printf("  --help          Show this help message\n");
@@ -2456,7 +2473,7 @@ static int main_impl(int argc, char *argv[]) {
             return 0;
         }
         if (strcmp(argv[1], "--version") == 0) {
-            printf("%s\n", INSTALLER_VERSION);
+            printf("%s\n", INSTALLER_BUILD_DATE);
             return 0;
         }
         if (strcmp(argv[1], "--test-hash") == 0) {
@@ -2486,10 +2503,11 @@ static int main_impl(int argc, char *argv[]) {
             /* Unit-test harness for the self-update logic: ingest a release
              * JSON file, then run check_self_update and print the outcome as
              * parseable lines.  Used by installer/test/test_self_update.mjs
-             * (pnpm test:hash). */
+             * (pnpm test:hash).  current_build is a YYYY-MM-DD build date
+             * (the managed installerDate contract), not a version. */
             if (argc < 5) {
                 fprintf(stderr,
-                        "Usage: %s --test-self-update <json-file> <current-version> <asset-name>\n",
+                        "Usage: %s --test-self-update <json-file> <current-build-date> <asset-name>\n",
                         argv[0]);
                 return 2;
             }
@@ -2522,14 +2540,13 @@ static int main_impl(int argc, char *argv[]) {
                 return 2;
             }
             free(buf);
-            char latest_version[64] = "";
+            char latest_date[64] = "";
             char download_url[512] = "";
-            int ret = check_self_update(cur_ver,
-                                        "onemen", "firefox-scripts", asset_name,
-                                        latest_version, sizeof(latest_version),
+            int ret = check_self_update(cur_ver, asset_name,
+                                        latest_date, sizeof(latest_date),
                                         download_url, sizeof(download_url));
             printf("status=%d\n", ret);
-            printf("latest_version=%s\n", latest_version);
+            printf("latest_date=%s\n", latest_date);
             printf("download_url=%s\n", download_url);
             return 0;
         }
@@ -2577,7 +2594,7 @@ static int main_impl(int argc, char *argv[]) {
     // published packages, the hash manifest and the release lists (CORS-
     // enabled URLs) and POSTs the raw bytes to the local server.  Nothing to
     // verify or prime here — the tab always opens and drives that.
-    printf("Firefox Scripts Installer v%s\n", INSTALLER_VERSION);
+    printf("Firefox Scripts Installer (build %s)\n", INSTALLER_BUILD_DATE);
 
     // Scan browsers (--server-only skips the scan: headless HTTP-server mode
     // for the second-instance tests, where no browser UI is ever touched).

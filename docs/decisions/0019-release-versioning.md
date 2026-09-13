@@ -44,3 +44,26 @@ cost: publishing stamps two extra tags per release — the pipeline work belongs
 [#33](https://github.com/onemen/firefox-scripts/issues/33) under the v1.0 gate (the `latest`-tag
 move already ships, P0-1/#40). Revisit-if: users need semantic version comparisons — only then add
 semver aliases on top, never rename artifacts.
+
+## Amendment 2026-09-13 — date-based installer self-update + Pages installer mirror
+
+The installer's original self-update compared a hardcoded `VERSION` against the `latest` release's
+`tag_name` — a comparison that can never converge under this ADR (`latest` is a permanently-named
+moving tag), so the mechanism was dead on arrival once this scheme shipped. The installer's own
+update detection is therefore defined here, aligned with the same scheme:
+
+- **Detection is date-based, not version-based.** The binaries bake `BUILD_DATE` (YYYY-MM-DD) from
+  `config/installer.conf` at generation time; the installer-<date> release body carries a managed
+  JSON block (`{"installerDate": "YYYY-MM-DD", "download": {"<asset>": "<url>"}}`) written by the
+  publish automation. The installer compares the two dates (lexicographic = chronological for ISO
+  dates); the release tag itself is never compared.
+- **The installer tab ingests the newest installer-<date> release body** (via the `/releases`
+  listing, so a fresh installer publish is never masked by a scripts-only republish of `latest`). A
+  body without the managed block, or a local/dev test build, means no update offer — silent.
+- **Installers are also gh-pages artifacts** (prod publishes mirror them to the Pages branch): the
+  release asset remains the user-facing download, but the banner's fetch must go to a CORS-enabled
+  host, which release-asset CDNs are not. This supersedes the "installers are release-only" reading
+  above; helpers remain Pages-only and never release assets.
+- The former `VERSION=1.0.0` conf key and version-based comparison are removed; the Windows
+  VERSIONINFO FileVersion carries the build date. The "no update signal when only the installer
+  changed" requirement is preserved: zips and installers hash/date independently.

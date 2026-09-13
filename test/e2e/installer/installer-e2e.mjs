@@ -258,10 +258,10 @@ async function runHttpLayer(counter, sessionToken) {
       assertAuthorized(counter, res, '/api/self-update passes the gate');
     }
 
-    // Test 6: self-update flow — POST a release JSON, then GET reports the
-    // parsed version + matching asset URL (installer/src/self_update.c).
-    // The E2E installer is a -dev build, so INSTALLER_BINARY_NAME carries the
-    // -dev suffix; the fixture must match it.
+    // Test 6: self-update flow — POST release JSON(s), then GET reports the
+    // date-based verdict (installer/src/self_update.c, ADR 0019 amendment).
+    // The E2E installer is a -dev build, so the managed download map's key
+    // must carry the -dev suffix.
     console.log('\nTest 6: self-update flow');
     {
       const plainBase =
@@ -269,11 +269,17 @@ async function runHttpLayer(counter, sessionToken) {
         : process.platform === 'darwin' ? 'installer_mac'
         : 'installer_linux';
       const asset = `${plainBase}-dev${process.platform === 'win32' ? '.exe' : ''}`;
+      const block = date =>
+        JSON.stringify({
+          installerDate: date,
+          download: {[asset]: 'https://example.invalid/installer-download'},
+        });
+      // Real-world shape: managed block embedded in the release body.
       const releaseJson = JSON.stringify({
-        tag_name: 'v1.0.1',
+        tag_name: 'latest',
+        body: '```json\n' + block('2026-09-13') + '\n```',
         assets: [
-          {name: 'helper_win-dev.exe', browser_download_url: 'https://example.invalid/helper'},
-          {name: asset, browser_download_url: 'https://example.invalid/installer-download'},
+          {name: 'helper_win-dev.exe', browser_download_url: 'https://example.invalid/decoy'},
         ],
       });
       const post = await httpPostRaw('/api/self-update', releaseJson, sessionToken);
@@ -291,17 +297,48 @@ async function runHttpLayer(counter, sessionToken) {
       }
       check(counter, Boolean(su), 'GET /api/self-update returns JSON', got.body.slice(0, 80));
       if (su) {
-        check(counter, su.updateAvailable === true, 'update available detected');
-        // Raw tag passthrough (the UI prepends 'v', so a v-less release tag
-        // renders "v1.0.1" — see the test_self_update.mjs contract note).
-        check(counter, su.latestVersion === 'v1.0.1', `latest version parsed: ${su.latestVersion}`);
+        // The E2E binary bakes today's BUILD_DATE; the fixture's published
+        // date (2026-09-13, fixed) is strictly older → update flagged, URL
+        // from the managed map (the assets[] decoy must be ignored).
+        check(counter, su.updateAvailable === true, 'newer published date → update available');
+        check(counter, su.latestDate === '2026-09-13', `published date parsed: ${su.latestDate}`);
         check(
           counter,
           su.downloadUrl === 'https://example.invalid/installer-download',
-          `matching asset URL extracted: ${su.downloadUrl}`
+          `managed download URL extracted: ${su.downloadUrl}`
         );
-        check(counter, su.currentVersion === '1.0.0', 'current version reported');
+        check(
+          counter,
+          /^\d{4}-\d{2}-\d{2}$/.test(su.buildDate),
+          `binary build date reported: ${su.buildDate}`
+        );
+        check(counter, su.buildDate !== '1.0.0', 'no version constant leaks (date-based contract)');
       }
+
+      // Up-to-date path: publish a date equal to the binary's build date.
+      const todayJson = JSON.stringify({
+        tag_name: 'latest',
+        body: '```json\n' + block(su?.buildDate ?? '2026-01-01') + '\n```',
+      });
+      await httpPostRaw('/api/self-update', todayJson, sessionToken);
+      const got2 = await httpGet('/api/self-update', sessionToken);
+      const su2 = JSON.parse(got2.body);
+      check(
+        counter,
+        su2.updateAvailable === false && su2.latestDate === su2.buildDate,
+        'same published date → up to date'
+      );
+
+      // No managed block → silently no update (older-format bodies).
+      const noBlock = JSON.stringify({tag_name: 'latest', body: 'plain body', assets: []});
+      await httpPostRaw('/api/self-update', noBlock, sessionToken);
+      const got3 = await httpGet('/api/self-update', sessionToken);
+      const su3 = JSON.parse(got3.body);
+      check(
+        counter,
+        su3.updateAvailable === false && su3.latestDate === '',
+        'release body without managed block → no update, no error'
+      );
     }
   }
 }

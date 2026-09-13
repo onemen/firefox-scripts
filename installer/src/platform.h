@@ -69,7 +69,18 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
 
 // ===== Configurable constants =====
 
-#define INSTALLER_VERSION CFG_VERSION
+/* Date-based self-update (ADR 0019 amendment): the build date baked at
+ * generation time (YYYY-MM-DD from config/installer.conf BUILD_DATE).
+ * Replaces the former INSTALLER_VERSION — the repo ships unversioned,
+ * date-stamped artifacts, so a version constant could never converge with
+ * the permanently-named `latest` tag. */
+#define INSTALLER_BUILD_DATE CFG_BUILD_DATE
+
+/* Local test builds (upload:local snapshots) never offer a self-update: the
+ * snapshot exists to test THIS build, the banner would only confuse, and a
+ * just-built binary always carries today's date anyway.  Consumed by the web
+ * UI via /api/build-info (isLocal). */
+#define INSTALLER_SELF_UPDATE_DISABLED (INSTALLER_LOCAL || INSTALLER_DEV)
 #define INSTALLER_REPO_OWNER CFG_REPO_OWNER
 #define INSTALLER_REPO_NAME CFG_REPO_NAME
 /* The installer itself performs no network I/O: the browser tab fetches the

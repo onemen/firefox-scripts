@@ -14,8 +14,17 @@ process.argv.push('--mode=prod');
 const moduleUrl = pathToFileURL(
   fileURLToPath(new URL('../../../tools/publish/componentReleases.mjs', import.meta.url))
 ).href;
-const {componentDate, scriptsTag, installerTag, groupBuilt, renderComponentBody, componentAssets} =
-  await import(moduleUrl);
+const {
+  componentDate,
+  scriptsTag,
+  installerTag,
+  groupBuilt,
+  renderComponentBody,
+  componentAssets,
+  renderSelfUpdateBlock,
+  parseSelfUpdateBlock,
+  mergeSelfUpdateBlock,
+} = await import(moduleUrl);
 
 test('componentDate: YYYY-MM-DD UTC, injectable clock', () => {
   assert.equal(componentDate(new Date('2026-09-09T23:30:00Z')), '2026-09-09');
@@ -88,4 +97,59 @@ test('componentAssets: nothing built → empty map', () => {
     {installer: p => p, installerPath: p => p}
   );
   assert.equal(assets.size, 0);
+});
+
+// ── managed self-update block (ADR 0019 amendment, date-based self-update) ──
+
+test('renderSelfUpdateBlock: JSON with installerDate + download map', () => {
+  const block = renderSelfUpdateBlock('2026-09-13', {
+    'installer_win.exe': 'https://x/win',
+    'installer_linux': 'https://x/linux',
+  });
+  const parsed = JSON.parse(block);
+  assert.equal(parsed.installerDate, '2026-09-13');
+  assert.equal(parsed.download['installer_win.exe'], 'https://x/win');
+  assert.equal(parsed.download.installer_linux, 'https://x/linux');
+});
+
+test('parseSelfUpdateBlock: round-trips the fenced managed block', () => {
+  const block = renderSelfUpdateBlock('2026-09-13', {'installer_win.exe': 'https://x/win'});
+  const body = `Installer binaries — 2026-09-13.\n\n- installer_win.exe\n\n\`\`\`json\n${block}\n\`\`\`\n`;
+  const parsed = parseSelfUpdateBlock(body);
+  assert.equal(parsed.installerDate, '2026-09-13');
+  assert.equal(parsed.download['installer_win.exe'], 'https://x/win');
+});
+
+test('parseSelfUpdateBlock: null on bodies without a managed block', () => {
+  assert.equal(parseSelfUpdateBlock('plain body, no block'), null);
+  assert.equal(parseSelfUpdateBlock(''), null);
+  assert.equal(parseSelfUpdateBlock(null), null);
+  assert.equal(parseSelfUpdateBlock('```json\n{"unrelated": true}\n```'), null);
+});
+
+test('mergeSelfUpdateBlock: this run wins, prior same-day entries survive', () => {
+  const prior = {
+    installerDate: '2026-09-13',
+    download: {
+      'installer_win.exe': 'https://x/win-morning',
+      'installer_mac': 'https://x/mac-morning',
+    },
+  };
+  const merged = mergeSelfUpdateBlock(
+    '2026-09-13',
+    {'installer_win.exe': 'https://x/win-evening'},
+    prior
+  );
+  assert.equal(merged['installer_win.exe'], 'https://x/win-evening');
+  assert.equal(merged.installer_mac, 'https://x/mac-morning');
+});
+
+test('mergeSelfUpdateBlock: prior entries from a DIFFERENT date are dropped', () => {
+  const prior = {installerDate: '2026-09-12', download: {installer_mac: 'https://x/stale'}};
+  const merged = mergeSelfUpdateBlock('2026-09-13', {'installer_win.exe': 'https://x/win'}, prior);
+  assert.deepEqual(merged, {'installer_win.exe': 'https://x/win'});
+});
+
+test('mergeSelfUpdateBlock: no prior → just this run', () => {
+  assert.deepEqual(mergeSelfUpdateBlock('2026-09-13', {a: 'u'}), {a: 'u'});
 });

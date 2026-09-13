@@ -134,7 +134,7 @@ import {
 } from './platforms.mjs';
 import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
 import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
-import {runStagingGuard} from './stagingGuard.mjs';
+import {readInstallerConf, runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
 const FORCE = process.argv.includes('--force');
@@ -609,7 +609,10 @@ async function publishToGitHub({
       pagesFiles[installerAssetName(p)] = fs.readFileSync(installerPath(p));
   } else {
     // Prod: zips go to the release AND Pages (the installer fetches zips from
-    // Pages); installers are release-only; helpers are Pages-only.
+    // Pages); installers go to the release AND Pages (CORS-enabled branch
+    // serving — the self-update banner's download link needs a host the
+    // installer tab can fetch; release-asset CDNs send no CORS headers);
+    // helpers are Pages-only.
     for (const name of builtZips) {
       pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
       // updater-ui is internal: the updater downloads and updates it from the
@@ -625,6 +628,10 @@ async function publishToGitHub({
         await deleteExistingAsset(octokit, release.id, installerAssetName(p));
         await uploadAsset(octokit, release.id, installerPath(p), installerAssetName(p));
       }
+      // Pages mirror (ADR 0019 amendment): the release asset stays the
+      // user-facing download; the Pages copy exists so the installer tab's
+      // banner link can fetch it cross-origin.
+      pagesFiles[installerAssetName(p)] = fs.readFileSync(installerPath(p));
     }
   }
   for (const p of builtHelpers) {
@@ -736,6 +743,7 @@ async function publishToGitHub({
       manifest: merged,
       zipPath,
       installerPath,
+      installerDate: readInstallerConf().BUILD_DATE,
     });
     await pinLatestRelease(octokit);
   }

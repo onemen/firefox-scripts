@@ -4,11 +4,12 @@
 // (src/helper/version.rc) already carries one; without it the installer is a
 // stripped, unsigned PE with no metadata — the exact profile AV machine-learning
 // engines flag as suspicious (Defender: Program:Script/Wacapew.A!ml).
-// Keep FILEVERSION/PRODUCTVERSION in sync with VERSION in config/installer.conf.
+// The repo ships unversioned date-stamped artifacts (ADR 0019): FileVersion
+// carries the build date as 1,0,<YYYY>,<MMDD> and ProductVersion the date.
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     1,0,2026,913
+PRODUCTVERSION  1,0,2026,913
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS_NT_WINDOWS32
@@ -21,12 +22,12 @@ BEGIN
             VALUE "Comments",         "Installs and updates the Firefox Scripts helper packages (fx-folder + utils)\0"
             VALUE "CompanyName",      "Tab Mix Plus\0"
             VALUE "FileDescription",  "Firefox Scripts Installer\0"
-            VALUE "FileVersion",      "1.0.0\0"
+            VALUE "FileVersion",      "2026-09-13\0"
             VALUE "InternalName",     "installer_win.exe\0"
             VALUE "LegalCopyright",   "Copyright 2026 Tab Mix Plus\0"
             VALUE "OriginalFilename", "installer_win.exe\0"
             VALUE "ProductName",      "Firefox Scripts\0"
-            VALUE "ProductVersion",   "1.0.0\0"
+            VALUE "ProductVersion",   "2026-09-13\0"
         END
     END
     BLOCK "VarFileInfo"

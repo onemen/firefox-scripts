@@ -122,6 +122,9 @@ jobs:
 
       # JS vs C hash parity against the dev snapshot built above (test_hash
       # accepts both prod- and dev- snapshots, so no second build is needed).
+      # test:hash also runs test_self_update.mjs — the date-based self-update
+      # contract (ADR 0019 amendment) needs the built binary's
+      # --test-self-update mode.
       - name: Hash parity — JS vs C installer
         if: runner.os == 'Windows' && needs.changes.outputs.publish == 'true'
         shell: bash
