@@ -303,6 +303,23 @@ async function runHttpLayer(counter, sessionToken) {
         `binary build date reported: ${buildDate}`
       );
       check(counter, buildDate !== '1.0.0', 'no version constant leaks (date-based contract)');
+      // Stale-binary guard: a snapshot built before the assetName/buildDate
+      // contract leaves assetName/buildDate null — Date.parse would yield NaN
+      // and toISOString would throw RangeError, killing the whole runner.
+      // Fail one check and skip the date fixtures instead (a stale snapshot
+      // is a harness problem, not a self-update result).
+      if (
+        typeof assetName !== 'string' ||
+        typeof buildDate !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(buildDate)
+      ) {
+        check(
+          counter,
+          false,
+          'binary predates the assetName/buildDate contract — rebuild the snapshot (pnpm upload:local)'
+        );
+        return;
+      }
       // Date.parse first: `new Date(x) + n` triggers Date ToPrimitive
       // (toString) and builds a garbage string — the + would silently yield
       // the SAME day, flipping every fixture verdict.
@@ -1389,6 +1406,21 @@ async function run() {
   // probe the DEAD run's server. Sweep first.
   await killStrayProcesses();
 
+  // Global watchdog: every leg below bounds its own awaits, but a wedged
+  // child (GUI dialog on a dev machine, OS-level stall) would otherwise hang
+  // the runner until CI cancels it — and the harness's timed-out local runs
+  // leave orphaned installers squatting on port 8777, poisoning later legs.
+  // Cap the whole run; on expiry sweep the orphans this process spawned so
+  // the NEXT run starts clean, then exit non-zero.
+  const WATCHDOG_MS = 20 * 60_000;
+  const watchdog = setTimeout(() => {
+    console.error(
+      `\n[watchdog] run exceeded ${WATCHDOG_MS / 60_000} min — killing stray installer children and failing`
+    );
+    killStrayProcesses().finally(() => process.exit(1));
+  }, WATCHDOG_MS);
+  watchdog.unref();
+
   // Snapshot discovery
   let snapshotDir = opts.snapshot;
   if (!snapshotDir) {
@@ -1475,17 +1507,24 @@ async function run() {
   }
 
   if (!summary(counter)) process.exitCode = 1;
+  clearTimeout(watchdog);
 
-  // Hard-exit instead of letting node unwind naturally: the UI layer spawns the
-  // installer detached, and the installer relaunches the detected browser,
-  // which inherits the installer's stdio pipes. A browser that outlives this
-  // process (e.g. the snap leg's relaunch, which starts its own instance when
-  // it cannot hand the URL off) keeps those pipes open, so the event loop never
-  // drains and the job hangs until CI cancels it. The summary is final.
+  // Sweep any installer children this run leaked (a leg that threw mid-flight
+  // can leave its spawn alive holding port 8777 — the detached UI installer
+  // in particular has no other owner), then hard-exit instead of letting node
+  // unwind naturally: the UI layer spawns the installer detached, and the
+  // installer relaunches the detected browser, which inherits the installer's
+  // stdio pipes. A browser that outlives this process (e.g. the snap leg's
+  // relaunch, which starts its own instance when it cannot hand the URL off)
+  // keeps those pipes open, so the event loop never drains and the job hangs
+  // until CI cancels it. The summary is final.
+  await killStrayProcesses();
   process.exit(process.exitCode || 0);
 }
 
 run().catch(err => {
   console.error('Test runner failed:', err);
-  process.exit(1);
+  // Same sweep as the success path: the mid-run throw may have orphaned the
+  // smoke-test installer or a leg's spawn on port 8777.
+  killStrayProcesses().finally(() => process.exit(1));
 });
