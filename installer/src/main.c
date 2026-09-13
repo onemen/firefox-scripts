@@ -707,6 +707,9 @@ int handle_api_build_info(int client_fd, const char *query, const char *body, si
     json_escape(esc_branch, sizeof(esc_branch), INSTALLER_DEV_BRANCH);
     json_escape(esc_release, sizeof(esc_release), INSTALLER_RELEASE_NAME);
 
+    char esc_asset[128];
+    json_escape(esc_asset, sizeof(esc_asset), INSTALLER_BINARY_NAME);
+
     char json[2048];
     int pos = snprintf(json, sizeof(json),
                        "{"
@@ -715,14 +718,18 @@ int handle_api_build_info(int client_fd, const char *query, const char *body, si
                        "\"distPath\":\"%s\","
                        "\"devBranch\":\"%s\","
                        "\"selfUpdateDisabled\":%d,"
-                       "\"releaseName\":\"%s\""
+                       "\"releaseName\":\"%s\","
+                       "\"assetName\":\"%s\","
+                       "\"buildDate\":\"%s\""
                        "}",
                        INSTALLER_LOCAL ? 1 : 0,
                        INSTALLER_DEV ? 1 : 0,
                        esc_dist,
                        esc_branch,
                        INSTALLER_SELF_UPDATE_DISABLED ? 1 : 0,
-                       esc_release);
+                       esc_release,
+                       esc_asset,
+                       INSTALLER_BUILD_DATE);
 
     send_json_response(client_fd, json, pos);
     return 0;
