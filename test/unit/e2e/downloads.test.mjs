@@ -26,6 +26,7 @@ const {
   downloadTo,
   isFileLockError,
   parseFirefoxVersion,
+  portableBinaryPath,
   resolveDownloadUrl,
   runInstallerWithRetry,
 } = await import(downloadsUrl);
@@ -490,7 +491,6 @@ test('runInstallerWithRetry: success on the first try never sleeps', () => {
   });
   assert.equal(runs, 1);
 });
-
 test('isFileLockError: matches the AV signatures, only on Windows', () => {
   assert.equal(isFileLockError(lockedErr(), {platform: 'win32'}), true);
   assert.equal(isFileLockError(lockedErr('os error 32'), {platform: 'win32'}), true);
@@ -500,4 +500,39 @@ test('isFileLockError: matches the AV signatures, only on Windows', () => {
     false
   );
   assert.equal(isFileLockError(null), false);
+});
+
+// ── portableBinaryPath (extracted-portable cache, A1) ───────────────────
+// The skip-if-cached check must target the launcher FILE. The Linux tarball's
+// top-level entry is a `firefox/` DIRECTORY — a path/basename collision that
+// existsSync-based checking cannot survive (ubuntu portable leg, 2026-09-13).
+
+test('portableBinaryPath: launcher file per platform (not the top-level dir)', () => {
+  assert.equal(portableBinaryPath('/p', 'linux'), path.join('/p', 'firefox', 'firefox'));
+  assert.equal(
+    portableBinaryPath('/p', 'darwin'),
+    path.join('/p', 'Firefox.app', 'Contents', 'MacOS', 'firefox')
+  );
+  assert.equal(portableBinaryPath('/p', 'win32'), path.join('/p', 'firefox.exe'));
+});
+
+test('installPortableFirefox skip check: only a regular launcher file counts', async () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-portable-'));
+  try {
+    // Simulate the colliding Linux cache layout: firefox/ is a directory.
+    // The predicate installPortableFirefox uses is statSync().isFile() —
+    // assert it rejects the directory and accepts the launcher file.
+    fs.mkdirSync(path.join(dest, 'firefox'));
+    const stat = fs.statSync(portableBinaryPath(dest, 'linux'), {throwIfNoEntry: false});
+    assert.notEqual(
+      stat?.isFile(),
+      true,
+      'directory-only layout (the old buggy path) must not count as cached'
+    );
+    fs.writeFileSync(path.join(dest, 'firefox', 'firefox'), '#!/bin/sh\n');
+    const stat2 = fs.statSync(portableBinaryPath(dest, 'linux'), {throwIfNoEntry: false});
+    assert.equal(stat2?.isFile(), true, 'launcher file counts as cached');
+  } finally {
+    fs.rmSync(dest, {recursive: true, force: true});
+  }
 });
