@@ -594,11 +594,28 @@ async function installInstaller(url, browser, args) {
         `  ⚠ download failed (${err.message}); reusing previously downloaded ` +
           `installer ${path.basename(fallback)} (advisory leg — gate will warn)`
       );
-      execSync(`"${fallback}" ${args.join(' ')}`, {stdio: 'inherit'});
+      runSilentInstaller(fallback, args);
       return;
     }
     throw err;
   }
+  runInstallerWithRetry(`"${exe}" ${args.join(' ')}`);
+}
+
+/**
+ * Run a downloaded/fallback installer through the AV file-lock retry
+ * (runInstallerWithRetry). Every silent-install invocation in this module must
+ * go through this — the vendor setup.exe is scanned right after the download
+ * completes, and Defender intermittently holds the file lock for the first
+ * seconds (observed on the floorp leg 2026-09-13 and again on the registered
+ * floorp leg 2026-09-14: "The process cannot access the file because it is
+ * being used by another process" → execSync message, which isFileLockError
+ * matches, so the retry rides it out).
+ *
+ * @param {string} exe absolute path to the installer
+ * @param {string[]} args silent-install argv (e.g. ['/S'])
+ */
+function runSilentInstaller(exe, args) {
   runInstallerWithRetry(`"${exe}" ${args.join(' ')}`);
 }
 
@@ -979,7 +996,7 @@ export async function installBrowser(browser, platform = process.platform) {
         `  ⚠ ${err.message}; reusing previously downloaded installer ` +
           `${path.basename(fallback)} (advisory leg — gate will warn)`
       );
-      execSync(`"${fallback}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
+      runSilentInstaller(fallback, recipe.args);
       return requireBinary(browser);
     }
     const exe = path.join(
@@ -995,14 +1012,14 @@ export async function installBrowser(browser, platform = process.platform) {
         `  ⚠ download failed (${err.message}); reusing previously downloaded ` +
           `installer ${path.basename(fallback)} (advisory leg — gate will warn)`
       );
-      execSync(`"${fallback}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
+      runSilentInstaller(fallback, recipe.args);
       return requireBinary(browser);
     }
     if (resolved.sha256Url) {
       console.log(`  verifying vendor sha256 for ${browser} ${resolved.version}`);
       await verifySha256(exe, resolved.sha256Url);
     }
-    execSync(`"${exe}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
+    runSilentInstaller(exe, recipe.args);
     const binary = resolveBinary(browser);
     if (!binary) {
       throw new Error(`${browser} installer ran, but no binary found in known install dirs`);

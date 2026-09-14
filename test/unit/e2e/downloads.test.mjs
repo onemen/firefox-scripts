@@ -458,6 +458,44 @@ test('parseFirefoxVersion: unbranded dotted-numeric fallback, null on garbage', 
 
 // ── runInstallerWithRetry (AV file-lock race, floorp leg 2026-09-13) ──────
 
+// The registered/fallback install paths previously ran execSync directly, so
+// the AV race (floorp 2026-09-13, floorp registered leg 2026-09-14, nightly
+// registered leg 2026-09-14) could kill the leg before any test ran. Every
+// silent-install invocation now goes through runSilentInstaller →
+// runInstallerWithRetry. This test pins the REAL error shape the failing
+// runs produced — execSync with stdio:'inherit' surfaces the scanner's text
+// only in err.message (err.stderr is null; run 34814023362 job 103881027235
+// printed the signature to the log then threw a message-only error) — and
+// proves the retry consumes it.
+test('runInstallerWithRetry: message-only lock error (execSync inherit shape) is retried', () => {
+  const inheritShape = new Error(
+    'Command failed: "D:' +
+      String.fromCharCode(92) +
+      'a' +
+      String.fromCharCode(92) +
+      '_temp' +
+      String.fromCharCode(92) +
+      'browser-dl' +
+      String.fromCharCode(92) +
+      'floorp-setup.exe" /S' +
+      String.fromCharCode(10) +
+      'The process cannot access the file because it is being used by another process.'
+  );
+  inheritShape.stderr = null;
+  const runs = [inheritShape, 'ok'];
+  const sleeps = [];
+  runInstallerWithRetry('cmd', {
+    platform: 'win32',
+    run: () => {
+      const r = runs.shift();
+      if (r !== 'ok') throw r;
+    },
+    sleep: ms => sleeps.push(ms),
+  });
+  assert.equal(runs.length, 0, 'the message-only lock error was consumed');
+  assert.equal(sleeps.length, 1, 'slept once before the retry');
+});
+
 function lockedErr(
   message = 'The process cannot access the file because it is being used by another process.'
 ) {
