@@ -47,6 +47,11 @@
     // END managed
     "**/node_modules/**",
     "**/dist/**",
+    // Verbatim archive (test/investigate/README.md): discussion threads
+    // preserved byte-for-byte — MD034 etc. would force edits that break the
+    // verbatim guarantee (same rationale as the verbatim-archives block in
+    // config/eslint.config.js and the .prettierignore entry).
+    "**/test/investigate/*.md",
     // Local drafts (gitignored .local files/dirs) — same exclusion
     // .prettierignore and eslint.config.js use (AGENTS.md: they are not
     // authoritative sources and their style is not gated).

@@ -7,6 +7,9 @@ logs
 **/*local*/**
 **/*local*.*
 **/fx-folder/**
+# Verbatim archive: discussion threads preserved byte-for-byte — never reformatted
+# (same rationale as the verbatim-archives block in config/eslint.config.js).
+**/test/investigate/*.md
 **/.clang-format
 pnpm-lock.yaml
 # build outputs (installer Makefile + publish scripts dump into dist/)

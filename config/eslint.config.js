@@ -148,6 +148,25 @@ export default defineConfig([
     ...jsBase,
   },
 
+  // Verbatim archives (e.g. test/investigate/README.md preserves discussion
+  // threads byte-for-byte): the historical code blocks predate repo style, so
+  // linting them as authored code would force edits that break the verbatim
+  // guarantee. Markdown structure rules (headings, links) still apply.
+  {
+    name: 'verbatim-archives',
+    files: ['test/investigate/**/*.md/**/*.{js,mjs,cjs}'],
+    rules: {
+      'no-var': 'off',
+      'prefer-const': 'off',
+      'no-unused-vars': 'off',
+      'no-empty': 'off',
+      'no-useless-catch': 'off',
+      'no-useless-escape': 'off',
+      'no-empty-function': 'off',
+      'security/detect-non-literal-regexp': 'off',
+    },
+  },
+
   // core/fx-folder is Firefox config/pref-scripts distributed as-is: variable
   // names are part of the user-facing API surface and unused bindings are by
   // design (e.g. config.js guards). Leave the files untouched — disable the

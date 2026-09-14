@@ -34,30 +34,26 @@
  * --sessions=1
  */
 
-import fs from "node:fs";
-import path from "node:path";
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   REPO_ROOT,
   launchFirefox,
   attachProcessLogging,
   tempDir,
   rmDir,
-} from "../e2e/shared/helpers.mjs";
-import { findZip, extractZip, findGreDir } from "../e2e/shared/browsers.mjs";
+} from '../e2e/shared/helpers.mjs';
+import {findZip, extractZip, findGreDir} from '../e2e/shared/browsers.mjs';
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
-const FIREFOX_BIN = "C:/code/TabMixPlus-Hub/ff-portable/core/firefox.exe";
+const FIREFOX_BIN = 'C:/code/TabMixPlus-Hub/ff-portable/core/firefox.exe';
 const GRE_DIR = findGreDir(FIREFOX_BIN);
-const SNAPSHOT_DIR = path.join(
-  REPO_ROOT,
-  "dist",
-  "dev-postv1-manifest-lifecycle-e2e-70951d3",
-);
+const SNAPSHOT_DIR = path.join(REPO_ROOT, 'dist', 'dev-postv1-manifest-lifecycle-e2e-70951d3');
 
-const EXT_ID = "testext@example.com";
+const EXT_ID = 'testext@example.com';
 const EXT_DIR_NAME = `${EXT_ID}`;
-const CHROME_PROBE = "chrome://testext/content/test.html";
+const CHROME_PROBE = 'chrome://testext/content/test.html';
 
 // ── Test legacy extension (unpacked, bootstrap) ────────────────────────────
 
@@ -179,16 +175,16 @@ try {
 
 function variantLoaderSource(variant, delayMs = 0) {
   const src = fs.readFileSync(
-    path.join(REPO_ROOT, "core", "chrome", "utils", "BootstrapLoader.js"),
-    "utf-8",
+    path.join(REPO_ROOT, 'core', 'chrome', 'utils', 'BootstrapLoader.js'),
+    'utf-8'
   );
 
   let out;
-  if (variant === "repo") {
+  if (variant === 'repo') {
     out = src;
   } else {
-    const start = src.indexOf("function createManifestTemporarily");
-    const end = src.indexOf("\n    return {", start);
+    const start = src.indexOf('function createManifestTemporarily');
+    const end = src.indexOf('\n    return {', start);
     if (start < 0 || end < 0)
       throw new Error(`cannot locate createManifestTemporarily (${variant})`);
     const head = src.slice(0, start);
@@ -196,80 +192,74 @@ function variantLoaderSource(variant, delayMs = 0) {
 
     const cfnc =
       "      Cc['@mozilla.org/chrome/chrome-registry;1']\n" +
-      "        .getService(Ci.nsIXULChromeRegistry)\n" +
-      "        .checkForNewChrome();\n";
+      '        .getService(Ci.nsIXULChromeRegistry)\n' +
+      '        .checkForNewChrome();\n';
 
     const body = [];
-    body.push("    function createManifestTemporarily(manifestText) {");
-    body.push("      const tempFile = tempDir.clone();");
+    body.push('    function createManifestTemporarily(manifestText) {');
+    body.push('      const tempFile = tempDir.clone();');
+    body.push('      tempFile.append(`chrome.manifest.${Services.uuid.generateUUID()}`);');
     body.push(
-      "      tempFile.append(`chrome.manifest.${Services.uuid.generateUUID()}`);",
+      "      const foStream = Cc['@mozilla.org/network/file-output-stream;1'].createInstance("
     );
+    body.push('        Ci.nsIFileOutputStream');
+    body.push('      );');
     body.push(
-      "      const foStream = Cc['@mozilla.org/network/file-output-stream;1'].createInstance(",
+      '      foStream.init(tempFile, 0x02 | 0x08 | 0x20, 0o664, 0); // write, create, truncate'
     );
-    body.push("        Ci.nsIFileOutputStream");
-    body.push("      );");
+    body.push('      foStream.write(manifestText, manifestText.length);');
+    body.push('      foStream.close();');
     body.push(
-      "      foStream.init(tempFile, 0x02 | 0x08 | 0x20, 0o664, 0); // write, create, truncate",
+      '      Components.manager.QueryInterface(Ci.nsIComponentRegistrar).autoRegister(tempFile);'
     );
-    body.push("      foStream.write(manifestText, manifestText.length);");
-    body.push("      foStream.close();");
-    body.push(
-      "      Components.manager.QueryInterface(Ci.nsIComponentRegistrar).autoRegister(tempFile);",
-    );
-    if (variant === "discussion+cfnc") body.push(cfnc.replace(/\n$/, ""));
-    if (variant !== "uuid-manual") {
-      body.push(
-        "      Cc['@mozilla.org/uriloader/external-helper-app-service;1']",
-      );
-      body.push("        .getService(Ci.nsPIExternalAppLauncher)");
-      body.push("        .deleteTemporaryFileOnExit(tempFile);");
+    if (variant === 'discussion+cfnc') body.push(cfnc.replace(/\n$/, ''));
+    if (variant !== 'uuid-manual') {
+      body.push("      Cc['@mozilla.org/uriloader/external-helper-app-service;1']");
+      body.push('        .getService(Ci.nsPIExternalAppLauncher)');
+      body.push('        .deleteTemporaryFileOnExit(tempFile);');
     }
-    body.push("      return function () {");
-    body.push("        tempFile.fileSize = 0; // truncate the manifest");
+    body.push('      return function () {');
+    body.push('        tempFile.fileSize = 0; // truncate the manifest');
     body.push("        Cc['@mozilla.org/chrome/chrome-registry;1']");
-    body.push("          .getService(Ci.nsIXULChromeRegistry)");
-    body.push("          .checkForNewChrome();");
-    if (variant === "uuid-manual") body.push("        tempFile.remove(false);");
-    body.push("      };");
-    body.push("    }");
-    out = head + body.join("\n") + tail;
+    body.push('          .getService(Ci.nsIXULChromeRegistry)');
+    body.push('          .checkForNewChrome();');
+    if (variant === 'uuid-manual') body.push('        tempFile.remove(false);');
+    body.push('      };');
+    body.push('    }');
+    out = head + body.join('\n') + tail;
   }
 
   if (delayMs > 0) {
-    const fStart = out.indexOf("function createManifestTemporarily");
-    const fEnd = out.indexOf("\n    return {", fStart);
+    const fStart = out.indexOf('function createManifestTemporarily');
+    const fEnd = out.indexOf('\n    return {', fStart);
     if (fStart < 0 || fEnd < 0)
-      throw new Error(
-        `cannot locate createManifestTemporarily for delay wrap (${variant})`,
-      );
+      throw new Error(`cannot locate createManifestTemporarily for delay wrap (${variant})`);
     const fnDecl = out.slice(fStart, fEnd).trim();
     const wrapper =
       `    const createManifestTemporarilySync = ${fnDecl};\n` +
       "    // Race probe: register the manifest LATE, past the platform's\n" +
       "    // addon-startup chrome re-scan, to expose the 'addon startup late'\n" +
-      "    // failure mode the discussion variant risks.\n" +
-      "    function createManifestTemporarily(manifestText) {\n" +
-      "      let cleanup = null;\n" +
+      '    // failure mode the discussion variant risks.\n' +
+      '    function createManifestTemporarily(manifestText) {\n' +
+      '      let cleanup = null;\n' +
       // The cleanup closure below closes over the timer, keeping it alive
       // until it fires — an unreferenced nsITimer is released (and never
       // fires) the moment this function returns.
       "      const timer = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);\n" +
-      "      timer.initWithCallback(\n" +
-      "        {\n" +
-      "          notify() {\n" +
-      "            cleanup = createManifestTemporarilySync(manifestText);\n" +
-      "          },\n" +
-      "        },\n" +
+      '      timer.initWithCallback(\n' +
+      '        {\n' +
+      '          notify() {\n' +
+      '            cleanup = createManifestTemporarilySync(manifestText);\n' +
+      '          },\n' +
+      '        },\n' +
       `        ${delayMs},\n` +
-      "        Ci.nsITimer.TYPE_ONE_SHOT\n" +
-      "      );\n" +
-      "      return function () {\n" +
-      "        timer.cancel(); // pending registration not needed anymore\n" +
-      "        if (cleanup) cleanup();\n" +
-      "      };\n" +
-      "    }\n";
+      '        Ci.nsITimer.TYPE_ONE_SHOT\n' +
+      '      );\n' +
+      '      return function () {\n' +
+      '        timer.cancel(); // pending registration not needed anymore\n' +
+      '        if (cleanup) cleanup();\n' +
+      '      };\n' +
+      '    }\n';
     out = out.slice(0, fStart) + wrapper + out.slice(fEnd);
   }
 
@@ -279,44 +269,44 @@ function variantLoaderSource(variant, delayMs = 0) {
 // ── Seed helpers ───────────────────────────────────────────────────────────
 
 function seedProfile(snapshotDir, variant, delayMs = 0) {
-  const profileDir = tempDir("fxs-101");
-  fs.mkdirSync(profileDir, { recursive: true });
+  const profileDir = tempDir('fxs-101');
+  fs.mkdirSync(profileDir, {recursive: true});
 
   // utils → chrome/utils
-  const utilsZip = findZip(snapshotDir, ["utils-dev.zip", "utils.zip"]);
-  if (!utilsZip) throw new Error("no utils zip in snapshot");
-  const chromeUtils = path.join(profileDir, "chrome", "utils");
+  const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);
+  if (!utilsZip) throw new Error('no utils zip in snapshot');
+  const chromeUtils = path.join(profileDir, 'chrome', 'utils');
   extractZip(utilsZip, chromeUtils);
   // replace BootstrapLoader.js with the variant under test
   fs.writeFileSync(
-    path.join(chromeUtils, "BootstrapLoader.js"),
-    variantLoaderSource(variant, delayMs),
+    path.join(chromeUtils, 'BootstrapLoader.js'),
+    variantLoaderSource(variant, delayMs)
   );
 
   // pre-create the dir the loader writes its temp manifest into
-  const bed = path.join(profileDir, "browser-extension-data", EXT_DIR_NAME);
-  fs.mkdirSync(bed, { recursive: true });
+  const bed = path.join(profileDir, 'browser-extension-data', EXT_DIR_NAME);
+  fs.mkdirSync(bed, {recursive: true});
 
   // test legacy extension → profile/extensions/<id>/
-  const extDir = path.join(profileDir, "extensions", EXT_DIR_NAME);
-  fs.mkdirSync(path.join(extDir, "content"), { recursive: true });
-  fs.writeFileSync(path.join(extDir, "install.rdf"), EXT_INSTALL_RDF);
-  fs.writeFileSync(path.join(extDir, "chrome.manifest"), EXT_CHROME_MANIFEST);
-  fs.writeFileSync(path.join(extDir, "bootstrap.js"), EXT_BOOTSTRAP_JS);
-  fs.writeFileSync(path.join(extDir, "content", "test.html"), EXT_TEST_HTML);
+  const extDir = path.join(profileDir, 'extensions', EXT_DIR_NAME);
+  fs.mkdirSync(path.join(extDir, 'content'), {recursive: true});
+  fs.writeFileSync(path.join(extDir, 'install.rdf'), EXT_INSTALL_RDF);
+  fs.writeFileSync(path.join(extDir, 'chrome.manifest'), EXT_CHROME_MANIFEST);
+  fs.writeFileSync(path.join(extDir, 'bootstrap.js'), EXT_BOOTSTRAP_JS);
+  fs.writeFileSync(path.join(extDir, 'content', 'test.html'), EXT_TEST_HTML);
 
   const prefs = {
     // silence the in-browser updater (not the subject of this test)
-    "extensions.firefox-scripts.lastScriptsCheckDate": today(),
-    "extensions.firefox-scripts.lastUpdateTabShown": today(),
+    'extensions.firefox-scripts.lastScriptsCheckDate': today(),
+    'extensions.firefox-scripts.lastUpdateTabShown': today(),
     // keep the session quiet
-    "app.update.disabledForTesting": true,
-    "app.update.auto": false,
-    "browser.shell.checkDefaultBrowser": false,
-    "datareporting.policy.dataSubmissionEnabled": false,
-    "extensions.autoDisableScopes": 0,
+    'app.update.disabledForTesting': true,
+    'app.update.auto': false,
+    'browser.shell.checkDefaultBrowser': false,
+    'datareporting.policy.dataSubmissionEnabled': false,
+    'extensions.autoDisableScopes': 0,
   };
-  return { profileDir, chromeUtils, prefs };
+  return {profileDir, chromeUtils, prefs};
 }
 
 function today() {
@@ -324,21 +314,20 @@ function today() {
 }
 
 function seedGre(greDir, ticks) {
-  const fxZip = findZip(SNAPSHOT_DIR, ["fx-folder-dev.zip", "fx-folder.zip"]);
-  if (!fxZip) throw new Error("no fx-folder zip in snapshot");
-  const staging = tempDir("fxs-fx");
+  const fxZip = findZip(SNAPSHOT_DIR, ['fx-folder-dev.zip', 'fx-folder.zip']);
+  if (!fxZip) throw new Error('no fx-folder zip in snapshot');
+  const staging = tempDir('fxs-fx');
   try {
     extractZip(fxZip, staging);
-    const base = path.join(staging, "fx-folder");
-    for (const rel of ["config.js", "defaults/pref/config-prefs.js"]) {
-      const src = path.join(base, ...rel.split("/"));
-      const dst = path.join(greDir, ...rel.split("/"));
-      if (!fs.existsSync(src))
-        throw new Error(`${rel} missing from fx-folder zip`);
-      fs.mkdirSync(path.dirname(dst), { recursive: true });
+    const base = path.join(staging, 'fx-folder');
+    for (const rel of ['config.js', 'defaults/pref/config-prefs.js']) {
+      const src = path.join(base, ...rel.split('/'));
+      const dst = path.join(greDir, ...rel.split('/'));
+      if (!fs.existsSync(src)) throw new Error(`${rel} missing from fx-folder zip`);
+      fs.mkdirSync(path.dirname(dst), {recursive: true});
       fs.writeFileSync(dst, fs.readFileSync(src));
     }
-    fs.appendFileSync(path.join(greDir, "config.js"), greProbeSource(ticks));
+    fs.appendFileSync(path.join(greDir, 'config.js'), greProbeSource(ticks));
   } finally {
     rmDir(staging);
   }
@@ -346,8 +335,8 @@ function seedGre(greDir, ticks) {
 
 function saveGreState(greDir) {
   const saved = {};
-  for (const rel of ["config.js", "defaults/pref/config-prefs.js"]) {
-    const p = path.join(greDir, ...rel.split("/"));
+  for (const rel of ['config.js', 'defaults/pref/config-prefs.js']) {
+    const p = path.join(greDir, ...rel.split('/'));
     saved[p] = fs.existsSync(p) ? fs.readFileSync(p) : null;
   }
   return saved;
@@ -356,13 +345,13 @@ function saveGreState(greDir) {
 function restoreGreState(saved) {
   for (const [p, data] of Object.entries(saved)) {
     if (data !== null) {
-      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.mkdirSync(path.dirname(p), {recursive: true});
       fs.writeFileSync(p, data);
     } else {
       try {
         fs.unlinkSync(p);
       } catch (err) {
-        if (err.code !== "ENOENT") throw err;
+        if (err.code !== 'ENOENT') throw err;
       }
     }
   }
@@ -376,13 +365,11 @@ async function runSession(
   prefs,
   label,
   sessionNo,
-  closeMode = "clean",
-  holdMs = 18_000,
+  closeMode = 'clean',
+  holdMs = 18_000
 ) {
-  console.log(
-    `\n  --- ${label}: session ${sessionNo} (close=${closeMode}, hold=${holdMs}ms) ---`,
-  );
-  const logPath = path.join(profileDir, "chrome-probe.log");
+  console.log(`\n  --- ${label}: session ${sessionNo} (close=${closeMode}, hold=${holdMs}ms) ---`);
+  const logPath = path.join(profileDir, 'chrome-probe.log');
   const before = fs.existsSync(logPath) ? fs.statSync(logPath).size : 0;
 
   let browser;
@@ -400,70 +387,64 @@ async function runSession(
       } catch {
         /* not ready */
       }
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 250));
     }
-    await new Promise((r) => setTimeout(r, holdMs));
+    await new Promise(r => setTimeout(r, holdMs));
   } catch (err) {
     console.log(`  [${label}] launch/run error: ${err.message}`);
   } finally {
     if (browser) {
-      if (closeMode === "kill") {
+      if (closeMode === 'kill') {
         try {
-          browser.process()?.kill("SIGKILL");
+          browser.process()?.kill('SIGKILL');
           console.log(`  [${label}] KILLED (unclean)`);
         } catch (err) {
           console.log(`  [${label}] kill failed: ${err.message}`);
         }
-        await new Promise((r) => setTimeout(r, 4_000));
+        await new Promise(r => setTimeout(r, 4_000));
       } else {
         try {
           await browser.close();
         } catch {
           /* ignore */
         }
-        await new Promise((r) => setTimeout(r, 3_000));
+        await new Promise(r => setTimeout(r, 3_000));
       }
     }
   }
 
   // collect probe lines added during this session (byte-offset slice, so
   // identical lines across sessions are not filtered)
-  const newChunk = fs.existsSync(logPath)
-    ? fs.readFileSync(logPath, "utf-8").slice(before)
-    : "";
-  const newLines = newChunk.split("\n").filter((l) => l.trim());
+  const newChunk = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8').slice(before) : '';
+  const newLines = newChunk.split('\n').filter(l => l.trim());
   console.log(`  [${label}] probe (${newLines.length} new):`);
   for (const line of newLines) console.log(`      ${line}`);
 
   // what temp manifest files survive after close?
-  const bedDir = path.join(profileDir, "browser-extension-data", EXT_DIR_NAME);
+  const bedDir = path.join(profileDir, 'browser-extension-data', EXT_DIR_NAME);
   let files = [];
   try {
     files = fs.readdirSync(bedDir);
   } catch {
     /* bed dir may be missing */
   }
-  console.log(
-    `  [${label}] browser-extension-data after close: ${JSON.stringify(files)}`,
-  );
+  console.log(`  [${label}] browser-extension-data after close: ${JSON.stringify(files)}`);
 
   // extension lifecycle
-  const life = path.join(profileDir, "ext-lifecycle.log");
+  const life = path.join(profileDir, 'ext-lifecycle.log');
   if (fs.existsSync(life)) {
-    const lines = fs.readFileSync(life, "utf-8").trimEnd().split("\n");
-    console.log(
-      `  [${label}] ext lifecycle (${lines.length}): ${lines.slice(-4).join(" | ")}`,
-    );
+    const lines = fs.readFileSync(life, 'utf-8').trimEnd().split('\n');
+    console.log(`  [${label}] ext lifecycle (${lines.length}): ${lines.slice(-4).join(' | ')}`);
   } else {
     console.log(`  [${label}] ext lifecycle: NO LOG — extension never started`);
   }
 }
 
 function clearStartupCache(profileDir) {
-  for (const rel of ["startupCache", "cache2"]) {
+  for (const rel of ['startupCache', 'cache2']) {
     const p = path.join(profileDir, rel);
     if (fs.existsSync(p)) {
-      fs.rmSync(p, { recursive: true, force: true });
+      fs.rmSync(p, {recursive: true, force: true});
       console.log(`  [cache-clear] removed ${rel}`);
     }
   }
@@ -472,29 +453,22 @@ function clearStartupCache(profileDir) {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 const VARIANTS = {
-  repo: "repo — current loader (control)",
-  discussion:
-    "discussion — UUID + deleteTemporaryFileOnExit, no immediate checkForNewChrome",
-  "discussion+cfnc": "discussion + immediate checkForNewChrome",
-  "uuid-manual": "UUID + no immediate checkForNewChrome + manual cleanup",
+  'repo': 'repo — current loader (control)',
+  'discussion': 'discussion — UUID + deleteTemporaryFileOnExit, no immediate checkForNewChrome',
+  'discussion+cfnc': 'discussion + immediate checkForNewChrome',
+  'uuid-manual': 'UUID + no immediate checkForNewChrome + manual cleanup',
 };
 
 async function main() {
   const args = process.argv.slice(2);
-  const variantArg = args
-    .find((a) => a.startsWith("--variant="))
-    ?.split("=")[1];
-  const doAll = args.includes("--all");
-  const crash = args.includes("--crash");
-  const delayMs =
-    Number(args.find((a) => a.startsWith("--delay="))?.split("=")[1]) || 0;
-  const nSessions =
-    Number(args.find((a) => a.startsWith("--sessions="))?.split("=")[1]) || 3;
-  const variants = doAll ? Object.keys(VARIANTS) : [variantArg || "repo"];
-  if (variants.some((v) => !VARIANTS[v])) {
-    console.error(
-      `Unknown variant. Choose from: ${Object.keys(VARIANTS).join(", ")}`,
-    );
+  const variantArg = args.find(a => a.startsWith('--variant='))?.split('=')[1];
+  const doAll = args.includes('--all');
+  const crash = args.includes('--crash');
+  const delayMs = Number(args.find(a => a.startsWith('--delay='))?.split('=')[1]) || 0;
+  const nSessions = Number(args.find(a => a.startsWith('--sessions='))?.split('=')[1]) || 3;
+  const variants = doAll ? Object.keys(VARIANTS) : [variantArg || 'repo'];
+  if (variants.some(v => !VARIANTS[v])) {
+    console.error(`Unknown variant. Choose from: ${Object.keys(VARIANTS).join(', ')}`);
     process.exit(1);
   }
 
@@ -502,30 +476,26 @@ async function main() {
   const probeTicks = delayMs > 0 ? Math.ceil(delayMs / 1000) + 10 : 12;
   const holdMs = delayMs > 0 ? delayMs + 25_000 : 18_000;
 
+  console.log(`Firefox: ${FIREFOX_BIN}\nGreD:    ${GRE_DIR}\nSnapshot: ${SNAPSHOT_DIR}`);
   console.log(
-    `Firefox: ${FIREFOX_BIN}\nGreD:    ${GRE_DIR}\nSnapshot: ${SNAPSHOT_DIR}`,
+    `utils zip: ${findZip(SNAPSHOT_DIR, ['utils-dev.zip', 'utils.zip']) ? 'ok' : 'MISSING'}`
   );
-  console.log(
-    `utils zip: ${findZip(SNAPSHOT_DIR, ["utils-dev.zip", "utils.zip"]) ? "ok" : "MISSING"}`,
-  );
-  console.log(
-    `delay=${delayMs}ms sessions=${nSessions} probeTicks=${probeTicks}`,
-  );
+  console.log(`delay=${delayMs}ms sessions=${nSessions} probeTicks=${probeTicks}`);
 
   const savedGre = saveGreState(GRE_DIR);
   try {
     seedGre(GRE_DIR, probeTicks);
-    console.log("GreD seeded (config.js + probe).");
+    console.log('GreD seeded (config.js + probe).');
 
     for (const variant of variants) {
-      console.log(`\n${"=".repeat(72)}`);
+      console.log(`\n${'='.repeat(72)}`);
       console.log(`VARIANT: ${variant} — ${VARIANTS[variant]}`);
-      console.log("=".repeat(72));
+      console.log('='.repeat(72));
       const seeded = seedProfile(SNAPSHOT_DIR, variant, delayMs);
       console.log(`profile: ${seeded.profileDir}`);
 
       for (let s = 1; s <= nSessions; s++) {
-        const closeMode = crash && s === 2 ? "kill" : "clean";
+        const closeMode = crash && s === 2 ? 'kill' : 'clean';
         await runSession(
           FIREFOX_BIN,
           seeded.profileDir,
@@ -533,18 +503,14 @@ async function main() {
           variant,
           s,
           closeMode,
-          holdMs,
+          holdMs
         );
         if (crash && s === 2) {
           // after the unclean exit: are uuid manifests left behind?
-          const bedDir = path.join(
-            seeded.profileDir,
-            "browser-extension-data",
-            EXT_DIR_NAME,
-          );
+          const bedDir = path.join(seeded.profileDir, 'browser-extension-data', EXT_DIR_NAME);
           try {
             console.log(
-              `  [${variant}] browser-extension-data after KILL: ${JSON.stringify(fs.readdirSync(bedDir))}`,
+              `  [${variant}] browser-extension-data after KILL: ${JSON.stringify(fs.readdirSync(bedDir))}`
             );
           } catch {
             /* bed dir may be missing */
@@ -553,16 +519,16 @@ async function main() {
         if (s === 2 && nSessions >= 3) clearStartupCache(seeded.profileDir);
       }
 
-      if (process.env.FXS_KEEP_PROFILES !== "1") rmDir(seeded.profileDir);
+      if (process.env.FXS_KEEP_PROFILES !== '1') rmDir(seeded.profileDir);
       else console.log(`profile kept: ${seeded.profileDir}`);
     }
   } finally {
     restoreGreState(savedGre);
   }
-  console.log("\nDone.");
+  console.log('\nDone.');
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error(err);
   process.exit(1);
 });
