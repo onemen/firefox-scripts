@@ -22,6 +22,10 @@ jobs:
   changes:
     name: detect changed paths
     runs-on: ubuntu-latest
+    # Job-level timeouts (belt-and-suspenders, all jobs here): GitHub's
+    # default is 360 min — a wedged job would hang until then. The numbers
+    # are ~3x the slowest observed green run (see docs/ci-inventory.md).
+    timeout-minutes: 5
     outputs:
       publish: ${{ steps.filter.outputs.publish }}
     steps:
@@ -51,6 +55,7 @@ jobs:
   checks:
     name: lint + format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: $/.github/actions/setup-repo
       - run: pnpm lint
@@ -75,6 +80,9 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # Publish gate with the full native build: slowest observed 129 s
+    # (windows-latest, MSYS2 gcc); a cold MSYS2 toolchain install adds ~3 min.
+    timeout-minutes: 20
     steps:
       - name: Skip publish gate — no publish-relevant changes
         if: needs.changes.outputs.publish != 'true'
@@ -147,6 +155,7 @@ jobs:
   ci-gate:
     name: CI gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: always()
     needs: [changes, checks, build]
     steps:

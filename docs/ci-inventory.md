@@ -45,6 +45,22 @@ Every Linux job that runs `apt-get update` first calls the shared `harden-apt` c
 (Google Chrome): their indexes churn out-of-band and a mismatch breaks `apt-get update` for every
 open PR and the next `main` push at once (2026-09-09 incident).
 
+### Job timeouts
+
+Every job in `ci.yml` and `e2e.yml` sets an explicit `timeout-minutes` — GitHub's default is 360
+minutes, which turns any wedged job (GUI dialog, OS stall) into a six-hour hang before cancellation.
+The values are ~3× the slowest observed green run; measured durations (2026-09-13, warm caches):
+
+| Job(s)                                                          | Timeout | Slowest green run observed | Notes                                                                                                                                                                                                |
+| --------------------------------------------------------------- | ------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `detect changed paths` (both workflows)                         | 5 min   | 7 s                        |                                                                                                                                                                                                      |
+| CI / lint + format, CI / CI gate, E2E gate, post-gate jobs      | 10 min  | 28 s (lint + format)       |                                                                                                                                                                                                      |
+| CI / publish gate — `<os>`                                      | 20 min  | 129 s (windows, MSYS2 gcc) | Cold MSYS2 toolchain install adds ~3 min                                                                                                                                                             |
+| E2E / build dev snapshot, E2E / installer E2E, helper E2E       | 15 min  | 143 s (installer, windows) | 15 min > the runner's own 10-min watchdog (installer-e2e.mjs, `E2E_WATCHDOG_MIN` override), so on a wedge the script's orphan sweep + `[watchdog]` log wins the race — CI never shows a bare VM kill |
+| E2E / updater, portable-firefox, snap, browser-matrix, waterfox | 20 min  | 373 s (portable, windows)  | Fork browser legs download their Firefox fresh each run (no download cache): ~8 min cold — 20 min is ~2.5×; fork-download caching is the tracked speed lever (#197)                                  |
+
+The URL watchdog keeps its own `timeout-minutes: 30` (progress-aware transfer budget, #143).
+
 ## Scheduled and manual workflows
 
 | Workflow / job name                             | Schedule / trigger                                              | Purpose                                                                                                                                                                                                                      | Download behavior / filter                                                                                                                                                                                |

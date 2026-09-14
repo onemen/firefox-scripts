@@ -1416,10 +1416,16 @@ async function run() {
   // leave orphaned installers squatting on port 8777, poisoning later legs.
   // Cap the whole run; on expiry sweep the orphans this process spawned so
   // the NEXT run starts clean, then exit non-zero.
-  const WATCHDOG_MS = 20 * 60_000;
+  //
+  // Default 10 min ≈ 4× the slowest observed green run (installer E2E
+  // windows-latest, 143 s). E2E_WATCHDOG_MIN overrides it for slow machines
+  // (AV scanning, --ui + restart-scope layers together); must stay BELOW the
+  // CI job's timeout-minutes so this sweep + log line wins the race.
+  const WATCHDOG_MIN = Math.max(1, Number.parseInt(process.env.E2E_WATCHDOG_MIN ?? '', 10) || 10);
+  const WATCHDOG_MS = WATCHDOG_MIN * 60_000;
   const watchdog = setTimeout(() => {
     console.error(
-      `\n[watchdog] run exceeded ${WATCHDOG_MS / 60_000} min — killing stray installer children and failing`
+      `\n[watchdog] run exceeded ${WATCHDOG_MIN} min — killing stray installer children and failing`
     );
     killStrayProcesses().finally(() => process.exit(1));
   }, WATCHDOG_MS);
