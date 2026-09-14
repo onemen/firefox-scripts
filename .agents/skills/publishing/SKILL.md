@@ -38,7 +38,8 @@ pnpm upload -- --mode=prod          # latest release + gh-pages (main only)
 Prerequisites: Node ≥ 20.19 + pnpm; token with `contents:write` in the untracked root `.env` (copied
 from `.env-example`); clean worktree. `--ref=<branch|commit>` builds another ref in a temporary
 worktree without touching your checkout. CI publishes via `.github/workflows/pages.yml` (manual
-dispatch, per-OS serial jobs).
+dispatch, per-OS serial jobs) — `build-and-upload.yml` (#33) is the parallel build-matrix +
+single-writer-publisher successor, gated behind its first green CI runs.
 
 ## Flow (one run)
 
