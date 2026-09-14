@@ -508,23 +508,30 @@ async function buildBinaries(platforms, storedHashes) {
  * signing and copy the signed result back over the same path before pass 2
  * (--skip-build) runs the gates + publish. Written into the staging tree
  * (dist/.build/build-manifest.json), which build-only keeps on disk.
+ *
+ * `relPath` is the staging-tree-relative path (POSIX separators) so a workflow
+ * can re-locate the staged files on a DIFFERENT runner after artifact
+ * transport; `absPath` is the local path for same-machine consumers.
  */
 function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
+  const rel = absPath => path.relative(BUILD_ROOT, absPath).split(path.sep).join('/');
   const files = [
     ...builtInstallers.map(p => ({
       role: 'installer',
       platform: p,
       asset: installerAssetName(p),
+      relPath: rel(installerPath(p)),
       absPath: installerPath(p),
     })),
     ...builtHelpers.map(p => ({
       role: 'helper',
       platform: p,
       asset: helperAssetName(p),
+      relPath: rel(helperPath(p)),
       absPath: helperPath(p),
     })),
   ];
-  const manifest = {mode: PUBLISH_MODE, platforms, stagingDir: BUILD_ROOT, files};
+  const manifest = {mode: PUBLISH_MODE, platforms, files};
   const manifestPath = path.join(BUILD_ROOT, 'build-manifest.json');
   fs.mkdirSync(BUILD_ROOT, {recursive: true});
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
@@ -532,7 +539,7 @@ function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
     info('  nothing to sign — no binaries needed rebuilding');
   } else {
     for (const f of files) {
-      info(`  staged ${yellow(f.role)} ${f.asset} → ${dim(f.absPath)}`);
+      info(`  staged ${yellow(f.role)} ${f.asset} → ${dim(f.relPath)}`);
     }
   }
   info(`  build manifest → ${manifestPath}`);

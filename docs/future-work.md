@@ -113,9 +113,13 @@ VM, or a non-elevated user running against an admin-owned install dir. The autom
 
 > Tracked in [#33](https://github.com/onemen/firefox-scripts/issues/33).
 
-- [ ] Re-add a `.github/workflows/build-and-upload.yml` action: a Windows/Linux/macOS build matrix
+- [x] Re-add a `.github/workflows/build-and-upload.yml` action: a Windows/Linux/macOS build matrix
       (each OS runs `upload` for its platform and stages the binaries) + one upload job that
-      publishes the staged set, for fully automated cross-platform publishing.
+      publishes the staged set, for fully automated cross-platform publishing. (Landed as a
+      manual-dispatch workflow alongside pages.yml: parallel stage-only build matrix via
+      `upload.mjs --build-only` + native AV per platform, then a single-writer publish job via
+      `--skip-build`; stage-only is the default — publishing needs `publish=true` at dispatch. The
+      deterministic-output check ships in the same workflow, advisory.)
 - [ ] Publish a `helper_<platform>.sha256` asset alongside the helper binaries and assert the
       downloaded binary matches it (see §2.2 helper-binary trust).
 

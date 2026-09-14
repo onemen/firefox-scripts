@@ -1,0 +1,332 @@
+# Build and upload — cross-OS build matrix + single publisher (#33)
+#
+# pages.yml couples build and publish inside three serialized jobs. This
+# workflow splits them the way upload.mjs's SignPath two-pass flow already
+# anticipates (--build-only / --skip-build):
+#
+#   1. pre-publish — prod gates only (browser-version drift + a green E2E run
+#      for this commit), mirroring pages.yml. Skipped entirely for stage-only
+#      runs, which touch no publish target.
+#   2. baseline — snapshot the pre-run hashes.json from gh-pages so all build
+#      jobs diff against the same base and a source change rebuilds the
+#      binaries on every platform.
+#   3. build matrix (win / linux / mac, PARALLEL) — each OS runs
+#      `upload.mjs --build-only --platform=<os>`: hash-check + rebuild + stage
+#      binaries + build-manifest.json, then uploads the staging tree as an
+#      artifact. A platform whose binaries are unchanged stages nothing (the
+#      manifest records an empty file list). No job here touches any GitHub
+#      publish target; each also runs the platform's native AV engine
+#      (Defender / ClamAV) over what it staged.
+#   4. publish — ONE run of `upload.mjs --skip-build` with all three
+#      platforms in scope: treats the staged bytes as final, re-runs the AV/VT
+#      gates, and performs the release + Pages publish. Single writer, so the
+#      gh-pages commits and release-asset uploads can never interleave — the
+#      property pages.yml buys with serialization, bought here with
+#      architecture. This job is also where a future SignPath code-signing
+#      step slots in (sign the staged bytes between the artifacts and pass 2).
+#   5. deterministic — advisory: two `upload:local --mode=prod --force` runs on
+#      one runner must produce byte-identical snapshots (#33's deterministic
+#      publish check; Windows builds are pinned via SOURCE_DATE_EPOCH, #162).
+#
+# Trigger is manual only. The default dispatch is STAGE-ONLY: nothing is
+# published unless the operator explicitly sets publish=true at dispatch
+# (manual-first; prod additionally refuses non-main and needs the gates).
+#
+# Runs in the `pages-publish` concurrency group — the same slot as pages.yml,
+# so the two workflows can never publish concurrently.
+
+name: Build and upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'prod = latest release + gh-pages (main only) · dev = disposable dev-build-*'
+        type: choice
+        default: 'dev'
+        options:
+          - dev
+          - prod
+      publish:
+        description: 'Publish after staging (false = build + stage artifacts only)'
+        type: boolean
+        default: false
+      force:
+        description: 'Rebuild + re-upload even when hashes are unchanged (prod only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # release assets + gh-pages pushes (publish job only)
+  actions: write # release-gate cache-prune step deletes stale Actions caches
+  issues: write # ADR 0021: pre-flight warn-and-continue notification issue
+
+concurrency:
+  group: pages-publish
+  cancel-in-progress: false # a publish must never be killed mid-upload
+
+env:
+  # upload.mjs reads its token from this fixed variable name.
+  GITHUB_TOKEN_VAR: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # ── Prod gates ────────────────────────────────────────────────────────────
+  # Same contract as pages.yml's pre-publish job. Runs for prod publishes
+  # only: stage-only and dev runs touch no (prod) publish target.
+  pre-publish:
+    name: check prod publish gates
+    if: inputs.publish && inputs.mode == 'prod'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Restore watchdog baseline
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog
+          key: url-watchdog-baseline-${{ github.run_id }}
+          restore-keys: url-watchdog-baseline-
+      - name: Restore validated-versions record
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-validated
+          key: browser-validated-${{ github.run_id }}
+          restore-keys: browser-validated-
+      - name: Check browser version drift
+        env:
+          MODE: ${{ inputs.mode }}
+          VALIDATED_DIR: ${{ github.workspace }}/.watchdog-validated
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if node tools/check-browser-downloads.mjs --drift --require-validated; then
+            echo "no browser version drift since the last watchdog run"
+          else
+            echo "::error::new browser version(s) since the last watchdog run — run the URL watchdog workflow (refreshes the baseline + triggers browser-specific E2E), then re-dispatch publish."
+            exit 1
+          fi
+      - name: Require a successful E2E run for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count="$(gh api "repos/${{ github.repository }}/actions/workflows/e2e.yml/runs?head_sha=${{ github.sha }}&status=success" --jq '.total_count')"
+          echo "successful E2E runs for ${{ github.sha }}: $count"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no successful E2E workflow run for commit ${{ github.sha }} — let the E2E run on main finish (or re-run it), then re-dispatch the publish."
+            exit 1
+          fi
+      - name: Prune stale Actions caches
+        run: node tools/ci/prune-caches.mjs --keep=3
+
+  # ── Shared diff base ──────────────────────────────────────────────────────
+  baseline:
+    name: capture pre-run hash manifest
+    needs: pre-publish
+    if: always() && (needs.pre-publish.result == 'success' || needs.pre-publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch current hashes.json from gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p baseline
+          if gh api "repos/${{ github.repository }}/contents/hashes.json?ref=gh-pages" \
+              --jq '.content' > /tmp/content.b64 2>/dev/null; then
+            base64 -d /tmp/content.b64 > baseline/hashes.json
+            echo "captured $(wc -c < baseline/hashes.json) bytes"
+          else
+            echo "no hashes.json on gh-pages yet — first publish starts fresh"
+            echo '{}' > baseline/hashes.json
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: baseline-hashes
+          path: baseline/hashes.json
+          if-no-files-found: error
+
+  # ── Build matrix (parallel, stage-only) ──────────────────────────────────
+  build:
+    name: build — ${{ matrix.platform }} binaries
+    needs: baseline
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win
+            os: windows-latest
+            msys2: true
+          - platform: linux
+            os: ubuntu-latest
+            cross: true
+          - platform: mac
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: $/.github/actions/setup-repo
+        with:
+          install: 'false'
+      - name: Set up MSYS2 toolchain (make + gcc)
+        if: matrix.msys2
+        # update: false — see pages.yml: a mid-cycle toolchain upgrade changed
+        # the gcc version and the rebuilt installer was falsely AV-flagged the
+        # next day; the toolchain stays stable within a cycle.
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc make
+      - name: Harden apt sources
+        if: matrix.cross
+        uses: ./.github/actions/harden-apt
+      - name: Install aarch64 cross toolchain (linux builds the twin)
+        if: matrix.cross
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-gcc --version | head -1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: baseline-hashes
+          path: ${{ runner.temp }}/baseline/
+      - run: pnpm install --frozen-lockfile
+      # Pass 1: hash-check, rebuild changed, stage. Exits BEFORE the AV/VT
+      # gates and any publishing; the staging tree + build-manifest.json stay
+      # on disk. Prod diffs against the shared pre-run baseline.
+      - name: Build and stage binaries
+        shell: bash
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          ARGS="--mode=${{ inputs.mode }} --build-only --platform=${{ matrix.platform }}"
+          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          if [ "${{ inputs.mode }}" = "prod" ]; then
+            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
+          fi
+          node tools/publish/upload.mjs $ARGS
+      # Native AV pass over exactly the staged bytes (Defender on Windows,
+      # ClamAV on Linux/macOS). The publisher re-scans everything as its own
+      # gate — this is the per-platform engine coverage pages.yml had.
+      - name: Native AV scan of staged binaries
+        shell: bash
+        run: |
+          mapfile -t FILES < <(node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('dist/.build/build-manifest.json', 'utf-8'));
+            for (const f of m.files) console.log(f.relPath);
+          ")
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "nothing staged on this platform (binaries unchanged)"
+            exit 0
+          fi
+          node tools/scan-av.mjs "${FILES[@]}"
+      - name: Upload staged binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged-${{ matrix.platform }}
+          path: dist/.build/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Deterministic publish check (advisory, #33) ──────────────────────────
+  deterministic:
+    name: deterministic publish output
+    needs: baseline
+    if: always() && (needs.baseline.result == 'success' || needs.baseline.result == 'skipped')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: $/.github/actions/setup-repo
+        with:
+          install: 'false'
+      - name: Set up MSYS2 toolchain (make + gcc)
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc make
+      - run: pnpm install --frozen-lockfile
+      # SOURCE_DATE_EPOCH pins the PE TimeDateStamp (#162), so two runs of the
+      # same commit must produce byte-identical Windows binaries. The zips'
+      # entries carry per-file timestamps derived from the sources, so the
+      # full snapshot must match too.
+      - name: Snapshot run 1
+        run: pnpm upload:local -- --mode=prod --force --platform=win
+      - name: Stash first snapshot
+        run: |
+          dir=$(ls -d dist/prod-* | head -1)
+          mv "$dir" dist/.run1
+      - name: Snapshot run 2
+        run: pnpm upload:local -- --mode=prod --force --platform=win
+      - name: Compare snapshots
+        shell: bash
+        run: |
+          dir2=$(ls -d dist/prod-* | head -1)
+          diff -r dist/.run1 "$dir2" || {
+            echo "::error::two upload:local runs of the same commit produced different snapshots — builds are not deterministic"
+            exit 1
+          }
+          echo "snapshots byte-identical"
+
+  # ── Publisher (single writer) ─────────────────────────────────────────────
+  # The determinism job is ADVISORY: a red `deterministic` marks the run but
+  # does not block the publish (the staged bytes are AV/VT-gated regardless;
+  # a determinism regression must not become a publish outage with no bypass).
+  publish:
+    name: publish staged set
+    needs: [build, deterministic]
+    if: always() && inputs.publish && needs.build.result == 'success'
+    environment:
+      name: ${{ inputs.mode == 'prod' && 'release' || 'dev' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: $/.github/actions/setup-repo
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: baseline-hashes
+          path: ${{ runner.temp }}/baseline/
+      - name: Download staged binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: staged-*
+          merge-multiple: true
+          path: dist/.build/
+      # The staged artifacts keep their dist/.build-relative layout
+      # (installer/…, scripts/…, build-manifest.json); verify the union is
+      # complete before pass 2 touches anything.
+      - name: Verify staging tree
+        shell: bash
+        run: |
+          test -f dist/.build/build-manifest.json
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const m = JSON.parse(fs.readFileSync('dist/.build/build-manifest.json', 'utf-8'));
+            const missing = m.files.filter(f => !fs.existsSync(path.resolve('dist/.build', f.relPath)));
+            if (missing.length) {
+              console.error('staged files missing after artifact merge:', missing.map(f => f.asset).join(', '));
+              process.exit(1);
+            }
+            console.log('staging tree complete:', m.files.length ? m.files.map(f => f.asset).join(', ') : '(no rebuilt binaries — idle publish)');
+          "
+      # Pass 2: the staged bytes ARE the final artifacts. Re-runs the AV/VT
+      # gates over everything in scope, then performs the release + Pages
+      # publish — the only job that writes to any GitHub target.
+      - name: Publish (pass 2 — gates + upload)
+        shell: bash
+        env:
+          FXS_INTERNAL_CI: '1'
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          ARGS="--mode=${{ inputs.mode }} --skip-build --platform=win --platform=linux --platform=mac"
+          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          if [ "${{ inputs.mode }}" = "prod" ]; then
+            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
+          fi
+          node tools/publish/upload.mjs $ARGS
