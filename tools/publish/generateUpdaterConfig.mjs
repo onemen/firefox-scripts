@@ -173,6 +173,9 @@ function stableChannelUrls(config) {
       'installer.conf is missing required keys (REPO_OWNER, ZIP_DOWNLOAD_REPO, RELEASE_NAME, HASHES_URL)'
     );
   }
+  // The stable channel's zip base: installer.conf's literal value (the
+  // gh-pages host) when present; the release-download URL stays only as the
+  // fallback for a stripped config.
   const zipBase =
     config.ZIP_BASE_URL && !config.ZIP_BASE_URL.includes('${') ?
       config.ZIP_BASE_URL
@@ -207,11 +210,13 @@ function generateModule(config) {
     const lit = JSON.stringify(value).replace(/"/g, "'");
     return key.length + 5 + lit.length > 100 ? `  ${key}:\n    ${lit},` : `  ${key}: ${lit},`;
   };
-  // Where the privileged engine downloads the package zips.  Defaults to the
-  // release download URL derived from RELEASE_NAME; an explicit ZIP_BASE_URL
-  // wins when it is a literal (no ${VAR} template — installer.conf's own
-  // value is a template, expanded on the C side).  Dev overrides it with the
-  // dev-build-<id> branch base (via jsDelivr), since dev publishes no release.
+  // Where the privileged engine downloads the package zips.  installer.conf
+  // pins this to the gh-pages host (the same branch as the manifest and
+  // helpers — release assets are the human/manual surface only).  An explicit
+  // ZIP_BASE_URL wins when it is a literal (no ${VAR} template — installer.conf
+  // no longer carries one, so the releases/download fallback below only fires
+  // for a stripped config).  Dev overrides it with the dev-build-<id> branch
+  // base (via jsDelivr), since dev publishes no release.
   const zipBase =
     eff.ZIP_BASE_URL && !eff.ZIP_BASE_URL.includes('${') ?
       eff.ZIP_BASE_URL

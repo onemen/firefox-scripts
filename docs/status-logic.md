@@ -14,25 +14,28 @@ Two phases feed the same hash-based status:
 
 ## Where files are stored on GitHub
 
-| Artifact                                                                              | Host                 | URL                                                                                |
-| ------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------- |
-| `fx-folder.zip` (config package)                                                      | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/fx-folder.zip` |
-| `utils.zip`                                                                           | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip`     |
-| `installer_win.exe` / `installer_linux` / `installer_linux_aarch64` / `installer_mac` | GitHub Release asset | `https://github.com/onemen/firefox-scripts/releases/download/latest/`              |
-| `updater-ui.zip` (the update tab itself)                                              | gh-pages branch      | `https://onemen.github.io/firefox-scripts/updater-ui.zip`                          |
-| `hashes.json` (hash manifest)                                                         | gh-pages branch      | `https://onemen.github.io/firefox-scripts/hashes.json`                             |
-| `helper_win.exe` / `helper_linux` / `helper_mac`                                      | gh-pages branch      | `https://onemen.github.io/firefox-scripts/helper_<platform>` (+ `.exe` on Windows) |
+| Artifact                                                                              | Machine fetch host (installer tab / updater)                                   | Human surface (manual downloads)                                                       |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `fx-folder.zip` (config package)                                                      | gh-pages branch — `https://onemen.github.io/firefox-scripts/fx-folder.zip`     | Release asset — `https://github.com/onemen/firefox-scripts/releases/download/latest/…` |
+| `utils.zip`                                                                           | gh-pages branch — `https://onemen.github.io/firefox-scripts/utils.zip`         | Release asset — `…/releases/download/latest/utils.zip`                                 |
+| `updater-ui.zip` (the update tab itself)                                              | gh-pages branch — `https://onemen.github.io/firefox-scripts/updater-ui.zip`    | — (gh-pages only)                                                                      |
+| `hashes.json` (hash manifest)                                                         | gh-pages branch — `https://onemen.github.io/firefox-scripts/hashes.json`       | — (gh-pages only)                                                                      |
+| `helper_win.exe` / `helper_linux` / `helper_mac`                                      | gh-pages branch — `https://onemen.github.io/firefox-scripts/helper_<platform>` | — (gh-pages only)                                                                      |
+| `installer_win.exe` / `installer_linux` / `installer_linux_aarch64` / `installer_mac` | — (fetched by humans, not by the installer/updater)                            | Release asset — `…/releases/download/latest/` + `installer-<date>` releases            |
 
-The GitHub release carries exactly `fx-folder.zip`, `utils.zip` and the `installer_<os>` binaries;
-`updater-ui.zip` and the helper binaries are gh-pages-only (never release assets — the privileged
-updater fetches them from the branch, see issue #102).
+Every **machine** fetch (installer tab, in-browser updater, helper download, manifest check) comes
+from the gh-pages branch — one CORS-enabled host, `ZIP_BASE_URL` = `ZIP_PAGES_URL` =
+`HELPER_BASE_URL` in `config/installer.conf`. GitHub **releases** are the human surface only: manual
+downloads, archive browsing, the dated component releases. Migrating the Pages hosting (e.g. to the
+Actions deployment model) touches only `tools/publish/uploadToPages.mjs` — no fetch URL changes.
 
 Notes:
 
-- The zip and installer packages are attached to a GitHub **Release** (tag `RELEASE_NAME` from
-  `config/installer.conf`) in the `firefox-scripts` repo. The hash manifest lives on the
-  **gh-pages** branch because it is updated more often than a release and the branch is CORS-enabled
-  (the installer tab fetches it) — see ADR [0003](./decisions/0003-hash-manifest-on-gh-pages.md).
+- The zips and installer binaries are attached to a GitHub **Release** (tag `RELEASE_NAME` from
+  `config/installer.conf`) for human downloads. The hash manifest, zips (for the machine fetches)
+  and helpers live on the **gh-pages** branch because it is updated more often than a release and
+  the branch is CORS-enabled (the installer tab fetches it) — see ADR
+  [0003](./decisions/0003-hash-manifest-on-gh-pages.md).
 - The hash manifest has one entry per package, including the **canonical file list** the installer
   hashes over:
   `{"utils": {"hash": "...", "files": ["..."], "date": "..."}, "fx-folder": {"hash": "...", "files": ["..."], "date": "..."}}`,
@@ -333,8 +336,8 @@ updater tab: `updater.html` + `updater.js` (engine) + `updater-ui.js` (client) +
 brand logos, installed into `chrome/utils/updater/ui` and served as
 `chrome://firefox-scripts/content/ui/*`. It is not hash-checked by the C installer (no per-package
 status UI); the in-browser updater hashes it against this manifest entry to decide when to
-self-update, downloading the zip from the manifest's own host (`UI_BASE_URL` — Pages in prod; it is
-never a release asset, so not from `ZIP_BASE_URL`, issue #102).
+self-update, downloading the zip from the manifest's own host (`UI_BASE_URL` — the same gh-pages
+host as every other machine fetch; releases are the manual-download surface, issue #102).
 
 ### fx-folder (`core/fx-folder`, shipped as `fx-folder.zip`)
 

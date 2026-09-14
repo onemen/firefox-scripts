@@ -67,14 +67,14 @@ test('effectiveConfig in prod keeps installer.conf URLs', () => {
   assert.equal(eff.ASSET_SUFFIX ?? '', '');
 });
 
-test('generated module: prod mode — no dev/local flags, github URLs', () => {
+test('generated module: prod mode — no dev/local flags, gh-pages machine URLs', () => {
   const {module} = probe();
   assert.match(module, /IS_DEV: false/);
   assert.match(module, /IS_LOCAL: false/);
-  assert.match(
-    module,
-    /ZIP_BASE_URL: 'https:\/\/github\.com\/onemen\/firefox-scripts\/releases\/download\//
-  );
+  // Machine fetch host: the gh-pages branch (release assets are the human
+  // manual-download surface only).
+  assert.match(module, /ZIP_BASE_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts'/);
+  assert.doesNotMatch(module, /releases\/download/);
   assert.doesNotMatch(module, /cdn\.jsdelivr\.net/);
   assert.doesNotMatch(module, /localhost/);
   assert.doesNotMatch(module, /LOCAL_DIST_PATH: '[^']+'/);
@@ -107,10 +107,7 @@ test('generated module: STABLE_* fallback URLs only in dev mode (ADR 0026)', () 
     dev.module,
     /STABLE_HASHES_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts\/hashes\.json'/
   );
-  assert.match(
-    dev.module,
-    /STABLE_ZIP_BASE_URL: 'https:\/\/github\.com\/onemen\/firefox-scripts\/releases\/download\/latest'/
-  );
+  assert.match(dev.module, /STABLE_ZIP_BASE_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts'/);
   assert.match(dev.module, /STABLE_UI_BASE_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts'/);
   assert.match(
     dev.module,
@@ -136,13 +133,15 @@ test('generated module: dev-local — dev suffix retained on top of file:// URLs
 });
 
 test('generated module: UI_BASE_URL points at the manifest host in every mode', () => {
-  // Prod: updater-ui.zip is Pages-only (never a release asset, upload.mjs), so
-  // the ui base is ZIP_PAGES_URL while package zips come from the release URL
-  // (issue #102: ensureUpdaterUi used to fetch it from the release and 404'd).
+  // Prod: every machine fetch lives on ONE host — the gh-pages branch carries
+  // the zips, updater-ui.zip, the helpers and the manifest alike, so
+  // UI_BASE_URL == ZIP_BASE_URL == ZIP_PAGES_URL. (Historically the zips came
+  // from the release URL — issue #102: ensureUpdaterUi 404'd fetching
+  // updater-ui.zip there; releases are the manual-download surface now.)
   const prod = probe();
   assert.match(prod.module, /UI_BASE_URL: 'https:\/\/onemen\.github\.io\/firefox-scripts'/);
   assert.equal(prod.effective.UI_BASE_URL, prod.effective.ZIP_PAGES_URL);
-  assert.notEqual(prod.effective.UI_BASE_URL, prod.effective.ZIP_BASE_URL);
+  assert.equal(prod.effective.UI_BASE_URL, prod.effective.ZIP_BASE_URL);
 
   // Dev/local: everything publishes to one base — UI_BASE_URL equals it.
   const dev = probe('--mode=dev');

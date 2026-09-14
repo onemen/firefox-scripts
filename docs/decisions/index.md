@@ -87,6 +87,9 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0026](./0026-publish-channels-and-dead-channel-fallback.md) — Publish channels: stable (CI-only,
   full cross-OS asset set) vs test (`--mode=dev`, branch-only, optional RC note); dead-test-channel
   daily check falls back to the stable manifest (extends [0009])
+- [0027](./0027-machine-fetches-on-publish-branch.md) — Machine fetches (installer tab, updater,
+  helper, manifest) all read from the publish branch; release assets are the human manual-download
+  surface only (extends [0003], [0026])
 
 ## Historical
 

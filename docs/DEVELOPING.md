@@ -724,10 +724,11 @@ What a run publishes (the hash comparison itself is [status-logic.md](./status-l
   installer + helper binaries for the selected platforms, and `hashes.json`. Unchanged binaries are
   reused from the newest previous snapshot instead of recompiled; the untracked generated files are
   regenerated for the run and removed afterwards.
-- **prod → GitHub** — rebuilt zips replace their `latest` release assets; installer binaries are
-  release assets; helpers + `hashes.json` + `updater-ui.zip` go to `gh-pages`; the `latest` tag
-  moves to the published commit (unless idle or `--no-tag`); the component date tags are synced
-  (#72). A run where nothing changed uploads nothing.
+- **prod → GitHub** — rebuilt zips and installer binaries are attached to the `latest` release as
+  **release assets (the human manual-download surface)**; the zips (for machine fetches), helpers,
+  `hashes.json` + `updater-ui.zip` go to `gh-pages`, the single host every installer/updater fetch
+  reads; the `latest` tag moves to the published commit (unless idle or `--no-tag`); the component
+  date tags are synced (#72). A run where nothing changed uploads nothing.
 - **dev → GitHub** — the same artifact set (with `-dev` names) to the `dev-build-<id>` branch via
   the git-data API, content-addressed: unchanged files create no commit. No release unless `--tag`.
 
@@ -759,11 +760,13 @@ The unified flow (`upload`):
    `dev-build-<id>` in dev; the newest `dist/<mode>-*/` snapshot in `--local` mode).
 2. Computes SHA-256 hashes for each package source tree and each binary source tree, and rebuilds
    only what changed (everything in `--mode=dev`/`--force`).
-3. Uploads the changed artifacts as release assets (`utils.zip`, `installer_win.exe`, …) in prod.
-4. Pushes the **changed** artifacts to the publish branch — the installer UI fetches them from there
-   because GitHub Pages sends `Access-Control-Allow-Origin: *` (in dev mode the same branch is read
-   through jsDelivr, which is also CORS-enabled). The branch is created automatically on first run.
-   Only the artifacts rebuilt this run are pushed, so an unchanged package keeps its live artifact.
+3. In prod, uploads the changed artifacts (`utils.zip`, `installer_win.exe`, …) as release assets —
+   the human manual-download surface; no machine consumer reads them.
+4. Pushes the **changed** artifacts to the publish branch — this is the host every machine fetch
+   reads (installer tab and in-browser updater alike: `ZIP_BASE_URL` = `ZIP_PAGES_URL`), because
+   GitHub Pages sends `Access-Control-Allow-Origin: *` (in dev mode the same branch is read through
+   jsDelivr, which is also CORS-enabled). The branch is created automatically on first run. Only the
+   artifacts rebuilt this run are pushed, so an unchanged package keeps its live artifact.
 5. Publishes the hash manifest (`hashes.json`) to the same branch.
 6. Prod only, when something was rebuilt: syncs the date-stamped **component releases**
    (`scripts-<date>` for rebuilt package zips, `installer-<date>` for rebuilt installers + helpers,
