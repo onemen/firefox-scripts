@@ -237,6 +237,14 @@ jobs:
             exit 0
           fi
           node tools/scan-av.mjs "${FILES[@]}"
+      - name: Rename build manifest per platform
+        shell: bash
+        # The staged-* artifacts all merge into one dist/.build in the publish
+        # job; identical manifest names would overwrite each other in artifact
+        # order, so each leg ships build-manifest.<platform>.json.
+        run:
+          mv dist/.build/build-manifest.json "dist/.build/build-manifest.${{ matrix.platform
+          }}.json"
       - name: Upload staged binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -319,17 +327,19 @@ jobs:
       - name: Verify staging tree
         shell: bash
         run: |
-          test -f dist/.build/build-manifest.json
           node -e "
             const fs = require('fs');
             const path = require('path');
-            const m = JSON.parse(fs.readFileSync('dist/.build/build-manifest.json', 'utf-8'));
-            const missing = m.files.filter(f => !fs.existsSync(path.resolve('dist/.build', f.relPath)));
+            // Each build leg ships its own manifest (see the rename step); the
+            // union is the staged set.
+            const manifests = fs.readdirSync('dist/.build').filter(f => /^build-manifest\..+\.json$/.test(f));
+            const files = manifests.flatMap(f => JSON.parse(fs.readFileSync(path.join('dist/.build', f), 'utf-8')).files);
+            const missing = files.filter(f => !fs.existsSync(path.resolve('dist/.build', f.relPath)));
             if (missing.length) {
               console.error('staged files missing after artifact merge:', missing.map(f => f.asset).join(', '));
               process.exit(1);
             }
-            console.log('staging tree complete:', m.files.length ? m.files.map(f => f.asset).join(', ') : '(no rebuilt binaries — idle publish)');
+            console.log('staging tree complete:', files.length ? files.map(f => f.asset).join(', ') : '(no rebuilt binaries — idle publish)');
           "
       # Pass 2: the staged bytes ARE the final artifacts. Re-runs the AV/VT
       # gates over everything in scope, then performs the release + Pages
