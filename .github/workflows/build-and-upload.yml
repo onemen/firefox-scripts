@@ -56,10 +56,16 @@ on:
         type: boolean
         default: false
 
+# Read-only by default; every write capability is scoped to the one job that
+# uses it (a job-level permissions block REPLACES this one — e2e.yml
+# precedent):
+#   pre-publish → actions: write (cache prune) + issues: write (ADR 0021
+#     lookup-failure notification issue, raised inside the drift check)
+#   publish → contents: write (release assets + gh-pages pushes)
+#   baseline / build / deterministic → contents: read is enough (artifact
+#     transfer uses the runtime token, not the GITHUB_TOKEN permissions)
 permissions:
-  contents: write # release assets + gh-pages pushes (publish job only)
-  actions: write # release-gate cache-prune step deletes stale Actions caches
-  issues: write # ADR 0021: pre-flight warn-and-continue notification issue
+  contents: read
 
 concurrency:
   group: pages-publish
@@ -78,6 +84,10 @@ jobs:
     if: inputs.publish && inputs.mode == 'prod'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write # release-gate cache-prune step deletes stale Actions caches
+      issues: write # ADR 0021: pre-flight lookup-failure notification issue
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -214,10 +224,13 @@ jobs:
       - name: Native AV scan of staged binaries
         shell: bash
         run: |
+          # relPath is staging-tree-relative; resolve it against dist/.build or
+          # scan-av silently scans nothing (a missing file is a note, exit 0).
           mapfile -t FILES < <(node -e "
             const fs = require('fs');
+            const path = require('path');
             const m = JSON.parse(fs.readFileSync('dist/.build/build-manifest.json', 'utf-8'));
-            for (const f of m.files) console.log(f.relPath);
+            for (const f of m.files) console.log(path.join('dist/.build', f.relPath));
           ")
           if [ "${#FILES[@]}" -eq 0 ]; then
             echo "nothing staged on this platform (binaries unchanged)"
@@ -258,6 +271,7 @@ jobs:
       - name: Snapshot run 1
         run: pnpm upload:local -- --mode=prod --force --platform=win
       - name: Stash first snapshot
+        shell: bash # default Windows shell (pwsh) has no ls -d / head pipeline
         run: |
           dir=$(ls -d dist/prod-* | head -1)
           mv "$dir" dist/.run1
@@ -285,6 +299,8 @@ jobs:
       name: ${{ inputs.mode == 'prod' && 'release' || 'dev' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write # release assets + gh-pages pushes
     steps:
       - uses: $/.github/actions/setup-repo
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
