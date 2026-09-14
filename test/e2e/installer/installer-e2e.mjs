@@ -1421,7 +1421,8 @@ async function run() {
   // windows-latest, 143 s). E2E_WATCHDOG_MIN overrides it for slow machines
   // (AV scanning, --ui + restart-scope layers together); must stay BELOW the
   // CI job's timeout-minutes so this sweep + log line wins the race.
-  const WATCHDOG_MIN = Math.max(1, Number.parseInt(process.env.E2E_WATCHDOG_MIN ?? '', 10) || 10);
+  const parsedWatchdogMin = Number.parseInt(process.env.E2E_WATCHDOG_MIN ?? '', 10);
+  const WATCHDOG_MIN = Number.isFinite(parsedWatchdogMin) ? Math.max(1, parsedWatchdogMin) : 10;
   const WATCHDOG_MS = WATCHDOG_MIN * 60_000;
   const watchdog = setTimeout(() => {
     console.error(
