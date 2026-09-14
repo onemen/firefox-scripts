@@ -443,13 +443,11 @@
           .catch(function (err) {
             console.error('[ingest] waterfox releases fetch failed: ' + (err && err.message));
           }),
-        fetchRaw(urls.selfUpdateUrl)
-          .then(function (buf) {
-            return postRaw('/api/self-update', buf);
-          })
-          .catch(function (err) {
-            console.error('[ingest] self-update fetch failed: ' + (err && err.message));
-          }),
+        // NOTE: the self-update release JSON is NOT ingested here — it is
+        // owned by ingestSelfUpdateSources() (releases-list first, latest
+        // fallback).  A POST of the raw latest-release body here would
+        // overwrite the managed installer payload with a block-less one and
+        // the banner would silently never show.
       ].concat(ingestHgTags)
     );
 
@@ -477,42 +475,95 @@
   }
 
   /* ========================================================================
-     Self-Update Banner
+     Self-Update Banner — date-based (ADR 0019 amendment)
+
+     The tab ingests two payloads before asking the server for a verdict:
+       • /api/package-urls.releasesUrl — the releases listing (newest first);
+         the newest managed installer-<date> body wins (a fresh installer
+         publish is never masked by a scripts-only republish of `latest`)
+       • /api/package-urls.selfUpdateUrl — the latest release (fallback,
+         covers a repo where no installer-<date> release exists yet)
+     The C side parses the managed installerDate/download block and compares
+     it with the binary's baked build date.  Local/dev test builds never
+     check: the snapshot exists to test THIS build.
      ======================================================================== */
-  function checkSelfUpdate() {
-    fetchJSON('/api/self-update').then(function (data) {
-      if (!data) return;
-      if (data.error) {
-        // Silently ignore network/API errors -- banner stays hidden
-        return;
-      }
-      if (data.updateAvailable) {
-        qs('new-version-tag').textContent = 'v' + data.latestVersion;
-        qs('update-banner').style.display = 'flex';
-        qs('btn-self-update').onclick = function () {
-          if (data.downloadUrl) {
-            // Download via an in-page anchor click (no target=_blank): the
-            // same gesture as the manual-download links — no popup blocker,
-            // no blank tab.  GitHub serves the asset with
-            // Content-Disposition: attachment, so the browser shows its
-            // save dialog instead of navigating away.
-            const a = document.createElement('a');
-            a.href = data.downloadUrl;
-            a.download = '';
-            a.rel = 'noopener';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          } else {
-            alert(
-              'Update available: v' +
-                data.latestVersion +
-                '. Please download the latest installer from the repository.'
-            );
-          }
-        };
-      }
+  let selfUpdateIngested = false;
+
+  function ingestSelfUpdateSource(url) {
+    if (!url) return Promise.resolve(false);
+    return fetchRaw(url)
+      .then(function (buf) {
+        return postRaw('/api/self-update', buf);
+      })
+      .then(function (res) {
+        if (res && res.ok) selfUpdateIngested = true;
+        return true;
+      })
+      .catch(function (err) {
+        console.error('[ingest] self-update release fetch failed: ' + (err && err.message));
+        return false;
+      });
+  }
+
+  function ingestSelfUpdateSources(pkg) {
+    if (selfUpdateIngested) return Promise.resolve();
+    // Newest managed installer-<date> body first; the latest release as
+    // fallback.  Harmless duplicate ingests: the server just overwrites.
+    return ingestSelfUpdateSource(pkg && pkg.releasesUrl).then(function (managed) {
+      if (!managed) return ingestSelfUpdateSource(pkg && pkg.selfUpdateUrl);
+      return null;
     });
+  }
+
+  function checkSelfUpdate() {
+    fetchJSON('/api/build-info')
+      .then(function (info) {
+        if (info && info.selfUpdateDisabled) return null;
+        return fetchJSON('/api/package-urls').then(ingestSelfUpdateSources);
+      })
+      .then(function () {
+        if (!selfUpdateIngested) return null;
+        return fetchJSON('/api/self-update').then(function (data) {
+          if (!data || data.error) {
+            // Silently ignore network/API errors -- banner stays hidden
+            return null;
+          }
+          if (data.updateAvailable) {
+            qs('new-version-tag').textContent = data.latestDate;
+            const currentEl = qs('current-date-tag');
+            if (currentEl && data.buildDate) currentEl.textContent = data.buildDate;
+            qs('update-banner').style.display = 'flex';
+            qs('btn-self-update').onclick = function () {
+              if (data.downloadUrl) {
+                // Download via an in-page anchor click (no target=_blank): the
+                // same gesture as the manual-download links — no popup blocker,
+                // no blank tab.  GitHub serves the asset with
+                // Content-Disposition: attachment, so the browser shows its
+                // save dialog instead of navigating away.
+                const a = document.createElement('a');
+                a.href = data.downloadUrl;
+                a.download = '';
+                a.rel = 'noopener';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+              } else {
+                // A newer build is published but the managed block has no URL
+                // for this platform yet — fall back to the releases page.
+                window.open(
+                  'https://github.com/onemen/firefox-scripts/releases',
+                  '_blank',
+                  'noopener'
+                );
+              }
+            };
+          }
+          return null;
+        });
+      })
+      .catch(function () {
+        /* banner stays hidden on any failure */
+      });
   }
 
   /* ========================================================================
@@ -969,16 +1020,16 @@
      Installation (group-level: install to all profiles in group)
      ======================================================================== */
   function startGroupInstall(group) {
-    // Build the install queue from the SERVER's status flags (configUpToDate /
-    // utilsUpToDate), so the button works regardless of checkbox state.
-    // When a checkbox is checked it acts as an override to include/exclude.
+    // Strict checkbox gating (#180 follow-up): a component is installed only
+    // when the user explicitly checks its checkbox.  The Install button is
+    // disabled until at least one checkbox on the card is checked, so the
+    // checked set is always the exact install set — nothing rides along.
     installQueue = [];
-    const anyChecked = document.querySelectorAll('.chk-component:checked').length > 0;
     // Resolve this group's card ONCE via its sanitized data-binary-key (the
     // same key derivation as getCardProgressEls).  The config checkbox is then
     // queried card-scoped: matching on data-group with the raw binary path is
     // unreliable because Windows paths contain backslashes, which CSS
-    // attribute-selector strings treat as escape sequences (e.g. "C:\Program"
+    // attribute-selector strings treat as escape sequences (e.g. "C:\\Program"
     // parses as "C:Program"), so the selector silently fails and config gets
     // installed even when its checkbox was left unchecked.
     const binaryKey = (group.binaryPath || '').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -990,21 +1041,13 @@
 
       // config.js lives in the shared binary dir, so it only needs to be
       // installed ONCE per group (first profile) - avoids double UAC prompts.
-      let doConfig = false;
-      if (idx === 0) {
-        if (configChk) doConfig = anyChecked ? configChk.checked : !b.configUpToDate;
-        // No config checkbox rendered means its badge shows "Up To Date".
-        // The configUpToDate flag is 0 until the hash check has run (e.g.
-        // right after startup), so defaulting to !configUpToDate here would
-        // silently install config — and raise a UAC prompt — when the user
-        // only selected utils.  A missing checkbox selects nothing.
-      }
+      // No config checkbox rendered means its badge shows "Up To Date" —
+      // a missing checkbox selects nothing.
+      const doConfig = idx === 0 && Boolean(configChk && configChk.checked);
 
       // Same rule as config: a missing utils checkbox means its badge shows
       // "Up To Date" — never auto-install a component the UI did not offer.
-      let doUtils;
-      if (utilsChk) doUtils = anyChecked ? utilsChk.checked : !b.utilsUpToDate;
-      else doUtils = false;
+      const doUtils = Boolean(utilsChk && utilsChk.checked);
 
       if (doConfig || doUtils) {
         installQueue.push({
@@ -1019,14 +1062,13 @@
       console.log(
         '[install] QUEUE EMPTY',
         group.binaryPath,
-        'anyChecked=' + anyChecked,
         'browsers=' + (group.browsers ? group.browsers.length : 'none'),
         'configUpToDate=' +
           (group.browsers && group.browsers[0] ? group.browsers[0].configUpToDate : 'n/a'),
         'utilsUpToDate=' +
           (group.browsers && group.browsers[0] ? group.browsers[0].utilsUpToDate : 'n/a')
       );
-      showDebug('Nothing to install: no pending config or utils components were found.');
+      showDebug('Nothing to install: no component checkbox is checked.');
       return;
     }
 

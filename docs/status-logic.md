@@ -101,8 +101,8 @@ every upload yet still exited 0 with "✓ Done". `upload:local` intentionally ru
 
 ### 1.2 Binary publish (unified with the zips in `upload.mjs`)
 
-- Scope: the current OS locally; `--ci` for all three platforms; `--platform=win|linux|mac` for an
-  explicit set. A binary is (re)compiled only when the hash of its source inputs changed: the
+- Scope: the current OS locally; `--platform=win|linux|mac` for an explicit set (the prod workflow
+  passes one per job). A binary is (re)compiled only when the hash of its source inputs changed: the
   installer hash covers `installer/src` (minus `helper/`) **plus** `installer/web/*` and
   `config/installer.conf` — the generated `_config.h`/`resources.h` are gitignored build products,
   so their true sources are hashed instead (`computeFileSetHash` in hashUtils.mjs). The helper hash

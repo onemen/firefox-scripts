@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 #ifdef _WIN32
 #include <tlhelp32.h>
 #include <bcrypt.h>
@@ -654,6 +655,15 @@ int handle_api_package_urls(int client_fd, const char *query, const char *body, 
              "https://api.github.com/repos/%s/%s/releases/tags/%s",
              INSTALLER_REPO_OWNER, INSTALLER_REPO_NAME, INSTALLER_RELEASE_NAME);
 
+    // Releases listing (per_page=10, newest first) — the self-update ingest
+    // prefers the newest managed installer-<date> body over the latest
+    // release body (the badge-holder), so a fresh installer publish is never
+    // masked by a scripts-only republish of `latest` (ADR 0019 amendment).
+    char releases_url[512];
+    snprintf(releases_url, sizeof(releases_url),
+             "https://api.github.com/repos/%s/%s/releases?per_page=10",
+             INSTALLER_REPO_OWNER, INSTALLER_REPO_NAME);
+
     // Last-update dates from the remote manifest, for the manual-download
     // links ("last update ..." annotation).  Empty when the manifest was
     // unreachable.
@@ -671,10 +681,12 @@ int handle_api_package_urls(int client_fd, const char *query, const char *body, 
                        "\"utilsDate\":\"%s\","
                        "\"hashesUrl\":\"%s\","
                        "\"selfUpdateUrl\":\"%s\","
+                       "\"releasesUrl\":\"%s\","
                        "\"waterfoxUrl\":\"%s\""
                        "}",
                        utils_url, fx_url, updater_ui_url, esc_fx_date, esc_utils_date,
-                       INSTALLER_HASHES_URL, self_update_url, WATERFOX_RELEASES_URL);
+                       INSTALLER_HASHES_URL, self_update_url, releases_url,
+                       WATERFOX_RELEASES_URL);
 
     send_json_response(client_fd, json, pos);
     return 0;
@@ -690,9 +702,13 @@ int handle_api_build_info(int client_fd, const char *query, const char *body, si
     (void)body;
     (void)body_len;
 
-    char esc_dist[MAX_PATH_LEN * 2], esc_branch[256];
+    char esc_dist[MAX_PATH_LEN * 2], esc_branch[256], esc_release[128];
     json_escape(esc_dist, sizeof(esc_dist), INSTALLER_LOCAL_DIST_PATH);
     json_escape(esc_branch, sizeof(esc_branch), INSTALLER_DEV_BRANCH);
+    json_escape(esc_release, sizeof(esc_release), INSTALLER_RELEASE_NAME);
+
+    char esc_asset[128];
+    json_escape(esc_asset, sizeof(esc_asset), INSTALLER_BINARY_NAME);
 
     char json[2048];
     int pos = snprintf(json, sizeof(json),
@@ -700,12 +716,20 @@ int handle_api_build_info(int client_fd, const char *query, const char *body, si
                        "\"isLocal\":%d,"
                        "\"isDev\":%d,"
                        "\"distPath\":\"%s\","
-                       "\"devBranch\":\"%s\""
+                       "\"devBranch\":\"%s\","
+                       "\"selfUpdateDisabled\":%d,"
+                       "\"releaseName\":\"%s\","
+                       "\"assetName\":\"%s\","
+                       "\"buildDate\":\"%s\""
                        "}",
                        INSTALLER_LOCAL ? 1 : 0,
                        INSTALLER_DEV ? 1 : 0,
                        esc_dist,
-                       esc_branch);
+                       esc_branch,
+                       INSTALLER_SELF_UPDATE_DISABLED ? 1 : 0,
+                       esc_release,
+                       esc_asset,
+                       INSTALLER_BUILD_DATE);
 
     send_json_response(client_fd, json, pos);
     return 0;
@@ -1230,14 +1254,15 @@ int handle_api_self_update(int client_fd, const char *query, const char *body, s
         return 0;
     }
 
-    char latest_version[64] = "";
+    char latest_date[64] = "";
     char download_url[512] = "";
 
-    int ret = check_self_update(INSTALLER_VERSION,
-                                INSTALLER_REPO_OWNER,
-                                INSTALLER_REPO_NAME,
+    // Date-based self-update (ADR 0019 amendment): compare this binary's
+    // baked build date against the managed installerDate block in the latest
+    // release body.  No version numbers anywhere.
+    int ret = check_self_update(INSTALLER_BUILD_DATE,
                                 INSTALLER_BINARY_NAME,
-                                latest_version, sizeof(latest_version),
+                                latest_date, sizeof(latest_date),
                                 download_url, sizeof(download_url));
 
     char json[1024];
@@ -1245,16 +1270,16 @@ int handle_api_self_update(int client_fd, const char *query, const char *body, s
 
     if (ret < 0) {
         pos = snprintf(json, sizeof(json),
-                       "{\"error\":\"Could not check for updates\",\"currentVersion\":\"%s\"}",
-                       INSTALLER_VERSION);
+                       "{\"error\":\"Could not check for updates\",\"buildDate\":\"%s\"}",
+                       INSTALLER_BUILD_DATE);
     } else if (ret == 0) {
         pos = snprintf(json, sizeof(json),
-                       "{\"updateAvailable\":false,\"currentVersion\":\"%s\",\"latestVersion\":\"%s\"}",
-                       INSTALLER_VERSION, latest_version);
+                       "{\"updateAvailable\":false,\"buildDate\":\"%s\",\"latestDate\":\"%s\"}",
+                       INSTALLER_BUILD_DATE, latest_date);
     } else {
         pos = snprintf(json, sizeof(json),
-                       "{\"updateAvailable\":true,\"currentVersion\":\"%s\",\"latestVersion\":\"%s\",\"downloadUrl\":\"%s\"}",
-                       INSTALLER_VERSION, latest_version, download_url);
+                       "{\"updateAvailable\":true,\"buildDate\":\"%s\",\"latestDate\":\"%s\",\"downloadUrl\":\"%s\"}",
+                       INSTALLER_BUILD_DATE, latest_date, download_url);
     }
 
     char header[512];
@@ -1426,6 +1451,11 @@ int handle_api_hg_tags(int client_fd, const char *query, const char *body, size_
     return 0;
 }
 
+// Restart/close helpers defined further down (used by the close-browser
+// endpoint).
+static void close_browser_by_pid(unsigned long pid, int wait_ms);
+static void close_browser_binary(const char *binary_path, int wait_ms);
+
 int handle_api_close_browser(int client_fd, const char *query, const char *body, size_t body_len) {
     (void)body;
     (void)body_len;
@@ -1449,93 +1479,69 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
     }
 
     RunningBrowser *b = &detected_browsers[browser_idx];
-    verbose_printf("[close-browser] Killing %s (PID: %lu, exe: %s)\n",
-                   b->identified_browser, b->pid, b->exe_name);
+    char pkill_pattern[MAX_PATH_LEN];  // POSIX: install-dir pkill pattern
+    verbose_printf("[close-browser] Closing %s (PID: %lu, binary: %s)\n",
+                   b->identified_browser, b->pid, b->binary_path);
 
+    // Close THIS install only (#180 follow-up: the old fallbacks matched by
+    // image name — taskkill /f /im + Get-Process — which also killed every
+    // other same-image install, e.g. ESR and Nightly are both firefox.exe).
+    //
+    // Everything here matches by FULL BINARY PATH, never by the detection-time
+    // PID: after a restart the detected PID is stale, and acting on a recycled
+    // PID could hit an unrelated process.  The path-scoped close covers the
+    // install's CURRENT main process and all its children.
 #ifdef _WIN32
-    // Use up to three kill methods in sequence to handle multi-process browsers.
-    DWORD pid_exit = 1, im_exit = 1, ps_exit = 1;
-
-    // 1) Kill by specific PID (most targeted)
-    {
-        char cmd[512];
-        snprintf(cmd, sizeof(cmd), "taskkill /f /pid %lu", (unsigned long)b->pid);
-        STARTUPINFOA si = { sizeof(si) };
-        PROCESS_INFORMATION pi;
-        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
-                           CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 5000);
-            GetExitCodeProcess(pi.hProcess, &pid_exit);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-        Sleep(500);
-    }
-
-    // 2) Kill by image name with process tree
-    {
-        char cmd[512];
-        snprintf(cmd, sizeof(cmd), "taskkill /f /im \"%s\" /t", b->exe_name);
-        STARTUPINFOA si = { sizeof(si) };
-        PROCESS_INFORMATION pi;
-        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
-                           CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 5000);
-            GetExitCodeProcess(pi.hProcess, &im_exit);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-        Sleep(500);
-    }
-
-    // 3) PowerShell backup (kills by any means)
-    {
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd),
-                 "powershell -NoProfile -NonInteractive -Command \"Get-Process %s | Stop-Process -Force\"",
-                 b->exe_name);
-        STARTUPINFOA si = { sizeof(si) };
-        PROCESS_INFORMATION pi;
-        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
-                           CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, 10000);
-            GetExitCodeProcess(pi.hProcess, &ps_exit);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-        Sleep(500);
-    }
+    // WM_CLOSE to every process of this binary (graceful session write), then
+    // wait/force-kill each — close_browser_by_pid semantics, path-scoped.
+    close_browser_binary(b->binary_path, 8000);
 
     char json[1024];
     int pos = snprintf(json, sizeof(json),
-                       "{\"status\":\"kill_attempted\",\"pid_kill_exit\":%lu,"
-                       "\"taskkill_im_exit\":%lu,\"powershell_exit\":%lu,"
-                       "\"message\":\"All kill methods completed\"}",
-                       pid_exit, im_exit, ps_exit);
+                       "{\"status\":\"closed\",\"pid\":%lu,"
+                       "\"method\":\"binary-scoped\","
+                       "\"message\":\"Closed this install only (matched by binary path)\"}",
+                       (unsigned long)b->pid);
     send_json_response(client_fd, json, pos);
 #else
-    // POSIX: try SIGTERM first (gentle), then pkill -9 (aggressive)
-    int sigterm_ret = -1;
-    if (kill((pid_t)b->pid, SIGTERM) == 0) {
-        sigterm_ret = 0;
-        sleep_ms(300);
+    // Signal every process of THIS install: matched by the INSTALL DIRECTORY
+    // (dirname of the binary + "/"), not the binary file path.  On Linux the
+    // launched binary and its real image can differ (firefox is a symlink/
+    // loader whose /proc/exe resolves to firefox-bin) while the cmdline keeps
+    // the invoked path — only the install directory is guaranteed to appear
+    // in EVERY process cmdline of this install, and it is unique per install
+    // (/usr/lib/firefox/ vs /usr/lib/firefox-esr/ never cross-match).
+    //
+    // Reject paths with the shell-dangerous characters inside double quotes
+    // (", ', `, $, backslash) instead of escaping them: pkill -f runs via the
+    // shell, and such a character would otherwise break out of the quoting
+    // and inject a command.  Other characters (spaces, semicolons, pipes)
+    // are literal inside double quotes, so ordinary paths still match — only
+    // an exotic path gets no sweep.
+    int swept = 0;
+    const char *last_slash = strrchr(b->binary_path, '/');
+    if (last_slash && last_slash != b->binary_path &&
+        strpbrk(b->binary_path, "\"'`$\\\n") == NULL) {
+        size_t dir_len = (size_t)(last_slash - b->binary_path) + 1;
+        if (dir_len < sizeof(pkill_pattern) - 2) {
+            memcpy(pkill_pattern, b->binary_path, dir_len);
+            pkill_pattern[dir_len] = '\0';
+            char pkill_cmd[4096];
+            snprintf(pkill_cmd, sizeof(pkill_cmd),
+                     "pkill -TERM -f \"%s\" 2>/dev/null", pkill_pattern);
+            (void)system(pkill_cmd);
+            sleep_ms(800);
+            snprintf(pkill_cmd, sizeof(pkill_cmd),
+                     "pkill -9 -f \"%s\" 2>/dev/null", pkill_pattern);
+            swept = (system(pkill_cmd) == 0);
+        }
     }
-
-    char proc_name[256];
-    strncpy(proc_name, b->exe_name, sizeof(proc_name) - 1);
-    proc_name[sizeof(proc_name) - 1] = '\0';
-#ifdef __linux__
-    char *dot = strstr(proc_name, ".exe");
-    if (dot) *dot = '\0';
-#endif
-    char pkill_cmd[4096];
-    snprintf(pkill_cmd, sizeof(pkill_cmd), "pkill -9 -f \"%s\" 2>/dev/null", proc_name);
-    int pkill_ret = system(pkill_cmd);
 
     char json[512];
     int pos = snprintf(json, sizeof(json),
-                       "{\"status\":\"kill_attempted\",\"sigterm_ret\":%d,\"pkill_ret\":%d,\"message\":\"pkill completed\"}",
-                       sigterm_ret, pkill_ret);
+                       "{\"status\":\"closed\",\"pid\":%lu,\"swept\":%d,"
+                       "\"message\":\"Closed this install only (matched by binary path)\"}",
+                       (unsigned long)b->pid, swept);
     send_json_response(client_fd, json, pos);
 #endif
 
@@ -1741,14 +1747,27 @@ static void close_browser_by_pid(unsigned long pid, int wait_ms) {
 }
 
 /**
- * Gracefully close every process of the given executable image.
- * Used when a config update happened — all instances share the config dir,
- * so they all need to be restarted with a clean cache.
+ * Gracefully close every running MAIN process of the given install (matched by
+ * full binary path), plus its child processes.  Used when a config update
+ * happened: all profiles of THIS install share the config dir, so they all
+ * need to be restarted with a clean cache.
+ *
+ * Matching is by full image path, not by executable name — several Firefox
+ * family installs can run at once under the same image name (e.g. ESR and
+ * Nightly are both firefox.exe); an image-name kill would close all of them
+ * (#180).
  */
-static void close_browser_image(const char *exe_name, int wait_ms) {
+static void close_browser_binary(const char *binary_path, int wait_ms) {
 #ifdef _WIN32
-    wchar_t wexe[MAX_PATH];
-    MultiByteToWideChar(CP_UTF8, 0, exe_name, -1, wexe, MAX_PATH);
+    if (strlen(binary_path) == 0) return;
+    wchar_t wbin[MAX_PATH];
+    if (MultiByteToWideChar(CP_UTF8, 0, binary_path, -1, wbin, MAX_PATH) == 0) return;
+    // szExeFile is only the image NAME, so pre-filter on the basename of the
+    // binary path; the full-path check below is what actually scopes the kill.
+    const wchar_t *wbase = wbin;
+    const wchar_t *slash = wcsrchr(wbin, L'\\');
+    if (slash && slash[1]) wbase = slash + 1;
+
     DWORD pids[256];
     int npids = 0;
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -1757,18 +1776,34 @@ static void close_browser_image(const char *exe_name, int wait_ms) {
         pe.dwSize = sizeof(pe);
         if (Process32FirstW(hSnapshot, &pe)) {
             do {
-                if (npids < 256 && _wcsicmp(pe.szExeFile, wexe) == 0)
+                if (npids >= 256 || _wcsicmp(pe.szExeFile, wbase) != 0) continue;
+                HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                                       pe.th32ProcessID);
+                if (!h) continue;  // cannot verify the path — leave it alone
+                char path[MAX_PATH] = "";
+                DWORD sz = (DWORD)sizeof(path);
+                BOOL ok = QueryFullProcessImageNameA(h, 0, path, &sz);
+                CloseHandle(h);
+                // Case-insensitive compare: Windows paths are case-preserving,
+                // and Firefox itself may differ in case from detection's copy.
+                // Both APIs return long ANSI paths, but detection captured the
+                // path via GetModuleFileNameExA — an 8.3-form capture would just
+                // fail to match here ("no close"), never close a wrong install.
+                if (ok && _stricmp(path, binary_path) == 0)
                     pids[npids++] = pe.th32ProcessID;
             } while (Process32NextW(hSnapshot, &pe));
         }
         CloseHandle(hSnapshot);
     }
+    verbose_printf("[restart] close_browser_binary(%s): %d matching process(es)\n",
+                   binary_path, npids);
+    log_msg("[restart] closing %d process(es) of %s\n", npids, binary_path);
     // Ask them all to close, then wait/force each (two phases so multi-instance
     // cases shut down in parallel instead of serially).
     for (int i = 0; i < npids; i++) EnumWindows(close_window_enum_proc, (LPARAM)pids[i]);
     for (int i = 0; i < npids; i++) wait_close_or_force(pids[i], wait_ms);
 #else
-    (void)exe_name;
+    (void)binary_path;
 #endif
 }
 
@@ -2029,8 +2064,8 @@ static void open_url_in_profile(const char *binary, const char *profile, const c
 
 typedef struct {
     int config_changed;
-    int ui_host_killed;  // the profile hosting the UI tab is being killed
-    char exe_name[MAX_PATH_LEN];
+    int ui_host_killed;              // the profile hosting the UI tab is being killed
+    char binary_path[MAX_PATH_LEN];  // install (binary) the restart targets
     int restart_idx[MAX_BROWSERS];
     int restart_count;
 } restart_plan_t;
@@ -2039,12 +2074,15 @@ static volatile int g_restart_worker_running = 0;
 
 static int do_restart_work(const restart_plan_t *plan) {
     if (plan->config_changed) {
-        // Gracefully close every instance of the exe (they all share the config
-        // dir).  WM_CLOSE lets Firefox write a valid session store.
-        verbose_printf("[restart] Config updated -> closing ALL instances of %s\n",
-                       plan->exe_name);
-        log_msg("[restart] closing ALL instances of %s\n", plan->exe_name);
-        close_browser_image(plan->exe_name, 8000);
+        // Close every running instance of THIS install (matched by full binary
+        // path — they all share the config dir).  WM_CLOSE lets Firefox write a
+        // valid session store.  Never kill by image name: ESR and Nightly both
+        // run as firefox.exe, so an image-name kill would close unrelated
+        // installs too (#180).
+        verbose_printf("[restart] Config updated -> closing all instances of %s\n",
+                       plan->binary_path);
+        log_msg("[restart] closing all instances of %s\n", plan->binary_path);
+        close_browser_binary(plan->binary_path, 8000);
     } else {
         // Targeted: close only the profiles whose utils were updated.
         for (int i = 0; i < plan->restart_count; i++) {
@@ -2223,8 +2261,8 @@ int handle_api_restart(int client_fd, const char *query, const char *body, size_
     restart_plan_t plan;
     memset(&plan, 0, sizeof(plan));
     plan.config_changed = config_changed;
-    strncpy(plan.exe_name, target->exe_name, MAX_PATH_LEN - 1);
-    plan.exe_name[MAX_PATH_LEN - 1] = '\0';
+    strncpy(plan.binary_path, target->binary_path, MAX_PATH_LEN - 1);
+    plan.binary_path[MAX_PATH_LEN - 1] = '\0';
     memcpy(plan.restart_idx, restart_idx, sizeof(int) * (size_t)restart_count);
     plan.restart_count = restart_count;
 
@@ -2337,7 +2375,7 @@ int handle_api_restart(int client_fd, const char *query, const char *body, size_
 // ===== Main =====
 
 static void print_help(void) {
-    printf("Firefox Scripts Installer v%s\n\n", INSTALLER_VERSION);
+    printf("Firefox Scripts Installer (build %s)\n\n", INSTALLER_BUILD_DATE);
     printf("Usage: installer [OPTIONS]\n\n");
     printf("Options:\n");
     printf("  --help          Show this help message\n");
@@ -2442,7 +2480,7 @@ static int main_impl(int argc, char *argv[]) {
             return 0;
         }
         if (strcmp(argv[1], "--version") == 0) {
-            printf("%s\n", INSTALLER_VERSION);
+            printf("%s\n", INSTALLER_BUILD_DATE);
             return 0;
         }
         if (strcmp(argv[1], "--test-hash") == 0) {
@@ -2472,10 +2510,11 @@ static int main_impl(int argc, char *argv[]) {
             /* Unit-test harness for the self-update logic: ingest a release
              * JSON file, then run check_self_update and print the outcome as
              * parseable lines.  Used by installer/test/test_self_update.mjs
-             * (pnpm test:hash). */
+             * (pnpm test:hash).  current_build is a YYYY-MM-DD build date
+             * (the managed installerDate contract), not a version. */
             if (argc < 5) {
                 fprintf(stderr,
-                        "Usage: %s --test-self-update <json-file> <current-version> <asset-name>\n",
+                        "Usage: %s --test-self-update <json-file> <current-build-date> <asset-name>\n",
                         argv[0]);
                 return 2;
             }
@@ -2508,14 +2547,13 @@ static int main_impl(int argc, char *argv[]) {
                 return 2;
             }
             free(buf);
-            char latest_version[64] = "";
+            char latest_date[64] = "";
             char download_url[512] = "";
-            int ret = check_self_update(cur_ver,
-                                        "onemen", "firefox-scripts", asset_name,
-                                        latest_version, sizeof(latest_version),
+            int ret = check_self_update(cur_ver, asset_name,
+                                        latest_date, sizeof(latest_date),
                                         download_url, sizeof(download_url));
             printf("status=%d\n", ret);
-            printf("latest_version=%s\n", latest_version);
+            printf("latest_date=%s\n", latest_date);
             printf("download_url=%s\n", download_url);
             return 0;
         }
@@ -2563,7 +2601,7 @@ static int main_impl(int argc, char *argv[]) {
     // published packages, the hash manifest and the release lists (CORS-
     // enabled URLs) and POSTs the raw bytes to the local server.  Nothing to
     // verify or prime here — the tab always opens and drives that.
-    printf("Firefox Scripts Installer v%s\n", INSTALLER_VERSION);
+    printf("Firefox Scripts Installer (build %s)\n", INSTALLER_BUILD_DATE);
 
     // Scan browsers (--server-only skips the scan: headless HTTP-server mode
     // for the second-instance tests, where no browser UI is ever touched).

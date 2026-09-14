@@ -44,6 +44,11 @@ import {discoverFirefoxBinary} from './browsers.mjs';
  * - {resolver: true, args} → version + mirror resolved by browserResolver.mjs
  *   (LibreWolf's bsys6-first chain, Waterfox's CDN); falls back to the
  *   temporary `ci-downloads` release and then the cached previous installer.
+ * - {url|resolver, args, portable: true, portableExe} → the recipe's NSIS
+ *   installer ALSO supports a portable layout (fork-portable E2E legs, #38):
+ *   with PORTABLE_BROWSER_DIR set, the installer runs `/S /D=<dir>` into that
+ *   directory instead of Program Files, and the binary is `portableExe` at its
+ *   root. Firefox Release keeps its own richer portable path below.
  * - `manual: true` → no automated install; `page` is the official download page
  *   (informational, for the manual legs).
  *
@@ -137,7 +142,12 @@ export const DOWNLOADS = {
       // firefox-updater). resolveInstallerUrl walks the fallback chain
       // (CDN → ci-downloads manual escape → cached installer) and resolves
       // the version from the GitHub tag or the CDN releases index.
-      win: {resolver: true, args: ['/S']}, // NSIS silent install → Program Files\Waterfox
+      win: {
+        resolver: true,
+        args: ['/S'], // NSIS silent install → Program Files\Waterfox
+        portable: true, // /D= → PORTABLE_BROWSER_DIR\waterfox.exe (fork-portable leg)
+        portableExe: 'waterfox.exe',
+      },
     },
     page: 'https://www.waterfox.net/download/',
   },
@@ -148,6 +158,8 @@ export const DOWNLOADS = {
       win: {
         url: 'https://github.com/zen-browser/desktop/releases/latest/download/zen.installer.exe',
         args: ['/S'], // NSIS silent install → %LOCALAPPDATA%\Zen Browser
+        portable: true, // /D= → PORTABLE_BROWSER_DIR\zen.exe (fork-portable leg)
+        portableExe: 'zen.exe',
       },
     },
     page: 'https://zen-browser.app/download/',
@@ -171,6 +183,8 @@ export const DOWNLOADS = {
       win: {
         url: 'https://github.com/Floorp-Projects/Floorp/releases/latest/download/floorp-windows-x86_64.installer.exe',
         args: ['/S'], // NSIS silent install → Program Files\Ablaze Floorp
+        portable: true, // /D= → PORTABLE_BROWSER_DIR\floorp.exe (fork-portable leg)
+        portableExe: 'floorp.exe',
       },
     },
   },
@@ -478,6 +492,96 @@ function findCachedInstaller(browser) {
   return found ? path.join(dir, found) : null;
 }
 
+/**
+ * Run a downloaded installer synchronously, retrying the Windows AV-lock race:
+ * Defender (or any scanner) can hold the freshly-written exe open for seconds
+ * after the download returns, and NSIS /S fails immediately with "The process
+ * cannot access the file because it is being used by another process" (floorp
+ * leg, 2026-09-13). A short backoff-and-retry is enough — the scanner releases
+ * the file, it is not a broken installer. Retries only that error signature;
+ * every other failure surfaces as before.
+ *
+ * `platform` is injectable so unit tests can exercise the Windows-only
+ * signature from any OS runner; production callers get `process.platform`.
+ */
+export function isFileLockError(err, {platform = process.platform} = {}) {
+  if (platform !== 'win32') return false;
+  const out = String(err?.stderr || err?.message || err?.code || '');
+  // execSync failures carry the scanner's message in stderr/message;
+  // spawnSync surfaces the same sharing violation (os error 32) as code EBUSY.
+  return /cannot access the file because it is being used by another process|The file is locked|os error 32|EBUSY/i.test(
+    out
+  );
+}
+
+export function runInstallerWithRetry(
+  cmd,
+  {attempts = 4, delayMs = 4000, platform, run, sleep} = {}
+) {
+  const runCmd =
+    run ??
+    (c => {
+      // execSync throws on a non-zero exit; the error's stderr/message carry
+      // the lock signature (see isFileLockError).
+      execSync(c, {stdio: 'inherit'});
+    });
+  const wait = sleep ?? (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      runCmd(cmd);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isFileLockError(err, platform ? {platform} : {}) || attempt === attempts) throw err;
+      console.log(
+        `  installer file locked (AV scan?) — retry ${attempt}/${attempts - 1} in ${delayMs / 1000}s`
+      );
+      wait(delayMs);
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Run a silent NSIS installer via spawnSync (verbatim args — /D= must never be
+ * quoted), retrying the Windows AV file-lock race: a spawnSync failure surfaces
+ * as `error` with libuv code EBUSY (the sharing violation), which
+ * isFileLockError matches. The runner receives {error, status} so the predicate
+ * sees either shape.
+ *
+ * @param {string} exe
+ * @param {string[]} args
+ * @param {string} [label] browser name for the failure message
+ * @param {object} [opts] test seams
+ * @param {Function} [opts.spawn] spawnSync replacement (unit tests)
+ * @param {Function} [opts.sleep] sleep replacement (unit tests)
+ * @returns {{error?: Error; status: number | null}} the last spawn result
+ */
+export function runNsisInstallerWithRetry(exe, args, label = 'installer', {spawn, sleep} = {}) {
+  let last;
+  runInstallerWithRetry(exe, {
+    // The NSIS spawn path only ever runs on Windows — pin the platform so the
+    // EBUSY/lock signature is honored regardless of where the unit tests run.
+    platform: 'win32',
+    sleep,
+    run: exePath => {
+      const result = (spawn ?? spawnSync)(exePath, args, {
+        stdio: 'inherit',
+        windowsVerbatimArguments: true,
+      });
+      last = result;
+      if (result.error) {
+        throw Object.assign(result.error, {code: result.error.code || 'EBUSY'});
+      }
+      if (result.status !== 0) {
+        throw new Error(`${label} exited with code ${result.status}`);
+      }
+    },
+  });
+  return last ?? {status: 0};
+}
+
 /** Download an official installer and run it with args (e.g. NSIS `/S`). */
 async function installInstaller(url, browser, args) {
   const exe = path.join(downloadDir(), `${browser}-setup.exe`);
@@ -490,12 +594,38 @@ async function installInstaller(url, browser, args) {
         `  ⚠ download failed (${err.message}); reusing previously downloaded ` +
           `installer ${path.basename(fallback)} (advisory leg — gate will warn)`
       );
-      execSync(`"${fallback}" ${args.join(' ')}`, {stdio: 'inherit'});
+      runSilentInstaller(fallback, args);
       return;
     }
     throw err;
   }
-  execSync(`"${exe}" ${args.join(' ')}`, {stdio: 'inherit'});
+  runInstallerWithRetry(`"${exe}" ${args.join(' ')}`);
+}
+
+/**
+ * Run a downloaded/fallback installer through the AV file-lock retry
+ * (runInstallerWithRetry). Every silent-install invocation in this module must
+ * go through this — the vendor setup.exe is scanned right after the download
+ * completes, and Defender intermittently holds the file lock for the first
+ * seconds (observed on the floorp leg 2026-09-13 and again on the registered
+ * floorp leg 2026-09-14: "The process cannot access the file because it is
+ * being used by another process" → execSync message, which isFileLockError
+ * matches, so the retry rides it out).
+ *
+ * @param {string} exe absolute path to the installer
+ * @param {string[]} args silent-install argv (e.g. ['/S'])
+ */
+function runSilentInstaller(exe, args) {
+  runInstallerWithRetry(`"${exe}" ${args.join(' ')}`);
+}
+
+/** The launcher file each portable install produces, per platform. */
+export function portableBinaryPath(dest, platform) {
+  return (
+    platform === 'linux' ? path.join(dest, 'firefox', 'firefox')
+    : platform === 'darwin' ? path.join(dest, 'Firefox.app', 'Contents', 'MacOS', 'firefox')
+    : path.join(dest, 'firefox.exe')
+  );
 }
 
 /** Download Firefox Release into a custom, non-registered directory. */
@@ -503,6 +633,17 @@ async function installPortableFirefox(url, platform) {
   const dest = process.env.PORTABLE_BROWSER_DIR;
   if (!dest) throw new Error('PORTABLE_BROWSER_DIR is required for portable Firefox');
   fs.mkdirSync(dest, {recursive: true});
+
+  // The E2E workflow caches the extracted dir alongside the installer (same
+  // URL-derived key, so it can only match this browser version). When the
+  // launcher file is already in place, skip the extract/install work entirely.
+  // statSync (not existsSync): a directory at that path must not count — the
+  // Linux tarball's top-level `firefox/` dir shares the launcher's basename.
+  const portableBinary = portableBinaryPath(dest, platform);
+  if (fs.statSync(portableBinary, {throwIfNoEntry: false})?.isFile()) {
+    console.log(`  reusing cached portable dir (${path.basename(dest)})`);
+    return portableBinary;
+  }
 
   if (platform === 'linux') {
     const binary = await installTarball(url, 'firefox-portable', dest);
@@ -513,18 +654,10 @@ async function installPortableFirefox(url, platform) {
     const exe = path.join(downloadDir(), 'firefox-portable-setup.exe');
     await downloadTo(url, exe);
     // NSIS /D must be the final argument and uses a custom directory instead
-    // of the registered Program Files location.
-    // Pass the final /D= option directly to NSIS. PowerShell launches this
-    // Node process with native Windows paths, and verbatim arguments prevent
-    // MSYS/Git Bash path rewriting when the same helper is used locally.
-    const result = spawnSync(exe, ['/S', `/D=${dest}`], {
-      stdio: 'inherit',
-      windowsVerbatimArguments: true,
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      throw new Error(`Firefox portable installer exited with code ${result.status}`);
-    }
+    // of the registered Program Files location. Verbatim args keep the /D=
+    // path unquoted; the retry wrapper rides out the AV file-lock race
+    // (spawnSync failure surfaces as error.code EBUSY).
+    runNsisInstallerWithRetry(exe, nsisPortableArgs(dest), 'Firefox portable installer');
     const binary = path.join(dest, 'firefox.exe');
     if (!fs.existsSync(binary)) throw new Error(`portable Firefox binary not found: ${binary}`);
     return binary;
@@ -586,6 +719,111 @@ async function installDmg(url, appName) {
       execSync(`hdiutil detach "${device || mountPoint}"`);
     }
   }
+}
+
+/**
+ * The argv for a silent NSIS install into `dest`: `/S` plus the final `/D=`
+ * (NSIS consumes the rest of the command line for /D — it must be last and
+ * never quoted; callers pass these with windowsVerbatimArguments).
+ *
+ * @param {string} dest
+ * @returns {string[]}
+ */
+export function nsisPortableArgs(dest) {
+  return ['/S', `/D=${dest}`];
+}
+
+/**
+ * Install an NSIS fork browser (zen, floorp, waterfox) portably: the same
+ * official installer the registered recipe uses, but with NSIS `/D=` pointing
+ * at PORTABLE_BROWSER_DIR instead of Program Files (the mechanism the Firefox
+ * portable recipe above already relies on). The binary is `portableExe` at the
+ * directory root — no install-dir discovery, so the exported FIREFOX_BINARY is
+ * exactly the binary the fork-portable E2E legs will drive (#38).
+ *
+ * @param {string} browser
+ * @param {{
+ *   resolver?: boolean;
+ *   url?: string;
+ *   args?: string[];
+ *   portableExe: string;
+ * }} recipe
+ * @returns {Promise<string>} absolute path to the portable binary
+ */
+async function installForkPortable(browser, recipe) {
+  const dest = process.env.PORTABLE_BROWSER_DIR;
+  if (!dest) throw new Error('PORTABLE_BROWSER_DIR is required for a portable fork install');
+  fs.mkdirSync(dest, {recursive: true});
+  // The fork-portable E2E job caches the extracted dir alongside the
+  // installer (same URL-derived key as the portable Firefox leg, so it can
+  // only match this browser version). When the launcher is already in place,
+  // skip the download + silent install entirely. statSync (not existsSync): a
+  // directory at that path must not count as installed.
+  const cachedBinary = path.join(dest, recipe.portableExe);
+  if (fs.statSync(cachedBinary, {throwIfNoEntry: false})?.isFile()) {
+    // Defense in depth against a same-key content change (a stable
+    // latest/download URL whose asset changed under the old redirect hash):
+    // only reuse the extracted dir when the cached installer that produced
+    // it still matches the remote size — the same self-heal rule downloadTo
+    // applies to the installer file. A mismatch falls through to a fresh
+    // download + install over the stale dir.
+    const cachedExe = path.join(downloadDir(), `${browser}-portable-setup.exe`);
+    const exeStat = fs.statSync(cachedExe, {throwIfNoEntry: false});
+    if (exeStat?.isFile() && exeStat.size > 0) {
+      try {
+        const head = await fetch(url, {method: 'HEAD', signal: AbortSignal.timeout(15_000)});
+        const expected = head.ok ? Number(head.headers.get('content-length')) : 0;
+        if (expected && exeStat.size === expected) {
+          console.log(`  reusing cached portable dir (${path.basename(dest)})`);
+          return cachedBinary;
+        }
+        console.log(
+          `  cached installer size ${exeStat.size} ≠ remote ${expected} — re-installing portable dir`
+        );
+      } catch {
+        // HEAD failed (flaky network): reuse the dir rather than fail — the
+        // job's version-derived cache key already guards the common case.
+        console.log(`  HEAD failed; reusing cached portable dir (${path.basename(dest)})`);
+        return cachedBinary;
+      }
+    } else {
+      // No cached installer (cache eviction race between the two cache
+      // entries): cannot prove freshness — re-install over the stale dir.
+      console.log('  no cached installer to validate against — re-installing portable dir');
+    }
+  }
+  let url;
+  let sha256Url;
+  if (recipe.resolver) {
+    // Same fallback chain as the registered install (mirrors → ci-downloads →
+    // cached previous installer), so a vendor outage degrades identically.
+    const resolved = await resolveInstallerUrl(browser);
+    url = resolved.url;
+    sha256Url = resolved.sha256Url;
+    console.log(`  ${browser} ${resolved.version} installer resolved from ${resolved.source}`);
+  } else {
+    if (!recipe.url) throw new Error(`${browser} portable recipe has no url and no resolver`);
+    url = recipe.url;
+  }
+  const exe = path.join(downloadDir(), `${browser}-portable-setup.exe`);
+  await downloadTo(url, exe);
+  if (sha256Url) {
+    console.log(`  verifying vendor sha256 for ${browser} (portable)`);
+    await verifySha256(exe, sha256Url);
+  }
+  // NSIS /D= consumes the rest of the command line (no quotes allowed), so
+  // spawn with verbatim args exactly like the Firefox portable recipe — and
+  // through the same AV file-lock retry (run 34741552124, floorp leg).
+  runNsisInstallerWithRetry(exe, nsisPortableArgs(dest), `${browser} portable installer`);
+  const binary = path.join(dest, recipe.portableExe);
+  // statSync (not existsSync): a directory at that path must not count.
+  if (!fs.statSync(binary, {throwIfNoEntry: false})?.isFile()) {
+    throw new Error(
+      `${browser} portable installer ran, but no binary at ${binary} — ` +
+        'does this installer honor /D= into a fresh directory?'
+    );
+  }
+  return binary;
 }
 
 /** Export the resolved browser binary for GitHub Actions callers. */
@@ -733,6 +971,11 @@ export async function installBrowser(browser, platform = process.platform) {
     console.log(`  ${browser} installed portably: ${binary}`);
     return binary;
   }
+  if (key === 'win' && recipe.portable && process.env.PORTABLE_BROWSER_DIR) {
+    const binary = await installForkPortable(browser, recipe);
+    console.log(`  ${browser} installed portably: ${binary}`);
+    return binary;
+  }
   if (recipe.tarball) {
     const binary = await installTarball(recipe.tarball, browser);
     console.log(`  ${browser} installed from official tarball: ${binary}`);
@@ -753,7 +996,7 @@ export async function installBrowser(browser, platform = process.platform) {
         `  ⚠ ${err.message}; reusing previously downloaded installer ` +
           `${path.basename(fallback)} (advisory leg — gate will warn)`
       );
-      execSync(`"${fallback}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
+      runSilentInstaller(fallback, recipe.args);
       return requireBinary(browser);
     }
     const exe = path.join(
@@ -769,14 +1012,14 @@ export async function installBrowser(browser, platform = process.platform) {
         `  ⚠ download failed (${err.message}); reusing previously downloaded ` +
           `installer ${path.basename(fallback)} (advisory leg — gate will warn)`
       );
-      execSync(`"${fallback}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
+      runSilentInstaller(fallback, recipe.args);
       return requireBinary(browser);
     }
     if (resolved.sha256Url) {
       console.log(`  verifying vendor sha256 for ${browser} ${resolved.version}`);
       await verifySha256(exe, resolved.sha256Url);
     }
-    execSync(`"${exe}" ${recipe.args.join(' ')}`, {stdio: 'inherit'});
+    runSilentInstaller(exe, recipe.args);
     const binary = resolveBinary(browser);
     if (!binary) {
       throw new Error(`${browser} installer ran, but no binary found in known install dirs`);

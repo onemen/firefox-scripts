@@ -20,9 +20,18 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const downloadsUrl = pathToFileURL(
   path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'downloads.mjs')
 ).href;
-const {DOWNLOADS, downloadDir, downloadTo, parseFirefoxVersion, resolveDownloadUrl} = await import(
-  downloadsUrl
-);
+const {
+  DOWNLOADS,
+  downloadDir,
+  downloadTo,
+  isFileLockError,
+  nsisPortableArgs,
+  parseFirefoxVersion,
+  portableBinaryPath,
+  resolveDownloadUrl,
+  runInstallerWithRetry,
+  runNsisInstallerWithRetry,
+} = await import(downloadsUrl);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
 
@@ -65,6 +74,42 @@ test('dmg app names match the browser discovery registry (space-safe volumes)', 
     // BROWSERS[browser].mac[0] under /Applications — the two must agree.
     assert.equal(recipe.app, BROWSERS[browser].mac[0]);
   }
+});
+
+// ── Fork portable recipes (#38 pre-1.0) ────────────────────────────────
+// The three NSIS fork installers (zen, floorp, waterfox) declare portable
+// capability; the portable path routes through installForkPortable, which
+// needs the exe name and the NSIS /D= argv.
+
+test('fork portable: NSIS win recipes declare portable + exe name', () => {
+  for (const [browser, exe] of [
+    ['zen', 'zen.exe'],
+    ['floorp', 'floorp.exe'],
+    ['waterfox', 'waterfox.exe'],
+  ]) {
+    const recipe = DOWNLOADS[browser]?.install?.win;
+    assert.ok(recipe, `${browser} needs a win recipe`);
+    assert.equal(recipe.portable, true, `${browser} must declare portable: true`);
+    assert.equal(recipe.portableExe, exe, `${browser} portableExe`);
+    assert.ok(recipe.args?.includes('/S'), `${browser} keeps its registered /S args`);
+    assert.ok(recipe.url || recipe.resolver, `${browser} must have url or resolver`);
+  }
+});
+
+test('nsisPortableArgs: /S then the final /D= (NSIS consumes the rest)', () => {
+  assert.deepEqual(nsisPortableArgs('C:\\temp\\fxs'), ['/S', '/D=C:\\temp\\fxs']);
+  assert.equal(nsisPortableArgs('C:/x y')[1], '/D=C:/x y', 'spaces ride inside /D=');
+});
+
+test('resolveDownloadUrl: fork win URLs stay the registered installers (cache-key parity)', async () => {
+  // The fork-portable legs cache the download under the same URL the
+  // registered install uses — the portable path must not change --url output.
+  assert.match(await resolveDownloadUrl('zen', 'win32'), /zen\.installer\.exe$/);
+  assert.match(
+    await resolveDownloadUrl('floorp', 'win32'),
+    /floorp-windows-x86_64\.installer\.exe$/
+  );
+  assert.match(await resolveDownloadUrl('waterfox', 'win32'), /Waterfox(Setup|%20Setup)/);
 });
 
 test('resolveDownloadUrl: accepts short platform names (win/mac)', async () => {
@@ -409,4 +454,258 @@ test('parseFirefoxVersion: unbranded dotted-numeric fallback, null on garbage', 
   assert.equal(parseFirefoxVersion('Mozilla Firefox'), null);
   assert.equal(parseFirefoxVersion(''), null);
   assert.equal(parseFirefoxVersion('cannot open display'), null);
+});
+
+// ── runInstallerWithRetry (AV file-lock race, floorp leg 2026-09-13) ──────
+
+// The registered/fallback install paths previously ran execSync directly, so
+// the AV race (floorp 2026-09-13, floorp registered leg 2026-09-14, nightly
+// registered leg 2026-09-14) could kill the leg before any test ran. Every
+// silent-install invocation now goes through runSilentInstaller →
+// runInstallerWithRetry. This test pins the REAL error shape the failing
+// runs produced — execSync with stdio:'inherit' surfaces the scanner's text
+// only in err.message (err.stderr is null; run 34814023362 job 103881027235
+// printed the signature to the log then threw a message-only error) — and
+// proves the retry consumes it.
+test('runInstallerWithRetry: message-only lock error (execSync inherit shape) is retried', () => {
+  const inheritShape = new Error(
+    'Command failed: "D:' +
+      String.fromCharCode(92) +
+      'a' +
+      String.fromCharCode(92) +
+      '_temp' +
+      String.fromCharCode(92) +
+      'browser-dl' +
+      String.fromCharCode(92) +
+      'floorp-setup.exe" /S' +
+      String.fromCharCode(10) +
+      'The process cannot access the file because it is being used by another process.'
+  );
+  inheritShape.stderr = null;
+  const runs = [inheritShape, 'ok'];
+  const sleeps = [];
+  runInstallerWithRetry('cmd', {
+    platform: 'win32',
+    run: () => {
+      const r = runs.shift();
+      if (r !== 'ok') throw r;
+    },
+    sleep: ms => sleeps.push(ms),
+  });
+  assert.equal(runs.length, 0, 'the message-only lock error was consumed');
+  assert.equal(sleeps.length, 1, 'slept once before the retry');
+});
+
+function lockedErr(
+  message = 'The process cannot access the file because it is being used by another process.'
+) {
+  return Object.assign(
+    new Error(`Command failed
+${message}`),
+    {stderr: message}
+  );
+}
+
+test('runInstallerWithRetry: retries the AV file-lock error then succeeds', () => {
+  const runs = [lockedErr(), lockedErr(), 'ok'];
+  const sleeps = [];
+  runInstallerWithRetry('cmd', {
+    platform: 'win32', // the lock signature is Windows-only; pin it on any OS
+    run: () => {
+      const r = runs.shift();
+      if (r !== 'ok') throw r;
+    },
+    sleep: ms => sleeps.push(ms),
+  });
+  assert.equal(runs.length, 0, 'all lock errors consumed');
+  assert.equal(sleeps.length, 2, 'slept between retries');
+});
+
+test('runInstallerWithRetry: rethrows a non-lock failure immediately (no retry)', () => {
+  const boom = Object.assign(new Error('NSIS exited 1627'), {stderr: 'exited with code 1627'});
+  let runs = 0;
+  assert.throws(
+    () =>
+      runInstallerWithRetry('cmd', {
+        platform: 'win32',
+        run: () => {
+          runs += 1;
+          throw boom;
+        },
+        sleep: () => assert.fail('must not sleep'),
+      }),
+    /1627/
+  );
+  assert.equal(runs, 1);
+});
+
+test('runInstallerWithRetry: gives up after the last attempt (persistent lock)', () => {
+  let runs = 0;
+  assert.throws(
+    () =>
+      runInstallerWithRetry('cmd', {
+        attempts: 3,
+        platform: 'win32',
+        run: () => {
+          runs += 1;
+          throw lockedErr();
+        },
+        sleep: () => {},
+      }),
+    /being used by another process/
+  );
+  assert.equal(runs, 3);
+});
+
+test('runInstallerWithRetry: success on the first try never sleeps', () => {
+  let runs = 0;
+  runInstallerWithRetry('cmd', {
+    run: () => {
+      runs += 1;
+    },
+    sleep: () => assert.fail('must not sleep'),
+  });
+  assert.equal(runs, 1);
+});
+test('isFileLockError: matches the AV signatures, only on Windows', () => {
+  assert.equal(isFileLockError(lockedErr(), {platform: 'win32'}), true);
+  assert.equal(isFileLockError(lockedErr('os error 32'), {platform: 'win32'}), true);
+  assert.equal(isFileLockError(lockedErr(), {platform: 'linux'}), false);
+  assert.equal(
+    isFileLockError(Object.assign(new Error('x'), {stderr: 'x'}), {platform: 'win32'}),
+    false
+  );
+  assert.equal(isFileLockError(null), false);
+});
+
+test('isFileLockError: spawnSync-shape EBUSY (libuv sharing violation) matches on Windows', () => {
+  // spawnSync failures surface as {error: Error with code EBUSY} — the same
+  // os error 32 sharing violation, different shape than execSync's stderr.
+  const err = Object.assign(new Error('spawn EBUSY'), {code: 'EBUSY'});
+  assert.equal(isFileLockError(err, {platform: 'win32'}), true);
+  assert.equal(isFileLockError(err, {platform: 'linux'}), false);
+  // A non-lock spawn error (e.g. ENOENT for a missing exe) must not match.
+  assert.equal(
+    isFileLockError(Object.assign(new Error('spawn ENOENT'), {code: 'ENOENT'}), {
+      platform: 'win32',
+    }),
+    false
+  );
+});
+
+test('runNsisInstallerWithRetry: retries spawnSync EBUSY then succeeds', () => {
+  const attempts = [];
+  const result = runNsisInstallerWithRetry('setup.exe', ['/S', '/D=C:\\x'], 'test installer', {
+    spawn: (exe, args) => {
+      attempts.push([exe, args]);
+      if (attempts.length < 3) {
+        return {error: Object.assign(new Error('spawn EBUSY'), {code: 'EBUSY'})};
+      }
+      return {status: 0};
+    },
+    sleep: () => {},
+  });
+  assert.equal(result.status, 0);
+  assert.equal(attempts.length, 3);
+  assert.deepEqual(attempts[0][1], ['/S', '/D=C:\\x'], 'args passed through verbatim');
+});
+
+test('runNsisInstallerWithRetry: rethrows a real installer failure (non-zero exit)', () => {
+  let attempts = 0;
+  assert.throws(
+    () =>
+      runNsisInstallerWithRetry('setup.exe', ['/S'], 'test installer', {
+        spawn: () => {
+          attempts += 1;
+          return {status: 1627};
+        },
+        sleep: () => assert.fail('must not sleep'),
+      }),
+    /exited with code 1627/
+  );
+  assert.equal(attempts, 1, 'non-lock failure must not be retried');
+});
+
+test('runNsisInstallerWithRetry: gives up after the last attempt (persistent EBUSY)', () => {
+  let attempts = 0;
+  assert.throws(
+    () =>
+      runNsisInstallerWithRetry('setup.exe', ['/S'], 'test installer', {
+        spawn: () => {
+          attempts += 1;
+          return {error: Object.assign(new Error('spawn EBUSY'), {code: 'EBUSY'})};
+        },
+        sleep: () => {},
+      }),
+    /EBUSY/
+  );
+  assert.equal(attempts, 4, 'default attempts = 4');
+});
+
+// ── portableBinaryPath (extracted-portable cache, A1) ───────────────────
+// The skip-if-cached check must target the launcher FILE. The Linux tarball's
+// top-level entry is a `firefox/` DIRECTORY — a path/basename collision that
+// existsSync-based checking cannot survive (ubuntu portable leg, 2026-09-13).
+
+test('portableBinaryPath: launcher file per platform (not the top-level dir)', () => {
+  assert.equal(portableBinaryPath('/p', 'linux'), path.join('/p', 'firefox', 'firefox'));
+  assert.equal(
+    portableBinaryPath('/p', 'darwin'),
+    path.join('/p', 'Firefox.app', 'Contents', 'MacOS', 'firefox')
+  );
+  assert.equal(portableBinaryPath('/p', 'win32'), path.join('/p', 'firefox.exe'));
+});
+
+test('fork portable: the fork-portable matrix browsers all declare portable capability', () => {
+  // The fork-portable E2E job's matrix (e2e.yml) drives these through
+  // installForkPortable; a recipe losing its portable declaration would make
+  // the leg install registered and fail the workflow's layout assert.
+  for (const browser of ['zen', 'floorp', 'waterfox']) {
+    const recipe = DOWNLOADS[browser]?.install?.win;
+    assert.equal(recipe?.portable, true, `${browser} must keep portable: true`);
+    assert.ok(recipe?.portableExe, `${browser} must keep portableExe`);
+  }
+  // LibreWolf has NO portable recipe — the fork-portable job excludes it
+  // (its NSIS setup is not verified to honor /D= into a fresh directory).
+  assert.notEqual(DOWNLOADS.librewolf?.install?.win?.portable, true);
+});
+
+test('fork portable skip check: only a regular launcher file counts as cached', () => {
+  // installForkPortable's cache predicate mirrors installPortableFirefox's:
+  // statSync().isFile() at dest/portableExe. A directory at the launcher
+  // path (broken cache layout) must not count.
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-fork-portable-'));
+  try {
+    const {portableExe} = DOWNLOADS.zen.install.win;
+    fs.mkdirSync(path.join(dest, portableExe));
+    const stat = fs.statSync(path.join(dest, portableExe), {throwIfNoEntry: false});
+    assert.notEqual(stat?.isFile(), true, 'directory must not count as cached');
+    fs.rmdirSync(path.join(dest, portableExe));
+    fs.writeFileSync(path.join(dest, portableExe), 'MZ');
+    const stat2 = fs.statSync(path.join(dest, portableExe), {throwIfNoEntry: false});
+    assert.equal(stat2?.isFile(), true, 'launcher file counts as cached');
+  } finally {
+    fs.rmSync(dest, {recursive: true, force: true});
+  }
+});
+
+test('installPortableFirefox skip check: only a regular launcher file counts', async () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-portable-'));
+  try {
+    // Simulate the colliding Linux cache layout: firefox/ is a directory.
+    // The predicate installPortableFirefox uses is statSync().isFile() —
+    // assert it rejects the directory and accepts the launcher file.
+    fs.mkdirSync(path.join(dest, 'firefox'));
+    const stat = fs.statSync(portableBinaryPath(dest, 'linux'), {throwIfNoEntry: false});
+    assert.notEqual(
+      stat?.isFile(),
+      true,
+      'directory-only layout (the old buggy path) must not count as cached'
+    );
+    fs.writeFileSync(path.join(dest, 'firefox', 'firefox'), '#!/bin/sh\n');
+    const stat2 = fs.statSync(portableBinaryPath(dest, 'linux'), {throwIfNoEntry: false});
+    assert.equal(stat2?.isFile(), true, 'launcher file counts as cached');
+  } finally {
+    fs.rmSync(dest, {recursive: true, force: true});
+  }
 });

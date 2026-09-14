@@ -46,6 +46,52 @@ export function localConfigOverrides(chromeUtils, snapshotDir) {
   };
 }
 
+// ── Windows startup hygiene (issue #191) ─────────────────────────────────
+
+/**
+ * Prefs that keep a throwaway test browser out of the user's Windows Startup
+ * apps. The HKCU Run value ("Mozilla-Firefox-<installHash>" = '"<exe>"
+ * -os-autostart') is written by Firefox's launch-on-login AUTO-ENABLE, which
+ * fires on the first run of a fresh profile of an official build — exactly what
+ * every E2E leg launches (fresh %TEMP% install dir → a new Run name each time,
+ * hence the accumulating debris on the dev machine; persistent-profile launches
+ * never trigger it). Gates, best first: defaultEnabled — the Nimbus pref
+ * DefaultLaunchOnLogin consults; a user pref here overrides any experiment
+ * value alreadyApplied — skips the auto-enable entirely (also skips its Remote
+ * Settings wait) winRegisterApplicationRestart — the Restart Manager
+ * registration (invisible on the Startup page); off as a belt
+ */
+export const STARTUP_HYGIENE_PREFS = {
+  'browser.startup.windowsLaunchOnLogin.defaultEnabled': false,
+  'browser.startup.windowsLaunchOnLogin.alreadyApplied': true,
+  'toolkit.winRegisterApplicationRestart': false,
+};
+
+const STARTUP_HYGIENE_MARKER = 'fxs-e2e startup hygiene';
+
+/**
+ * Write STARTUP_HYGIENE_PREFS into a profile's user.js — for launches that
+ * bypass puppeteer (detached `--profile` spawns on fresh profile dirs, e.g. the
+ * installer E2E's restart-scope bystander/target). Firefox applies user.js on
+ * startup, before the first-run auto-enable could fire. Idempotent.
+ *
+ * @param {string} profileDir fresh profile directory (created if missing)
+ */
+export function seedStartupHygienePrefs(profileDir) {
+  fs.mkdirSync(profileDir, {recursive: true});
+  const userJs = path.join(profileDir, 'user.js');
+  const existing = fs.existsSync(userJs) ? fs.readFileSync(userJs, 'utf-8') : '';
+  if (existing.includes(STARTUP_HYGIENE_MARKER)) return;
+  const lines = [
+    `// ${STARTUP_HYGIENE_MARKER} (issue #191) — never register Windows startup entries`,
+    ...Object.entries(STARTUP_HYGIENE_PREFS).map(
+      ([name, value]) => `user_pref(${JSON.stringify(name)}, ${JSON.stringify(value)});`
+    ),
+    '',
+  ];
+  fs.appendFileSync(userJs, lines.join('\n'));
+}
+
 // ── Assertion counters ────────────────────────────────────────────────────
 
 /** @returns {{passed: number; failed: number}} */
@@ -99,9 +145,17 @@ export async function launchFirefox(
     // (createProfile -> syncPreferences), so any prefs the caller needs must
     // be injected through this option — a caller-written user.js would be
     // silently replaced and never reach Firefox.
-    extraPrefsFirefox,
+    extraPrefsFirefox: {
+      // Never let a throwaway test install appear in the user's Windows
+      // Startup apps — see STARTUP_HYGIENE_PREFS. Callers can still override
+      // for a test that needs the real behavior.
+      ...STARTUP_HYGIENE_PREFS,
+      ...extraPrefsFirefox,
+    },
     args: ['-remote-allow-system-access', '--new-instance'],
   });
+  // closeBrowser's startup sweep keys off this (puppeteer's Browser keeps no
+  // executable path of its own).
 }
 
 /**

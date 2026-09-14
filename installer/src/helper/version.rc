@@ -1,8 +1,11 @@
+// The repo ships unversioned date-stamped artifacts (ADR 0019); the helper's
+// identity rides on the installer, which embeds it and verifies it by hash.
+// FileVersion carries the build date as 1,0,<YYYY>,<MMDD>.
 #include <windows.h>
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     1,0,2026,913
+PRODUCTVERSION  1,0,2026,913
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS_NT_WINDOWS32
@@ -15,12 +18,12 @@ BEGIN
             VALUE "Comments",         "Tab Mix Plus\0"
             VALUE "CompanyName",      "Tab Mix Plus\0"
             VALUE "FileDescription",  "Admin Copy Helper\0"
-            VALUE "FileVersion",      "1.0.0.0\0"
+            VALUE "FileVersion",      "2026-09-13\0"
             VALUE "InternalName",     "helper_win.exe\0"
             VALUE "LegalCopyright",   "Copyright 2026 Tab Mix Plus\0"
             VALUE "OriginalFilename", "helper_win.exe\0"
             VALUE "ProductName",      "Admin Copy\0"
-            VALUE "ProductVersion",   "1.0.0.0\0"
+            VALUE "ProductVersion",   "2026-09-13\0"
         END
     END
     BLOCK "VarFileInfo"

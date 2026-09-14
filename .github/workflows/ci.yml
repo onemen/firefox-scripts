@@ -22,6 +22,11 @@ jobs:
   changes:
     name: detect changed paths
     runs-on: ubuntu-latest
+    # Job-level timeouts (belt-and-suspenders, all jobs here): GitHub's
+    # default is 360 min — a wedged job would hang until then. The values
+    # are multiples of the slowest observed green run per group (see
+    # docs/ci-inventory.md → Job timeouts).
+    timeout-minutes: 5
     outputs:
       publish: ${{ steps.filter.outputs.publish }}
     steps:
@@ -51,6 +56,7 @@ jobs:
   checks:
     name: lint + format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: $/.github/actions/setup-repo
       - run: pnpm lint
@@ -75,6 +81,9 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # Publish gate with the full native build: slowest observed 129 s
+    # (windows-latest, MSYS2 gcc); a cold MSYS2 toolchain install adds ~3 min.
+    timeout-minutes: 20
     steps:
       - name: Skip publish gate — no publish-relevant changes
         if: needs.changes.outputs.publish != 'true'
@@ -90,6 +99,12 @@ jobs:
           update: true
           install: >-
             mingw-w64-ucrt-x86_64-gcc make
+
+      # The runner image's third-party apt sources can churn out-of-band and
+      # break `apt-get update` for everyone (2026-09-09 Google Chrome index).
+      - name: Harden apt sources
+        if: runner.os == 'Linux' && needs.changes.outputs.publish == 'true'
+        uses: ./.github/actions/harden-apt
 
       # ARM64 cross-compiler for the aarch64 Linux binaries (the 'linux'
       # platform implies the aarch64 twin in upload.mjs).
@@ -116,6 +131,9 @@ jobs:
 
       # JS vs C hash parity against the dev snapshot built above (test_hash
       # accepts both prod- and dev- snapshots, so no second build is needed).
+      # test:hash also runs test_self_update.mjs — the date-based self-update
+      # contract (ADR 0019 amendment) needs the built binary's
+      # --test-self-update mode.
       - name: Hash parity — JS vs C installer
         if: runner.os == 'Windows' && needs.changes.outputs.publish == 'true'
         shell: bash
@@ -138,6 +156,7 @@ jobs:
   ci-gate:
     name: CI gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: always()
     needs: [changes, checks, build]
     steps:

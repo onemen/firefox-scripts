@@ -78,7 +78,10 @@
         </div>
       </header>
 
-      <!-- Self-Update Banner (after header in DOM order per v005) -->
+      <!-- Self-Update Banner (after header in DOM order per v005).
+           Date-based (ADR 0019 amendment): shows the newest published
+           installer build date vs this binary's baked build date, plus a
+           plain-language instruction line. -->
       <div id="update-banner" class="update-banner">
         <div class="update-banner-content">
           <svg
@@ -96,10 +99,16 @@
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
           <span
-            >A new installer version is available:
-            <strong id="new-version-tag">v0.0.0</strong></span
+            >A new installer build is available: <strong id="new-version-tag">2026-01-01</strong>
+            <span class="update-banner-current"
+              >(this installer: <span id="current-date-tag"></span>)</span
+            ></span
           >
         </div>
+        <p class="update-banner-hint">
+          Download the new installer, then close this window and run the downloaded file — it
+          replaces the old one.
+        </p>
         <button class="btn-update" id="btn-self-update">
           <svg
             width="14"

@@ -1,0 +1,42 @@
+# .github/actions/harden-apt/action.yml — Drop third-party apt sources that
+# GitHub's runner image preinstalls but our jobs never use, BEFORE any
+# `apt-get update`.
+#
+# Why: these repos are maintained out-of-band and their indexes can churn
+# under us — on 2026-09-09 the preinstalled dl.google.com Chrome repo
+# republished its index and its CDN served Packages.gz bytes that no longer
+# matched its own Release file, so `apt-get update` failed with a hash-sum
+# mismatch and every ubuntu leg on every open PR went red at once (none of
+# our jobs install anything from that repo). Removing the unused source
+# makes `apt-get update` depend only on Ubuntu's own archive.
+#
+# No-op outside Linux runners (and when the sources are already gone), so
+# jobs can call it unconditionally.
+
+name: Harden apt sources
+description: >-
+  Remove unused third-party apt sources (Google Chrome et al.) so apt-get update cannot fail on
+  their out-of-band index churn
+
+runs:
+  using: composite
+  steps:
+    - name: Remove unused third-party apt sources
+      shell: bash
+      run: |
+        if [ "$(uname -s)" != "Linux" ]; then
+          echo "Not a Linux runner — nothing to do."
+          exit 0
+        fi
+
+        removed=0
+        for f in /etc/apt/sources.list.d/*[Gg]oogle* /etc/apt/sources.list.d/*chrome*; do
+          if [ -f "$f" ]; then
+            sudo rm -f "$f"
+            echo "Removed unused third-party apt source: $f"
+            removed=1
+          fi
+        done
+        if [ "$removed" = 0 ]; then
+          echo "No Google/Chrome apt sources found — nothing to remove."
+        fi

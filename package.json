@@ -21,6 +21,7 @@
     "test:e2e:installer": "node test/e2e/shared/run.mjs --installer",
     "test:e2e:updater": "node test/e2e/shared/run.mjs --updater",
     "upload": "node --env-file-if-exists=.env tools/publish/upload.mjs",
+    "release": "node tools/publish/release.mjs",
     "upload:local": "node tools/publish/upload.mjs --local",
     "dev-clean": "node --env-file-if-exists=.env tools/publish/devClean.mjs",
     "review:batch": "node tools/ci/batch-review.mjs",
@@ -39,15 +40,15 @@
     "@stylistic/eslint-plugin": "5.10.0",
     "archiver": "8.0.0",
     "clang-format": "1.8.0",
-    "eslint": "10.9.1",
+    "eslint": "10.10.0",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-mozilla": "5.0.1",
     "eslint-plugin-security": "4.0.1",
-    "globals": "17.11.0",
+    "globals": "17.12.0",
     "markdownlint-cli2": "0.23.2",
     "minimatch": "10.2.6",
     "prettier": "3.9.6",
     "prettier-plugin-jsdoc": "1.8.1",
-    "puppeteer-core": "25.5.0"
+    "puppeteer-core": "25.10.0"
   }
 }

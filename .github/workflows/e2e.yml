@@ -76,6 +76,11 @@ jobs:
   changes:
     name: detect changed paths
     runs-on: ubuntu-latest
+    # Job-level timeouts (belt-and-suspenders, all jobs here): GitHub's
+    # default is 360 min — a wedged job would hang until then. The values
+    # are multiples of the slowest observed green run per group (see
+    # docs/ci-inventory.md → Job timeouts).
+    timeout-minutes: 5
     outputs:
       installer: ${{ steps.filter.outputs.installer }}
       # A FULL manual dispatch (browser input '' or 'all') means "re-validate
@@ -146,11 +151,15 @@ jobs:
       needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
       github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: $/.github/actions/setup-repo
 
       # 'linux' implies the aarch64 twin in upload.mjs — install its
       # cross-compiler first (also validates the cross-compile on every PR).
+      - name: Harden apt sources
+        uses: ./.github/actions/harden-apt
+
       - name: Install aarch64 cross toolchain
         run: |
           sudo apt-get update -qq
@@ -172,6 +181,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.installer == 'true'
     runs-on: ${{ matrix.os }}
+    # 15 min > the runner's own 10-min watchdog (installer-e2e.mjs), so on a
+    # wedge the script's orphan sweep + [watchdog] log always wins the race
+    # and CI never shows a bare VM kill. Slowest green run: 143 s.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -181,6 +194,10 @@ jobs:
       - uses: $/.github/actions/setup-repo
 
       # 'linux' implies the aarch64 twin in upload.mjs (Linux runners only).
+      - name: Harden apt sources
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/harden-apt
+
       - name: Install aarch64 cross toolchain
         if: runner.os == 'Linux'
         run: |
@@ -193,11 +210,52 @@ jobs:
       # The UI layer launches a real Firefox (even headless it needs a display
       # server on Linux runners), so install xvfb and run under it — same as
       # the updater job below.
+      - name: Harden apt sources
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
+
+      # The UI layer and the restart-scope leg (#180) launch a real Firefox.
+      # Hosted runners cannot be relied on to ship one, so install Firefox
+      # Release PORTABLY (runner temp — user-writable, unregistered) like the
+      # portable-firefox and updater jobs do; downloads.mjs exports
+      # FIREFOX_BINARY through $GITHUB_ENV.
+      - name: Resolve Firefox download URL
+        id: ffurl
+        shell: bash
+        run: |
+          URL=$(node test/e2e/shared/downloads.mjs firefox --url)
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          echo "key=firefox-dl-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
+      - name: Cache Firefox installer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.BROWSER_DL_DIR }}
+          key: ${{ steps.ffurl.outputs.key }}
+
+      - name: Set portable browser directory (Linux/macOS)
+        if: ${{ !startsWith(matrix.os, 'windows') }}
+        shell: bash
+        run: |
+          echo "PORTABLE_BROWSER_DIR=${{ runner.temp }}/firefox-portable" >> "$GITHUB_ENV"
+          mkdir -p "${{ runner.temp }}/firefox-portable"
+
+      - name: Set portable browser directory (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'firefox-portable'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Firefox Release (portable)
+        run: node test/e2e/shared/downloads.mjs firefox
 
       - name: Run installer E2E (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -215,6 +273,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +305,9 @@ jobs:
     needs: [changes, snapshot]
     if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
+    # Browser legs download their Firefox fresh each run (no cache): worst
+    # observed 293 s warm, ~8 min with a cold download — 20 min is ~2.5x.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -290,6 +352,10 @@ jobs:
       # from downloads.mjs's official recipe (apt's Snap wrapper breaks BiDi);
       # it downloads via the official channel redirect and exports
       # FIREFOX_BINARY through $GITHUB_ENV.
+      - name: Harden apt sources
+        if: matrix.os == 'ubuntu-latest'
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -368,6 +434,9 @@ jobs:
     needs: [changes, snapshot]
     if: needs.changes.outputs.updater == 'true'
     runs-on: ${{ matrix.os }}
+    # Slowest leg in the suite (373 s windows-latest warm; the extracted-dir
+    # cache keeps the portable install cheap — cold adds ~2 min).
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -395,13 +464,23 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      # The key hashes the version-embedded final CDN URL, not the stable
+      # `?product=firefox-latest` redirect: that redirect never changes, so a
+      # key derived from it would pin yesterday's extracted browser in the
+      # portable-dir cache forever — the skip check would happily keep testing
+      # a stale Firefox. One redirect hop lands on the CDN URL that embeds the
+      # version (155.0.1 today); read it with a HEAD and hash THAT. This key
+      # guards both caches below (installer + extracted dir); downloadTo's
+      # HEAD-size check additionally self-heals the installer cache.
       - name: Resolve Firefox Release download URL (Linux/macOS)
         id: portable-url-unix
         if: ${{ runner.os != 'Windows' }}
         shell: bash
         run: |
           URL=$(node test/e2e/shared/downloads.mjs firefox --url)
-          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          FINAL=$(curl -fsSI -o /dev/null -w '%{redirect_url}' "$URL")
+          test -n "$FINAL" || FINAL="$URL"
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$FINAL")
           echo "key=firefox-portable-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
           echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
 
@@ -411,7 +490,15 @@ jobs:
         shell: pwsh
         run: |
           $url = node test/e2e/shared/downloads.mjs firefox --url
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($url)
+          # One redirect hop lands on the version-embedded CDN URL (see the
+          # Linux/macOS step for why the redirect URL itself is not enough).
+          $req = [System.Net.HttpWebRequest]::Create($url)
+          $req.AllowAutoRedirect = $false
+          $req.Method = 'HEAD'
+          $resp = $req.GetResponse()
+          $final = $resp.Headers['Location']
+          if (-not $final) { $final = $url }
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($final)
           $sha = [System.Security.Cryptography.SHA256]::HashData($bytes)
           $key = ([Convert]::ToHexString($sha)).ToLowerInvariant().Substring(0, 16)
           "key=firefox-portable-${{ runner.os }}-$key" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -422,6 +509,19 @@ jobs:
         with:
           path: ${{ env.BROWSER_DL_DIR }}
           key: ${{ steps.portable-url-unix.outputs.key || steps.portable-url-windows.outputs.key }}
+
+      # The extracted portable dir is cached too (same FINAL-URL-derived key,
+      # so it invalidates with the browser version): the installer is the
+      # cheap part on a cache hit, the extract/install step is not —
+      # especially the Windows exe re-extract and the macOS dmg mount+copy.
+      # install-portable skips its work when the expected binary is already
+      # present.
+      - name: Cache extracted portable Firefox
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PORTABLE_BROWSER_DIR }}
+          key:
+            ${{ steps.portable-url-unix.outputs.key || steps.portable-url-windows.outputs.key }}-x
 
       - name: Install Firefox Release portably (Linux/macOS)
         if: ${{ runner.os != 'Windows' }}
@@ -499,6 +599,10 @@ jobs:
           esac
           chmod +x dist/installer/installer_* 2>/dev/null || true
 
+      - name: Harden apt sources
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/harden-apt
+
       - name: Install Linux test prerequisites
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -548,6 +652,7 @@ jobs:
     needs: [changes, snapshot]
     if: needs.changes.outputs.updater == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
@@ -566,6 +671,10 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::warning::snapd unavailable on this runner — snap E2E leg skipped (#55)"
           fi
+
+      - name: Harden apt sources
+        if: steps.snapd.outputs.available == 'true'
+        uses: ./.github/actions/harden-apt
 
       - name: Install Linux test prerequisites
         if: steps.snapd.outputs.available == 'true'
@@ -697,12 +806,14 @@ jobs:
 
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
   # Each browser resolves its installer through test/e2e/shared/browserResolver.mjs:
+  # ── Fork-browser matrix (advisory) ─────────────────────────────────────
   # LibreWolf (Codeberg bsys6 → packages API; librewolf.dev → dl.librewolf.net
   # → bsys6 asset → ci-downloads → cached installer), Floorp and Zen (GitHub
-  # stable latest asset URLs), Waterfox (its CDN versioned setup URL — the leg
-  # is ADVISORY during its soak period, ADR 0021). Firefox Dev Edition is NOT
-  # here — it is first-party Mozilla and runs as a required leg of the
-  # `updater` job above.
+  # stable latest asset URLs). Waterfox is NOT here anymore — it graduated to
+  # the required `updater-waterfox` job above (ADR 0025); a `browser=waterfox`
+  # dispatch still collapses the matrix to it for the BROWSER_PIN_VERSION
+  # escape (ADR 0021/0023). Firefox Dev Edition is NOT here — it is
+  # first-party Mozilla and runs as a required leg of the `updater` job above.
   browser-matrix:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest'
     # Same updater E2E test as the `updater` job, so it is gated on the same
@@ -713,15 +824,18 @@ jobs:
       needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
       github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
     runs-on: windows-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       # Manual escape: a `browser` input collapses the matrix to that one leg
       # (dynamic JSON matrix — the canonical fromJSON pattern). Empty input
       # (or any non-dispatch event, where `inputs` is empty) = the full matrix.
+      # waterfox stays selectable here for pinned single-browser escapes even
+      # though its steady-state leg is the required `updater-waterfox` job.
       matrix:
         browser:
           ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
-          inputs.browser) || '["librewolf", "floorp", "zen", "waterfox"]') }}
+          inputs.browser) || '["librewolf", "floorp", "zen"]') }}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
       # Manual escape: pin the resolver to the requested version (empty input
@@ -778,6 +892,204 @@ jobs:
           path: dist/updater-e2e-*.png
           if-no-files-found: ignore
 
+  # ── Fork-portable E2E (advisory, Windows; #38 pre-1.0) ────────────────
+  # The fork legs above install into Program Files (registered layout). This
+  # leg drives the SAME official NSIS installers into a custom directory
+  # (NSIS /D=) — the layout a substantial share of users run and the shape
+  # the installer/updater must detect without a registered install dir. The
+  # recipes (portable: true + portableExe) and the /D= mechanism landed in
+  # #194; this job wires the legs. Zen + Floorp + Waterfox: the three forks
+  # whose installers are VERIFIED to honor /D= into a fresh directory
+  # (LibreWolf's setup does not declare that capability, so its leg stays
+  # registered-only). ADVISORY like browser-matrix: a fork packaging change
+  # (e.g. a broken /D=) must not block a Firefox-only merge. Same
+  # URL-keyed download cache as browser-matrix, PLUS the extracted-dir cache
+  # (the portable Firefox pattern) so a warm run skips the silent install.
+  fork-portable:
+    name: 'fork portable E2E · ${{ matrix.browser }} · windows-latest'
+    needs: [changes, snapshot]
+    # A single-browser librewolf escape is excluded (no portable recipe → the
+    # leg would install registered and the layout assert would fail); its
+    # applicability entry below carries the same predicate. All other
+    # single-browser escapes collapse the matrix to that fork (waterfox's
+    # break-glass pin then exercises the portable path too).
+    if:
+      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
+      github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser !=
+      'librewolf'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      # Manual escape: a `browser` dispatch collapses the matrix to that one
+      # leg (empty/non-dispatch input = the full matrix).
+      matrix:
+        browser:
+          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
+          inputs.browser) || '["zen", "floorp", "waterfox"]') }}
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      BROWSER_PIN_VERSION: ${{ inputs.version }}
+
+    steps:
+      - uses: $/.github/actions/setup-repo
+
+      - name: Set portable browser directory
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'fork-portable'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Zen/Floorp resolve to STABLE latest/download URLs, so the URL hash
+      # alone cannot invalidate a cache when the browser releases. One HEAD
+      # hop lands on the vendor's version-bearing CDN/asset URL — hash THAT
+      # for the key (the exact pattern the portable Firefox leg uses for the
+      # same reason). downloadTo's HEAD-size check additionally self-heals the
+      # installer cache when the stable URL still serves a new file size.
+      - name: Resolve download URL
+        id: dlurl
+        shell: bash
+        run: |
+          URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
+          FINAL=$(curl -fsSI -o /dev/null -w '%{redirect_url}' "$URL")
+          test -n "$FINAL" || FINAL="$URL"
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$FINAL")
+          echo "key=browser-dl-${{ runner.os }}-${{ matrix.browser }}-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
+
+      - name: Cache ${{ matrix.browser }} installer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.BROWSER_DL_DIR }}
+          key: ${{ steps.dlurl.outputs.key }}
+          save-always: true
+
+      # Same FINAL-URL-derived key family as the portable Firefox leg
+      # (<key>-x): a version bump changes the redirect target, so a stale
+      # extracted dir can never be restored under the new release's key.
+      - name: Cache extracted portable ${{ matrix.browser }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PORTABLE_BROWSER_DIR }}
+          key: ${{ steps.dlurl.outputs.key }}-x
+
+      - name: Install ${{ matrix.browser }} portably
+        run: node test/e2e/shared/downloads.mjs ${{ matrix.browser }}
+
+      - name: Assert portable layout
+        shell: pwsh
+        run: |
+          if (-not $env:FIREFOX_BINARY.StartsWith($env:PORTABLE_BROWSER_DIR, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "${{ matrix.browser }} binary is not inside portable directory: $env:FIREFOX_BINARY"
+          }
+          if (-not (Test-Path -LiteralPath $env:FIREFOX_BINARY -PathType Leaf)) {
+            throw "${{ matrix.browser }} binary not found: $env:FIREFOX_BINARY"
+          }
+          Write-Host "Portable ${{ matrix.browser }}: $env:FIREFOX_BINARY"
+
+      - name: Download dev snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-snapshot
+          path: dist/
+
+      - name: Run updater E2E
+        run: node test/e2e/updater/updater-e2e.mjs
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-fork-portable-${{ matrix.browser }}
+          path: dist/updater-e2e-*.png
+          if-no-files-found: ignore
+
+  # ── Waterfox hard gate (ADR 0025, amends ADR 0021) ────────────────────────
+  # Waterfox is ≈40% of the user base; after a 4-green-run soak (ADR 0021's
+  # flip criterion) its updater E2E leg is REQUIRED, not advisory. Windows-only
+  # because its download recipe is the Windows NSIS installer. Kept OUT of the
+  # `updater` matrix so one browser's recipe cannot fail the firefox/firefox-dev
+  # /nightly legs wholesale — this job carries its own retry/mirror chain.
+  # Version artifact: uploaded like the `updater` legs so record-validation
+  # records the exact waterfox build the leg validated (single-OS set).
+  updater-waterfox:
+    name: 'updater E2E · waterfox · windows-latest'
+    needs: [changes, snapshot]
+    # `browser=waterfox` dispatches run this required leg (ADR 0025 break-glass
+    # pin); other partial dispatches don't apply it — the gate's applicability
+    # entry and the check-gate-coverage contract carry the same predicate.
+    if:
+      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
+      github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      # Manual escape (ADR 0021/0023): pin the resolver to the requested
+      # version when a dispatch pins one (empty on push/PR events).
+      BROWSER_PIN_VERSION: ${{ inputs.version }}
+
+    steps:
+      - uses: $/.github/actions/setup-repo
+
+      # Same URL-keyed installer cache as the fork legs — the CDN setup URL
+      # embeds the version, so each release gets its own cache entry.
+      - name: Resolve download URL
+        id: dlurl
+        shell: bash
+        run: |
+          URL=$(node test/e2e/shared/downloads.mjs waterfox --url)
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          echo "key=browser-dl-${{ runner.os }}-waterfox-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
+      - name: Cache waterfox installer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.BROWSER_DL_DIR }}
+          key: ${{ steps.dlurl.outputs.key }}
+          save-always: true
+
+      - name: Install waterfox
+        run: node test/e2e/shared/downloads.mjs waterfox
+
+      - name: Download dev snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-snapshot
+          path: dist/
+
+      - name: Run updater E2E
+        run: node test/e2e/updater/updater-e2e.mjs
+
+      # Same artifact contract as the `updater` matrix legs: the exact tested
+      # version travels to record-validation as a file (GitHub limitation
+      # #17245). Consumed with a waterfox-specific single-OS expected set.
+      - name: Capture installed waterfox version
+        id: instver
+        shell: bash
+        run: |
+          VER="$(node test/e2e/shared/downloads.mjs waterfox --installed-version)"
+          echo "Tested waterfox $VER on windows-latest"
+          printf '{"browser":"%s","os":"%s","version":"%s"}\n' \
+            "waterfox" "windows-latest" "$VER" \
+            > "e2e-version-waterfox-windows-latest.json"
+
+      - name: Upload waterfox version artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-version-waterfox-windows-latest
+          path: e2e-version-waterfox-windows-latest.json
+          if-no-files-found: error
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-waterfox
+          path: dist/updater-e2e-*.png
+          if-no-files-found: ignore
+
   # ── E2E gate ─────────────────────────────────────────────────────────────
   # Single branch-protection check. Every upstream job is a hard gate, so a
   # green aggregate check cannot hide a failed, cancelled, or skipped matrix
@@ -787,6 +1099,7 @@ jobs:
   e2e-gate:
     name: E2E gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: always()
     needs:
       [
@@ -795,9 +1108,11 @@ jobs:
         installer,
         helper,
         updater,
+        updater-waterfox,
         portable-firefox,
         snap-firefox,
         browser-matrix,
+        fork-portable,
       ]
     steps:
       # Local action — a fresh runner needs the repo checked out first.
@@ -819,9 +1134,11 @@ jobs:
             installer:${{ needs.changes.outputs.installer == 'true' }}
             helper:${{ needs.changes.outputs.updater == 'true' }}
             updater:${{ needs.changes.outputs.updater == 'true' }}
+            updater-waterfox:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
             snap-firefox:${{ needs.changes.outputs.updater == 'true' }}
             browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
+            fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser != 'librewolf') }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
           # verify.sh splits the value on whitespace, newlines included.
@@ -830,12 +1147,16 @@ jobs:
             installer:${{ needs.installer.result }}
             helper:${{ needs.helper.result }}
             updater:${{ needs.updater.result }}
+            updater-waterfox:${{ needs.updater-waterfox.result }}
             portable-firefox:${{ needs.portable-firefox.result }}
             snap-firefox:${{ needs.snap-firefox.result }}
             browser-matrix:${{ needs.browser-matrix.result }}
-          required: snapshot installer helper updater portable-firefox
-          advisory: snap-firefox browser-matrix
-          skip-guard: snapshot installer helper updater portable-firefox snap-firefox browser-matrix
+            fork-portable:${{ needs.fork-portable.result }}
+          required: snapshot installer helper updater updater-waterfox portable-firefox
+          advisory: snap-firefox browser-matrix fork-portable
+          skip-guard:
+            snapshot installer helper updater updater-waterfox portable-firefox snap-firefox
+            browser-matrix fork-portable
 
   # ── Record validated browser versions (#4) ────────────────────────────────
   # After the updater matrix legs (firefox/firefox-dev/nightly × 3 OSes) ran
@@ -876,6 +1197,7 @@ jobs:
       github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' &&
       inputs.browser != '' && inputs.browser != 'all')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Only this job touches issues (meta-issue comment). Job-level permissions
     # REPLACE the workflow-level block, so contents: read (checkout, scripts)
     # must be listed here as well — not just issues: write.
@@ -927,8 +1249,9 @@ jobs:
     # (GitHub cancels pending needs-jobs), leaving the installer for the retry.
     if: >-
       always() && github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser
-      != 'all' && needs.e2e-gate.result != 'skipped'
+      != 'all' &&      needs.e2e-gate.result != 'skipped'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write # delete the release asset + release + tag
     steps:

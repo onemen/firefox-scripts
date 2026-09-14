@@ -23,12 +23,17 @@ communicates freshness without pretending every package changed.
   `installer_linux`. `updater-ui.zip` and `helper_<os>` are gh-pages-branch artifacts — never
   release assets.
 - Releases are tagged **per component + date**: `scripts-<YYYY-MM-DD>` (the zips) and
-  `installer-<YYYY-MM-DD>` (installer + helper binaries). A component release is created only when
-  that component changed.
+  `installer-<YYYY-MM-DD>` (installer binaries; helpers are gh-pages-only — they never appear on a
+  release page, and a helper-only rebuild creates no tag). A component release is created only when
+  that component changed. Component releases are **full releases** (not prereleases); after each
+  publish the Latest badge is re-pinned onto `latest` with `make_latest=true` on Update-a-release —
+  GitHub renders the badge-holding release as the page's hero card, so the page reads: latest hero
+  first, frozen date tags below (amended 2026-09-12, Latest Scripts scheme: the earlier
+  `prerelease=true` badge-guard and the `make_latest=false` wording predate the verified
+  availability of `make_latest` on Update-a-release).
 - `latest` (existing moving tag) always carries the **complete release asset set** — both package
-  zips + the installers — and stays GitHub's "Latest"; component releases are created with
-  `make_latest=false`. README, docs and the updater point only at `latest` — never at versioned
-  URLs.
+  zips + the installers — and stays GitHub's "Latest". README, docs and the updater point only at
+  `latest` — never at versioned URLs.
 
 ## Consequences
 
@@ -39,3 +44,26 @@ cost: publishing stamps two extra tags per release — the pipeline work belongs
 [#33](https://github.com/onemen/firefox-scripts/issues/33) under the v1.0 gate (the `latest`-tag
 move already ships, P0-1/#40). Revisit-if: users need semantic version comparisons — only then add
 semver aliases on top, never rename artifacts.
+
+## Amendment 2026-09-13 — date-based installer self-update + Pages installer mirror
+
+The installer's original self-update compared a hardcoded `VERSION` against the `latest` release's
+`tag_name` — a comparison that can never converge under this ADR (`latest` is a permanently-named
+moving tag), so the mechanism was dead on arrival once this scheme shipped. The installer's own
+update detection is therefore defined here, aligned with the same scheme:
+
+- **Detection is date-based, not version-based.** The binaries bake `BUILD_DATE` (YYYY-MM-DD) from
+  `config/installer.conf` at generation time; the installer-<date> release body carries a managed
+  JSON block (`{"installerDate": "YYYY-MM-DD", "download": {"<asset>": "<url>"}}`) written by the
+  publish automation. The installer compares the two dates (lexicographic = chronological for ISO
+  dates); the release tag itself is never compared.
+- **The installer tab ingests the newest installer-<date> release body** (via the `/releases`
+  listing, so a fresh installer publish is never masked by a scripts-only republish of `latest`). A
+  body without the managed block, or a local/dev test build, means no update offer — silent.
+- **Installers are also gh-pages artifacts** (prod publishes mirror them to the Pages branch): the
+  release asset remains the user-facing download, but the banner's fetch must go to a CORS-enabled
+  host, which release-asset CDNs are not. This supersedes the "installers are release-only" reading
+  above; helpers remain Pages-only and never release assets.
+- The former `VERSION=1.0.0` conf key and version-based comparison are removed; the Windows
+  VERSIONINFO FileVersion carries the build date. The "no update signal when only the installer
+  changed" requirement is preserved: zips and installers hash/date independently.

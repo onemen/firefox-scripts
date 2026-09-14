@@ -13,7 +13,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(
   path.join(REPO_ROOT, 'tools', 'ci', 'record-validated-versions.mjs')
 ).href;
-const {collectLegVersions, planRollingComment, UPDATER_LEG_OSES, VALIDATION_MARKER} = await import(
+const {collectLegVersions, planRollingComment, BROWSER_LEG_OSES, VALIDATION_MARKER} = await import(
   scriptUrl
 );
 const watchdogUrl = pathToFileURL(
@@ -30,7 +30,7 @@ function writeLeg(dir, browser, os, version) {
 /** A temp dir containing a full agreeing leg set for every validated browser. */
 function fullLegSet(dir, {versionOf = () => '155.0.1'} = {}) {
   for (const browser of VALIDATED_BROWSERS) {
-    for (const os of UPDATER_LEG_OSES) {
+    for (const os of BROWSER_LEG_OSES[browser]) {
       writeLeg(dir, browser, os, versionOf(browser));
     }
   }
@@ -39,12 +39,31 @@ function fullLegSet(dir, {versionOf = () => '155.0.1'} = {}) {
 test('collectLegVersions: agreeing legs across all OSes yield the record', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'legs-ok-'));
   try {
-    fullLegSet(tmp, {versionOf: b => (b === 'firefox' ? '155.0.1' : '156.0b3')});
+    fullLegSet(tmp, {
+      versionOf: b =>
+        b === 'firefox' ? '155.0.1'
+        : b === 'waterfox' ? '6.7.2'
+        : '156.0b3',
+    });
     const out = collectLegVersions(tmp);
     assert.deepEqual(out, {
       'firefox': {version: '155.0.1'},
       'firefox-dev': {version: '156.0b3'},
+      'waterfox': {version: '6.7.2'},
     });
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectLegVersions: a missing waterfox windows leg throws (single-OS validated browser)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'legs-wfx-'));
+  try {
+    // Firefox/firefox-dev legs complete, but the required waterfox leg never
+    // uploaded its artifact — the record must not be written with a hole.
+    fullLegSet(tmp);
+    fs.rmSync(path.join(tmp, 'e2e-version-waterfox-windows-latest.json'));
+    assert.throws(() => collectLegVersions(tmp), /waterfox: missing version artifacts/);
   } finally {
     fs.rmSync(tmp, {recursive: true, force: true});
   }

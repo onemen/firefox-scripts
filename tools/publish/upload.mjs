@@ -11,10 +11,18 @@
 //
 // Usage:
 //   pnpm upload -- --mode=prod            # check hashes, build changed, upload to GitHub
-//   pnpm upload -- --mode=dev             # same, but ALWAYS rebuild + upload
+//   pnpm upload -- --mode=dev             # same, but ALWAYS rebuild + upload, branch-only
 //   pnpm upload:local -- --mode=prod      # offline snapshot: dist/prod-<branch>-<hash>/
 //
 // Flags:
+//   --mode=prod|dev    REQUIRED. prod = latest release + gh-pages (main only,
+//                      CI-only per ADR 0026); dev = disposable dev-build-<id> branch.
+//   --tag              (dev only, ADR 0026) create the RC-style prerelease page
+//                      for this dev build — the only release-creating path; a
+//                      dev publish without it is branch-only.
+//   --note="<label>"   (dev only) label the build: the slug joins the
+//                      dev-build id (--note="RC 1" → dev-build-<branch>-RC-1-<sha>);
+//                      with --tag it leads the page title + body.
 //   --local            write a complete snapshot to dist/<mode>-<branch>-<hash>/
 //                      instead of GitHub (offline; no token, no network).
 //                      Unchanged binaries are reused from the newest snapshot.
@@ -24,8 +32,9 @@
 //                      (prod only — dev always behaves this way).
 //   --ref=<branch|commit>  build a specific branch/commit in a temporary
 //                      detached worktree (your checkout is left untouched).
-//   --ci               build binaries for all platforms (default: current OS).
-//   --platform=win|linux|mac (repeatable)  explicit binary platform set.
+//   --platform=win|linux|mac (repeatable)  binary platform set (default:
+//                      current OS). CI passes one per job; a local run cannot
+//                      widen it past its own OS in prod (see the guard below).
 //   --no-tag           (prod only) skip moving the 'latest' release tag to the
 //                      uploaded commit (it is force-updated after every
 //                      non-idle prod upload).
@@ -42,7 +51,8 @@
 //   --quiet            suppress progress output (errors still print).
 //
 // Dev mode never touches the latest release/gh-pages — everything goes to the
-// dev-build-<id> branch.  The generated files (_config.h, resources.h,
+// dev-build-<id> branch, and no release is created without --tag.  The
+// generated files (_config.h, resources.h,
 // updater-config.sys.mjs) are untracked: the Makefile and createZip.mjs
 // regenerate them on demand with the current mode's URLs, and the package /
 // installer hashes cover their true sources (see buildPackages/buildBinaries).
@@ -79,17 +89,18 @@ import {
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
-import {REF_NAME, REF_SHA} from './publishMode.mjs';
+import {DEV_NOTE, DEV_TAG, REF_NAME, REF_SHA} from './publishMode.mjs';
 import {
   createOctokit,
   enforcePublishBranch,
   getGitHubToken,
   getLatestCommitDate,
+  zipEntryDate,
   loadSharedPatterns,
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
-import {syncComponentReleases} from './componentReleases.mjs';
+import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {
@@ -121,7 +132,9 @@ import {
   helperShaAssetName,
   installerAssetName,
 } from './platforms.mjs';
-import {runStagingGuard} from './stagingGuard.mjs';
+import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
+import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
+import {readInstallerConf, runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
 const FORCE = process.argv.includes('--force');
@@ -149,21 +162,21 @@ if (BUILD_ONLY && SKIP_BUILD) {
 }
 // Removed flags fail loudly: an old --dry-run / --packages-only /
 // --binaries-only invocation must never silently turn into a real upload.
-// The offline check is now `--local` (upload:local).
-const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only'].filter(f =>
+// The offline check is now `--local` (upload:local). --ci was removed with
+// the workflow-only prod guard: it only widened the platform set, so a local
+// `--ci` prod run would still have published a partial release.
+const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only', '--ci'].filter(f =>
   process.argv.includes(f)
 );
 if (REMOVED_FLAGS.length > 0) {
   throw new Error(
     `Unknown flag ${REMOVED_FLAGS.join(', ')} — the offline check is now ` +
-      `'upload:local' (node tools/publish/upload.mjs --local --mode=prod|dev).`
+      `'upload:local' (node tools/publish/upload.mjs --local --mode=prod|dev); ` +
+      `prod publishes are workflow-only (gh workflow run pages.yml -f mode=prod).`
   );
 }
 // --mode=dev always rebuilds + re-uploads; a hash match never suppresses it.
 const ALWAYS = PUBLISH_MODE === 'dev' || FORCE;
-// Explicit --ci only (never ambient env): local shells often export CI=true,
-// which must not widen a local run beyond the current OS.
-const IS_CI = process.argv.includes('--ci');
 const PLATFORMS = process.argv
   .filter(a => a.startsWith('--platform='))
   .map(a => a.slice('--platform='.length));
@@ -173,6 +186,12 @@ const PLATFORMS = process.argv
 // snapshots touch no GitHub target and are exempt). Escaping to a real staging
 // rehearsal requires the explicit FIREFOX_SCRIPTS_ALLOW_STAGING=1.
 runStagingGuard({mode: PUBLISH_MODE, local: LOCAL});
+// Prod is CI-only (ADR 0026): a local real prod run cannot produce the full
+// cross-OS binary set. --local snapshots proceed. Real prod uploads are
+// admitted only for workflow runs — the guard reads the pages.yml-set env
+// marker via isWorkflowRun(), so a local `--ci` (which only widens the
+// platform set, still yielding a partial release) cannot pass.
+runProdCiGuard({mode: PUBLISH_MODE, local: LOCAL, isCi: isWorkflowRun()});
 
 const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
@@ -219,8 +238,8 @@ const installerPath = p => path.join(INSTALLER_DIST, installerAssetName(p, ASSET
 const helperPath = p => path.join(INSTALLER_DIST, helperAssetName(p, ASSET_SUFFIX));
 
 /**
- * Expand the effective build platform set: explicit list > --ci > native.
- * 'linux' pulls in the aarch64 twin automatically (see platforms.mjs).
+ * Expand the effective build platform set: explicit list > native. 'linux'
+ * pulls in the aarch64 twin automatically (see platforms.mjs).
  */
 function resolvePlatforms() {
   let selected;
@@ -231,8 +250,6 @@ function resolvePlatforms() {
       }
     }
     selected = PLATFORMS;
-  } else if (IS_CI) {
-    selected = ['win', 'linux', 'mac'];
   } else {
     switch (process.platform) {
       case 'win32':
@@ -361,7 +378,10 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
         zipPath(name),
         zipPatterns,
         createZip.zipPrefixFor(name),
-        extraFiles.map(f => f.rel)
+        extraFiles.map(f => f.rel),
+        // Every file inside the zip carries the package's release date (the
+        // same manifest `date` users see) — not each source file's mtime.
+        zipEntryDate(date)
       );
       built.push(name);
     }
@@ -525,14 +545,26 @@ function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
  * never seen (e.g. a local-only HEAD), so target_commitish must be an
  * already-pushed ref.
  */
+// --tag (dev only, ADR 0026): announce this dev build with the RC-style
+// prerelease page (title `dev-build-<id>[ — <note>]`, body: note if given, a
+// test-build warning, and source-commit provenance — renderDevRelease in
+// devReleasePage.mjs). The only release-creating path: a dev publish without
+// --tag is branch-only, matching DEVELOPING.md's mode table. --note="<label>"
+// labels the build: the slug joins the dev-build id, and with --tag it leads
+// the page title + body. Both flags are rejected outside dev mode.
+
 async function getOrCreateDevRelease(octokit) {
-  const body = [
-    'Development build for testing',
-    '',
-    `Files are on the [${DEV_BRANCH}](https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${DEV_BRANCH}) branch.`,
-  ].join('\n');
+  const shortSha = execSync('git rev-parse --short HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'})
+    .trim()
+    .slice(0, 7);
+  const {title, body} = renderDevRelease({
+    note: DEV_NOTE,
+    shortSha,
+    date: new Date().toISOString().slice(0, 10),
+    devBranch: DEV_BRANCH,
+  });
   return getOrCreateRelease(octokit, DEV_BRANCH, {
-    name: DEV_BRANCH,
+    name: title,
     body,
     commitish: DEV_BRANCH,
     // A dev build is a pre-release: it is never the stable download.
@@ -577,7 +609,10 @@ async function publishToGitHub({
       pagesFiles[installerAssetName(p)] = fs.readFileSync(installerPath(p));
   } else {
     // Prod: zips go to the release AND Pages (the installer fetches zips from
-    // Pages); installers are release-only; helpers are Pages-only.
+    // Pages); installers go to the release AND Pages (CORS-enabled branch
+    // serving — the self-update banner's download link needs a host the
+    // installer tab can fetch; release-asset CDNs send no CORS headers);
+    // helpers are Pages-only.
     for (const name of builtZips) {
       pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
       // updater-ui is internal: the updater downloads and updates it from the
@@ -593,6 +628,10 @@ async function publishToGitHub({
         await deleteExistingAsset(octokit, release.id, installerAssetName(p));
         await uploadAsset(octokit, release.id, installerPath(p), installerAssetName(p));
       }
+      // Pages mirror (ADR 0019 amendment): the release asset stays the
+      // user-facing download; the Pages copy exists so the installer tab's
+      // banner link can fetch it cross-origin.
+      pagesFiles[installerAssetName(p)] = fs.readFileSync(installerPath(p));
     }
   }
   for (const p of builtHelpers) {
@@ -615,13 +654,17 @@ async function publishToGitHub({
     message: `chore: publish ${PUBLISH_MODE} artifacts (${new Date().toISOString().slice(0, 10)})`,
   });
 
-  // Dev release assets (manual download/testing) — after the push above, so
+  // Announced (--tag) dev release assets (manual download/testing) — after
+  // the push above, so
   // the release tag can be created at the now-existing dev-build branch.  Only
   // the two manual-download packages (utils + fx-folder zips) and the installer
   // binary are attached: updater-ui is fetched by the updater itself and the
   // helpers are branch-only, so neither belongs on the release.  All artifacts
   // stay on the branch (the installer/updater fetch from there via jsDelivr).
-  if (PUBLISH_MODE === 'dev') {
+  // Dev release page (ADR 0026): only an announced (--tag) publish creates
+  // the prerelease — a routine branch-only run touches no release at all, so
+  // manually deleting one never resurrects itself on the next test publish.
+  if (PUBLISH_MODE === 'dev' && createsDevRelease({tag: DEV_TAG})) {
     const devRelease = await getOrCreateDevRelease(octokit);
     // Only the two manual-download packages (utils + fx-folder zips) and the
     // installer binary are attached.  updater-ui is fetched by the updater
@@ -687,18 +730,22 @@ async function publishToGitHub({
   }
 
   // Date-stamped component releases alongside `latest` (issue #72, ADR 0019):
-  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers +
-  // helpers. Prerelease=true so the date tags can never take GitHub's
-  // "Latest" badge; skipped on idle runs (nothing rebuilt → tags stay frozen).
+  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers
+  // (helpers are gh-pages-only — never release assets). Full releases, then the
+  // Latest badge is re-pinned onto `latest` via make_latest (the Latest Scripts
+  // scheme — the badge release renders as the page's hero card). Skipped on
+  // idle runs (nothing rebuilt → tags stay frozen).
   if (PUBLISH_MODE === 'prod' && anythingUploaded) {
     await syncComponentReleases(octokit, {
       builtZips,
       builtInstallers,
       builtHelpers,
+      manifest: merged,
       zipPath,
       installerPath,
-      helperPath,
+      installerDate: readInstallerConf().BUILD_DATE,
     });
+    await pinLatestRelease(octokit);
   }
 }
 

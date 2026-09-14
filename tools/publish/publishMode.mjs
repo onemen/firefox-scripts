@@ -104,16 +104,65 @@ export function localSnapshotDir() {
 }
 
 /**
- * Per-run dev-build branch identity: `dev-build-<id>`, where `<id>` is the
- * DEV_BUILD_ID env var, or `<current-branch>-<short-sha>` (stable for re-runs
- * of the same commit, unique across commits, human-deletable), or a timestamp
- * fallback when git is unavailable.
+ * --note="<label>" (dev only): label this test build. Slugified into the
+ * dev-build id (spaces and other non-name characters become '-'), so two builds
+ * off the same branch carry intent-revealing branch names: --mode=dev
+ * --note="v1.0 RC" → dev-build-main-v1.0-RC-<sha> With --tag it also leads the
+ * release page's title and body. Empty for a plain test publish.
  */
-export const DEV_BUILD_ID = (() => {
-  if (process.env.DEV_BUILD_ID) return process.env.DEV_BUILD_ID;
-  const {branch, sha} = gitBranchAndSha();
-  return `${branch.replace(/[^\w.-]+/g, '-')}-${sha}`;
+const DEV_NOTE_ARG = (() => {
+  const arg = process.argv.find(a => a.startsWith('--note='));
+  return arg ? arg.slice('--note='.length) : '';
 })();
+export const DEV_NOTE = DEV_NOTE_ARG;
+
+/**
+ * --tag (dev only): create the RC-style prerelease page for this dev build. The
+ * only release-creating path — without it a dev publish is branch-only (ADR
+ * 0026).
+ */
+export const DEV_TAG = process.argv.includes('--tag');
+
+/**
+ * Slugify a --note label for embedding in the dev-build id: whitespace runs
+ * become single '-', characters outside [\w.-] are dropped, and repeated
+ * separators collapse — `..` never reaches a git refname (forbidden in
+ * refnames, would fail the branch push).
+ */
+export function slugifyDevNote(note) {
+  return (
+    String(note || '')
+      .trim()
+      // Drop disallowed characters first (an em-dash between spaces leaves two
+      // spaces that the next step collapses), then fold whitespace to '-'.
+      .replace(/[^\w\s.-]/g, '')
+      .replace(/\s+/g, '-')
+      // Collapse leftover separator runs ("v1..RC" → "v1-RC").
+      .replace(/[-.]{2,}/g, '-')
+  );
+}
+
+/**
+ * Per-run dev-build branch identity: `dev-build-<id>`, where `<id>` is the
+ * DEV_BUILD_ID env var, or `<current-branch>[-<note-slug>]-<short-sha>` (--note
+ * labels the id; stable for re-runs of the same commit + note, unique across
+ * commits), or a timestamp fallback when git is unavailable.
+ *
+ * Exported pure for unit tests; DEV_BUILD_ID below applies the live argv/env.
+ */
+export function devBuildId({branch, sha, note, envId}) {
+  if (envId) return envId;
+  const notePart = slugifyDevNote(note);
+  return `${branch.replace(/[^\w.-]+/g, '-')}${notePart ? `-${notePart}` : ''}-${sha}`;
+}
+
+/** Full dev-branch id for this run. */
+export const DEV_BUILD_ID = devBuildId({
+  branch: gitBranchAndSha().branch,
+  sha: gitBranchAndSha().sha,
+  note: DEV_NOTE,
+  envId: process.env.DEV_BUILD_ID,
+});
 
 /** Full branch name holding dev artifacts. */
 export const DEV_BRANCH = `dev-build-${DEV_BUILD_ID}`;
@@ -127,6 +176,9 @@ export function requireMode() {
         '  --mode=dev   publish to the dev-build-<id> branch only ' +
         '(any branch; never touches latest/gh-pages)'
     );
+  }
+  if (MODE !== 'dev' && (process.argv.some(a => a.startsWith('--note=')) || DEV_TAG)) {
+    throw new Error('--note= and --tag are dev-mode only (they label dev-build-<id> builds).');
   }
   if (!MODES.includes(MODE)) {
     throw new Error(`Unknown --mode='${MODE}' (expected prod|dev)`);

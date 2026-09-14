@@ -156,8 +156,42 @@ export function effectiveConfig(config, {installer = false} = {}) {
   return {...eff, UI_BASE_URL: eff.UI_BASE_URL || eff.ZIP_PAGES_URL || eff.ZIP_BASE_URL};
 }
 
+/**
+ * stableChannelUrls — the stable channel's fetch-side URLs, derived from the
+ * installer.conf values BEFORE any mode override (ADR 0026). Dev/test builds
+ * embed them so the daily check can fall back to the stable channel when the
+ * test channel's own manifest becomes unreachable (its dev-build branch was
+ * deleted). Stable builds get no fallback — the channel is their own — and the
+ * C-installer config header never sees these keys (generateModule emits them
+ * only here).
+ */
+function stableChannelUrls(config) {
+  if (MODE !== 'dev') return null;
+  const {REPO_OWNER, ZIP_DOWNLOAD_REPO, RELEASE_NAME} = config;
+  if (!REPO_OWNER || !ZIP_DOWNLOAD_REPO || !RELEASE_NAME || !config.HASHES_URL) {
+    throw new Error(
+      'installer.conf is missing required keys (REPO_OWNER, ZIP_DOWNLOAD_REPO, RELEASE_NAME, HASHES_URL)'
+    );
+  }
+  const zipBase =
+    config.ZIP_BASE_URL && !config.ZIP_BASE_URL.includes('${') ?
+      config.ZIP_BASE_URL
+    : `https://github.com/${REPO_OWNER}/${ZIP_DOWNLOAD_REPO}/releases/download/${RELEASE_NAME}`;
+  const helperBase =
+    config.HELPER_BASE_URL ||
+    `https://${REPO_OWNER}.github.io/${config.REPO_NAME || 'firefox-scripts'}`;
+  const uiBase = config.UI_BASE_URL || config.ZIP_PAGES_URL || zipBase;
+  return {
+    STABLE_HASHES_URL: config.HASHES_URL,
+    STABLE_ZIP_BASE_URL: zipBase,
+    STABLE_UI_BASE_URL: uiBase,
+    STABLE_HELPER_BASE_URL: helperBase,
+  };
+}
+
 function generateModule(config) {
   const eff = effectiveConfig(config);
+  const stableUrls = stableChannelUrls(config);
   const {REPO_OWNER, ZIP_DOWNLOAD_REPO, RELEASE_NAME} = eff;
   if (!REPO_OWNER || !ZIP_DOWNLOAD_REPO || !RELEASE_NAME || !eff.HASHES_URL) {
     throw new Error(
@@ -239,6 +273,15 @@ ${urlLine('ASSET_SUFFIX', eff.ASSET_SUFFIX || '')}
   // Absolute path of the local snapshot directory (--local builds only; empty
   // otherwise).  The file:// URLs above point into it.
 ${urlLine('LOCAL_DIST_PATH', LOCAL ? localSnapshotDir().replace(/\\/g, '/') : '')}
+
+  // Stable-channel fallback URLs (test/dev builds only, ADR 0026): where the
+  // daily check turns when this channel's own manifest is unreachable (its
+  // dev-build branch was deleted).  Empty in stable builds — the stable
+  // channel is their own.
+${urlLine('STABLE_HASHES_URL', stableUrls ? stableUrls.STABLE_HASHES_URL : '')}
+${urlLine('STABLE_ZIP_BASE_URL', stableUrls ? stableUrls.STABLE_ZIP_BASE_URL : '')}
+${urlLine('STABLE_UI_BASE_URL', stableUrls ? stableUrls.STABLE_UI_BASE_URL : '')}
+${urlLine('STABLE_HELPER_BASE_URL', stableUrls ? stableUrls.STABLE_HELPER_BASE_URL : '')}
 
   // The dev-build branch this run publishes to (dev mode only).
 ${urlLine('DEV_BRANCH', DEV_BRANCH)}

@@ -39,15 +39,36 @@ export function listZipEntries(buf) {
     const nameLen = buf.readUInt16LE(p + 28);
     const extraLen = buf.readUInt16LE(p + 30);
     const commentLen = buf.readUInt16LE(p + 32);
+    // DOS time/date (central directory): 16-bit time at +12, date at +14.
+    const dosTime = buf.readUInt16LE(p + 12);
+    const dosDate = buf.readUInt16LE(p + 14);
     const localOffset = buf.readUInt32LE(p + 42);
     // archiver writes data-descriptor zips: the local header's sizes are zero
     // and the real compressed size lives only in the central directory.
     const compSize = buf.readUInt32LE(p + 20);
     const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
-    entries.push({name, method, localOffset, compSize});
+    entries.push({name, method, localOffset, compSize, dosTime, dosDate});
     p += 46 + nameLen + extraLen + commentLen;
   }
   return entries;
+}
+
+/**
+ * Decode a central-directory DOS time/date pair (as listed by listZipEntries)
+ * to a UTC Date. ZIP stores local clock time without a zone; the writer
+ * (compress-commons) encodes UTC fields, so decode as UTC.
+ *
+ * @param {{dosTime: number; dosDate: number}} entry
+ * @returns {Date}
+ */
+export function dosDateTimeToUtc({dosTime, dosDate}) {
+  const year = 1980 + (dosDate >> 9);
+  const month = (dosDate >> 5) & 0x0f;
+  const day = dosDate & 0x1f;
+  const hours = dosTime >> 11;
+  const minutes = (dosTime >> 5) & 0x3f;
+  const seconds = (dosTime & 0x1f) * 2;
+  return new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds));
 }
 
 /**

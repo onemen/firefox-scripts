@@ -5,7 +5,21 @@
 
 /* The installer performs no network I/O: the web UI fetches the latest
  * release JSON (api.github.com sends CORS *) and POSTs the raw bytes here
- * (POST /api/self-update).  check_self_update() parses that stored buffer. */
+ * (POST /api/self-update).  check_self_update() parses that stored buffer.
+ *
+ * Update detection is DATE-based (ADR 0019 amendment), not version-based: the release
+ * body carries a managed JSON block (written by the publish automation,
+ * tools/publish/componentReleases.mjs) of the shape
+ *
+ *     "installerDate": "YYYY-MM-DD",
+ *     "download": { "<installer asset name>": "<browser_download_url>", ... }
+ *
+ * The comparison is against the build date baked into this binary
+ * (INSTALLER_BUILD_DATE).  Both strings are YYYY-MM-DD, so a plain strcmp is
+ * the correct chronological ordering.  The release tag itself is never
+ * compared: `latest` is a permanently-named moving tag (ADR 0019), so a
+ * version/tag comparison can never converge. */
+
 static char *g_self_update_json = NULL;
 static size_t g_self_update_len = 0;
 
@@ -21,125 +35,100 @@ int ingest_self_update_json(const char *json, size_t len) {
     return 0;
 }
 
-int check_self_update(const char *current_version,
-                      const char *repo_owner,
-                      const char *repo_name,
+/* Locate a JSON string value for `key` (bare key, no quotes — inside a
+ * release BODY the block is JSON-escaped as \"key\", so the quote characters
+ * are preceded by backslashes and must not be part of the needle), scanning
+ * forward from `from` for the FIRST occurrence whose value parses.  Returns
+ * the start of the string contents with *out_len set to the value length;
+ * NULL when no occurrence from `from` yields a value.  Plain strstr — the
+ * payloads this parses are written by our own publish automation, not
+ * adversarial. */
+static const char *find_string_value(const char *from, const char *key,
+                                     size_t *out_len) {
+    const char *p = from;
+    while ((p = strstr(p, key)) != NULL) {
+        const char *after = p + strlen(key);
+        /* Boundary: the key must end a name, not merely appear inside one
+         * (accept both \" and " as the terminator — this also keeps
+         * "installer_linux" from matching inside "installer_linux_aarch64"). */
+        if ((after[0] == '\\' && after[1] == '"') || after[0] == '"') {
+            const char *colon = strchr(after, ':');
+            const char *value = colon ? strchr(colon + 1, '"') : NULL;
+            if (colon && value) {
+                value++;
+                const char *end = strchr(value, '"');
+                if (end) {
+                    /* Inside an escaped body the value's closing delimiter is
+                     * \" — the backslash belongs to the delimiter, not the
+                     * content (without this the date parses as
+                     * "2026-09-13\" and the strict ISO check rejects it). */
+                    if (end > value && *(end - 1) == '\\') end--;
+                    *out_len = (size_t)(end - value);
+                    return value;
+                }
+            }
+        }
+        p = after;  // keep scanning: a later occurrence may be the real one
+    }
+    return NULL;
+}
+
+/* Strict YYYY-MM-DD (10 chars, digits with dashes) — anything else means the
+ * body block is malformed or from an older publish, and staying silent is the
+ * safe answer. */
+static int is_iso_date(const char *s, size_t len) {
+    if (len != 10) return 0;
+    for (size_t i = 0; i < len; i++) {
+        if (i == 4 || i == 7) {
+            if (s[i] != '-') return 0;
+        } else if (s[i] < '0' || s[i] > '9') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int check_self_update(const char *current_build,
                       const char *asset_name,
-                      char *latest_version, size_t ver_size,
+                      char *latest_date, size_t date_size,
                       char *download_url, size_t url_size) {
-    (void)repo_owner;
-    (void)repo_name;
+    latest_date[0] = '\0';
+    download_url[0] = '\0';
 
     if (!g_self_update_json) {
         return -1;  // no release JSON ingested yet (UI fetch pending/failed)
     }
 
-    const char *response = g_self_update_json;
-
-    // Parse JSON response manually to find "tag_name" and the download URL
-    // of the asset named asset_name (this platform's installer binary).
-    // Simple string search approach.  GitHub JSON is formatted with a space
-    // after each colon ("tag_name": "..."), so find the key and skip past
-    // the colon and any whitespace to the opening quote.
-
-    // Find tag_name
-    const char *tag_key = strstr(response, "\"tag_name\"");
-    if (!tag_key) {
-        return -1;
-    }
-    const char *tag_colon = strchr(tag_key + strlen("\"tag_name\""), ':');
-    if (!tag_colon) {
-        return -1;
-    }
-    const char *tag_start = strchr(tag_colon + 1, '"');
-    if (!tag_start) {
-        return -1;
-    }
-    tag_start++;
-
-    const char *tag_end = strchr(tag_start, '"');
-    if (!tag_end) {
-        return -1;
+    // Managed block: parse the build date.  Bare keys — see
+    // find_string_value for the escaped-body rationale.
+    size_t date_len = 0;
+    const char *date_start = find_string_value(g_self_update_json, "installerDate", &date_len);
+    if (!date_start || !is_iso_date(date_start, date_len)) {
+        return 0;  // no managed block (older body format) → silently no update
     }
 
-    size_t tag_len = (size_t)(tag_end - tag_start);
-    if (tag_len >= ver_size) tag_len = ver_size - 1;
-    memcpy(latest_version, tag_start, tag_len);
-    latest_version[tag_len] = '\0';
+    size_t copy_len = date_len < date_size - 1 ? date_len : date_size - 1;
+    memcpy(latest_date, date_start, copy_len);
+    latest_date[copy_len] = '\0';
 
-    // Compare versions (simple string comparison - assumes semver format "v1.2.3" or "1.2.3")
-    // Strip leading 'v' if present
-    const char *cur = current_version;
-    const char *lat = latest_version;
-    if (*cur == 'v') cur++;
-    if (*lat == 'v') lat++;
-
-    if (strcmp(cur, lat) == 0) {
-        return 0;  // Same version
+    // Both sides are YYYY-MM-DD: lexicographic == chronological.
+    if (strcmp(current_build, latest_date) >= 0) {
+        return 0;  // this build is at least as new
     }
 
-    // Find the asset named asset_name in the release's assets array.  The
-    // array holds several files (helper binaries, package zips, installers);
-    // the first browser_download_url is NOT necessarily the installer.
-    const char *assets_key = strstr(response, "\"assets\"");
-    if (!assets_key) {
-        return -1;
+    // Newer build published.  Resolve this platform's download URL from the
+    // managed "download" map (asset name → URL under the permanently-named
+    // `latest` tag).  Search starts AFTER the date value so an asset list's
+    // browser_download_url fields (earlier releases in the /releases array)
+    // can never satisfy the lookup.  An absent entry still reports the
+    // update: the UI falls back to pointing at the releases page.
+    size_t url_len = 0;
+    const char *url_start = find_string_value(date_start + date_len, asset_name, &url_len);
+    if (!url_start || url_len == 0) {
+        return 1;
     }
-    const char *assets_start = strchr(assets_key + strlen("\"assets\""), '[');
-    if (!assets_start) {
-        return -1;
-    }
-
-    const char *p = assets_start;
-    while ((p = strstr(p, "\"name\"")) != NULL) {
-        const char *name_colon = strchr(p + strlen("\"name\""), ':');
-        if (!name_colon) break;
-        const char *name_start = strchr(name_colon + 1, '"');
-        if (!name_start) break;
-        name_start++;
-        const char *name_end = strchr(name_start, '"');
-        if (!name_end) break;
-
-        size_t name_len = (size_t)(name_end - name_start);
-        int is_installer = (strlen(asset_name) == name_len) &&
-                           strncmp(name_start, asset_name, name_len) == 0;
-
-        // The next '"'name'"' or '}' bounds this asset object; the
-        // browser_download_url must belong to it.
-        const char *next_name = strstr(name_end, "\"name\"");
-        const char *next_brace = strchr(name_end, '}');
-        const char *limit = NULL;
-        if (next_name && next_brace) {
-            limit = (next_name < next_brace) ? next_name : next_brace;
-        } else {
-            limit = next_name ? next_name : next_brace;
-        }
-
-        if (is_installer) {
-            const char *bdu = strstr(name_end, "\"browser_download_url\"");
-            if (bdu && (!limit || bdu < limit)) {
-                const char *bdu_colon = strchr(bdu + strlen("\"browser_download_url\""), ':');
-                if (bdu_colon) {
-                    const char *bdu_start = strchr(bdu_colon + 1, '"');
-                    if (bdu_start) {
-                        bdu_start++;
-                        const char *bdu_end = strchr(bdu_start, '"');
-                        if (bdu_end) {
-                            size_t bdu_len = (size_t)(bdu_end - bdu_start);
-                            if (bdu_len >= url_size) bdu_len = url_size - 1;
-                            memcpy(download_url, bdu_start, bdu_len);
-                            download_url[bdu_len] = '\0';
-                            return 1;  // Update available
-                        }
-                    }
-                }
-            }
-            // The release's tag is newer but it ships no installer for this
-            // platform yet — nothing to download, so no update is offered.
-            return 0;
-        }
-        p = name_end;
-    }
-
-    return 0;
+    size_t url_copy = url_len < url_size - 1 ? url_len : url_size - 1;
+    memcpy(download_url, url_start, url_copy);
+    download_url[url_copy] = '\0';
+    return 1;  // update available
 }

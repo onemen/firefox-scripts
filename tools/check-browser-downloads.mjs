@@ -95,22 +95,27 @@ const BROWSERS = ['firefox', 'firefox-dev', 'librewolf', 'floorp', 'zen', 'water
 
 /**
  * Browsers whose current version must be covered by a successful E2E run before
- * a prod publish (the hard-gated `updater` legs on all 3 OSes). Fork legs are
- * advisory, so they stay on the watchdog-baseline check only.
+ * a prod publish (the hard-gated `updater` legs — firefox/firefox-dev/nightly
+ * on all 3 OSes, waterfox on Windows).
  *
- * Waterfox soak (ADR 0021): its E2E leg runs advisory for its first green runs;
- * once stable, add 'waterfox' here AND move the leg from the gate's `advisory`
- * to `required` in e2e.yml (one line each).
+ * Waterfox soak (ADR 0021) completed: 4 consecutive green advisory runs
+ * (2026-09-05 ×2, 2026-09-09 ×2 — the latter two against the freshly released
+ * 6.7.2), so it graduated to the hard gate (ADR 0025): a required
+ * `updater-waterfox` E2E leg (Windows-only — its download recipe is the Windows
+ * NSIS installer) and publish-drift coverage via this list.
  */
-export const VALIDATED_BROWSERS = ['firefox', 'firefox-dev'];
+export const VALIDATED_BROWSERS = ['firefox', 'firefox-dev', 'waterfox'];
 
 /**
  * Fork browsers whose version lookup may degrade to warn-and-continue in the
  * publish pre-flight (ADR 0021): after the resolver's retry + mirror chain is
  * exhausted, an unresolved fork lookup warns, notifies, and lets the publish
  * proceed. Fork DRIFT (resolved but newer than the baseline) still blocks.
+ *
+ * Waterfox is NOT here anymore (ADR 0025): as a hard-gate browser its lookup
+ * failure blocks a publish, exactly like firefox/firefox-dev.
  */
-export const FORK_BROWSERS = ['librewolf', 'floorp', 'zen', 'waterfox'];
+export const FORK_BROWSERS = ['librewolf', 'floorp', 'zen'];
 
 /** E2E workflow dispatched when a new release is recorded (repo file name). */
 const E2E_WORKFLOW = 'e2e.yml';
@@ -132,10 +137,10 @@ export async function resolveVersion(browser) {
  *   collapses the matrix to that leg (the ADR 0021 manual escape, whose runs
  *   sit in their own non-cancelled concurrency group).
  * - The hard-gate browsers share ONE full dispatch (`browser=all`): it runs the
- *   updater legs on all 3 OSes and record-validation, refreshing the
- *   validated-versions record the publish gate reads. One dispatch, never two —
- *   a second full dispatch would land in the same cancel-in-progress
- *   concurrency group and kill the first.
+ *   updater legs (incl. the required waterfox leg, ADR 0025) on their OSes and
+ *   record-validation, refreshing the validated-versions record the publish
+ *   gate reads. One dispatch, never two — a second full dispatch would land in
+ *   the same cancel-in-progress concurrency group and kill the first.
  *
  * `first-run` findings are deliberately excluded: a cache eviction re-baselines
  * without any release having shipped. Fork dispatches are capped at the fork

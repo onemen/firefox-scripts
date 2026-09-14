@@ -6,7 +6,7 @@
 ## Context
 
 The upstream firefox-scripts tree shipped `versionInfo.json` as the version source for update checks
-(`a24af78`, 2026-01-05).The 2026 installer / publish rewrite inherited it: the early publish
+(`a24af78`, 2026-01-05). The 2026 installer / publish rewrite inherited it: the early publish
 pipeline published per-package hashes **and** `versionInfo.json` to a **GitHub Gist** (`9b91fda`,
 2026-07-28 — `updateGistHashes` in the first `checkAndUpload.mjs`), and the updater compared the
 manifest's `date` against the local `versionInfo.json`. Meanwhile the installer treated

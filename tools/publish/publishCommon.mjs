@@ -57,6 +57,26 @@ export function getLatestCommitDate(dir, patterns) {
   }
 }
 
+/**
+ * Turn a manifest date (YYYY-MM-DD) into the timestamp every entry of the
+ * shipped zip gets (maintainer request, 2026-09-12: file dates inside utils.zip
+ * / fx-folder.zip should read as the release's date, not each source file's
+ * last-edit date). Normalized to 12:00 UTC so any timezone's zip viewer shows
+ * the intended calendar date, and so builds are reproducible. Falls back to now
+ * when the date is missing/invalid.
+ *
+ * @param {string | undefined} date YYYY-MM-DD (the manifest's `date` field)
+ * @returns {Date}
+ */
+export function zipEntryDate(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return new Date();
+  const d = new Date(`${date}T12:00:00Z`);
+  // Reject well-formed but impossible calendar dates (2026-02-30 — JS rolls
+  // them forward instead of returning NaN): the round-trip must match.
+  if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) return new Date();
+  return d;
+}
+
 // Both publish scripts call loadSharedPatterns twice (zip + hash variants,
 // installer + helper variants); the "Loading gitignore files" block must print
 // once, not per call.
