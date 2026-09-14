@@ -941,12 +941,20 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      # Zen/Floorp resolve to STABLE latest/download URLs, so the URL hash
+      # alone cannot invalidate a cache when the browser releases. One HEAD
+      # hop lands on the vendor's version-bearing CDN/asset URL — hash THAT
+      # for the key (the exact pattern the portable Firefox leg uses for the
+      # same reason). downloadTo's HEAD-size check additionally self-heals the
+      # installer cache when the stable URL still serves a new file size.
       - name: Resolve download URL
         id: dlurl
         shell: bash
         run: |
           URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
-          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          FINAL=$(curl -fsSI -o /dev/null -w '%{redirect_url}' "$URL")
+          test -n "$FINAL" || FINAL="$URL"
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$FINAL")
           echo "key=browser-dl-${{ runner.os }}-${{ matrix.browser }}-$KEY" >> "$GITHUB_OUTPUT"
           echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
 
@@ -957,9 +965,9 @@ jobs:
           key: ${{ steps.dlurl.outputs.key }}
           save-always: true
 
-      # Same URL-derived key as the portable Firefox leg: invalidates with the
-      # browser version, so a stale extracted dir can never be validated in
-      # place of the new release.
+      # Same FINAL-URL-derived key family as the portable Firefox leg
+      # (<key>-x): a version bump changes the redirect target, so a stale
+      # extracted dir can never be restored under the new release's key.
       - name: Cache extracted portable ${{ matrix.browser }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

@@ -744,8 +744,36 @@ async function installForkPortable(browser, recipe) {
   // directory at that path must not count as installed.
   const cachedBinary = path.join(dest, recipe.portableExe);
   if (fs.statSync(cachedBinary, {throwIfNoEntry: false})?.isFile()) {
-    console.log(`  reusing cached portable dir (${path.basename(dest)})`);
-    return cachedBinary;
+    // Defense in depth against a same-key content change (a stable
+    // latest/download URL whose asset changed under the old redirect hash):
+    // only reuse the extracted dir when the cached installer that produced
+    // it still matches the remote size — the same self-heal rule downloadTo
+    // applies to the installer file. A mismatch falls through to a fresh
+    // download + install over the stale dir.
+    const cachedExe = path.join(downloadDir(), `${browser}-portable-setup.exe`);
+    const exeStat = fs.statSync(cachedExe, {throwIfNoEntry: false});
+    if (exeStat?.isFile() && exeStat.size > 0) {
+      try {
+        const head = await fetch(url, {method: 'HEAD', signal: AbortSignal.timeout(15_000)});
+        const expected = head.ok ? Number(head.headers.get('content-length')) : 0;
+        if (expected && exeStat.size === expected) {
+          console.log(`  reusing cached portable dir (${path.basename(dest)})`);
+          return cachedBinary;
+        }
+        console.log(
+          `  cached installer size ${exeStat.size} ≠ remote ${expected} — re-installing portable dir`
+        );
+      } catch {
+        // HEAD failed (flaky network): reuse the dir rather than fail — the
+        // job's version-derived cache key already guards the common case.
+        console.log(`  HEAD failed; reusing cached portable dir (${path.basename(dest)})`);
+        return cachedBinary;
+      }
+    } else {
+      // No cached installer (cache eviction race between the two cache
+      // entries): cannot prove freshness — re-install over the stale dir.
+      console.log('  no cached installer to validate against — re-installing portable dir');
+    }
   }
   let url;
   let sha256Url;
