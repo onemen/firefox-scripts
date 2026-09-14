@@ -892,6 +892,111 @@ jobs:
           path: dist/updater-e2e-*.png
           if-no-files-found: ignore
 
+  # ── Fork-portable E2E (advisory, Windows; #38 pre-1.0) ────────────────
+  # The fork legs above install into Program Files (registered layout). This
+  # leg drives the SAME official NSIS installers into a custom directory
+  # (NSIS /D=) — the layout a substantial share of users run and the shape
+  # the installer/updater must detect without a registered install dir. The
+  # recipes (portable: true + portableExe) and the /D= mechanism landed in
+  # #194; this job wires the legs. Zen + Floorp + Waterfox: the three forks
+  # whose installers are VERIFIED to honor /D= into a fresh directory
+  # (LibreWolf's setup does not declare that capability, so its leg stays
+  # registered-only). ADVISORY like browser-matrix: a fork packaging change
+  # (e.g. a broken /D=) must not block a Firefox-only merge. Same
+  # URL-keyed download cache as browser-matrix, PLUS the extracted-dir cache
+  # (the portable Firefox pattern) so a warm run skips the silent install.
+  fork-portable:
+    name: 'fork portable E2E · ${{ matrix.browser }} · windows-latest'
+    needs: [changes, snapshot]
+    # A single-browser librewolf escape is excluded (no portable recipe → the
+    # leg would install registered and the layout assert would fail); its
+    # applicability entry below carries the same predicate. All other
+    # single-browser escapes collapse the matrix to that fork (waterfox's
+    # break-glass pin then exercises the portable path too).
+    if:
+      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
+      github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser !=
+      'librewolf'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      # Manual escape: a `browser` dispatch collapses the matrix to that one
+      # leg (empty/non-dispatch input = the full matrix).
+      matrix:
+        browser:
+          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
+          inputs.browser) || '["zen", "floorp", "waterfox"]') }}
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      BROWSER_PIN_VERSION: ${{ inputs.version }}
+
+    steps:
+      - uses: $/.github/actions/setup-repo
+
+      - name: Set portable browser directory
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'fork-portable'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Resolve download URL
+        id: dlurl
+        shell: bash
+        run: |
+          URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
+          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+          echo "key=browser-dl-${{ runner.os }}-${{ matrix.browser }}-$KEY" >> "$GITHUB_OUTPUT"
+          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
+
+      - name: Cache ${{ matrix.browser }} installer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.BROWSER_DL_DIR }}
+          key: ${{ steps.dlurl.outputs.key }}
+          save-always: true
+
+      # Same URL-derived key as the portable Firefox leg: invalidates with the
+      # browser version, so a stale extracted dir can never be validated in
+      # place of the new release.
+      - name: Cache extracted portable ${{ matrix.browser }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PORTABLE_BROWSER_DIR }}
+          key: ${{ steps.dlurl.outputs.key }}-x
+
+      - name: Install ${{ matrix.browser }} portably
+        run: node test/e2e/shared/downloads.mjs ${{ matrix.browser }}
+
+      - name: Assert portable layout
+        shell: pwsh
+        run: |
+          if (-not $env:FIREFOX_BINARY.StartsWith($env:PORTABLE_BROWSER_DIR, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "${{ matrix.browser }} binary is not inside portable directory: $env:FIREFOX_BINARY"
+          }
+          if (-not (Test-Path -LiteralPath $env:FIREFOX_BINARY -PathType Leaf)) {
+            throw "${{ matrix.browser }} binary not found: $env:FIREFOX_BINARY"
+          }
+          Write-Host "Portable ${{ matrix.browser }}: $env:FIREFOX_BINARY"
+
+      - name: Download dev snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dev-snapshot
+          path: dist/
+
+      - name: Run updater E2E
+        run: node test/e2e/updater/updater-e2e.mjs
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-fork-portable-${{ matrix.browser }}
+          path: dist/updater-e2e-*.png
+          if-no-files-found: ignore
+
   # ── Waterfox hard gate (ADR 0025, amends ADR 0021) ────────────────────────
   # Waterfox is ≈40% of the user base; after a 4-green-run soak (ADR 0021's
   # flip criterion) its updater E2E leg is REQUIRED, not advisory. Windows-only
@@ -999,6 +1104,7 @@ jobs:
         portable-firefox,
         snap-firefox,
         browser-matrix,
+        fork-portable,
       ]
     steps:
       # Local action — a fresh runner needs the repo checked out first.
@@ -1024,6 +1130,7 @@ jobs:
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
             snap-firefox:${{ needs.changes.outputs.updater == 'true' }}
             browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
+            fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser != 'librewolf') }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
           # verify.sh splits the value on whitespace, newlines included.
@@ -1036,11 +1143,12 @@ jobs:
             portable-firefox:${{ needs.portable-firefox.result }}
             snap-firefox:${{ needs.snap-firefox.result }}
             browser-matrix:${{ needs.browser-matrix.result }}
+            fork-portable:${{ needs.fork-portable.result }}
           required: snapshot installer helper updater updater-waterfox portable-firefox
-          advisory: snap-firefox browser-matrix
+          advisory: snap-firefox browser-matrix fork-portable
           skip-guard:
             snapshot installer helper updater updater-waterfox portable-firefox snap-firefox
-            browser-matrix
+            browser-matrix fork-portable
 
   # ── Record validated browser versions (#4) ────────────────────────────────
   # After the updater matrix legs (firefox/firefox-dev/nightly × 3 OSes) ran

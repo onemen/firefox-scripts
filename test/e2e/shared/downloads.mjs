@@ -736,6 +736,17 @@ export function nsisPortableArgs(dest) {
 async function installForkPortable(browser, recipe) {
   const dest = process.env.PORTABLE_BROWSER_DIR;
   if (!dest) throw new Error('PORTABLE_BROWSER_DIR is required for a portable fork install');
+  fs.mkdirSync(dest, {recursive: true});
+  // The fork-portable E2E job caches the extracted dir alongside the
+  // installer (same URL-derived key as the portable Firefox leg, so it can
+  // only match this browser version). When the launcher is already in place,
+  // skip the download + silent install entirely. statSync (not existsSync): a
+  // directory at that path must not count as installed.
+  const cachedBinary = path.join(dest, recipe.portableExe);
+  if (fs.statSync(cachedBinary, {throwIfNoEntry: false})?.isFile()) {
+    console.log(`  reusing cached portable dir (${path.basename(dest)})`);
+    return cachedBinary;
+  }
   let url;
   let sha256Url;
   if (recipe.resolver) {

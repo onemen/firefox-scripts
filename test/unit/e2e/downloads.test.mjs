@@ -618,6 +618,39 @@ test('portableBinaryPath: launcher file per platform (not the top-level dir)', (
   assert.equal(portableBinaryPath('/p', 'win32'), path.join('/p', 'firefox.exe'));
 });
 
+test('fork portable: the fork-portable matrix browsers all declare portable capability', () => {
+  // The fork-portable E2E job's matrix (e2e.yml) drives these through
+  // installForkPortable; a recipe losing its portable declaration would make
+  // the leg install registered and fail the workflow's layout assert.
+  for (const browser of ['zen', 'floorp', 'waterfox']) {
+    const recipe = DOWNLOADS[browser]?.install?.win;
+    assert.equal(recipe?.portable, true, `${browser} must keep portable: true`);
+    assert.ok(recipe?.portableExe, `${browser} must keep portableExe`);
+  }
+  // LibreWolf has NO portable recipe — the fork-portable job excludes it
+  // (its NSIS setup is not verified to honor /D= into a fresh directory).
+  assert.notEqual(DOWNLOADS.librewolf?.install?.win?.portable, true);
+});
+
+test('fork portable skip check: only a regular launcher file counts as cached', () => {
+  // installForkPortable's cache predicate mirrors installPortableFirefox's:
+  // statSync().isFile() at dest/portableExe. A directory at the launcher
+  // path (broken cache layout) must not count.
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-fork-portable-'));
+  try {
+    const {portableExe} = DOWNLOADS.zen.install.win;
+    fs.mkdirSync(path.join(dest, portableExe));
+    const stat = fs.statSync(path.join(dest, portableExe), {throwIfNoEntry: false});
+    assert.notEqual(stat?.isFile(), true, 'directory must not count as cached');
+    fs.rmdirSync(path.join(dest, portableExe));
+    fs.writeFileSync(path.join(dest, portableExe), 'MZ');
+    const stat2 = fs.statSync(path.join(dest, portableExe), {throwIfNoEntry: false});
+    assert.equal(stat2?.isFile(), true, 'launcher file counts as cached');
+  } finally {
+    fs.rmSync(dest, {recursive: true, force: true});
+  }
+});
+
 test('installPortableFirefox skip check: only a regular launcher file counts', async () => {
   const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-portable-'));
   try {

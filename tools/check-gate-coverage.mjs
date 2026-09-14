@@ -387,6 +387,8 @@ const CONTRACTS = [
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox'",
       'browser-matrix':
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
+      'fork-portable':
+        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser != 'librewolf'",
     },
     applicability: [
       'snapshot',
@@ -395,6 +397,7 @@ const CONTRACTS = [
       'updater',
       'updater-waterfox',
       'browser-matrix',
+      'fork-portable',
     ],
     // Runs after e2e-gate: records the validated browser versions (#4) only
     // when every browser leg passed, and cleans up the temporary
