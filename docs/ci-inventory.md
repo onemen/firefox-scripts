@@ -49,7 +49,9 @@ open PR and the next `main` push at once (2026-09-09 incident).
 
 Every job in `ci.yml` and `e2e.yml` sets an explicit `timeout-minutes` — GitHub's default is 360
 minutes, which turns any wedged job (GUI dialog, OS stall) into a six-hour hang before cancellation.
-The values are ~3× the slowest observed green run; measured durations (2026-09-13, warm caches):
+The values are multiples of the slowest observed green run per group — ~2.5–4× on the slow E2E legs
+(the margins that matter), and a generous minutes-scale floor on cheap jobs. Measured durations
+(2026-09-13, warm caches):
 
 | Job(s)                                                          | Timeout | Slowest green run observed | Notes                                                                                                                                                                                                |
 | --------------------------------------------------------------- | ------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

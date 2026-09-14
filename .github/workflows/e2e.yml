@@ -77,8 +77,9 @@ jobs:
     name: detect changed paths
     runs-on: ubuntu-latest
     # Job-level timeouts (belt-and-suspenders, all jobs here): GitHub's
-    # default is 360 min — a wedged job would hang until then. The numbers
-    # are ~3x the slowest observed green run (see docs/ci-inventory.md).
+    # default is 360 min — a wedged job would hang until then. The values
+    # are multiples of the slowest observed green run per group (see
+    # docs/ci-inventory.md → Job timeouts).
     timeout-minutes: 5
     outputs:
       installer: ${{ steps.filter.outputs.installer }}
