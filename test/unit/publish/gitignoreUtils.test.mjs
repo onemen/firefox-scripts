@@ -101,11 +101,15 @@ test('shouldIgnore: a trailing-slash dir match decides immediately — deep nega
   // descending. Unlike real gitignore (!logs/README would re-include), a file
   // under a dir-ignored tree is unreachable by negation. Callers must express
   // such exceptions as earlier sibling patterns, not later negations.
-  const patterns = P([['logs/'], ['!logs/README', true]]);
+  // Fixtures use the parser-normalized shape: parseGitignore strips the
+  // leading '!' into isNegation, so a stored pattern never contains '!' —
+  // passing '!logs/README' here would exercise minimatch's own inverted-match
+  // semantics instead of shouldIgnore's (batch review, 2026-09-15).
+  const patterns = P([['logs/'], ['logs/README', true]]);
   assert.equal(shouldIgnore('C:/base/logs/debug.txt', patterns, 'C:/base'), true);
   assert.equal(shouldIgnore('C:/base/logs/README', patterns, 'C:/base'), true);
   // An EARLIER negation does win (first-match-wins is checked first):
-  const rescued = P([['!logs/README', true], ['logs/']]);
+  const rescued = P([['logs/README', true], ['logs/']]);
   assert.equal(shouldIgnore('C:/base/logs/README', rescued, 'C:/base'), false);
 });
 
@@ -114,7 +118,7 @@ test('shouldIgnore: FIRST match wins — the opposite of gitignore last-match', 
   // this implementation decides on the first match, so the negation after a
   // matching wildcard never applies. Pinned so nobody "fixes" a caller into
   // relying on git semantics.
-  const patterns = P([['*.log'], ['!keep.log', true]]);
+  const patterns = P([['*.log'], ['keep.log', true]]);
   assert.equal(shouldIgnore('C:/base/keep.log', patterns, 'C:/base'), true);
 });
 
