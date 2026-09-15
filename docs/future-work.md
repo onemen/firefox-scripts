@@ -104,10 +104,13 @@ automated on hosted runners (the UAC prompt is an OS-level UI) — it needs a se
 VM, or a non-elevated user running against an admin-owned install dir. The automation tool
 (Puppeteer / Playwright / Firefox CDP) is deliberately not decided here.
 
-- **Helper binary trust:** publish a `helper_<platform>.sha256` asset alongside the helper binaries
-  and assert the downloaded binary matches it before execution.
-- **Trigger:** on push to `main` when `core/**`, `config/installer.conf`, `installer/src/**`,
-  `tools/publish/**` change, plus nightly.
+- **Helper binary trust — shipped (#174):** `upload.mjs` publishes a `helper_<platform>.sha256`
+  sidecar next to each helper (`hashUtils.mjs::helperSha256Sidecar`), and the updater fetches and
+  verifies it before executing the helper, refusing to run a mismatch
+  (`tools/publish/remote-ui/updater.js`; `docs/auto-updater.md` §6).
+- **Trigger:** the elevation matrix above still has no automation. The browser legs that do exist
+  run from `.github/workflows/e2e.yml` — every PR, every `main` push, the merge queue, plus manual
+  dispatch — path-filtered on the subsystems each leg exercises. There is no nightly job.
 
 ## 3. Publish pipeline tasks
 
@@ -120,8 +123,8 @@ VM, or a non-elevated user running against an admin-owned install dir. The autom
       `upload.mjs --build-only` + native AV per platform, then a single-writer publish job via
       `--skip-build`; stage-only is the default — publishing needs `publish=true` at dispatch. The
       deterministic-output check ships in the same workflow, advisory.)
-- [ ] Publish a `helper_<platform>.sha256` asset alongside the helper binaries and assert the
-      downloaded binary matches it (see §2.2 helper-binary trust).
+- [x] Publish a `helper_<platform>.sha256` asset alongside the helper binaries and assert the
+      downloaded binary matches it (see §2.2 helper-binary trust). Shipped in #174.
 
 Staging publish target — mostly shipped, remainder folded here: `paths.js` already reads env
 variables over `installer.conf` (`cfg()` precedence) and `--mode=dev` provides the safe dev-build
@@ -175,27 +178,31 @@ sync problem is gone — there is nothing tracked that can drift (see ADR
 ## 6. Test infrastructure
 
 Test-infrastructure gaps verified **not implemented on `main`** and **not covered** by #3 / #4 / #38
-as of 2026-09-05. The proposed tracking home is listed per item.
+as of 2026-09-15. The proposed tracking home is listed per item.
 
-- **Installer `--port 0` / `--server-only` test flags** (C: `installer/src/main.c` + Makefile).
-  `--port 0` binds an OS-ephemeral port so parallel CI jobs never collide on `DEFAULT_PORT=8777`;
-  `--server-only` skips the browser scan so the second-instance path (`tcp_listening`) is reachable
-  headless. The installer currently has no such flags. Unblocks: installer API-contract tests,
-  free-port/no-hijack/second-instance coverage. Home: a Phase 4 (#3) child issue.
-- **`env.json` deployment manifest** — the running installer writes port/URLs/hashes/run-id to a
-  file the E2E harness reads (local/CI parity; no port scraping). Not implemented. Home: the same
-  Phase 4 (#3) child issue as the flags (they ship together).
-- **E2E profile/process hygiene** — kill stray installer/browser processes between runs,
-  `removeProfileCompatibilityIni` after profile seeding, tag spawned processes for teardown —
-  deterministic repeats on all three OSes. Not implemented in `test/e2e/`. Home: #3 (Phase 4).
-- **`FIREFOX_BINARY` pinning** — E2E resolves the latest browser release at run time
-  (`downloads.mjs`); a runner-side vendor update can flip a green matrix red with no repo change.
-  Decide a pin/cache policy (URL with pinned version + periodic bump via the URL watchdog). Home: #3
-  now; revisited when the matrix expands (#31).
-- **`msys2/setup-msys2` release caching** — Windows legs run with `update: true`, re-fetching the
-  toolchain every run; `cache: true` would trade freshness for minutes per job (same trade the
-  cached `-fanalyzer` leg already made, PRs #105/#106). Home: #33 (pipeline automation) or as CI
-  polish under #4.
+- **`msys2/setup-msys2` release caching** — only `ci.yml`'s publish-gate build job still runs
+  `update: true` (a full `pacman -Syu` every run; a cold MSYS2 toolchain install adds ~3 min). The
+  publish paths deliberately pin `update: false` (`pages.yml`, `build-and-upload.yml`): a mid-cycle
+  upgrade moved gcc 16.1.0 → 16.2.0 and the rebuilt `installer_win.exe` was falsely flagged by
+  Defender's ML the next day, so the AV scan gate — not `pacman -Syu` — is the enforcement.
+  `cache: true` on that one job would trade freshness for minutes. Home: #33 (pipeline automation)
+  or as CI polish under #4.
+
+### Resolved since the 2026-09-05 pass (kept for reference)
+
+- ~~**Installer `--port 0` / `--server-only` test flags** and the **`env.json` deployment
+  manifest**~~ — shipped together in #141: `installer/src/main.c` gained `--smoke-test`,
+  `--server-only`, `--port` and `--env-file`, and `write_env_manifest()` writes the manifest when
+  `--env-file` is passed (after the session token exists). Installer API-contract coverage rides on
+  them — `test/e2e/installer/smoke-security.mjs` spawns the binary with `--smoke-test`, and
+  `test/unit/e2e/apiRouteContract.test.mjs` diffs the registered `/api` routes against the gated
+  sets.
+- ~~**E2E profile/process hygiene**~~ — shipped in #155 (`test/e2e/shared/processHygiene.mjs`:
+  `killStrayProcesses()`, `removeProfileCompatibilityIni()`, `closeBrowser()`; unit tests in
+  `test/unit/e2e/processHygiene.test.mjs`) — deterministic repeat runs on all three OSes.
+- ~~**`FIREFOX_BINARY` pinning**~~ — resolved by decision rather than by a pin: E2E keeps tracking
+  the newest vendor release at run time, with `BROWSER_PIN_VERSION` as the manual escape hatch (ADR
+  [0023](./decisions/0023-e2e-browser-version-pinning.md), #154).
 - ~~**Test runner + layout decision** (`node:test`, type-first `test/`)~~ — settled: PR #52.
 
 ## Historical: Firefox 155 chrome-frame probes (obsolete)
