@@ -222,7 +222,7 @@
      ======================================================================== */
   /** Append the session token (?t=...) to a local API path if not present. */
   function withToken(path) {
-    if (/[?&]t=[0-9a-f]{16}/.test(path)) return path;
+    if (/[?&]t=[0-9a-f]{32}/.test(path)) return path;
     const t = getSessionToken();
     if (!t) return path;
     const sep = path.indexOf('?') >= 0 ? '&' : '?';
@@ -1610,7 +1610,7 @@
      Init
      ======================================================================== */
   function getSessionToken() {
-    const m = /[?&]t=([0-9a-f]{16})/.exec(window.location.search);
+    const m = /[?&]t=([0-9a-f]{32})/.exec(window.location.search);
     return m ? m[1] : null;
   }
 

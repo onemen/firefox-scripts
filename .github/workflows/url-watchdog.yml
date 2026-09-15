@@ -116,6 +116,9 @@ jobs:
     name: browser download URLs (PR)
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    # Same progress-aware vendor fetches as the scheduled `check` (30 min);
+    # fewer URLs on a PR diff, so half the budget still gives ~5x headroom.
+    timeout-minutes: 15
     # Stateless vendor checks + annotations only — no GitHub API calls, so no
     # write scopes.
     permissions:

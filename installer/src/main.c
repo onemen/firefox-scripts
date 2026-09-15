@@ -55,7 +55,7 @@ static char g_env_file_path[MAX_PATH_LEN] = "";
 // from a PREVIOUS installer run carries an old token; /api/claim compares it
 // against this one so stale tabs show a "closed" placeholder instead of the
 // installer UI (and don't shut down the current installer when closed).
-static char g_session_token[17];
+static char g_session_token[33]; /* 32 hex chars + NUL */
 
 // UI URL for this run, reopened explicitly after a restart that kills the tab.
 static char g_ui_url[128];
@@ -132,8 +132,14 @@ static int generate_session_token(void) {
     unsigned char raw[16];
     if (fill_random_bytes(raw, sizeof(raw)) != 0) return -1;
     const char *hex = "0123456789abcdef";
-    for (int i = 0; i < 16; i++) g_session_token[i] = hex[raw[i] % 16];
-    g_session_token[16] = '\0';
+    // Consume both nibbles of every random byte: a true 128-bit token
+    // (64 hex chars). Taking only one nibble per byte would halve the
+    // entropy the CSPRNG provides (ADR 0010).
+    for (int i = 0; i < 16; i++) {
+        g_session_token[i * 2] = hex[raw[i] >> 4];
+        g_session_token[i * 2 + 1] = hex[raw[i] & 0xF];
+    }
+    g_session_token[32] = '\0';
     return 0;
 }
 
