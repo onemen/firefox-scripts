@@ -62,6 +62,11 @@ jobs:
       - run: pnpm lint
       - run: pnpm format
       - run: pnpm test
+      # Supply-chain gate (2026-09-15 audit): fails the PR on any known high
+      # or critical vulnerability in the dependency tree. Dev-only tree, so
+      # only new advisories should ever trip it; Dependabot's weekly pnpm
+      # entry keeps the tree moving between advisories.
+      - run: pnpm audit --audit-level=high
       - run: pnpm check:decisions
       - run: pnpm check:gates
 
