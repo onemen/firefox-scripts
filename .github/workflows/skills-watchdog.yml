@@ -45,6 +45,9 @@ jobs:
     name: check third-party skill drift
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
+    # Frontmatter fetch + one upstream git probe: minutes-scale work; 15 min
+    # leaves ~10x headroom (ci-inventory.md timeout policy).
+    timeout-minutes: 15
     permissions:
       contents: read
       issues: write # rolling tracking issue (the only write this workflow does)
@@ -72,6 +75,8 @@ jobs:
     name: third-party skill drift (PR)
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    # PR review-time leg of the same watchdog: local frontmatter parse only.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
