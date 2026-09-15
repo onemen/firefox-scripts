@@ -55,7 +55,7 @@ static char g_env_file_path[MAX_PATH_LEN] = "";
 // from a PREVIOUS installer run carries an old token; /api/claim compares it
 // against this one so stale tabs show a "closed" placeholder instead of the
 // installer UI (and don't shut down the current installer when closed).
-static char g_session_token[17];
+static char g_session_token[33]; /* 32 hex chars + NUL */
 
 // UI URL for this run, reopened explicitly after a restart that kills the tab.
 static char g_ui_url[128];
