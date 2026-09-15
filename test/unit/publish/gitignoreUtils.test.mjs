@@ -118,10 +118,22 @@ test('shouldIgnore: FIRST match wins — the opposite of gitignore last-match', 
   assert.equal(shouldIgnore('C:/base/keep.log', patterns, 'C:/base'), true);
 });
 
-test('shouldIgnore: Windows separators in the path are normalized', () => {
+test('shouldIgnore: forward slashes are the canonical separator on every platform', () => {
   const patterns = P([['installer/src/private.c']]);
-  assert.equal(shouldIgnore('C:\\base\\installer\\src\\private.c', patterns, 'C:\\base'), true);
+  assert.equal(shouldIgnore('C:/base/installer/src/private.c', patterns, 'C:/base'), true);
 });
+
+test(
+  'shouldIgnore: backslash paths normalize only via the Windows path module',
+  // The normalization is path.relative's, which splits backslashes on win32
+  // only. Production is safe everywhere — getAllFiles builds its paths with
+  // the local path module — so only pin the backslash behavior on Windows.
+  {skip: process.platform !== 'win32'},
+  () => {
+    const patterns = P([['installer/src/private.c']]);
+    assert.equal(shouldIgnore('C:\\base\\installer\\src\\private.c', patterns, 'C:\\base'), true);
+  }
+);
 
 // ── getAllFiles ──────────────────────────────────────────────────────────────
 
