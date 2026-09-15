@@ -311,13 +311,17 @@ static int compute_file_sha256(const char *filepath, char *out_hash, size_t hash
  */
 /**
  * Canonical hash-path ordering: case-insensitive byte-wise comparison —
- * ASCII-lowercase each byte, then compare as unsigned char. The JS reference
+ * ASCII-lowercase each byte (primary key), then compare as unsigned char;
+ * case-insensitively equal but distinct paths (A.txt vs a.txt) tie-break on
+ * the raw bytes so the order is total and input-independent. The JS reference
  * (tools/publish/hashUtils.mjs compareCaseInsensitive) and the in-browser twin
- * (scriptsUpdater.sys.mjs compareHashOrder) implement the same order; the
- * adversarial-path probe in installer/test/test_hash.mjs pins the parity.
- * Deliberately locale-independent.
+ * (scriptsUpdater.sys.mjs compareHashOrder) implement the same byte contract
+ * over UTF-8; the adversarial-path probe in installer/test/test_hash.mjs pins
+ * the parity. Deliberately locale-independent.
  */
 static int cmp_path_ci(const char *a, const char *b) {
+    const char *ra = a;
+    const char *rb = b;
     while (*a && *b) {
         unsigned char ca = (unsigned char)*a;
         unsigned char cb = (unsigned char)*b;
@@ -331,7 +335,10 @@ static int cmp_path_ci(const char *a, const char *b) {
     unsigned char cb = (unsigned char)*b;
     if (ca >= 'A' && ca <= 'Z') ca = (unsigned char)(ca - 'A' + 'a');
     if (cb >= 'A' && cb <= 'Z') cb = (unsigned char)(cb - 'A' + 'a');
-    return (int)ca - (int)cb;
+    if (ca != cb) return (int)ca - (int)cb;
+    /* Folded-equal (reached only when both strings ended together): raw-byte
+     * tie-break keeps distinct paths order-stable regardless of input. */
+    return strcmp(ra, rb);
 }
 
 int compute_directory_sha256(const char *base_dir,

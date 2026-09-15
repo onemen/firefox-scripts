@@ -227,6 +227,8 @@ function adversarialComparatorProbe(installerBinary) {
 
   // 1. Order parity on adversarial pairs (JS comparator only — pure ordering).
   const pairs = [
+    ['A.txt', 'a.txt'], // folds equal — the raw-byte tie-break must order this
+    ['AB.js', 'Ab.js'],
     ['A.txt', 'a!.txt'],
     ['Beta.js', 'alpha.js'],
     ['file_1.txt', 'file-1.txt'],
@@ -263,6 +265,7 @@ function adversarialComparatorProbe(installerBinary) {
     'B.txt',
     'a!.txt',
     'A.txt',
+    'a.txt',
     'b/c.d.ts',
     'b/c.js',
     'B/d.txt',
@@ -276,7 +279,8 @@ function adversarialComparatorProbe(installerBinary) {
   const contents = {
     'B.txt': 'bravo',
     'a!.txt': 'alpha bang',
-    'A.txt': 'alpha',
+    'A.txt': 'alpha upper',
+    'a.txt': 'alpha lower',
     'b/c.d.ts': 'declaration',
     'b/c.js': 'script',
     'B/d.txt': 'bravo dir',

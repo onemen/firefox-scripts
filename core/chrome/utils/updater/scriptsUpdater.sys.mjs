@@ -658,25 +658,37 @@ export async function fetchText(url) {
 }
 
 /**
- * The canonical hash-order comparator: case-insensitive byte-wise comparison
- * (ASCII-lowercase both sides, then compare by code units). Mirrors C
- * strcasecmp() in installer/src/detect_browser.c — the manifest contract is
- * that C, publish-side Node and this in-browser module all derive the identical
- * order. Deliberately NOT localeCompare(): its ordering follows the application
- * locale and could silently diverge from the C twin.
+ * The canonical hash-order comparator: case-insensitive comparison over UTF-8
+ * bytes — ASCII letters fold (primary key), and paths that fold equal but
+ * differ in case tie-break on the raw bytes, so the order is total and
+ * input-independent. Byte-exact mirror of cmp_path_ci() in
+ * installer/src/detect_browser.c (and compareCaseInsensitive() in
+ * tools/publish/hashUtils.mjs) — the manifest contract is that C, publish-side
+ * Node and this in-browser module all derive the identical order. Deliberately
+ * NOT localeCompare(): its ordering follows the application locale and could
+ * silently diverge from the C twin.
  *
  * @param {string} a
  * @param {string} b
  * @returns {number} negative / 0 / positive, for Array.prototype.sort
  */
 function compareHashOrder(a, b) {
-  const la = a.toLowerCase();
-  const lb = b.toLowerCase();
-  return (
-    la < lb ? -1
-    : la > lb ? 1
-    : 0
-  );
+  const fa = new TextEncoder().encode(a);
+  const fb = new TextEncoder().encode(b);
+  const FOLD = 0x20; // 'a' - 'A'
+  const len = Math.min(fa.length, fb.length);
+  for (let i = 0; i < len; i++) {
+    const ca = fa[i] >= 65 && fa[i] <= 90 ? fa[i] + FOLD : fa[i];
+    const cb = fb[i] >= 65 && fb[i] <= 90 ? fb[i] + FOLD : fb[i];
+    if (ca !== cb) return ca - cb;
+  }
+  // Folded-equal so far: the shorter byte string sorts first, and identical
+  // lengths tie-break on the raw bytes (distinct case-variants stay ordered).
+  if (fa.length !== fb.length) return fa.length - fb.length;
+  for (let i = 0; i < len; i++) {
+    if (fa[i] !== fb[i]) return fa[i] - fb[i];
+  }
+  return 0;
 }
 
 /**

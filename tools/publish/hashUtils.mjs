@@ -18,15 +18,16 @@ import {warn} from './log.mjs';
 export const HASHES_FILE = 'hashes.json';
 
 /**
- * The canonical hash-order comparator: case-insensitive byte-wise comparison
- * (ASCII-lowercase both sides, then compare by UTF-16 code units). This mirrors
- * C strcasecmp() in installer/src/detect_browser.c and is locale-independent —
- * deliberately NOT String.prototype.localeCompare, whose order varies with the
+ * The canonical hash-order comparator: case-insensitive comparison over UTF-8
+ * bytes — ASCII letters fold (primary key), and paths that fold equal but
+ * differ in case tie-break on the raw bytes, so the order is total and
+ * input-independent. Byte-exact mirror of cmp_path_ci() in
+ * installer/src/detect_browser.c (and compareHashOrder() in
+ * scriptsUpdater.sys.mjs); locale-independent — deliberately NOT
+ * String.prototype.localeCompare, whose order varies with the
  * runtime/application locale and would silently diverge from the C twin (and
- * across machines). Non-ASCII paths fall back to code-unit order on the JS
- * side; C tolower()s per byte — the published file sets are ASCII, and the
- * adversarial probe in installer/test/test_hash.mjs pins the contract (ADR
- * 0002).
+ * across machines). The adversarial probe in installer/test/test_hash.mjs pins
+ * the contract (ADR 0002).
  *
  * Accepts plain strings, or `{relative}` / `{rel}` entry objects as used by
  * computeDirectoryHash / computeFileSetHash.
@@ -35,16 +36,22 @@ export const HASHES_FILE = 'hashes.json';
  * @param {string | {relative?: string; rel?: string}} b
  * @returns {number} negative / 0 / positive, for Array.prototype.sort
  */
+const FOLD_OFFSET = 'a'.charCodeAt(0) - 'A'.charCodeAt(0);
+function foldC(bytes) {
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    out[i] = b >= 65 && b <= 90 ? b + FOLD_OFFSET : b;
+  }
+  return out;
+}
 export function compareCaseInsensitive(a, b) {
   const sa = typeof a === 'string' ? a : (a.relative ?? a.rel);
   const sb = typeof b === 'string' ? b : (b.relative ?? b.rel);
-  const la = sa.toLowerCase();
-  const lb = sb.toLowerCase();
-  return (
-    la < lb ? -1
-    : la > lb ? 1
-    : 0
-  );
+  const folded = Buffer.compare(foldC(Buffer.from(sa, 'utf-8')), foldC(Buffer.from(sb, 'utf-8')));
+  if (folded !== 0) return folded;
+  if (sa === sb) return 0;
+  return Buffer.compare(Buffer.from(sa, 'utf-8'), Buffer.from(sb, 'utf-8'));
 }
 
 /**
