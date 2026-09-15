@@ -86,6 +86,18 @@ export function shouldIgnore(filePath, patterns, baseDir) {
 export function getAllFiles(dir, patterns, baseDir, includeSubfolders = []) {
   const files = [];
   const entries = fs.readdirSync(dir, {withFileTypes: true});
+  // Filesystem enumeration order is unspecified — NTFS shuffles it when files
+  // are deleted + recreated, which happens to the generated files on every
+  // publish run. The zip entry order derives from this walk, so an unsorted
+  // walk makes the zips' bytes nondeterministic between two runs of the same
+  // commit (#33 deterministic-output check caught exactly that). Sort every
+  // directory level; the hash manifest already sorts its rel paths
+  // independently, so only byte-layout determinism is at stake here.
+  entries.sort((a, b) =>
+    a.name < b.name ? -1
+    : a.name > b.name ? 1
+    : 0
+  );
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);

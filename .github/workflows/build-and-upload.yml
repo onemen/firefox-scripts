@@ -231,7 +231,10 @@ jobs:
         run: |
           # relPath is staging-tree-relative; resolve it against dist/.build or
           # scan-av silently scans nothing (a missing file is a note, exit 0).
-          mapfile -t FILES < <(node -e "
+          # Read line-by-line instead of mapfile: macOS ships bash 3.2, which
+          # has no mapfile builtin (first run: exit 127 on the mac leg).
+          FILES=()
+          while IFS= read -r f; do FILES+=("$f"); done < <(node -e "
             const fs = require('fs');
             const path = require('path');
             const m = JSON.parse(fs.readFileSync('dist/.build/build-manifest.json', 'utf-8'));
@@ -255,6 +258,10 @@ jobs:
         with:
           name: staged-${{ matrix.platform }}
           path: dist/.build/
+          # dist/.build is a hidden directory — v4+ artifacts exclude hidden
+          # paths by default, which silently uploads nothing (first run: every
+          # leg failed here with 'No files were found').
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
