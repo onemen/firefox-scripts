@@ -27,12 +27,6 @@ ephemeral ports plus Origin checks) is adopted.
 **Entropy note (2026-09-15):** the token is a true 128-bit value — 16 CSPRNG bytes, both nibbles
 taken (`hex[raw[i] >> 4]`, `hex[raw[i] & 0xF]`). Earlier builds consumed only the low nibble
 (`raw[i] % 16`), yielding 64 bits from the same 16 random bytes; the smoke-security and E2E
-harnesses pin the 32-hex length.
-
-**Availability note (2026-09-15):** the serve loop is single-threaded, so one stalled connection
-blocks every request behind it — ADR 0010 previously covered only who may drive the API, not whether
-it stays reachable. Accepted sockets now carry two independent read deadlines: a 10 s idle
-`SO_RCVTIMEO` and a 30 s total per-request read bound (a client dribbling bytes every few seconds
-defeats an idle timeout alone). On expiry the request is answered `408 Request Timeout` and closed.
-The smoke test exercises the idle bound via a shortened, test-only override
-(`FXS_HTTP_RECV_TIMEOUT_MS`, honored only under `--smoke-test`).
+harnesses pin the 32-hex length.**Availability note (2026-09-15):** the single-threaded serve loop's
+availability envelope — per-connection read deadlines, 408 semantics, and the smoke-test override —
+is its own decision: see [ADR 0028](./0028-installer-serve-loop-availability.md).
