@@ -98,7 +98,11 @@ async function hit(route, {token, method = 'GET', body} = {}) {
     signal: AbortSignal.timeout(10_000),
   });
   const text = await res.text();
-  return {status: res.status, text, acao: res.headers.get('access-control-allow-origin')};
+  return {
+    status: res.status,
+    text,
+    acao: res.headers.get('access-control-allow-origin'),
+  };
 }
 
 async function waitForServer(token, child) {
@@ -136,9 +140,14 @@ async function main() {
 
   const child = spawn(installer, ['--smoke-test'], {
     cwd: REPO_ROOT,
-    // Shorten the server's idle read deadline for the timeout check below.
-    // Honored only under --smoke-test (main.c); production is unaffected.
-    env: {...process.env, FXS_HTTP_RECV_TIMEOUT_MS: '1500'},
+    // Shorten the server's read deadlines for the timeout checks below: idle
+    // 1000 ms, total 5000 ms. Honored only under --smoke-test (main.c);
+    // production is unaffected.
+    env: {
+      ...process.env,
+      FXS_HTTP_RECV_TIMEOUT_MS: '1000',
+      FXS_HTTP_REQUEST_TOTAL_TIMEOUT_MS: '5000',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -272,6 +281,66 @@ async function main() {
       check(
         after.text.includes('"current":1'),
         'server still serves after the stalled connection',
+        after.text.slice(0, 80)
+      );
+    }
+
+    console.log('\nDribbling client hits the total read bound despite idle resets');
+    {
+      // A dribbler defeats the idle deadline: every byte arrives before
+      // SO_RCVTIMEO can fire, so the recv loop never sees an error. Only the
+      // total per-request read bound can shed it — this is exactly why the
+      // fix ships two independent deadlines instead of one.
+      const dribbler = net.connect({host: '127.0.0.1', port: PORT});
+      const started = Date.now();
+      const saw408 = await new Promise(resolve => {
+        let buf = '';
+        const giveUp = setTimeout(
+          () => resolve({ok: false, detail: 'no response within 15 s'}),
+          15_000
+        );
+        const drip = setInterval(() => dribbler.write('x'), 300); // well under the 1000 ms idle deadline
+        dribbler.on('data', d => {
+          buf += d.toString();
+          if (buf.startsWith('HTTP/1.0 408') || buf.startsWith('HTTP/1.1 408')) {
+            clearInterval(drip);
+            clearTimeout(giveUp);
+            resolve({
+              ok: true,
+              detail: `${buf.split('\r\n')[0]} after ${Date.now() - started} ms`,
+            });
+          }
+        });
+        dribbler.on('error', err => {
+          clearInterval(drip);
+          clearTimeout(giveUp);
+          resolve({ok: false, detail: err.message});
+        });
+        dribbler.on('close', () => {
+          clearInterval(drip);
+          clearTimeout(giveUp);
+          resolve({
+            ok: false,
+            detail: `closed without 408 (got: ${buf.slice(0, 40) || 'nothing'})`,
+          });
+        });
+      });
+      dribbler.destroy();
+      check(saw408.ok, 'dribbling client gets 408 from the total read bound', saw408.detail);
+      // Surviving ~5 s against a 1 s idle deadline is itself the proof that
+      // the dribble kept resetting the idle bound — i.e. the total read
+      // bound, not SO_RCVTIMEO, is what shed this connection.
+      check(
+        saw408.ok && Date.now() - started >= 4000,
+        'dribble survived past the idle deadline (total bound did the shedding)',
+        `elapsed ${Date.now() - started} ms`
+      );
+
+      // And the loop must still be alive after shedding it.
+      const after = await hit('claim', {token});
+      check(
+        after.text.includes('"current":1'),
+        'server still serves after the dribbling client',
         after.text.slice(0, 80)
       );
     }
