@@ -27,9 +27,7 @@ import {fileURLToPath} from 'url';
 // publishes, and the spawned installer gets its own argv.
 process.argv.push('--mode=prod');
 
-const {computeFileSetHash, collectDirEntries} = await import(
-  '../../tools/publish/hashUtils.mjs'
-);
+const {computeFileSetHash, collectDirEntries} = await import('../../tools/publish/hashUtils.mjs');
 const {loadSharedPatterns} = await import('../../tools/publish/publishCommon.mjs');
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
