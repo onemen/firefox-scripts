@@ -11,7 +11,9 @@ description:
 
 AI review is a **local, agent-run step** — not a CI bot. The agent that opened the PR runs the
 review when the PR is ready, assesses the findings itself, and posts only the accepted ones. No
-CI/repo AI secret exists or should be added; CodeRabbit `review:batch` is an optional deep pass.
+CI/repo AI secret exists or should be added. External review triggers (CodeRabbit
+`@coderabbitai review` / `pnpm review:batch`) require explicit operator instruction — never
+self-initiated (see the boundary section below).
 
 ## The protocol
 
@@ -117,8 +119,9 @@ sharper:
 
 - **On tooling/workflow PRs (`.github/**`, `tools/ci|publish/**`) the local reviewer is nearly
   blind** — its diff-hunk window can't see cross-file API semantics (`behind_by` vs `ahead_by`,
-  `state=open` vs reopened issues, `--fix` convergence). Run CodeRabbit (`@coderabbitai review`) on
-  these PRs and treat the local pass as advisory garnish, not evidence of health.
+  `state=open` vs reopened issues, `--fix` convergence). These PRs warrant the CodeRabbit pass — but
+  that pass is operator-initiated (boundary below): recommend it and wait for the explicit
+  instruction, and meanwhile treat the local pass as advisory garnish, not evidence of health.
 - **Findings on pristine third-party skills (ADR 0022, `metadata.github-repo` frontmatter) are
   auto-rejected** — the content is byte-identical to upstream and must not be edited. The replay
   burned quota to flag upstream's own wording ("truncated sentence") — a false positive by
@@ -127,10 +130,29 @@ sharper:
   zero-findings pass that skipped half the files proves nothing. (Planned tooling fix: a coverage
   line in the summary.)
 
+## Review-trigger boundary — operator-initiated only
+
+The agent-run step is `pnpm review:local` plus the triage/posting of its findings. External
+reviewers are the **operator's** call, never the agent's initiative:
+
+- **Never invoke `@coderabbitai review` (or any external review trigger) unprompted.** It posts as
+  the user, consumes their included-review quota (~1/hour), and adds timeline activity they did not
+  ask for. Recommend the pass and wait for the explicit instruction.
+- **`pnpm review:batch` likewise requires explicit operator instruction** to run — same reason: it
+  posts CodeRabbit reviews to PRs under the user's account and spends their quota.
+- **When the operator does run `review:batch`** (or any external reviewer), the agent triages its
+  findings right / wrong / useless exactly as for the local pass and posts each accepted finding per
+  the protocol above: line-anchored individually resolvable threads (fallback review body, never
+  `gh pr comment`), the 🤖 provenance marker (e.g.
+  `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`), and each
+  thread resolved as its fix lands. External findings get the same scrutiny as local ones —
+  assessed, not rubber-stamped.
+
 ## Also know
 
 - `.github/workflows/ai-review.yml` was removed; do not re-add CI AI review.
 - `tools/ai-review.mjs` configures providers as an array of `{id, label, model, keyEnv, endpoint}`;
   the first entry whose API key is set is used, with per-file fallback.
-- CodeRabbit is quota-limited (~1 review/hour, shared bot/CLI quota — `.coderabbit.yaml`); use
-  `@coderabbitai review` for a one-off deep pass, `pnpm review:batch` for batched branch reviews.
+- CodeRabbit is quota-limited (~1 review/hour, shared bot/CLI quota — `.coderabbit.yaml`):
+  `@coderabbitai review` for a one-off deep pass, `pnpm review:batch` for batched branch reviews —
+  both strictly on explicit operator instruction (see the boundary section above).

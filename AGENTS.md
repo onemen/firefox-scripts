@@ -175,8 +175,11 @@ before merging (main requires conversation resolution). Every agent-posted revie
 one-line 🤖 provenance marker (e.g.
 `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`) — reviews go out
 under the user's own account, and the marker is what separates agent from human activity. The review
-is not gated on CI — it can help debug failing checks. Add no CI/repo AI secret; CodeRabbit
-`review:batch` remains an optional deep pass. Full protocol: the `ai-review` skill.
+is not gated on CI — it can help debug failing checks. Add no CI/repo AI secret. External review
+triggers — CodeRabbit `@coderabbitai review` and `pnpm review:batch` — are **operator-initiated
+only**: the agent never invokes them unprompted. When the operator runs `review:batch`, the agent
+triages its findings and posts accepted ones per the protocol above. Full protocol: the `ai-review`
+skill.
 
 ## Agent workflow
 

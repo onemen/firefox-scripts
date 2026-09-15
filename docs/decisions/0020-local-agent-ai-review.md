@@ -45,12 +45,21 @@ AI review is a **local, agent-run step**, not a CI bot:
   an optional backup; Groq was removed (retired).
 - `.github/workflows/ai-review.yml` was **removed**; no repo/CI secret is required.
 - CodeRabbit `review:batch` stays as an optional deep ~1-review/hour pass for the PRs that warrant
-  it.
+  it. **Amended 2026-09-15:** such passes — and any external review trigger, including
+  `@coderabbitai review` — are **operator-initiated only**; the agent never invokes them
+  unprompted (they post under the user's account and consume their quota). When the operator does
+  run one, the agent triages its findings right / wrong / useless and posts each accepted finding
+  per the protocol above (line-anchored resolvable threads, 🤖 provenance marker, resolve as fixes
+  land) — external findings get the same scrutiny as local ones, never a rubber stamp.
 
 ## Consequences
 
 - No CI bot noise, no per-push comments, no token stored in CI; review output lands on the PR
   filtered by the agent's assessment.
+- The boundary cuts both ways: the agent's review authority is local-only (`review:local` +
+  triage); external reviewers are invoked solely at the operator's instruction, and their output
+  re-enters the same assess-then-post protocol. (Amendment 2026-09-15, after an agent
+  self-triggered a CodeRabbit pass on PR #204 without instruction.)
 - Review quality depends on the agent performing the step and on the configured model — not on a
   scheduled bot.
 - Requires `GEMINI_API_KEY` in the agent's local `.env` (untracked); the CI AI-review workflow
