@@ -4,6 +4,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import js from '@eslint/js';
 import markdown from '@eslint/markdown';
 import eslintConfigPrettier from 'eslint-config-prettier';
+import sdl from '@microsoft/eslint-plugin-sdl';
 import security from 'eslint-plugin-security';
 import {defineConfig} from 'eslint/config';
 import globals from 'globals';
@@ -173,6 +174,21 @@ export default defineConfig([
     ],
     languageOptions: {
       globals: globals.node,
+    },
+  },
+
+  // The updater tab ships as updater-ui.zip and renders server/browser-fetched
+  // content paths; AGENTS.md's "no innerHTML in the updater tab" convention is
+  // enforced here rather than remembered (2026-09-15 audit P2). XML-parsed
+  // XHTML + hidden toggles are the house pattern. installer/web/script.js is
+  // deliberately out of scope: it renders only the installer's own embedded
+  // UI, is reviewed separately, and is not shipped in a zip.
+  {
+    name: 'updater-tab-sdl',
+    files: ['tools/publish/remote-ui/**/*.{js,mjs}'],
+    plugins: {sdl},
+    rules: {
+      'sdl/no-inner-html': 'error',
     },
   },
 ]);

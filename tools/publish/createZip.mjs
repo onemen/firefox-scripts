@@ -132,7 +132,7 @@ export async function createZip(
     output.on('close', () => {
       const size = (archive.pointer() / 1024).toFixed(1);
       success(`  ✓ ${path.basename(outputPath)}  ${files.length} files, ${size} KB`);
-      resolve();
+      resolve(undefined);
     });
 
     archive.on('error', reject);
