@@ -24,6 +24,13 @@ import {existsSync, readdirSync, statSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {killStrayProcesses} from '../shared/processHygiene.mjs';
+import {
+  GATED_API_ROUTES,
+  OPEN_API_ROUTES,
+  SHUTDOWN_API_ROUTE,
+  SHUTDOWN_REJECT_BODY,
+  UNAUTHORIZED_REJECT_BODY,
+} from './apiRoutes.mjs';
 
 // test/e2e/installer/smoke-security.mjs → repo root
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
@@ -31,28 +38,11 @@ const PORT = 8777;
 const BASE = `http://127.0.0.1:${PORT}`;
 const WRONG_TOKEN = '0'.repeat(16);
 
-// Every state-changing route must reject a missing/wrong token.  Keep this
-// list in sync with the `request_has_valid_token` gates in installer/src/
-// (main.c + http_server.c).  `/api/shutdown` is special: it replies
-// {"status":"ignored"} instead of {"error":"unauthorized"}.
-const GATED_ROUTES = [
-  'status',
-  'install',
-  'self-update',
-  'manifest',
-  'upload',
-  'waterfox',
-  'hg-tags',
-  'close-browser',
-  'open-folder',
-  'rescan',
-  'restart',
-];
-const SHUTDOWN_ROUTE = 'shutdown';
-const SHUTDOWN_REJECT = 'ignored';
-
-// Read-only routes: usable without a token, but still must never carry CORS.
-const OPEN_ROUTES = ['ping', 'build-info', 'browsers', 'package-urls'];
+// The route/token-gate sets live in ./apiRoutes.mjs so that
+// test/unit/e2e/apiRouteContract.test.mjs (part of `pnpm test`, no build
+// needed) can diff them against the routes actually registered in
+// installer/src/*.c — a route added there without a classification fails that
+// unit test rather than silently escaping this smoke test.
 
 let failures = 0;
 let checks = 0;
@@ -168,8 +158,8 @@ async function main() {
     await waitForServer(token, child);
 
     console.log('Missing token → must be refused on every state-changing route');
-    for (const route of [...GATED_ROUTES, SHUTDOWN_ROUTE]) {
-      const reject = route === SHUTDOWN_ROUTE ? SHUTDOWN_REJECT : 'unauthorized';
+    for (const route of [...GATED_API_ROUTES, SHUTDOWN_API_ROUTE]) {
+      const reject = route === SHUTDOWN_API_ROUTE ? SHUTDOWN_REJECT_BODY : UNAUTHORIZED_REJECT_BODY;
       const res = await hit(route);
       check(
         res.text.includes(reject),
@@ -180,8 +170,8 @@ async function main() {
     }
 
     console.log('\nWrong token → must be refused on every state-changing route');
-    for (const route of [...GATED_ROUTES, SHUTDOWN_ROUTE]) {
-      const reject = route === SHUTDOWN_ROUTE ? SHUTDOWN_REJECT : 'unauthorized';
+    for (const route of [...GATED_API_ROUTES, SHUTDOWN_API_ROUTE]) {
+      const reject = route === SHUTDOWN_API_ROUTE ? SHUTDOWN_REJECT_BODY : UNAUTHORIZED_REJECT_BODY;
       const res = await hit(route, {token: WRONG_TOKEN});
       check(
         res.text.includes(reject),
@@ -209,10 +199,10 @@ async function main() {
     }
 
     console.log('\nRead-only routes work without a token and carry no CORS');
-    for (const route of OPEN_ROUTES) {
+    for (const route of OPEN_API_ROUTES) {
       const res = await hit(route);
       check(
-        !res.text.includes('unauthorized'),
+        !res.text.includes(UNAUTHORIZED_REJECT_BODY),
         `/api/${route} usable without token`,
         `got: ${res.text.slice(0, 80)}`
       );
@@ -220,7 +210,7 @@ async function main() {
     }
 
     console.log('\nValid token → the gate lets requests through (business errors are fine)');
-    for (const route of GATED_ROUTES) {
+    for (const route of GATED_API_ROUTES) {
       // self-update with a GET hits the network; POST an empty payload instead
       // so it fails fast on parsing, past the gate.
       const res =
@@ -228,7 +218,7 @@ async function main() {
           await hit(route, {token, method: 'POST', body: '{}'})
         : await hit(route, {token});
       check(
-        !res.text.includes('unauthorized'),
+        !res.text.includes(UNAUTHORIZED_REJECT_BODY),
         `/api/${route} passes with valid token`,
         `got: ${res.text.slice(0, 80)}`
       );
@@ -236,9 +226,9 @@ async function main() {
     }
 
     console.log('\nShutdown (last): valid token stops the server');
-    const shut = await hit(SHUTDOWN_ROUTE, {token});
+    const shut = await hit(SHUTDOWN_API_ROUTE, {token});
     check(
-      !shut.text.includes('unauthorized') && !shut.text.includes(SHUTDOWN_REJECT),
+      !shut.text.includes(UNAUTHORIZED_REJECT_BODY) && !shut.text.includes(SHUTDOWN_REJECT_BODY),
       '/api/shutdown honors valid token',
       shut.text.slice(0, 80)
     );
