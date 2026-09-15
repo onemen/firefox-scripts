@@ -161,6 +161,7 @@ jobs:
   build:
     name: build — ${{ matrix.platform }} binaries
     needs: baseline
+    if: always() && needs.baseline.result == 'success'
     strategy:
       fail-fast: false
       matrix:
