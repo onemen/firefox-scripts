@@ -534,14 +534,73 @@ int admin_copy(const char *src, const char *dst, char *error_msg, size_t error_s
 }
 
 #else
-// Fallback for other platforms - just do a file copy without elevation
+// Fallback for other POSIX-ish platforms (e.g. *BSD): in-process buffered
+// copy. The previous system("cp \"%s\" \"%s\"") violated the argv-array shell
+// rule (docs/security.md item 5 — a path containing " or $() could break the
+// interpolation) and silently truncated paths beyond the command buffer.
+// Like before, there is no elevation proxy on these platforms: an unwritable
+// destination fails with a clear error via admin_copy_files' error_msg.
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+
+static void create_parent_dirs(const char *dst_path) {
+    char dir[MAX_PATH_LEN];
+    snprintf(dir, sizeof(dir), "%s", dst_path);
+    char *p = dir + strlen(dir);
+    while (p > dir && p[-1] != '/') p--;
+    if (p > dir) p[-1] = '\0';
+
+    char tmp[MAX_PATH_LEN];
+    strncpy(tmp, dir, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    for (char *c = tmp + 1; *c; c++) {
+        if (*c == '/') {
+            *c = '\0';
+            mkdir(tmp, 0755);
+            *c = '/';
+        }
+    }
+    mkdir(tmp, 0755);
+}
+
+static int copy_file_content(const char *src, const char *dst) {
+    int in_fd = open(src, O_RDONLY);
+    if (in_fd < 0) return -1;
+
+    int out_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out_fd < 0) {
+        close(in_fd);
+        return -1;
+    }
+
+    char buf[65536];
+    ssize_t n;
+    while ((n = read(in_fd, buf, sizeof(buf))) > 0) {
+        ssize_t written = 0;
+        while (written < n) {
+            ssize_t r = write(out_fd, buf + written, (size_t)(n - written));
+            if (r <= 0) {
+                close(in_fd);
+                close(out_fd);
+                return -1;
+            }
+            written += r;
+        }
+    }
+    int err = (n < 0) ? -1 : 0;
+    close(in_fd);
+    if (close(out_fd) != 0) err = -1;
+    return err;
+}
+
 int admin_copy_files(const char *const srcs[], const char *const dsts[], int count,
                      char *error_msg, size_t error_size) {
     for (int i = 0; i < count; i++) {
-        char cmd[MAX_PATH_LEN * 3];
-        snprintf(cmd, sizeof(cmd), "cp \"%s\" \"%s\"", srcs[i], dsts[i]);
-        if (system(cmd) != 0) {
-            snprintf(error_msg, error_size, "Copy command failed for %s", dsts[i]);
+        create_parent_dirs(dsts[i]);
+        if (copy_file_content(srcs[i], dsts[i]) < 0) {
+            snprintf(error_msg, error_size, "Copy failed for %s: %s", dsts[i],
+                     strerror(errno));
             return -1;
         }
     }
@@ -551,9 +610,14 @@ int admin_copy_files(const char *const srcs[], const char *const dsts[], int cou
 int admin_copy_mode(int argc, char *argv[]) {
     int pairs = (argc - 2) / 2;
     for (int i = 0; i < pairs; i++) {
-        char cmd[MAX_PATH_LEN * 3];
-        snprintf(cmd, sizeof(cmd), "cp \"%s\" \"%s\"", argv[2 + i * 2], argv[2 + i * 2 + 1]);
-        if (system(cmd) != 0) return 1;
+        const char *src = argv[2 + i * 2];
+        const char *dst = argv[2 + i * 2 + 1];
+        create_parent_dirs(dst);
+        if (copy_file_content(src, dst) < 0) {
+            fprintf(stderr, "admin-copy: failed %s -> %s (%s)\n", src, dst,
+                    strerror(errno));
+            return 1;
+        }
     }
     return 0;
 }

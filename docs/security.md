@@ -43,7 +43,9 @@ Run through every item; each maps to code that already exists.
    (browser binaries, profiles); paths come from user-writable files (`profiles.ini`, registry) so a
    path containing `"` or `$()` could break quoting. Reviewed, but new shell calls must use
    argv-array APIs (`CreateProcess*`, `execvp`) instead. `tools/publish/remote-ui/updater.js`
-   already uses `Subprocess.call` with argv arrays.
+   already uses `Subprocess.call` with argv arrays. The admin-copy fallback no longer shells out at
+   all: it is an in-process buffered copy (2026-09-15 audit P2 fix); the remaining interpolated
+   calls are the path-verified `pkill` sweep and hash/dialog helpers.
 6. **No eval / dynamic regex on untrusted input** — eslint (`security/detect-eval-with-expression`,
    `security/detect-unsafe-regex`) flags these.
 7. **No secrets in logs** — the session token is logged at startup
