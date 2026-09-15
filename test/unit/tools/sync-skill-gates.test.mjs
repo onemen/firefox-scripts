@@ -291,6 +291,23 @@ test('markdownlint: missing ignores anchor fails loudly', () => {
   assert.throws(() => renderMarkdownlintConfig('{"globs": []}', ['vendor-a']), /anchor/);
 });
 
+test('markdownlint: prose // comments mentioning .agents/skills are preserved', () => {
+  const withProse = [
+    '{',
+    '  "ignores": [',
+    '    // why we ignore .agents/skills at all: upstream text (ADR 0022)',
+    '    "**/node_modules/**",',
+    '  ],',
+    '}',
+  ].join('\n');
+  // --fix idempotence: the comment survives a render, and the stray scan
+  // does not flag it (a false positive would break --check forever).
+  const out = renderMarkdownlintConfig(withProse, ['vendor-a']);
+  assert.ok(out.includes('// why we ignore .agents/skills at all: upstream text (ADR 0022)'));
+  assert.deepEqual(findStraySkillLines(withProse, MDLINT_BEGIN_MARKER, MDLINT_END_MARKER), []);
+  assert.equal(renderMarkdownlintConfig(out, ['vendor-a']), out, 'idempotent with the comment');
+});
+
 test('findStraySkillLines: markers are configurable (markdownlint uses //)', () => {
   const md = [
     '"ignores": [',

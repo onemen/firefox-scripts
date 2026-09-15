@@ -105,7 +105,10 @@ export function classifySkills(root) {
  */
 function isSkillGateLine(line) {
   const t = line.trim();
-  return t !== '' && !t.startsWith('#') && t.includes('.agents/skills');
+  // JSONC `//` comments (markdownlint config prose) are never gate lines —
+  // `--fix` must preserve a comment that merely mentions .agents/skills.
+  if (t === '' || t.startsWith('#') || t.startsWith('//')) return false;
+  return t.includes('.agents/skills');
 }
 
 /**
