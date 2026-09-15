@@ -271,15 +271,16 @@ export function bodyAssetNames(currentNames, priorNames) {
  * full release briefly holds the badge otherwise. Idempotent: same-day
  * republishes replace assets and rewrite the body.
  *
+ * @param {object} [opts]
+ * @param {'scripts' | 'installer'} [opts.kind] which component (labels the
+ *   body)
+ * @param {Record<string, string>} [opts.dates] per-asset updated-date labels
+ * @param {Record<string, string> | null} [opts.selfUpdateUrlByAsset] asset →
+ *   self-update URL map (scripts body only)
  * @returns {Promise<{created: boolean}>} whether the release was newly created
  */
-export async function syncComponentRelease(
-  octokit,
-  tagName,
-  date,
-  assets,
-  {kind, dates = {}, selfUpdateUrlByAsset = null} = {}
-) {
+export async function syncComponentRelease(octokit, tagName, date, assets, opts = {}) {
+  const {kind, dates = {}, selfUpdateUrlByAsset = null} = opts;
   const {getRelease, getOrCreateRelease, deleteExistingAsset, uploadAsset, uploadAssetBuffer} =
     await import('./uploadUtilsZip.mjs');
   const existed = !!(await getRelease(octokit, tagName));
@@ -392,7 +393,7 @@ export async function pinLatestRelease(octokit) {
  * stays frozen at its own date). Fails soft: any error is a warning — the date
  * tags are a browsing convenience, never a publish gate.
  *
- * @param {object} octokit authenticated client
+ * @param {import('@octokit/rest').Octokit} octokit authenticated client
  * @param {object} p
  * @param {string[]} p.builtZips rebuilt package names
  * @param {string[]} p.builtInstallers rebuilt platform keys
@@ -403,6 +404,8 @@ export async function pinLatestRelease(octokit) {
  * @param {(name: string) => string} p.zipPath staged zip path by package name
  * @param {(p: string) => string} p.installerPath staged installer path by
  *   platform
+ * @param {string} [p.installerDate] this run's installer build date
+ *   (YYYY-MM-DD) — labels the installer component release
  */
 export async function syncComponentReleases(
   octokit,
