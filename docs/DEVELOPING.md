@@ -333,17 +333,15 @@ CLI flags win over environment variables, which win over the config file.
 
 ### CI matrix
 
-`.github/workflows/e2e.yml`:
+The per-job inventory of `.github/workflows/e2e.yml` — descriptions, triggers, path filters, and
+advisory-vs-required gate semantics — lives in [docs/ci-inventory.md](./ci-inventory.md), the single
+source kept in sync with the workflows (this summary table used to drift every time a leg was
+added). In short: the installer, helper, and updater legs are the hard gate (updater runs the
+Firefox stable/Dev/Nightly matrix plus the required waterfox leg, ADR 0025), while the fork-portable
+and snap legs are advisory.
 
-| Job          | OS matrix                                | Gate                                |
-| ------------ | ---------------------------------------- | ----------------------------------- |
-| installer    | ubuntu, macos, windows                   | Hard (blocks merge)                 |
-| helper       | ubuntu (sudo test)                       | Hard                                |
-| updater      | ubuntu (Mozilla tarball), macos, windows | Hard                                |
-| snap Firefox | ubuntu (snap store install)              | Advisory (skips without snapd, #55) |
-
-See `docs/e2e-matrix-plan.md` for the planned browser × OS expansion (Waterfox, Zen, Firefox
-Nightly, LibreWolf, and Floorp). The post-v1.0 browser expansion is tracked in issue #38.
+`docs/e2e-matrix-plan.md` is historical context — the browser × OS expansion it planned has shipped
+(#194, #199); the live scope is tracked in issues #3 and #38.
 
 ### Manual escape — testing a browser CI cannot fetch (`ci-downloads`, ADR 0021)
 

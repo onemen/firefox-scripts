@@ -10,10 +10,10 @@
 # Updater E2E: uses the shared dev snapshot (built once by the `snapshot`
 # job), installs Firefox, creates a test profile with scripts, launches
 # Firefox via puppeteer-core + WebDriver BiDi, and asserts the updater tab
-# renders the correct state. Advisory gate across the supported browser × OS
-# matrix.
+# renders the correct state. The Firefox stable/Dev/Nightly legs and the
+# required waterfox leg are hard gates; the fork and snap legs are advisory.
 #
-# See: docs/e2e-matrix-plan.md, https://github.com/onemen/firefox-scripts/issues/3
+# Per-job inventory: docs/ci-inventory.md — https://github.com/onemen/firefox-scripts/issues/3
 
 name: E2E
 
