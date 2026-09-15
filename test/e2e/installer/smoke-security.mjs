@@ -21,6 +21,7 @@
 
 import {spawn} from 'node:child_process';
 import {existsSync, readdirSync, statSync} from 'node:fs';
+import net from 'node:net';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {killStrayProcesses} from '../shared/processHygiene.mjs';
@@ -97,7 +98,11 @@ async function hit(route, {token, method = 'GET', body} = {}) {
     signal: AbortSignal.timeout(10_000),
   });
   const text = await res.text();
-  return {status: res.status, text, acao: res.headers.get('access-control-allow-origin')};
+  return {
+    status: res.status,
+    text,
+    acao: res.headers.get('access-control-allow-origin'),
+  };
 }
 
 async function waitForServer(token, child) {
@@ -135,6 +140,14 @@ async function main() {
 
   const child = spawn(installer, ['--smoke-test'], {
     cwd: REPO_ROOT,
+    // Shorten the server's read deadlines for the timeout checks below: idle
+    // 1000 ms, total 5000 ms. Honored only under --smoke-test (main.c);
+    // production is unaffected.
+    env: {
+      ...process.env,
+      FXS_HTTP_RECV_TIMEOUT_MS: '1000',
+      FXS_HTTP_REQUEST_TOTAL_TIMEOUT_MS: '5000',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -223,6 +236,113 @@ async function main() {
         `got: ${res.text.slice(0, 80)}`
       );
       check(res.acao === null, `/api/${route} has no Access-Control-Allow-Origin`);
+    }
+
+    console.log('\nStalled connection cannot wedge the single-threaded serve loop');
+    {
+      // ADR 0010 availability note: the serve loop is single-threaded, so one
+      // stalled connection once blocked every request behind it. Accepted
+      // sockets now carry an idle deadline (SO_RCVTIMEO) plus a total
+      // per-request read bound (a dribbling client defeats an idle timeout
+      // alone). A connection that sends nothing must be answered 408 and
+      // closed — and the server must keep serving afterwards.
+      const stalled = net.connect({host: '127.0.0.1', port: PORT});
+      const saw408 = await new Promise(resolve => {
+        let buf = '';
+        const giveUp = setTimeout(
+          () => resolve({ok: false, detail: 'no response within 10 s'}),
+          10_000
+        );
+        stalled.on('data', d => {
+          buf += d.toString();
+          if (buf.startsWith('HTTP/1.0 408') || buf.startsWith('HTTP/1.1 408')) {
+            clearTimeout(giveUp);
+            resolve({ok: true, detail: buf.split('\r\n')[0]});
+          }
+        });
+        stalled.on('error', err => {
+          clearTimeout(giveUp);
+          resolve({ok: false, detail: err.message});
+        });
+        stalled.on('close', () => {
+          clearTimeout(giveUp);
+          resolve({
+            ok: false,
+            detail: `closed without 408 (got: ${buf.slice(0, 40) || 'nothing'})`,
+          });
+        });
+      });
+      stalled.destroy();
+      check(saw408.ok, 'idle connection gets 408 Request Timeout', saw408.detail);
+
+      // The bound is only useful if the server survived it: a full
+      // valid-token round-trip must still work.
+      const after = await hit('claim', {token});
+      check(
+        after.text.includes('"current":1'),
+        'server still serves after the stalled connection',
+        after.text.slice(0, 80)
+      );
+    }
+
+    console.log('\nDribbling client hits the total read bound despite idle resets');
+    {
+      // A dribbler defeats the idle deadline: every byte arrives before
+      // SO_RCVTIMEO can fire, so the recv loop never sees an error. Only the
+      // total per-request read bound can shed it — this is exactly why the
+      // fix ships two independent deadlines instead of one.
+      const dribbler = net.connect({host: '127.0.0.1', port: PORT});
+      const started = Date.now();
+      const saw408 = await new Promise(resolve => {
+        let buf = '';
+        const giveUp = setTimeout(
+          () => resolve({ok: false, detail: 'no response within 15 s'}),
+          15_000
+        );
+        const drip = setInterval(() => dribbler.write('x'), 300); // well under the 1000 ms idle deadline
+        dribbler.on('data', d => {
+          buf += d.toString();
+          if (buf.startsWith('HTTP/1.0 408') || buf.startsWith('HTTP/1.1 408')) {
+            clearInterval(drip);
+            clearTimeout(giveUp);
+            resolve({
+              ok: true,
+              detail: `${buf.split('\r\n')[0]} after ${Date.now() - started} ms`,
+            });
+          }
+        });
+        dribbler.on('error', err => {
+          clearInterval(drip);
+          clearTimeout(giveUp);
+          resolve({ok: false, detail: err.message});
+        });
+        dribbler.on('close', () => {
+          clearInterval(drip);
+          clearTimeout(giveUp);
+          resolve({
+            ok: false,
+            detail: `closed without 408 (got: ${buf.slice(0, 40) || 'nothing'})`,
+          });
+        });
+      });
+      dribbler.destroy();
+      check(saw408.ok, 'dribbling client gets 408 from the total read bound', saw408.detail);
+      // Surviving ~5 s against a 1 s idle deadline is itself the proof that
+      // the dribble kept resetting the idle bound — i.e. the total read
+      // bound, not SO_RCVTIMEO, is what shed this connection.
+      check(
+        saw408.ok && Date.now() - started >= 4000,
+        'dribble survived past the idle deadline (total bound did the shedding)',
+        `elapsed ${Date.now() - started} ms`
+      );
+
+      // And the loop must still be alive after shedding it.
+      const after = await hit('claim', {token});
+      check(
+        after.text.includes('"current":1'),
+        'server still serves after the dribbling client',
+        after.text.slice(0, 80)
+      );
     }
 
     console.log('\nShutdown (last): valid token stops the server');

@@ -2716,6 +2716,16 @@ static int main_impl(int argc, char *argv[]) {
         printf("SMOKE_TEST_SESSION_TOKEN=%s\n", g_session_token);
         fflush(stdout);
     }
+    if (g_smoke_test) {
+        // Test-only override of the per-connection read deadlines (see
+        // http_server.c): keeps the idle-timeout smoke check fast. Honored
+        // only under --smoke-test; production always uses the defaults.
+        const char *idle = getenv("FXS_HTTP_RECV_TIMEOUT_MS");
+        const char *total = getenv("FXS_HTTP_REQUEST_TOTAL_TIMEOUT_MS");
+        if (idle || total) {
+            http_server_set_timeouts(idle ? atoi(idle) : 0, total ? atoi(total) : 0);
+        }
+    }
     // Deployment manifest for the E2E harness: written only when --env-file
     // was passed, after the token exists so the record is complete.
     if (g_env_file_path[0] != '\0') {

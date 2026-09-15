@@ -27,4 +27,6 @@ ephemeral ports plus Origin checks) is adopted.
 **Entropy note (2026-09-15):** the token is a true 128-bit value — 16 CSPRNG bytes, both nibbles
 taken (`hex[raw[i] >> 4]`, `hex[raw[i] & 0xF]`). Earlier builds consumed only the low nibble
 (`raw[i] % 16`), yielding 64 bits from the same 16 random bytes; the smoke-security and E2E
-harnesses pin the 32-hex length.
+harnesses pin the 32-hex length.**Availability note (2026-09-15):** the single-threaded serve loop's
+availability envelope — per-connection read deadlines, 408 semantics, and the smoke-test override —
+is its own decision: see [ADR 0028](./0028-installer-serve-loop-availability.md).
