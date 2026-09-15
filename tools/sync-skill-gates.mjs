@@ -6,17 +6,20 @@
  *
  * The third-party set is derived from each SKILL.md's `metadata.github-repo`
  * (the same `loadInventory()` source of truth the watchdog uses) and applied as
- * a generated block to `config/.prettierignore`. eslint's ignores are derived
- * directly at config-load (see `config/eslint.config.js`) — no static eslint
- * list exists.
+ * a generated block to two gate files:
  *
- * The `.prettierignore` policy is inverted for zero-touch vendor skills: a
- * managed block between BEGIN/END markers holds one glob ignoring every skill
- * directory, then one negated (un-ignore) line per authored skill, then one
- * comment line per third-party skill (provenance at a glance). (The literal
- * patterns live in config/.prettierignore — they cannot be spelled inside a
- * block comment: the glob's leading double-star-slash sequence is exactly what
- * terminates one.)
+ * - `config/.prettierignore` — a managed block between BEGIN/END comment markers
+ *   holds one glob ignoring every skill directory, then one negated (un-ignore)
+ *   line per authored skill, then one comment line per third-party skill
+ *   (provenance at a glance). (The literal patterns live in
+ *   config/.prettierignore — they cannot be spelled inside a block comment: the
+ *   glob's leading double-star-slash sequence is exactly what terminates one.)
+ * - `config/.markdownlint-cli2.jsonc` — a managed block inside the `ignores`
+ *   array holds one `.agents/skills/NAME/` glob entry per third-party skill, so
+ *   installing a new vendor skill never requires hand-editing the config.
+ *
+ * eslint's ignores are derived directly at config-load (see
+ * `config/eslint.config.js`) — no static eslint list exists.
  *
  * Installing a new third-party skill needs no config edit at all; authoring a
  * new skill is the rare act, and `pnpm format:fix` regenerates the un-ignore
@@ -32,10 +35,10 @@
  *   format:fix`).
  *
  * Fail-closed against the 4dd6640 regression class: a hand-written skill list
- * that survives beside the generated block silently re-gates vendor skills (and
+ * that survives beside a generated block silently re-gates vendor skills (and
  * breaks `gh skill update` detection) — so the block is the only place allowed
- * to gate the skills tree. `findStraySkillLines()` flags violators anywhere
- * else in the file; `--fix` strips them.
+ * to gate the skills tree. `findStraySkillLines()` flags prettierignore
+ * violators anywhere else in the file; `--fix` strips them.
  *
  * Note: negated patterns (`!`) work in `.prettierignore` (verified against
  * prettier 3.9), so the inverted policy is safe.
@@ -54,6 +57,14 @@ export const REPO_ROOT = path.resolve(__dirname, '..');
 export const PRETTIERIGNORE_PATH = 'config/.prettierignore';
 export const BEGIN_MARKER = '# BEGIN managed: third-party skills (generated — run pnpm format:fix)';
 export const END_MARKER = '# END managed';
+
+export const MARKDOWNLINT_PATH = 'config/.markdownlint-cli2.jsonc';
+/** Comment markers inside the JSONC `ignores` array. */
+export const MDLINT_BEGIN_MARKER =
+  '// BEGIN managed: third-party skills (generated — run pnpm format:fix)';
+export const MDLINT_END_MARKER = '// END managed';
+/** The line that opens the ignores array — the managed block inserts after it. */
+export const MDLINT_ANCHOR = '"ignores": [';
 
 /**
  * The third-party/authored classification of `.agents/skills/`, from the
@@ -94,7 +105,10 @@ export function classifySkills(root) {
  */
 function isSkillGateLine(line) {
   const t = line.trim();
-  return t !== '' && !t.startsWith('#') && t.includes('.agents/skills');
+  // JSONC `//` comments (markdownlint config prose) are never gate lines —
+  // `--fix` must preserve a comment that merely mentions .agents/skills.
+  if (t === '' || t.startsWith('#') || t.startsWith('//')) return false;
+  return t.includes('.agents/skills');
 }
 
 /**
@@ -125,10 +139,10 @@ function hasOrphanMarkers(lines) {
  * @param {string} current file content
  * @returns {{number: number; line: string}[]} 1-based line numbers + text
  */
-export function findStraySkillLines(current) {
+export function findStraySkillLines(current, beginMarker = BEGIN_MARKER, endMarker = END_MARKER) {
   const lines = current.replace(/\r\n/g, '\n').split('\n');
-  const beginIdx = lines.indexOf(BEGIN_MARKER);
-  const endIdx = lines.indexOf(END_MARKER);
+  const beginIdx = lines.findIndex(l => l.trim() === beginMarker);
+  const endIdx = lines.findIndex(l => l.trim() === endMarker);
   const hasBlock = beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx;
   const inBlock = i => hasBlock && i >= beginIdx && i <= endIdx;
   return lines
@@ -177,39 +191,105 @@ export function renderPrettierignore(current, thirdParty, authored) {
   return [...kept.slice(0, kBegin), ...block, ...kept.slice(kEnd + 1)].join('\n');
 }
 
+/**
+ * The desired managed block for the markdownlint config's `ignores` array — one
+ * `.agents/skills/NAME/` glob entry per third-party skill. Authored skills are
+ * deliberately absent (they ARE linted); node_modules/dist/local entries stay
+ * hand-maintained outside the block.
+ *
+ * @param {string[]} thirdParty
+ * @returns {string[]}
+ */
+export function renderMarkdownlintBlock(thirdParty) {
+  return [
+    `    ${MDLINT_BEGIN_MARKER}`,
+    ...thirdParty.map(name => `    "**/.agents/skills/${name}/**",`),
+    `    ${MDLINT_END_MARKER}`,
+  ];
+}
+
+/**
+ * Rewrite the markdownlint config's `ignores` array with the managed block
+ * after the opening anchor, dropping both any previous block and stray
+ * hand-written skill entries elsewhere in the array (the 4dd6640 regression
+ * class). Plain line surgery — no JSON parse/reserialize — so every comment
+ * survives byte-for-byte.
+ *
+ * @param {string} current file content
+ * @param {string[]} thirdParty
+ * @returns {string}
+ */
+export function renderMarkdownlintConfig(current, thirdParty) {
+  const lines = current.replace(/\r\n/g, '\n').split('\n');
+  const anchorIdx = lines.findIndex(l => l.trim() === MDLINT_ANCHOR);
+  if (anchorIdx === -1) {
+    throw new Error(`${MARKDOWNLINT_PATH}: ignores-array anchor (${MDLINT_ANCHOR}) not found`);
+  }
+  const beginIdx = lines.findIndex(l => l.trim() === MDLINT_BEGIN_MARKER);
+  const endIdx = lines.findIndex(l => l.trim() === MDLINT_END_MARKER);
+  const hasBlock = beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx;
+  const inBlock = i => hasBlock && i >= beginIdx && i <= endIdx;
+  // Drop the previous block (if any) and stray hand-written skill entries so
+  // the fresh block is the only gate in the file after one --fix run.
+  const kept = lines.filter(
+    (line, i) =>
+      !inBlock(i) &&
+      !isSkillGateLine(line) &&
+      line.trim() !== MDLINT_BEGIN_MARKER &&
+      line.trim() !== MDLINT_END_MARKER
+  );
+  const kAnchor = kept.findIndex(l => l.trim() === MDLINT_ANCHOR);
+  return [
+    ...kept.slice(0, kAnchor + 1),
+    ...renderMarkdownlintBlock(thirdParty),
+    ...kept.slice(kAnchor + 1),
+  ].join('\n');
+}
+
 async function main() {
   const fix = process.argv.includes('--fix');
   const {thirdParty, authored} = classifySkills(REPO_ROOT);
+
   const ignoreFile = path.join(REPO_ROOT, PRETTIERIGNORE_PATH);
   const current = fs.existsSync(ignoreFile) ? fs.readFileSync(ignoreFile, 'utf8') : '';
   const stray = findStraySkillLines(current);
   const desired = renderPrettierignore(current, thirdParty, authored);
 
-  if (desired === current.replace(/\r\n/g, '\n')) {
+  const mdFile = path.join(REPO_ROOT, MARKDOWNLINT_PATH);
+  const mdCurrent = fs.existsSync(mdFile) ? fs.readFileSync(mdFile, 'utf8') : '';
+  const mdStray = findStraySkillLines(mdCurrent, MDLINT_BEGIN_MARKER, MDLINT_END_MARKER);
+  const mdDesired = renderMarkdownlintConfig(mdCurrent, thirdParty);
+
+  const prettierOk = desired === current.replace(/\r\n/g, '\n');
+  const mdOk = mdDesired === mdCurrent.replace(/\r\n/g, '\n');
+  if (prettierOk && mdOk) {
     console.log(
-      `skill gates: .prettierignore in sync (${thirdParty.length} third-party, ${authored.length} authored)`
+      `skill gates: in sync (${thirdParty.length} third-party, ${authored.length} authored) — .prettierignore + .markdownlint-cli2.jsonc`
     );
     return;
   }
   if (!fix) {
-    if (stray.length > 0) {
-      console.error(
-        `skill gates: ${PRETTIERIGNORE_PATH} gates .agents/skills outside the managed block (stale hand-written list?):`
-      );
-      for (const {number, line} of stray) console.error(`  line ${number}: ${line}`);
+    if (stray.length > 0 || mdStray.length > 0) {
+      console.error('skill gates: hand-written skill list outside a managed block:');
+      for (const {number, line} of stray)
+        console.error(`  ${PRETTIERIGNORE_PATH} line ${number}: ${line}`);
+      for (const {number, line} of mdStray)
+        console.error(`  ${MARKDOWNLINT_PATH} line ${number}: ${line}`);
     } else {
-      console.error('skill gates: config/.prettierignore is out of sync with .agents/skills/.');
+      console.error('skill gates: generated blocks are out of sync with .agents/skills/.');
     }
     console.error(
-      'The managed block exclusively gates .agents/skills. Run: pnpm format:fix   (or: node tools/sync-skill-gates.mjs --fix)'
+      'The managed blocks exclusively gate .agents/skills. Run: pnpm format:fix   (or: node tools/sync-skill-gates.mjs --fix)'
     );
     process.exitCode = 1;
     return;
   }
-  fs.writeFileSync(ignoreFile, desired);
-  const strayNote = stray.length > 0 ? `, stripped ${stray.length} stray line(s)` : '';
+  if (!prettierOk) fs.writeFileSync(ignoreFile, desired);
+  if (!mdOk) fs.writeFileSync(mdFile, mdDesired);
+  const strayCount = stray.length + mdStray.length;
+  const strayNote = strayCount > 0 ? `, stripped ${strayCount} stray line(s)` : '';
   console.log(
-    `skill gates: .prettierignore regenerated (${thirdParty.length} third-party, ${authored.length} authored${strayNote})`
+    `skill gates: regenerated (${thirdParty.length} third-party, ${authored.length} authored${strayNote})`
   );
 }
 

@@ -38,11 +38,13 @@
   // watchdog's frontmatter classification.
   "globs": ["**/*.md"],
   "ignores": [
+    // BEGIN managed: third-party skills (generated — run pnpm format:fix)
     "**/.agents/skills/cavecrew/**",
     "**/.agents/skills/code-review/**",
     "**/.agents/skills/debugging-firefox/**",
     "**/.agents/skills/grill-me/**",
     "**/.agents/skills/lavish/**",
+    // END managed
     "**/node_modules/**",
     "**/dist/**",
     // Local drafts (gitignored .local files/dirs) — same exclusion
