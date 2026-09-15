@@ -90,6 +90,8 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0027](./0027-machine-fetches-on-publish-branch.md) — Machine fetches (installer tab, updater,
   helper, manifest) all read from the publish branch; release assets are the human manual-download
   surface only (extends [0003], [0026])
+- [0028](./0028-installer-serve-loop-availability.md) — Installer serve loop bounded by
+  per-connection read deadlines (idle + total; 408 on expiry) — availability half of [0010]
 
 ## Historical
 

@@ -30,6 +30,14 @@ void http_server_serve(void);
  */
 void http_server_stop(void);
 
+/**
+ * Override the per-connection read deadlines (idle recv timeout, total
+ * per-request read bound), in milliseconds. Values <= 0 keep the current
+ * setting. Intended for the smoke-test harness only — production always runs
+ * with the defaults from http_server.c.
+ */
+void http_server_set_timeouts(int recv_timeout_ms, int request_total_timeout_ms);
+
 // Route handlers (implemented in http_server.c, referenced in main.c)
 int handle_root(int client_fd, const char *query, const char *body, size_t body_len);
 int handle_style(int client_fd, const char *query, const char *body, size_t body_len);

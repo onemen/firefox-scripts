@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <errno.h>
 typedef int SOCKET;
 #define INVALID_SOCKET -1
 #define SOCKET_ERROR -1
@@ -28,12 +29,55 @@ typedef int SOCKET;
 #define MAX_REQUEST_HEADER (64 * 1024)
 #define MAX_REQUEST_BODY (4 * 1024 * 1024)
 
+/* Per-connection timeouts (audit 2026-09-15, P1 Reliability): the serve loop
+ * is single-threaded, so one stalled connection stalls every request behind
+ * it. Two independent bounds close the gap a socket option alone leaves:
+ *  - IDLE: SO_RCVTIMEO aborts a connection that sends nothing at all.
+ *  - TOTAL: a client dribbling one byte every few seconds resets SO_RCVTIMEO
+ *    forever, so the whole read phase is also bounded.
+ * On expiry the request is answered 408 Request Timeout and closed.
+ * The overrides are applied only under --smoke-test (smoke-security.mjs);
+ * production runs always use the defaults. */
+#define HTTP_RECV_TIMEOUT_MS_DEFAULT 10000
+#define HTTP_REQUEST_TOTAL_TIMEOUT_MS_DEFAULT 30000
+static int http_recv_timeout_ms = HTTP_RECV_TIMEOUT_MS_DEFAULT;
+static int http_request_total_timeout_ms = HTTP_REQUEST_TOTAL_TIMEOUT_MS_DEFAULT;
+
+/** Monotonic milliseconds (GetTickCount64 wraps at 49 days; a request lives
+ * for seconds, so wrap handling is out of scope). */
+static long long now_ms(void) {
+#ifdef _WIN32
+    return (long long)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+#endif
+}
+
 static int recv_some(int client_fd, char *buf, int size) {
 #ifdef _WIN32
     return recv(client_fd, buf, size, 0);
 #else
     return (int)read(client_fd, buf, (size_t)size);
 #endif
+}
+
+/** Apply the idle deadline to a freshly accepted socket. Best-effort: a
+ * failure to set the option degrades to the old unbounded behaviour for that
+ * connection only. (The total deadline is tracked in the serve loop.) */
+static void set_connection_timeouts(SOCKET client_fd) {
+#ifdef _WIN32
+    DWORD idle = (DWORD)http_recv_timeout_ms;
+#else
+    struct timeval idle = { http_recv_timeout_ms / 1000, (http_recv_timeout_ms % 1000) * 1000 };
+#endif
+    (void)setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&idle, sizeof(idle));
+}
+
+void http_server_set_timeouts(int recv_timeout_ms, int request_total_timeout_ms) {
+    if (recv_timeout_ms > 0) http_recv_timeout_ms = recv_timeout_ms;
+    if (request_total_timeout_ms > 0) http_request_total_timeout_ms = request_total_timeout_ms;
 }
 
 /** Case-insensitive search for `needle` within the first `limit` bytes. */
@@ -326,6 +370,15 @@ int http_server_start(unsigned short preferred_port) {
 void http_server_serve(void) {
     if (!server_running) return;
 
+#ifdef _WIN32
+    {
+        /* Same 10 s value as the default SO_RCVTIMEO below, expressed in
+         * Winsock's milliseconds; POSIX keeps SO_RCVTIMEO for the idle bound. */
+        DWORD idle = (DWORD)http_recv_timeout_ms;
+        (void)setsockopt(server_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&idle, sizeof(idle));
+    }
+#endif
+
     while (server_running) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
@@ -348,6 +401,9 @@ void http_server_serve(void) {
             }
             continue;
         }
+
+        set_connection_timeouts(client_fd);
+        const long long deadline = now_ms() + http_request_total_timeout_ms;
 
         // Read the full request: header block (terminated by a blank line)
         // plus any POST body.  Bodies are binary (zip bytes), so the read
@@ -377,7 +433,18 @@ void http_server_serve(void) {
                     req_cap = nc;
                 }
                 int n = recv_some(client_fd, req + req_len, (int)(req_cap - req_len - 1));
-                if (n <= 0) break; /* client closed or error */
+                if (n <= 0) {
+                    /* n < 0: error or deadline expiry (idle SO_RCVTIMEO) —
+                     * reply 408 and close; the send is best-effort and no-ops
+                     * if the peer is already gone. n == 0: the client closed
+                     * cleanly before finishing a request — nothing to answer. */
+                    if (n < 0) req_status = -2;
+                    break;
+                }
+                if (now_ms() > deadline) {
+                    req_status = -2;
+                    break;
+                }
                 req_len += (size_t)n;
                 req[req_len] = '\0';
 
@@ -461,6 +528,10 @@ void http_server_serve(void) {
             }
         } else if (req_status == -1) {
             send_response(client_fd, 413, "text/plain", "Request Too Large", 18);
+        } else if (req_status == -2) {
+            log_msg("[http] request timed out (idle %d ms / total %d ms)\n", http_recv_timeout_ms,
+                    http_request_total_timeout_ms);
+            send_response(client_fd, 408, "text/plain", "Request Timeout", 15);
         }
         free(req);
 
