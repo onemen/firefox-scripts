@@ -433,7 +433,14 @@ void http_server_serve(void) {
                     req_cap = nc;
                 }
                 int n = recv_some(client_fd, req + req_len, (int)(req_cap - req_len - 1));
-                if (n <= 0) break; /* client closed, idle timeout, or error */
+                if (n <= 0) {
+                    /* n < 0: error or deadline expiry (idle SO_RCVTIMEO) —
+                     * reply 408 and close; the send is best-effort and no-ops
+                     * if the peer is already gone. n == 0: the client closed
+                     * cleanly before finishing a request — nothing to answer. */
+                    if (n < 0) req_status = -2;
+                    break;
+                }
                 if (now_ms() > deadline) {
                     req_status = -2;
                     break;
