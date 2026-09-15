@@ -27,9 +27,21 @@
 import {execSync} from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import {fileURLToPath} from 'url';
-import {generateModule, readConfig} from '../../tools/publish/generateUpdaterConfig.mjs';
+
+// publishCommon/paths.mjs (in both import chains below) demand a --mode at
+// import time; the branch-agnostic prod default matches the reference
+// implementation the C twin is cross-checked against. Same pattern as the
+// test/unit zip tests. Static imports would hoist above this push and crash,
+// so both are dynamic.
+process.argv.push('--mode=prod');
+const [{generateModule, readConfig}, {compareCaseInsensitive, computeFileSetHash}] =
+  await Promise.all([
+    import('../../tools/publish/generateUpdaterConfig.mjs'),
+    import('../../tools/publish/hashUtils.mjs'),
+  ]);
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -118,7 +130,9 @@ const TESTS = [
 ];
 
 function main() {
-  const args = process.argv.slice(2);
+  // The --mode=prod pushed above for the publish-chain imports is not a
+  // positional argument of this test.
+  const args = process.argv.slice(2).filter(a => !a.startsWith('--mode='));
 
   // Accept zero or two positional arguments
   if (args.length === 2) {
@@ -193,7 +207,121 @@ function main() {
     if (!ok) allPassed = false;
   }
 
+  allPassed = adversarialComparatorProbe(INSTALLER) && allPassed;
+
   process.exit(allPassed ? 0 : 1);
+}
+
+/**
+ * Adversarial-path parity probe: pin the hash-order contract between the C
+ * comparator (cmp_path_ci in detect_browser.c) and the JS one
+ * (compareCaseInsensitive in tools/publish/hashUtils.mjs) on paths where naive
+ * sort orders disagree — case adjacency, digit vs letter, '_'/'-'/'.'/ ' ~'
+ * punctuation, extension shells, and the case-collision pairs that are
+ * order-stable only under a total comparator. Sorted orders must match
+ * element-for-element, and the C hash of a synthetic tree must equal the JS
+ * hash of the same tree byte-for-byte.
+ */
+function adversarialComparatorProbe(installerBinary) {
+  let ok = true;
+
+  // 1. Order parity on adversarial pairs (JS comparator only — pure ordering).
+  const pairs = [
+    ['A.txt', 'a!.txt'],
+    ['Beta.js', 'alpha.js'],
+    ['file_1.txt', 'file-1.txt'],
+    ['file.txt', 'file.txt.bak'],
+    ['config2.js', 'config10.js'],
+    ['config.js', 'configX.js'],
+    ['Zebra.js', 'apple.js'],
+    ['utils.d.ts', 'utils.js'],
+    ['x.js', 'x~.js'],
+    ['ARM/', 'a.txt'],
+    ['b/', 'B.txt'],
+  ];
+  let orderMismatches = 0;
+  for (const [p1, p2] of pairs) {
+    const a = [p1, p2].sort(compareCaseInsensitive);
+    const b = [p2, p1].sort(compareCaseInsensitive);
+    if (a[0] !== b[0] || a[1] !== b[1]) {
+      console.error(
+        `FAIL comparator: not order-stable for ${JSON.stringify(p1)} vs ${JSON.stringify(p2)}`
+      );
+      orderMismatches++;
+    }
+  }
+  if (orderMismatches > 0) {
+    console.error(`FAIL comparator: ${orderMismatches}/${pairs.length} adversarial pairs unstable`);
+    ok = false;
+  } else {
+    console.log(`PASS comparator: ${pairs.length}/${pairs.length} adversarial pairs order-stable`);
+  }
+
+  // 2. Byte-parity on a synthetic adversarial tree: C hash must equal JS hash.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cmp-'));
+  const rels = [
+    'B.txt',
+    'a!.txt',
+    'A.txt',
+    'b/c.d.ts',
+    'b/c.js',
+    'B/d.txt',
+    'config2.js',
+    'config10.js',
+    'Zebra.js',
+    'apple.js',
+    'x~.js',
+    'x.js',
+  ];
+  const contents = {
+    'B.txt': 'bravo',
+    'a!.txt': 'alpha bang',
+    'A.txt': 'alpha',
+    'b/c.d.ts': 'declaration',
+    'b/c.js': 'script',
+    'B/d.txt': 'bravo dir',
+    'config2.js': 'two',
+    'config10.js': 'ten',
+    'Zebra.js': 'zebra',
+    'apple.js': 'apple',
+    'x~.js': 'tilde',
+    'x.js': 'plain',
+  };
+  try {
+    for (const rel of rels) {
+      const abs = path.join(tmp, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(abs), {recursive: true});
+      fs.writeFileSync(abs, contents[rel]);
+    }
+    const entries = rels.map(rel => ({rel, absPath: path.join(tmp, ...rel.split('/'))}));
+    const {hash: jsHash} = computeFileSetHash(entries);
+
+    // C side: drive --test-hash with a minimal manifest whose files list is
+    // exactly the synthetic rels (shuffled in the manifest; the sort must
+    // normalize both sides regardless of input order).
+    const shuffled = [...rels];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = (i * 7 + 3) % (i + 1); // deterministic shuffle
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const manifestPath = path.join(tmp, 'probe-manifest.json');
+    fs.writeFileSync(manifestPath, JSON.stringify({utils: {hash: '', date: '', files: shuffled}}));
+    const cHash = execSync(
+      `"${installerBinary}" --test-hash utils "${tmp}" --manifest "${manifestPath}"`,
+      {
+        encoding: 'utf-8',
+      }
+    ).trim();
+    if (jsHash !== cHash) {
+      console.error(`FAIL comparator: C=${cHash} != JS=${jsHash} on adversarial tree`);
+      ok = false;
+    } else {
+      console.log(`PASS comparator: C hash == JS hash on ${rels.length}-file adversarial tree`);
+    }
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+  return ok;
 }
 
 main();

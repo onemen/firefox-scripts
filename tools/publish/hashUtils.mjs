@@ -18,6 +18,36 @@ import {warn} from './log.mjs';
 export const HASHES_FILE = 'hashes.json';
 
 /**
+ * The canonical hash-order comparator: case-insensitive byte-wise comparison
+ * (ASCII-lowercase both sides, then compare by UTF-16 code units). This mirrors
+ * C strcasecmp() in installer/src/detect_browser.c and is locale-independent —
+ * deliberately NOT String.prototype.localeCompare, whose order varies with the
+ * runtime/application locale and would silently diverge from the C twin (and
+ * across machines). Non-ASCII paths fall back to code-unit order on the JS
+ * side; C tolower()s per byte — the published file sets are ASCII, and the
+ * adversarial probe in installer/test/test_hash.mjs pins the contract (ADR
+ * 0002).
+ *
+ * Accepts plain strings, or `{relative}` / `{rel}` entry objects as used by
+ * computeDirectoryHash / computeFileSetHash.
+ *
+ * @param {string | {relative?: string; rel?: string}} a
+ * @param {string | {relative?: string; rel?: string}} b
+ * @returns {number} negative / 0 / positive, for Array.prototype.sort
+ */
+export function compareCaseInsensitive(a, b) {
+  const sa = typeof a === 'string' ? a : (a.relative ?? a.rel);
+  const sb = typeof b === 'string' ? b : (b.relative ?? b.rel);
+  const la = sa.toLowerCase();
+  const lb = sb.toLowerCase();
+  return (
+    la < lb ? -1
+    : la > lb ? 1
+    : 0
+  );
+}
+
+/**
  * Render a helper checksum sidecar: `<hex sha256> <filename>\n` — sha256sum -c
  * compatible (two spaces), and exactly the format the updater tab parses back
  * before executing a freshly downloaded helper (issue #33).
@@ -100,7 +130,7 @@ export function computeDirectoryHash(dirPath, patterns, extraFiles = []) {
   const sorted = [
     ...files.map(rel => ({relative: rel, fullPath: path.join(dirPath, rel)})),
     ...extraFiles.map(e => ({relative: e.rel, fullPath: e.absPath})),
-  ].sort((a, b) => a.relative.localeCompare(b.relative));
+  ].sort(compareCaseInsensitive);
 
   const hash = crypto.createHash('sha256');
 
@@ -143,7 +173,7 @@ export function collectDirEntries(dirPath, patterns, prefix, baseDir = dirPath, 
  * bumps the installer hash and triggers a rebuild.
  */
 export function computeFileSetHash(entries) {
-  const sorted = [...entries].sort((a, b) => a.rel.localeCompare(b.rel));
+  const sorted = [...entries].sort(compareCaseInsensitive);
   const hash = crypto.createHash('sha256');
   for (const {rel, absPath} of sorted) {
     hash.update(rel + '\n');

@@ -309,6 +309,31 @@ static int compute_file_sha256(const char *filepath, char *out_hash, size_t hash
  *
  * Returns 0 on success with 64-char hex digest in out_hash.
  */
+/**
+ * Canonical hash-path ordering: case-insensitive byte-wise comparison —
+ * ASCII-lowercase each byte, then compare as unsigned char. The JS reference
+ * (tools/publish/hashUtils.mjs compareCaseInsensitive) and the in-browser twin
+ * (scriptsUpdater.sys.mjs compareHashOrder) implement the same order; the
+ * adversarial-path probe in installer/test/test_hash.mjs pins the parity.
+ * Deliberately locale-independent.
+ */
+static int cmp_path_ci(const char *a, const char *b) {
+    while (*a && *b) {
+        unsigned char ca = (unsigned char)*a;
+        unsigned char cb = (unsigned char)*b;
+        if (ca >= 'A' && ca <= 'Z') ca = (unsigned char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (unsigned char)(cb - 'A' + 'a');
+        if (ca != cb) return (int)ca - (int)cb;
+        a++;
+        b++;
+    }
+    unsigned char ca = (unsigned char)*a;
+    unsigned char cb = (unsigned char)*b;
+    if (ca >= 'A' && ca <= 'Z') ca = (unsigned char)(ca - 'A' + 'a');
+    if (cb >= 'A' && cb <= 'Z') cb = (unsigned char)(cb - 'A' + 'a');
+    return (int)ca - (int)cb;
+}
+
 int compute_directory_sha256(const char *base_dir,
                              const char **rel_paths, int num_files,
                              int *out_files_found,
@@ -355,11 +380,11 @@ int compute_directory_sha256(const char *base_dir,
     }
     for (int i = 0; i < num_files; i++) sorted[i] = i;
 
-    // Sort indexes by strcmp on relative paths
+    // Sort indexes by cmp_path_ci on relative paths
     for (int i = 1; i < num_files; i++) {
         int key = sorted[i];
         int j = i - 1;
-        while (j >= 0 && strcasecmp(rel_paths[sorted[j]], rel_paths[key]) > 0) {
+        while (j >= 0 && cmp_path_ci(rel_paths[sorted[j]], rel_paths[key]) > 0) {
             sorted[j + 1] = sorted[j];
             j--;
         }

@@ -658,6 +658,28 @@ export async function fetchText(url) {
 }
 
 /**
+ * The canonical hash-order comparator: case-insensitive byte-wise comparison
+ * (ASCII-lowercase both sides, then compare by code units). Mirrors C
+ * strcasecmp() in installer/src/detect_browser.c — the manifest contract is
+ * that C, publish-side Node and this in-browser module all derive the identical
+ * order. Deliberately NOT localeCompare(): its ordering follows the application
+ * locale and could silently diverge from the C twin.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {number} negative / 0 / positive, for Array.prototype.sort
+ */
+function compareHashOrder(a, b) {
+  const la = a.toLowerCase();
+  const lb = b.toLowerCase();
+  return (
+    la < lb ? -1
+    : la > lb ? 1
+    : 0
+  );
+}
+
+/**
  * Compute the SHA-256 over a file set, matching compute_directory_sha256() in
  * installer/src/detect_browser.c: for each relative path (sorted
  * case-insensitively): hash(rel_path + "\n") if the file exists:
@@ -669,7 +691,7 @@ export async function fetchText(url) {
  * @returns {string} hex digest
  */
 export function computeFilesHash(files, baseDir) {
-  const sorted = [...files].sort((a, b) => a.localeCompare(b));
+  const sorted = [...files].sort(compareHashOrder);
   const nativeBase = Services.appinfo.OS === 'WINNT' ? baseDir.replace(/\//g, '\\') : baseDir;
 
   const baseFile = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
@@ -749,7 +771,7 @@ export async function computeZipFilesHash(files, zipPath) {
     prefix = [...tops][0] + '/';
   }
 
-  const sorted = [...files].sort((a, b) => a.localeCompare(b));
+  const sorted = [...files].sort(compareHashOrder);
   const hasher = Cc['@mozilla.org/security/hash;1'].createInstance(Ci.nsICryptoHash);
   hasher.init(Ci.nsICryptoHash.SHA256);
   const encoder = new TextEncoder();
