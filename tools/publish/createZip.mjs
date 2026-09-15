@@ -144,6 +144,15 @@ export async function createZip(
       const relativePath = path.relative(sourceDir, file).replace(/\\/g, '/');
       archive.file(file, {
         name: prefix ? `${prefix}/${relativePath}` : relativePath,
+        // Stat synchronously and hand archiver the result: without `stats`,
+        // archiver routes each append through its parallel stat queue and the
+        // entries are written in stat-COMPLETION order, not call order — the
+        // zip's byte layout was then nondeterministic between two runs of the
+        // same commit (#33 deterministic-output check caught exactly that).
+        // With stats provided, every append goes straight to archiver's
+        // concurrency-1 write queue in call order (== getAllFiles' sorted
+        // order). zipEntryDate still normalizes the displayed entry date.
+        stats: fs.statSync(file),
         // Every entry reads as the release's date (zipEntryDate normalizes to
         // 12:00 UTC for timezone-proof display + reproducible builds); null →
         // the source file's own mtime (previous behavior).
