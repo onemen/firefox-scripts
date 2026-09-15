@@ -21,6 +21,7 @@
 
 import {spawn} from 'node:child_process';
 import {existsSync, readdirSync, statSync} from 'node:fs';
+import net from 'node:net';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {killStrayProcesses} from '../shared/processHygiene.mjs';
@@ -135,6 +136,9 @@ async function main() {
 
   const child = spawn(installer, ['--smoke-test'], {
     cwd: REPO_ROOT,
+    // Shorten the server's idle read deadline for the timeout check below.
+    // Honored only under --smoke-test (main.c); production is unaffected.
+    env: {...process.env, FXS_HTTP_RECV_TIMEOUT_MS: '1500'},
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -223,6 +227,53 @@ async function main() {
         `got: ${res.text.slice(0, 80)}`
       );
       check(res.acao === null, `/api/${route} has no Access-Control-Allow-Origin`);
+    }
+
+    console.log('\nStalled connection cannot wedge the single-threaded serve loop');
+    {
+      // ADR 0010 availability note: the serve loop is single-threaded, so one
+      // stalled connection once blocked every request behind it. Accepted
+      // sockets now carry an idle deadline (SO_RCVTIMEO) plus a total
+      // per-request read bound (a dribbling client defeats an idle timeout
+      // alone). A connection that sends nothing must be answered 408 and
+      // closed — and the server must keep serving afterwards.
+      const stalled = net.connect({host: '127.0.0.1', port: PORT});
+      const saw408 = await new Promise(resolve => {
+        let buf = '';
+        const giveUp = setTimeout(
+          () => resolve({ok: false, detail: 'no response within 10 s'}),
+          10_000
+        );
+        stalled.on('data', d => {
+          buf += d.toString();
+          if (buf.startsWith('HTTP/1.0 408') || buf.startsWith('HTTP/1.1 408')) {
+            clearTimeout(giveUp);
+            resolve({ok: true, detail: buf.split('\r\n')[0]});
+          }
+        });
+        stalled.on('error', err => {
+          clearTimeout(giveUp);
+          resolve({ok: false, detail: err.message});
+        });
+        stalled.on('close', () => {
+          clearTimeout(giveUp);
+          resolve({
+            ok: false,
+            detail: `closed without 408 (got: ${buf.slice(0, 40) || 'nothing'})`,
+          });
+        });
+      });
+      stalled.destroy();
+      check(saw408.ok, 'idle connection gets 408 Request Timeout', saw408.detail);
+
+      // The bound is only useful if the server survived it: a full
+      // valid-token round-trip must still work.
+      const after = await hit('claim', {token});
+      check(
+        after.text.includes('"current":1'),
+        'server still serves after the stalled connection',
+        after.text.slice(0, 80)
+      );
     }
 
     console.log('\nShutdown (last): valid token stops the server');
