@@ -210,6 +210,10 @@ jobs:
       - name: Build and stage binaries
         shell: bash
         env:
+          # The prod CI marker is set on EVERY upload.mjs invocation (pages.yml
+          # convention): pass 1 runs the same prodCiGuard as pass 2, and a
+          # guard abort would otherwise kill each prod build leg at startup.
+          FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --build-only --platform=${{ matrix.platform }}"
