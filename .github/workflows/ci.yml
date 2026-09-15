@@ -93,10 +93,13 @@ jobs:
 
       - name: Set up MSYS2 toolchain (make + gcc)
         if: runner.os == 'Windows' && needs.changes.outputs.publish == 'true'
+        # update: false — see pages.yml: a mid-cycle toolchain upgrade changed
+        # the gcc version and the rebuilt installer was falsely AV-flagged the
+        # next day; the toolchain stays stable within a cycle.
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
           msystem: UCRT64
-          update: true
+          update: false
           install: >-
             mingw-w64-ucrt-x86_64-gcc make
 

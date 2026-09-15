@@ -48,11 +48,13 @@ open PR and the next `main` push at once (2026-09-09 incident).
 
 ### Job timeouts
 
-Every job in `ci.yml` and `e2e.yml` sets an explicit `timeout-minutes` — GitHub's default is 360
-minutes, which turns any wedged job (GUI dialog, OS stall) into a six-hour hang before cancellation.
-The values are multiples of the slowest observed green run per group — ~2.5–4× on the slow E2E legs
-(the margins that matter), and a generous minutes-scale floor on cheap jobs. Measured durations
-(2026-09-13, warm caches):
+Every job in `ci.yml`, `e2e.yml`, `pages.yml` and `build-and-upload.yml` sets an explicit
+`timeout-minutes` — GitHub's default is 360 minutes, which turns any wedged job (GUI dialog, OS
+stall) into a six-hour hang before cancellation. On the publish workflows that matters most:
+`pages-publish` is a non-cancellable concurrency group, so one wedged job would block every later
+publish for six hours. The values are multiples of the slowest observed green run per group —
+~2.5–4× on the slow E2E legs (the margins that matter), and a generous minutes-scale floor on cheap
+jobs. Measured durations (2026-09-13, warm caches):
 
 | Job(s)                                                          | Timeout | Slowest green run observed | Notes                                                                                                                                                                                                |
 | --------------------------------------------------------------- | ------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -61,6 +63,13 @@ The values are multiples of the slowest observed green run per group — ~2.5–
 | CI / publish gate — `<os>`                                      | 20 min  | 129 s (windows, MSYS2 gcc) | Cold MSYS2 toolchain install adds ~3 min                                                                                                                                                             |
 | E2E / build dev snapshot, E2E / installer E2E, helper E2E       | 15 min  | 143 s (installer, windows) | 15 min > the runner's own 10-min watchdog (installer-e2e.mjs, `E2E_WATCHDOG_MIN` override), so on a wedge the script's orphan sweep + `[watchdog]` log wins the race — CI never shows a bare VM kill |
 | E2E / updater, portable-firefox, snap, browser-matrix, waterfox | 20 min  | 373 s (portable, windows)  | Fork browser legs download their Firefox fresh each run (no download cache): ~8 min cold — 20 min is ~2.5×; fork-download caching is the tracked speed lever (#197)                                  |
+
+The publish workflows are dispatched by hand, so no green-run timing is tabulated: `pages.yml` and
+`build-and-upload.yml` use 10 min for the gate/snapshot jobs and 20 min for each platform build or
+publish job. The watchdog and janitorial jobs follow the same policy without a timing table:
+`url-watchdog` keeps 30 min on the scheduled `check` (progress-aware transfer budget, #143) and 15
+min on the PR leg; `skills-watchdog` uses 15 min (scheduled) / 10 min (PR); `cache-cleanup` uses 15
+min for the weekly prune.
 
 The URL watchdog keeps its own `timeout-minutes: 30` (progress-aware transfer budget, #143).
 

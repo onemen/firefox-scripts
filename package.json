@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Scripts for installing legacy extension on Firefox",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "lint": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache && node tools/format-c.mjs --check && make -C installer analyze && markdownlint-cli2 --config ./config/.markdownlint-cli2.jsonc \"**/*.md\" \"#node_modules\" \"#dist\"",
