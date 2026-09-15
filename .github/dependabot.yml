@@ -1,8 +1,25 @@
 # Keep the SHA-pinned GitHub Actions in .github/workflows/ci.yml current.
 # Dependabot updates the pinned commit SHA whenever the tracked tag moves.
+#
+# The pnpm entry covers the npm dependency surface (tools/, test/, config/):
+# weekly, grouped so a batch of minor/patch bumps lands as one reviewable PR,
+# capped at 5 open PRs. pnpm audit --audit-level=high additionally runs in the
+# ci.yml checks job on every PR (audit gate, ADR 0017). Runtime npm deps stay
+# at zero — these updates can only ever touch build/test tooling.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
+    open-pull-requests-limit: 5
