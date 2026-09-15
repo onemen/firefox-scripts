@@ -250,7 +250,14 @@ static int copy_file_content(const char *src, const char *dst) {
     int in_fd = open(src, O_RDONLY);
     if (in_fd < 0) return -1;
 
-    int out_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    /* Preserve the source mode (exec bit matters for browser binaries); the
+     * mode is filtered by the process umask as usual. */
+    struct stat src_stat;
+    if (fstat(in_fd, &src_stat) != 0) {
+        close(in_fd);
+        return -1;
+    }
+    int out_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode & 0777);
     if (out_fd < 0) {
         close(in_fd);
         return -1;
@@ -281,7 +288,9 @@ static void create_parent_dirs(const char *dst_path) {
     snprintf(dir, sizeof(dir), "%s", dst_path);
     char *p = dir + strlen(dir);
     while (p > dir && p[-1] != '/') p--;
-    if (p > dir) p[-1] = '\0';
+    if (p == dir) return; /* filename-only dst: no parent component to create */
+    p[-1] = '\0';
+    if (dir[0] == '\0') return; /* root-level dst: parent is / */
 
     char tmp[MAX_PATH_LEN];
     strncpy(tmp, dir, sizeof(tmp) - 1);
@@ -422,7 +431,9 @@ static void create_parent_dirs(const char *dst_path) {
     snprintf(dir, sizeof(dir), "%s", dst_path);
     char *p = dir + strlen(dir);
     while (p > dir && p[-1] != '/') p--;
-    if (p > dir) p[-1] = '\0';
+    if (p == dir) return; /* filename-only dst: no parent component to create */
+    p[-1] = '\0';
+    if (dir[0] == '\0') return; /* root-level dst: parent is / */
 
     char tmp[MAX_PATH_LEN];
     strncpy(tmp, dir, sizeof(tmp) - 1);
@@ -549,7 +560,9 @@ static void create_parent_dirs(const char *dst_path) {
     snprintf(dir, sizeof(dir), "%s", dst_path);
     char *p = dir + strlen(dir);
     while (p > dir && p[-1] != '/') p--;
-    if (p > dir) p[-1] = '\0';
+    if (p == dir) return; /* filename-only dst: no parent component to create */
+    p[-1] = '\0';
+    if (dir[0] == '\0') return; /* root-level dst: parent is / */
 
     char tmp[MAX_PATH_LEN];
     strncpy(tmp, dir, sizeof(tmp) - 1);
@@ -568,7 +581,14 @@ static int copy_file_content(const char *src, const char *dst) {
     int in_fd = open(src, O_RDONLY);
     if (in_fd < 0) return -1;
 
-    int out_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    /* Preserve the source mode (exec bit matters for browser binaries); the
+     * mode is filtered by the process umask as usual. */
+    struct stat src_stat;
+    if (fstat(in_fd, &src_stat) != 0) {
+        close(in_fd);
+        return -1;
+    }
+    int out_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode & 0777);
     if (out_fd < 0) {
         close(in_fd);
         return -1;
