@@ -11,6 +11,14 @@ on:
   # a PR lands via the queue (Settings → merge queue) — see docs/DEVELOPING.md.
   merge_group:
 
+# One run per ref: a new push to a PR branch supersedes (cancels) the branch's
+# previous CI run. `main` and merge-queue refs are distinct groups, and
+# cancel-in-progress is gated to pull_request so a main push is never cancelled
+# by anything — main's push run is what re-exercises the advisory E2E legs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
