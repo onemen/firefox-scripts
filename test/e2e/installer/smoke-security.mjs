@@ -155,7 +155,7 @@ async function main() {
   try {
     const deadline = Date.now() + 10_000;
     while (!token && Date.now() < deadline) {
-      const m = stdout.match(/SMOKE_TEST_SESSION_TOKEN=([0-9a-f]{16})/);
+      const m = stdout.match(/SMOKE_TEST_SESSION_TOKEN=([0-9a-f]{32})/);
       if (m) token = m[1];
       if (child.exitCode !== null) break;
       await new Promise(r => setTimeout(r, 100));

@@ -192,8 +192,9 @@ as of 2026-09-05. The proposed tracking home is listed per item.
   (`downloads.mjs`); a runner-side vendor update can flip a green matrix red with no repo change.
   Decide a pin/cache policy (URL with pinned version + periodic bump via the URL watchdog). Home: #3
   now; revisited when the matrix expands (#31).
-- **`msys2/setup-msys2` release caching** — Windows legs run with `update: true`, re-fetching the
-  toolchain every run; `cache: true` would trade freshness for minutes per job (same trade the
+- **`msys2/setup-msys2` release caching** — Windows legs run with `update: false` (toolchain frozen
+  mid-cycle after a gcc upgrade re-triggered AV flags — see the rationale comment in
+  `build-and-upload.yml`); `cache: true` would trade freshness for minutes per job (same trade the
   cached `-fanalyzer` leg already made, PRs #105/#106). Home: #33 (pipeline automation) or as CI
   polish under #4.
 - ~~**Test runner + layout decision** (`node:test`, type-first `test/`)~~ — settled: PR #52.

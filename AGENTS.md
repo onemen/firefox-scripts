@@ -222,8 +222,8 @@ Before finishing:
 
 ## Tooling
 
-- **Node ≥ 20.19** (`--env-file-if-exists`; eslint 10 engines need `^20.19 || ^22.13 || >=24`),
-  **pnpm** (lockfile v9), `"type": "module"` for all `tools/` scripts.
+- **Node ≥ 24** (`--env-file-if-exists`; CI and the repo `engines` pin `>=24`), **pnpm** (lockfile
+  v9), `"type": "module"` for all `tools/` scripts.
 - **C toolchain:** MSYS2 UCRT64/mingw-w64 on Windows (`-mwindows` GUI subsystem); clang/gcc
   elsewhere; `clang-format` pinned via npm. All asset embedding is Node (`installer/embed.mjs`).
 - **CI** runs from `.github/workflows/` (ci.yml, e2e.yml, pages.yml, build-and-upload.yml,

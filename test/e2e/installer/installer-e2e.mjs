@@ -481,8 +481,8 @@ async function runTestSurfaceLayer(counter, bin) {
         );
         check(
           counter,
-          typeof manifest.token === 'string' && /^[a-f0-9]{16}$/.test(manifest.token),
-          'manifest carries a 16-hex session token'
+          typeof manifest.token === 'string' && /^[a-f0-9]{32}$/.test(manifest.token),
+          'manifest carries a 32-hex (128-bit) session token'
         );
         check(
           counter,

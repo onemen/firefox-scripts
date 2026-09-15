@@ -47,7 +47,7 @@ one goal: installing and updating Firefox scripts for legacy extension support.
 | Component       | Requirement                           | Install                                                    |
 | --------------- | ------------------------------------- | ---------------------------------------------------------- |
 | C installer     | GCC or clang; Node.js for `embed.mjs` | (see per-OS below)                                         |
-| Publish scripts | Node.js 20+, pnpm                     | `apt install nodejs pnpm` / `winget install OpenJS.NodeJS` |
+| Publish scripts | Node.js ≥ 24, pnpm                    | `apt install nodejs pnpm` / `winget install OpenJS.NodeJS` |
 | Chrome scripts  | A Firefox-family browser              | —                                                          |
 
 ### Windows

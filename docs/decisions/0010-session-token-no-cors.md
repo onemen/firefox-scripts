@@ -11,7 +11,7 @@ the server authenticates requests and refuses cross-origin reads.
 
 ## Decision
 
-Every state-changing route requires `?t=<16-hex>` matching a per-run token embedded in the installer
+Every state-changing route requires `?t=<32-hex>` matching a per-run token embedded in the installer
 tab's URL, generated from the OS CSPRNG with a fail-closed startup (never a time/pid seed).
 Responses carry no `Access-Control-Allow-Origin` header, so cross-origin pages cannot read them. A
 security smoke test asserts every `/api/*` route rejects a missing/wrong token and no response has
@@ -23,3 +23,8 @@ Stale restored tabs (old token) are inert — they render a "closed" placeholder
 or restart the installer. The token is deliberately logged at startup for local diagnostics; it must
 never be logged in CI or remote contexts. Revisit-if: a token-free localhost trust model (random
 ephemeral ports plus Origin checks) is adopted.
+
+**Entropy note (2026-09-15):** the token is a true 128-bit value — 16 CSPRNG bytes, both nibbles
+taken (`hex[raw[i] >> 4]`, `hex[raw[i] & 0xF]`). Earlier builds consumed only the low nibble
+(`raw[i] % 16`), yielding 64 bits from the same 16 random bytes; the smoke-security and E2E
+harnesses pin the 32-hex length.
