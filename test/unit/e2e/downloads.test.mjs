@@ -521,6 +521,25 @@ test('runInstallerWithRetry: retries the AV file-lock error then succeeds', () =
   assert.equal(sleeps.length, 2, 'slept between retries');
 });
 
+test('runInstallerWithRetry: exponential backoff doubles each attempt (issue #215)', () => {
+  const quiet = Object.assign(new Error('installer exited with code 1'), {status: 1});
+  const sleeps = [];
+  assert.throws(
+    () =>
+      runInstallerWithRetry('cmd', {
+        attempts: 4,
+        delayMs: 4000,
+        platform: 'win32',
+        run: () => {
+          throw quiet;
+        },
+        sleep: ms => sleeps.push(ms),
+      }),
+    /exited with code 1/
+  );
+  assert.deepEqual(sleeps, [4000, 8000, 16000], '4s → 8s → 16s');
+});
+
 test('runInstallerWithRetry: rethrows a non-lock failure immediately (no retry)', () => {
   const boom = Object.assign(new Error('NSIS exited 1627'), {stderr: 'exited with code 1627'});
   let runs = 0;
@@ -555,6 +574,72 @@ test('runInstallerWithRetry: gives up after the last attempt (persistent lock)',
     /being used by another process/
   );
   assert.equal(runs, 3);
+});
+
+// ── quiet exit-1 race (issue #215) ─────────────────────────────────────────
+// The three 2026-09-15 occurrences (firefox/firefox-dev/nightly in run
+// 34978227275, zen in 34994285664, floorp in 34993534560) escaped the #201
+// retry: Defender suspends the freshly-written NSIS exe *after* launch, the
+// process dies with exit code 1 and prints NOTHING — no lock signature in
+// stderr, message, or the step log. The predicate classifies that shape as
+// the same race.
+test('isFileLockError: quiet exit-1 with no output (issue #215 shape) is the AV race', () => {
+  // execSync inherit shape: 'Command failed: <cmd>' message, no captured stderr
+  const execSyncShape = new Error('Command failed: "D:\\a\\_temp\\browser-dl\\zen-setup.exe" /S');
+  execSyncShape.status = 1;
+  execSyncShape.stderr = null;
+  assert.equal(isFileLockError(execSyncShape, {platform: 'win32'}), true);
+  assert.equal(isFileLockError(execSyncShape, {platform: 'linux'}), false);
+
+  // runNsisInstallerWithRetry shape: status-bearing error, no stderr
+  const nsisShape = Object.assign(new Error('installer exited with code 1'), {status: 1});
+  assert.equal(isFileLockError(nsisShape, {platform: 'win32'}), true);
+});
+
+test('isFileLockError: exit-1 WITH output or other exit codes are real failures', () => {
+  // A genuine /S failure reports text — not the race.
+  const withStderr = Object.assign(new Error('installer exited with code 1'), {
+    status: 1,
+    stderr: 'some NSIS error text',
+  });
+  assert.equal(isFileLockError(withStderr, {platform: 'win32'}), false);
+
+  // Multi-line message = output was appended → the run said something.
+  const multiline = Object.assign(
+    new Error('Command failed: "C:\\setup.exe" /S\nSome failure text'),
+    {status: 1}
+  );
+  assert.equal(isFileLockError(multiline, {platform: 'win32'}), false);
+
+  // Exit 1627 (NSIS fatal) stays a hard failure — as pinned by the earlier test.
+  assert.equal(
+    isFileLockError(Object.assign(new Error('exited with code 1627'), {status: 1627}), {
+      platform: 'win32',
+    }),
+    false
+  );
+
+  // Exit 1 with no status field and no code-1 message → not classified.
+  assert.equal(
+    isFileLockError(new Error('Command failed: "x.exe" /S'), {platform: 'win32'}),
+    false
+  );
+});
+
+test('runInstallerWithRetry: retries the quiet exit-1 race then succeeds (issue #215)', () => {
+  const quiet = Object.assign(new Error('installer exited with code 1'), {status: 1});
+  const runs = [quiet, quiet, 'ok'];
+  const sleeps = [];
+  runInstallerWithRetry('cmd', {
+    platform: 'win32',
+    run: () => {
+      const r = runs.shift();
+      if (r !== 'ok') throw r;
+    },
+    sleep: ms => sleeps.push(ms),
+  });
+  assert.equal(runs.length, 0, 'both quiet exits consumed');
+  assert.equal(sleeps.length, 2);
 });
 
 test('runInstallerWithRetry: success on the first try never sleeps', () => {
