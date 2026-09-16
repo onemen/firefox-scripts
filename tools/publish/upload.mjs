@@ -79,10 +79,8 @@ import {
   DIST_ROOT,
   GITHUB_TOKEN_VAR,
   INSTALLER_DIST,
-  PROFILE_PATH,
   PUBLISH_MODE,
   RELEASE_NAME,
-  REMOTE_UI_DIR,
   REPO_NAME,
   REPO_OWNER,
   SCRIPTS_DIST,
@@ -125,6 +123,12 @@ import {
 import {assertCleanWorktree} from './gitUtils.mjs';
 import {linkNodeModules, unlinkNodeModules} from './refNodeModules.mjs';
 import {cleanGenerated} from './syncGeneratedFiles.mjs';
+import {
+  INSTALLER_HASH_EXCLUDE,
+  OBSOLETE_FILES,
+  packageExtraFiles,
+  packageRoot,
+} from './generatedRegistry.mjs';
 import {
   PLATFORM,
   expandPlatforms,
@@ -197,30 +201,22 @@ const INSTALLER_DIR = path.join(REPO_ROOT, 'installer');
 const INSTALLER_SRC = path.join(INSTALLER_DIR, 'src');
 const INSTALLER_WEB = path.join(INSTALLER_DIR, 'web');
 const HELPER_SRC = path.join(INSTALLER_SRC, 'helper');
-const UTILS_SOURCE = path.join(PROFILE_PATH, 'chrome', 'utils');
-const FX_FOLDER_SOURCE = path.join(PROFILE_PATH, 'fx-folder');
-const UI_SOURCE = REMOTE_UI_DIR;
+// Package roots and the generated-file registry come from
+// generatedRegistry.mjs — the ONE list both this module and
+// syncGeneratedFiles.mjs read, so the publish hashes can never drift from the
+// generated-file set (ADR 0008's trap; pinned by
+// test/unit/generatedRegistry.test.mjs).
+const UTILS_SOURCE = packageRoot('utils');
+const FX_FOLDER_SOURCE = packageRoot('fx-folder');
+const UI_SOURCE = packageRoot('updater-ui');
 
 // The generated updater config ships inside utils.zip (and is hashed + listed
 // in the manifest) even though it is untracked/gitignored.  createZip.mjs
 // regenerates it (with the current mode's URLs) before this module hashes it.
-const GENERATED_UPDATER_CONFIG = {
-  rel: 'updater/updater-config.sys.mjs',
-  absPath: path.join(UTILS_SOURCE, 'updater', 'updater-config.sys.mjs'),
-};
-
-// The generated updater stylesheet ships inside updater-ui.zip (and is hashed
-// + listed in the manifest) even though it is untracked/gitignored.
-// createZip.mjs regenerates it before this module hashes it.
-const GENERATED_UI_CSS = {
-  rel: 'updater.css',
-  absPath: path.join(UI_SOURCE, 'updater.css'),
-};
-
-// Obsolete files: excluded from the zips and from the published hash / manifest
-// `files` list, so the zip content always equals the canonical list.  The
-// installer removes historically installed copies (installer/src/obsolete_files.h).
-const HASH_EXCLUDE = ['versionInfo.json'];
+// Registry-owned: packageExtraFiles() derives the {rel, absPath} entries shared
+// by the hash and the zip re-add below.
+const GENERATED_UPDATER_CONFIG = packageExtraFiles('utils');
+const GENERATED_UI_CSS = packageExtraFiles('updater-ui');
 
 const PACKAGES = [
   {name: 'utils', dir: UTILS_SOURCE},
@@ -347,10 +343,11 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
   for (const {name, dir} of PACKAGES) {
     // Generated files that ship inside the zip but are gitignored on disk are
     // re-added here so the zip content, hash and canonical `files` list all
-    // include them explicitly.
+    // include them explicitly. Package-name-keyed: arrays are already the
+    // registry-derived {rel, absPath} entries.
     const extraFiles =
-      name === 'utils' ? [GENERATED_UPDATER_CONFIG]
-      : name === 'updater-ui' ? [GENERATED_UI_CSS]
+      name === 'utils' ? GENERATED_UPDATER_CONFIG
+      : name === 'updater-ui' ? GENERATED_UI_CSS
       : [];
     const {hash, files} = computeDirectoryHash(dir, hashPatterns, extraFiles);
     const date = getLatestCommitDate(dir, hashPatterns);
@@ -407,10 +404,13 @@ async function buildBinaries(platforms, storedHashes) {
   // generated headers), installer/web/* and config/installer.conf — so a UI or
   // config change still bumps the hash and triggers a rebuild.
   const {hash: installerHash} = computeFileSetHash([
-    ...collectDirEntries(INSTALLER_SRC, installerPatterns, 'installer', INSTALLER_SRC, [
-      '_config.h',
-      'resources.h',
-    ]),
+    ...collectDirEntries(
+      INSTALLER_SRC,
+      installerPatterns,
+      'installer',
+      INSTALLER_SRC,
+      INSTALLER_HASH_EXCLUDE
+    ),
     ...collectDirEntries(INSTALLER_WEB, webPatterns, 'web'),
     {rel: 'config/installer.conf', absPath: path.join(REPO_ROOT, 'config', 'installer.conf')},
   ]);
@@ -945,7 +945,7 @@ async function main() {
     const createZip = await import('./createZip.mjs');
 
     const zipPatterns = loadSharedPatterns(FX_FOLDER_SOURCE, []);
-    const hashPatterns = loadSharedPatterns(FX_FOLDER_SOURCE, HASH_EXCLUDE);
+    const hashPatterns = loadSharedPatterns(FX_FOLDER_SOURCE, OBSOLETE_FILES);
 
     const storedHashes = await getStoredHashes({localOnly: LOCAL});
 

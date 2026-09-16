@@ -46,6 +46,9 @@ facts most often cause bugs:
 
 - **Single source of truth** is `config/installer.conf`: it generates `installer/src/_config.h` (C),
   `core/chrome/utils/updater/updater-config.sys.mjs` (updater), and feeds `tools/publish/paths.js`.
+  The generated-file set itself is registered in `tools/publish/generatedRegistry.mjs` — the one
+  list the generators, the publish hashes and the zip re-adds read; the registry ↔ hash-inputs tests
+  (`test/unit/generatedRegistry.test.mjs`) fail when the wiring is missing (ADR 0008).
 - **Hash-based detection.** Per-package SHA-256 manifest (`hashes.json`): for each file
   `sha256(rel_path + '\n') + sha256(file_bytes)`, files sorted case-insensitively; a missing file
   contributes only its path. Equal → Up to date; differs with at least one file present → Update

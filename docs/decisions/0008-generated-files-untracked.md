@@ -2,6 +2,11 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-18
+- **Amended:** 2026-09-16 — the source-coverage mapping is no longer hand-maintained:
+  `tools/publish/generatedRegistry.mjs` is the single registry (generated files, their shipping
+  rels, scan excludes, installer-hash excludes), and `test/unit/generatedRegistry.test.mjs` fails
+  `pnpm test` when a generated file's hash-input wiring is missing — the trap below is now
+  mechanical, not remembered
 
 ## Context
 
@@ -28,5 +33,7 @@ the installer hash covers `installer/src` + `installer/web/*` + `config/installe
 No hook machinery, no diff noise, and a UI/config change still bumps the package hashes — but only
 because the hash inputs were reworked to name the sources, not the artifacts. The trap: if a
 generated file is added or removed without updating the hash inputs, updates silently stop
-propagating. Revisit-if: a deterministic-publish CI check (run `upload:local` twice and diff the
-snapshots) is wanted, or a non-Node consumer appears.
+propagating. **Closed 2026-09-16** (see Amended): add the file to
+`tools/publish/generatedRegistry.mjs` and the tests enforce the rest — an unwired generated file
+fails `pnpm test`. Revisit-if: a deterministic-publish CI check (run `upload:local` twice and diff
+the snapshots) is wanted, or a non-Node consumer appears.

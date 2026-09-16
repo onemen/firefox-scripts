@@ -53,8 +53,13 @@ node tools/publish/syncGeneratedFiles.mjs
 Because the files are not committed, the publish hashes cover their **true sources**: the utils
 hash/file list explicitly includes `updater/updater-config.sys.mjs` (it ships inside utils.zip), the
 updater-ui list includes `updater.css` (ships inside updater-ui.zip), and the installer hash covers
-`installer/src` + `installer/web/*` + `config/installer.conf`. Trap: adding/removing a generated
-file without updating the hash inputs silently stops updates propagating.
+`installer/src` + `installer/web/*` + `config/installer.conf`.
+
+The whole mapping is owned by **`tools/publish/generatedRegistry.mjs`** — the single registry that
+`syncGeneratedFiles.mjs` (generators), `upload.mjs` (hash extraFiles, installer excludes) and this
+skill's table all describe. `test/unit/generatedRegistry.test.mjs` fails `pnpm test` when a
+generated file's hash-input wiring is missing (ADR 0008's old trap — closed mechanically): to add or
+remove a generated file, edit the registry and the tests tell you what must follow.
 
 At the end of every `upload` run the files are **deleted from disk** (`cleanGenerated`) so the
 working tree matches a fresh clone. `config/installer.conf` is the single source of truth (ADR

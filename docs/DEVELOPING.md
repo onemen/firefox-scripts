@@ -26,6 +26,8 @@ one goal: installing and updating Firefox scripts for legacy extension support.
 │   ├── createZip.mjs       Zip creation helpers (fx-folder.zip, utils.zip, updater-ui.zip)
 │   ├── generateUpdaterConfig.mjs  Regenerates updater-config.sys.mjs from installer.conf
 │   ├── syncGeneratedFiles.mjs     Regenerates the generated files (untracked, on demand)
+│   ├── generatedRegistry.mjs      Single registry of the generated files: shipping rels,
+│   │                              zip/hash extraFiles, scan excludes (ADR 0008)
 │   ├── gitignoreUtils.mjs  File-listing with gitignore support
 │   ├── hashUtils.mjs     Directory hashing & gh-pages hash manifest
 │   ├── publishMode.mjs   --mode=prod|dev gate, dev-build-<id> identity, -dev suffix
