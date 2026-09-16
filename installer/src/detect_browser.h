@@ -79,7 +79,7 @@ int check_utils_status(const char *profile_path);
 enum BrowserVariant identify_variant_from_path(const char *path);
 
 /**
- * Returns 1 if the remote hash Gist was reachable on the last fetch,
+ * Returns 1 if the remote hash manifest was reachable on the last fetch,
  * 0 if unreachable or the JSON could not be parsed.
  * The UI uses this to show a warning when update checks are unavailable.
  */

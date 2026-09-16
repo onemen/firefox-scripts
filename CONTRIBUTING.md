@@ -56,7 +56,7 @@ Uploads are gated to `main` and require a GitHub token (see
 `docs/DEVELOPING.md#publishing-a-release`); the offline check needs no token:
 
 ```bash
-npm run upload:local -- --mode=prod
+pnpm upload:local -- --mode=prod
 ```
 
 ## License
