@@ -79,11 +79,12 @@ function frontmatterLines(text) {
  * @param {string} key
  */
 function hasNonEmptyScalar(block, key) {
-  const re = new RegExp(`^${key}:\\s*(.*)$`);
+  const prefix = key + ':';
   for (let i = 0; i < block.length; i++) {
-    const m = block[i].match(re);
-    if (!m) continue;
-    if (m[1].trim() !== '') return true;
+    const line = block[i];
+    if (!line.startsWith(prefix)) continue;
+    const rest = line.slice(prefix.length);
+    if (rest.trim() !== '') return true;
     for (let j = i + 1; j < block.length; j++) {
       if (block[j].trim() === '') break;
       if (!/^\s/.test(block[j])) break; // next top-level key — value was empty
