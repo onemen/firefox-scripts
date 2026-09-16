@@ -98,15 +98,11 @@ export function getZipBaseUrl() {
 }
 
 /**
- * Base URL of the updater tab UI package (updater-ui.zip). It is published next
- * to the hash manifest (gh-pages / the dev-build branch / the local snapshot
- * dir) and is never a release asset (upload.mjs), so it must come from the
- * manifest's own host — not ZIP_BASE_URL, which is the release URL and has no
- * updater-ui zip in prod (issue #102).
- */
-/**
  * Base URL of the updater tab UI package (updater-ui.zip) on the active
- * channel.
+ * channel. It is published next to the hash manifest (gh-pages / the dev-build
+ * branch / the local snapshot dir) and is never a release asset (upload.mjs),
+ * so it must come from the manifest's own host — not ZIP_BASE_URL, which is the
+ * release URL and has no updater-ui zip in prod (issue #102).
  */
 export function getUiBaseUrl() {
   // Fall back to ZIP_BASE_URL only when the paired generated config predates
@@ -822,13 +818,6 @@ export function readZipEntry(zipReader, entryName) {
 }
 
 /**
- * Extract a zip into destDir. Mirrors the installer's extract_zip_flatten(): if
- * the archive has a single top-level folder (fx-folder.zip wraps files under
- * 'fx-folder/'), descend into it so files land flat.
- *
- * @returns {Promise<string>} the base dir containing the extracted files
- */
-/**
  * Reject zip entry names that could escape destDir: absolute paths, Windows
  * backslash separators, drive-letter tricks, and '.'/'..' components. Zip entry
  * names always use '/', so anything else is an attack.
@@ -842,9 +831,14 @@ function isUnsafeZipEntryName(entryName) {
   return false;
 }
 
+/**
+ * Extract a zip into destDir. Mirrors the installer's extract_zip_flatten(): if
+ * the archive has a single top-level folder (fx-folder.zip wraps files under
+ * 'fx-folder/'), descend into it so files land flat.
+ *
+ * @returns {Promise<string>} the base dir containing the extracted files
+ */
 export async function extractZipFlatten(zipPath, destDir) {
-  await IOUtils.makeDirectory(destDir, {ignoreExisting: true, createAncestors: true});
-
   const zipFile = await IOUtils.getFile(zipPath);
   const zipReader = Cc['@mozilla.org/libjar/zip-reader;1'].createInstance(Ci.nsIZipReader);
   zipReader.open(zipFile);
