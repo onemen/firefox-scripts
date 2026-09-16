@@ -1,15 +1,11 @@
-// tools/ai-review.mjs — advisory AI code reviewer for PR diffs.
+// tools/ai-review.mjs — advisory AI code reviewer for PR diffs (ADR 0020:
+// local, agent-run; see .agents/skills/ai-review for the protocol).
 //
 // Runs a model against each changed file's diff (per-file, chunked, with
-// rate-limit backoff) and writes two artifacts:
-//   - reviewdog RDJSON diagnostics (fed to `reviewdog -f=rdjson` in CI)
-//   - a markdown summary comment (posted/updated in place by the workflow)
+// rate-limit backoff) and writes reviewdog RDJSON diagnostics.
 //
-// Designed to be driven by .github/workflows/ai-review.yml with flags, so
-// swapping models/providers or switching modes never requires editing YAML:
-//
-//   node tools/ai-review.mjs --max-findings 10   (local: reviews main...HEAD with the
-//       first configured provider — gemini by default)
+// Run via `pnpm review:local`, which reviews main...HEAD with the first
+// configured provider.
 //
 // Flags:
 //   --provider <name>   Provider id (default: first configured provider with a

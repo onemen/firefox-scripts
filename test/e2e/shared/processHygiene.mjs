@@ -26,9 +26,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Does a process command line belong to the E2E harness? Matches the temp-dir
- * prefixes the harness passes in argv (browser profiles, the installer
- * `--env-file` dir) and the harness-built installer binary names. Exported for
+ * Does a process command line belong to the E2E harness? Matches the
+ * `fxs-e2e`/`fxs-installer-ui` marker prefixes the harness puts in argv and the
+ * `installer_<os>` names of the harness-built installer binaries. Exported for
  * unit tests.
  *
  * @param {string | null | undefined} cmdline full command line of a process

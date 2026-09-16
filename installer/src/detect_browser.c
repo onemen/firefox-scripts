@@ -105,8 +105,8 @@ int g_hash_check_available = 0;
  * Flag set to 1 while scan_and_filter_browsers() is running its initial scan.
  * When set, check_package_status() skips the network-backed hash check and
  * falls through to the fast file-existence check so the initial browser
- * detection does not block on a slow/unreachable Gist. The hash check runs
- * normally on subsequent status API polls.
+ * detection does not block on a slow/unreachable manifest host. The hash
+ * check runs normally on subsequent status API polls.
  */
 static int g_is_initial_scan = 0;
 
@@ -114,7 +114,7 @@ static int g_is_initial_scan = 0;
    to surface remote-hash failures instead of silently falling back. */
 
 /**
- * Static cache for remote hashes from the Gist.
+ * Static cache for remote hashes from the publish-branch hash manifest.
  * Cache TTL prevents re-downloading on every status poll.
  */
 static char g_cached_utils_hash[65] = "";
@@ -122,10 +122,9 @@ static char g_cached_fx_folder_hash[65] = "";
 static time_t g_hash_cache_time = 0;
 #define HASH_CACHE_TTL_SEC 300 /* 5 minutes */
 
-/* Cached canonical file lists (relative paths, '/' separators), one entry per
-/* Canonical shipped file lists, per package.  Each entry is a malloc'd
-   string.  Populated by ingest_remote_manifest() from the manifest's `files`
-   arrays. */
+/* Canonical shipped file lists, per package (relative paths, '/' separators).
+   Each entry is a malloc'd string.  Populated by ingest_remote_manifest() from
+   the manifest's `files` arrays. */
 static char **g_utils_files = NULL;
 static int g_utils_files_count = 0;
 static char **g_fx_files = NULL;
@@ -530,7 +529,7 @@ static int fetch_remote_hashes_internal(PackageHashes *out) {
 }
 
 /**
- * Returns 1 if the remote hash Gist was reachable and parsed successfully,
+ * Returns 1 if the remote hash manifest was reachable and parsed successfully,
  * 0 if the last fetch failed (unreachable, download error, or parse failure).
  * The UI uses this to show a warning when update checks are unavailable.
  */
@@ -578,7 +577,7 @@ static int check_package_status(int is_utils, const char *base_dir) {
         }
     }
 
-    // Gist unreachable → fall back to file presence.
+    // Manifest unreachable → fall back to file presence.
     return (files_found > 0) ? 1 : 0;
 }
 
