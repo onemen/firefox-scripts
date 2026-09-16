@@ -468,6 +468,11 @@ and point the test at the result; the pure-Node `pnpm test` suite never needs a 
   skill text is a prompt-injection surface. PR mode (`--pr`) is stateless, always green, and
   surfaces findings as annotations. Local run: `node tools/skills-watchdog.mjs --dry-run`.
 
+- **Skills checker** (`tools/check-skills.mjs`, wired into `pnpm lint`; static-only alias
+  `pnpm test:skills`) — gates on SKILL.md frontmatter validity (name/description presence, name =
+  directory, full or absent gh metadata) and runs the vendored skills' own `*.test.mjs` files with
+  `node --test`. Validation only: per ADR 0022 vendor text is never linted or formatted.
+
 **PR path filtering** — every E2E job (`.github/workflows/e2e.yml`: the `snapshot` build, the
 installer/updater matrices, the `helper` elevated-copy test, and the `browser-matrix` fork legs) and
 the publish gate (`build` in `.github/workflows/ci.yml`) run only when a changed file can affect
