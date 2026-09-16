@@ -69,7 +69,9 @@ jobs:
       - uses: $/.github/actions/setup-repo
       - run: pnpm lint
       - run: pnpm format
-      - run: pnpm test
+      # Coverage rides the same run (2026-09-15 audit): the report goes to the
+      # log only — no threshold gate, so this can never fail a PR.
+      - run: node --test --experimental-test-coverage "test/unit/**/*.test.mjs"
       # Supply-chain gate (2026-09-15 audit): fails the PR on any known high
       # or critical vulnerability in the dependency tree. Dev-only tree, so
       # only new advisories should ever trip it; Dependabot's weekly pnpm
