@@ -216,10 +216,15 @@ jobs:
           # guard abort would otherwise kill each prod build leg at startup.
           FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
+          # Dispatch inputs reach the shell only through env vars — never
+          # interpolated directly into run: (script-injection surface).
+          UPLOAD_MODE: ${{ inputs.mode }}
+          UPLOAD_PLATFORM: ${{ matrix.platform }}
+          UPLOAD_FORCE: ${{ inputs.force }}
         run: |
-          ARGS="--mode=${{ inputs.mode }} --build-only --platform=${{ matrix.platform }}"
-          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          if [ "${{ inputs.mode }}" = "prod" ]; then
+          ARGS="--mode=$UPLOAD_MODE --build-only --platform=$UPLOAD_PLATFORM"
+          if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
+          if [ "$UPLOAD_MODE" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
           node tools/publish/upload.mjs $ARGS
@@ -361,10 +366,12 @@ jobs:
         env:
           FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
+          UPLOAD_MODE: ${{ inputs.mode }}
+          UPLOAD_FORCE: ${{ inputs.force }}
         run: |
-          ARGS="--mode=${{ inputs.mode }} --skip-build --platform=win --platform=linux --platform=mac"
-          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          if [ "${{ inputs.mode }}" = "prod" ]; then
+          ARGS="--mode=$UPLOAD_MODE --skip-build --platform=win --platform=linux --platform=mac"
+          if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
+          if [ "$UPLOAD_MODE" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
           node tools/publish/upload.mjs $ARGS

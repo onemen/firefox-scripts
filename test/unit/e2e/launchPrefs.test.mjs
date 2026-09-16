@@ -49,7 +49,10 @@ test('seedStartupHygienePrefs writes the prefs into a fresh profile user.js', ()
     seedStartupHygienePrefs(dir);
     const userJs = fs.readFileSync(path.join(dir, 'user.js'), 'utf-8');
     for (const [name, value] of Object.entries(STARTUP_HYGIENE_PREFS)) {
-      assert.match(userJs, new RegExp(`user_pref\\("${name}", ${value}\\);`));
+      assert.ok(
+        userJs.includes(`user_pref("${name}", ${value});`),
+        `expected user.js to contain user_pref("${name}", ${value});`
+      );
     }
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
