@@ -99,10 +99,10 @@ detail lives there so this file stays a checklist, not a manual. All skills are 
 - **Third-party** (`metadata.github-repo` in `SKILL.md`): installed and updated only via
   `gh skill install` / `gh skill update`; kept byte-identical to upstream — never linted or
   formatted (excluded from the gates; see `eslint.config.js` / `.prettierignore`). Drift is surfaced
-  by the weekly watchdog, and `pnpm test:skills` (in `pnpm lint`) gates on frontmatter validity and
-  runs the vendored skills' own tests — validation only, vendor text stays pristine (ADR 0022:
-  "gates that validate apply to everything"). by the weekly watchdog as a tracking issue; updates
-  land as reviewed PRs.
+  by the weekly watchdog as a tracking issue; updates land as reviewed PRs. `pnpm lint` gates on
+  frontmatter validity and runs the vendored skills' own tests; `pnpm test:skills` performs static
+  frontmatter validation only. Vendor text stays pristine (ADR 0022: "gates that validate apply to
+  everything").
 - **Authored here**: fully covered by the lint/format gates; updates are normal PRs.
 
 | Skill               | Class       | Load when the task involves                                            |

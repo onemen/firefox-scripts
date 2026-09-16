@@ -54,7 +54,8 @@ import {SKILLS_DIR, parseSkillFrontmatter} from './skills-watchdog.mjs';
 const __filename = fileURLToPath(import.meta.url);
 
 const GH_META_KEYS = ['github-repo', 'github-ref', 'github-path', 'github-tree-sha'];
-const REPO_URL_RE = /github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/;
+const REPO_URL_RE =
+  /^(?:(?:https?|ssh):\/\/(?:git@)?github\.com\/|git@github\.com:|github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
 
 /**
  * Extract the frontmatter block (between the first two `---` lines), or null.

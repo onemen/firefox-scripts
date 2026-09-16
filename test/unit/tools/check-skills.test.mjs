@@ -157,6 +157,24 @@ test('unparseable github-repo URL is flagged', () => {
   }
 });
 
+test('near-miss github hostnames are rejected, not just non-GitHub schemes', () => {
+  for (const host of [
+    'https://notgithub.com/acme/alpha',
+    'https://github.com.evil.io/acme/alpha',
+  ]) {
+    const files = thirdParty('alpha');
+    files['SKILL.md'] = files['SKILL.md'].replace('https://github.com/acme/alpha', host);
+    const dir = makeSkillsDir({alpha: files});
+    try {
+      const errors = checkSkillsDir(dir);
+      assert.equal(errors.length, 1);
+      assert.match(errors[0].message, /not a GitHub repo URL/);
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+  }
+});
+
 test('partial gh metadata without github-repo is the retired hand-copy signature', () => {
   const dir = makeSkillsDir({
     alpha: {
