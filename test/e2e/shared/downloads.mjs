@@ -509,15 +509,33 @@ export function isFileLockError(err, {platform = process.platform} = {}) {
   const out = String(err?.stderr || err?.message || err?.code || '');
   // execSync failures carry the scanner's message in stderr/message;
   // spawnSync surfaces the same sharing violation (os error 32) as code EBUSY.
-  return /cannot access the file because it is being used by another process|The file is locked|os error 32|EBUSY/i.test(
-    out
-  );
+  if (
+    /cannot access the file because it is being used by another process|The file is locked|os error 32|EBUSY/i.test(
+      out
+    )
+  ) {
+    return true;
+  }
+  // Quiet exit-1 class (issue #215): Defender can suspend the freshly-written
+  // NSIS exe *after* it launches, so the process dies with exit code 1 and no
+  // output — no lock text lands in stderr, message, or the log, and the
+  // signature match above never fires. A genuine /S failure reports a
+  // different exit code (e.g. 1627) and/or stderr text, so treat
+  // exit-1-with-no-output as the race too. The message must be single-line:
+  // the execSync 'Command failed: <cmd>' shape carries only the command line,
+  // while appended output would show up as extra lines.
+  const msg = String(err?.message || '');
+  const status1 = err?.status === 1 || /exited with code 1$/.test(msg);
+  return status1 && !String(err?.stderr || '').trim() && !msg.includes('\n');
 }
 
 export function runInstallerWithRetry(
   cmd,
   {attempts = 4, delayMs = 4000, platform, run, sleep} = {}
 ) {
+  // Exponential backoff (issue #215): Defender's scan hold can outlast short
+  // fixed waits, so attempt n waits delayMs * 2^(n-1) — 4s/8s/16s/32s by
+  // default (60 s total, up from 12 s fixed).
   const runCmd =
     run ??
     (c => {
@@ -534,10 +552,11 @@ export function runInstallerWithRetry(
     } catch (err) {
       lastErr = err;
       if (!isFileLockError(err, platform ? {platform} : {}) || attempt === attempts) throw err;
+      const delay = delayMs * 2 ** (attempt - 1);
       console.log(
-        `  installer file locked (AV scan?) — retry ${attempt}/${attempts - 1} in ${delayMs / 1000}s`
+        `  installer locked or exited quietly (AV scan?) — retry ${attempt}/${attempts - 1} in ${delay / 1000}s`
       );
-      wait(delayMs);
+      wait(delay);
     }
   }
   throw lastErr;
@@ -575,7 +594,12 @@ export function runNsisInstallerWithRetry(exe, args, label = 'installer', {spawn
         throw Object.assign(result.error, {code: result.error.code || 'EBUSY'});
       }
       if (result.status !== 0) {
-        throw new Error(`${label} exited with code ${result.status}`);
+        // status rides on the error so isFileLockError can classify the quiet
+        // exit-1 AV race (issue #215) — with stdio:'inherit' the spawn result
+        // carries no captured output for the predicate to inspect.
+        throw Object.assign(new Error(`${label} exited with code ${result.status}`), {
+          status: result.status,
+        });
       }
     },
   });
@@ -611,6 +635,11 @@ async function installInstaller(url, browser, args) {
  * floorp leg 2026-09-14: "The process cannot access the file because it is
  * being used by another process" → execSync message, which isFileLockError
  * matches, so the retry rides it out).
+ *
+ * Since 2026-09-15 the race also escapes as a _quiet_ exit code 1 — the scanner
+ * suspends the exe after launch and it dies without printing anything (issue
+ * #215: firefox, firefox-dev, nightly, zen, floorp legs) — which the predicate
+ * now classifies as the same race.
  *
  * @param {string} exe absolute path to the installer
  * @param {string[]} args silent-install argv (e.g. ['/S'])
