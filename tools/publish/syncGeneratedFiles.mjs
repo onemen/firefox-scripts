@@ -137,11 +137,20 @@ const GENERATED = GENERATED_FILES.filter(f => f.rel in GENERATORS).map(f => ({
 // Gitignored updater-tab stylesheet — written to disk by createZip.mjs at
 // publish time so it ships inside updater-ui.zip.  Never tracked or committed:
 // it is regenerated on demand from the shared design system + updater tail.
-// Also registry-driven (the one PREVIEW member).
-const PREVIEW = GENERATED_FILES.filter(f => !(f.rel in GENERATORS)).map(f => ({
-  rel: f.rel,
-  generate: f.rel === 'tools/publish/remote-ui/updater.css' ? buildRemoteUiCss : null,
-}));
+// Also registry-driven (the one PREVIEW member). Fail fast at load: every
+// registry file must have exactly one generator (GENERATORS above, or the
+// PREVIEW one below) — a future registry entry without one must surface as a
+// clear load-time error, not a TypeError inside regenerate() (ai-review
+// finding on this PR).
+const PREVIEW = GENERATED_FILES.filter(f => !(f.rel in GENERATORS)).map(f => {
+  if (f.rel !== 'tools/publish/remote-ui/updater.css') {
+    throw new Error(
+      `syncGeneratedFiles.mjs: registry file '${f.rel}' has no generator — add it to GENERATORS ` +
+        `here (or teach PREVIEW how to build it)`
+    );
+  }
+  return {rel: f.rel, generate: buildRemoteUiCss};
+});
 
 /** Absolute path of a generated file. Re-exported from generatedRegistry.mjs. */
 export {generatedPath};
