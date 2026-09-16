@@ -421,13 +421,21 @@ pnpm test:hash
 
 Exit code 0 means every package's JS hash matches the C binary's (computed with `--test-hash`).
 
+`installer/test/test_self_update.mjs` additionally needs a **built binary** (it drives the
+installer's `--test-self-update` mode), so it runs where a build exists: the Windows publish gate in
+CI, or locally after `make all` / `dist_win`. On a Linux/macOS host without a Windows build, run the
+Windows-target cross-compile from WSL (or the reverse with MSYS2 — see the platform sections above)
+and point the test at the result; the pure-Node `pnpm test` suite never needs a binary.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every PR and on `main` pushes:
 
 - **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, markdownlint-cli2 — MD056
   table-column-count catches merged table rows that prettier cannot see (#147) — clang-format,
-  `gcc -fanalyzer`), `pnpm format`, and `pnpm test` (unit tests).
+  `gcc -fanalyzer`), `pnpm format`, `pnpm test`, and a separate
+  `node --test --experimental-test-coverage "test/unit/**/*.test.mjs"` pass whose report goes to the
+  log — informational only, no threshold gate.
 - **publish gate** (Windows / Linux / macOS) — `pnpm upload:local --mode=dev` rebuilds every package
   zip and the native binaries for the runner's OS, so regressions in generated files, hashes or the
   Makefile fail the PR before they reach a release.
