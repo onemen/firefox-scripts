@@ -38,8 +38,17 @@ function rawModeArg() {
   return arg ? arg.slice('--mode='.length) : undefined;
 }
 
-/** 'prod' | 'dev' | undefined — tolerant; generators rely on undefined=prod. */
-export const MODE = rawModeArg();
+/**
+ * 'prod' | 'dev' | undefined — tolerant; generators rely on undefined=prod.
+ *
+ * @returns {'prod' | 'dev' | undefined}
+ */
+function typedModeArg() {
+  const m = rawModeArg();
+  return m === 'prod' || m === 'dev' ? m : undefined;
+}
+
+export const MODE = typedModeArg();
 
 /**
  * --local (upload:local): build a self-contained snapshot whose URLs all point

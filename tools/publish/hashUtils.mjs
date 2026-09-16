@@ -199,12 +199,16 @@ async function readFromPages() {
 
   const octokit = createOctokit(token);
   try {
-    const {data} = await octokit.repos.getContent({
-      owner: REPO_OWNER,
-      repo: ZIP_PAGES_REPO,
-      path: HASHES_FILE,
-      ref: ZIP_PAGES_BRANCH,
-    });
+    // Octokit's union response type does not narrow to the file-content
+    // variant without a cast; `.content` is always present for a file fetch.
+    const {data} = /** @type {{data: {content: string}}} */ (
+      await octokit.repos.getContent({
+        owner: REPO_OWNER,
+        repo: ZIP_PAGES_REPO,
+        path: HASHES_FILE,
+        ref: ZIP_PAGES_BRANCH,
+      })
+    );
     return Buffer.from(data.content, 'base64').toString('utf-8');
   } catch (error) {
     if (error.status === 404) {

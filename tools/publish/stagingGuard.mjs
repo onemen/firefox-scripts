@@ -106,6 +106,12 @@ export function stagingBanner(overrides, {mode}) {
  * snapshots. Throws in prod when target overrides are present and
  * FIREFOX_SCRIPTS_ALLOW_STAGING is not set; warns in dev.
  *
+ * @param {object} [opts]
+ * @param {'prod' | 'dev'} [opts.mode] publish mode (which env vars count as
+ *   target overrides)
+ * @param {boolean} [opts.local] local snapshot run — guard never blocks
+ * @param {NodeJS.ProcessEnv} [opts.env] environment to inspect (injectable for
+ *   tests)
  * @returns {{overrides: Array; allowed: boolean}} what was found.
  */
 export function runStagingGuard({mode, local = false, env = process.env} = {}) {

@@ -7,7 +7,21 @@ import fs from 'fs';
 import {RELEASE_NAME, REPO_OWNER, REPO_NAME} from './paths.js';
 import {bold, dim, green} from './log.mjs';
 
-/** Get the release for a tag name (default: the configured RELEASE_NAME). */
+/**
+ * Get the release for a tag name (default: the configured RELEASE_NAME).
+ *
+ * @param {import('@octokit/rest').Octokit} octokit authenticated client
+ * @param {string} [tagName] release tag to look up
+ * @returns {Promise<{
+ *   id: number;
+ *   name: string | null;
+ *   prerelease: boolean;
+ *   body?: string;
+ *   assets: {id: number; name: string; size: number}[];
+ *   [k: string]: unknown;
+ * } | null>}
+ *   the release, or null when absent
+ */
 export async function getRelease(octokit, tagName = RELEASE_NAME) {
   try {
     const {data: releases} = await octokit.repos.listReleases({
@@ -23,7 +37,25 @@ export async function getRelease(octokit, tagName = RELEASE_NAME) {
   }
 }
 
-/** Get a release by tag, creating it (at `commitish`) when it does not exist. */
+/**
+ * Get a release by tag, creating it (at `commitish`) when it does not exist.
+ *
+ * @param {import('@octokit/rest').Octokit} octokit authenticated client
+ * @param {string} tagName release tag
+ * @param {object} [opts]
+ * @param {string} [opts.name] release name for the create call
+ * @param {string} [opts.body] release body (markdown)
+ * @param {string} [opts.commitish] target commitish for the create call
+ * @param {boolean} [opts.prerelease] create as prerelease
+ * @returns {Promise<{
+ *   id: number;
+ *   name: string | null;
+ *   prerelease: boolean;
+ *   assets: {id: number; name: string; size: number}[];
+ *   [k: string]: unknown;
+ * }>}
+ *   the existing or newly created release
+ */
 export async function getOrCreateRelease(
   octokit,
   tagName,
