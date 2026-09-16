@@ -495,7 +495,7 @@ QA matrix:
 | Changed file                   | Hook                                                                                                 | Cost  |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------- | ----- |
 | `**/*.md`, `**/*.{js,mjs,cjs}` | `prettier --check <file>`                                                                            | ~0.5s |
-| `docs/decisions/**`            | `pnpm check:decisions` (duplicate numbers, stale links, `Amends:`/`Amended:` reciprocity — ADR 0030) | <1s   |
+| `docs/decisions/**`            | `pnpm check:decisions` (duplicate numbers, stale links, `Amends:`/`Amended:` reciprocity — ADR 0029) | <1s   |
 
 Skip in hooks: `pnpm test:hash` (may build a full snapshot), full `pnpm lint` (needs a C toolchain
 for `make analyze`), `syncGeneratedFiles.mjs` (on-demand only), anything that writes. Formatting

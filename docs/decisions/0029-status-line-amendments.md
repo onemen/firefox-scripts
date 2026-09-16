@@ -1,4 +1,4 @@
-# 0030: Decision amendments are first-class status lines, not prose
+# 0029: Decision amendments are first-class status lines, not prose
 
 - **Status:** accepted
 - **Date:** 2026-09-16
@@ -21,11 +21,11 @@ churn numbers and bury still-valid decisions under stubs.
 
 An amendment keeps its record and gets a **first-class status line**. Under `- **Status:**`, the
 amended record carries a machine-readable `Amended:` line, and the amending record (when there is
-one — 0030 itself, here) carries the reciprocal `Amends:` line:
+one — 0029 itself, here) carries the reciprocal `Amends:` line:
 
 ```markdown
 - **Amends:** [0019](./0019-release-versioning.md) (what changed)
-- **Amended:** [0030](./0030-status-line-amendments.md) (what changed)
+- **Amended:** [0029](./0029-status-line-amendments.md) (what changed)
 ```
 
 Links use the `[NNNN](target-file.md)` form so the number is checkable. `check-decisions.mjs` fails

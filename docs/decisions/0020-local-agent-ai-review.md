@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-29
-- **Amended:** [0030](./0030-status-line-amendments.md) — its own amendment
+- **Amended:** [0029](./0029-status-line-amendments.md) — its own amendment
   convention; the inline **Amended** notes below are now declared here
 
 _Problem surface:_ PR review tooling
@@ -47,7 +47,7 @@ AI review is a **local, agent-run step**, not a CI bot:
   an optional backup; Groq was removed (retired).
 - `.github/workflows/ai-review.yml` was **removed**; no repo/CI secret is required.
 - CodeRabbit `review:batch` stays as an optional deep ~1-review/hour pass for the PRs that warrant
-  it. **Amended 2026-09-15** (declared per [0030](./0030-status-line-amendments.md)): such passes —
+  it. **Amended 2026-09-15** (declared per [0029](./0029-status-line-amendments.md)): such passes —
   and any external review trigger, including
   `@coderabbitai review` — are **operator-initiated only**; the agent never invokes them
   unprompted (they post under the user's account and consume their quota). When the operator does

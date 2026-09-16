@@ -8,7 +8,7 @@
 //      file (external URLs and bare anchors are ignored);
 //   3. a "superseded by [NNNN](...)" status points at a missing record;
 //   4. index.md does not mention every record;
-//   5. an `Amends:` / `Amended:` status line (ADR 0030) points at a missing
+//   5. an `Amends:` / `Amended:` status line (ADR 0029) points at a missing
 //      file or a non-record, its [NNNN] does not match the target filename,
 //      links to itself, or the pair is not reciprocated (X Amends Y ⇔
 //      Y Amended X). A self-contained `Amended: YYYY-MM-DD — …` line carries no
@@ -119,7 +119,7 @@ export function checkDecisionsDir(dir) {
 
     // Every file: relative links must resolve to an existing file.
     // HTML comments (e.g. the template's status hint), fenced code blocks
-    // (e.g. ADR 0030's status-line examples) and inline code spans (format
+    // (e.g. ADR 0029's status-line examples) and inline code spans (format
     // descriptions like `[NNNN](target-file.md)`) are ignored.
     const visible = content
       .replace(/<!--[\s\S]*?-->/g, '')
@@ -170,7 +170,7 @@ export function checkDecisionsDir(dir) {
     records.push({file: entry, number: fileMatch[1], status, fields});
   }
 
-  // ADR 0030: `Amends:` / `Amended:` status lines — machine-readable amendment
+  // ADR 0029: `Amends:` / `Amended:` status lines — machine-readable amendment
   // bookkeeping. Reciprocity is checked from both ends so a one-sided link is
   // caught whichever record the author edited.
   const byNumber = new Map(records.map(record => [record.number, record]));
@@ -206,7 +206,7 @@ export function checkDecisionsDir(dir) {
             fail(
               record.file,
               `${field} ${targetFile} is not reciprocated — ${targetFile} needs a "${back}:" ` +
-                `link back to [${record.number}] (ADR 0030: X ${field} Y ⇔ Y ${back} X)`
+                `link back to [${record.number}] (ADR 0029: X ${field} Y ⇔ Y ${back} X)`
             );
           }
         }

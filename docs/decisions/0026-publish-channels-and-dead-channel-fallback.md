@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-12
-- **Amended:** [0030](./0030-status-line-amendments.md) — its own amendment convention; the in-place
+- **Amended:** [0029](./0029-status-line-amendments.md) — its own amendment convention; the in-place
   supersede below is now declared here
 - **Amends:** [0012](./0012-new-tab-daily-notification.md) — the dead-test-channel fallback carves a
   scoped exception into 0012's silent-exit invariant (stable channel unchanged)

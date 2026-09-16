@@ -37,7 +37,7 @@ that will otherwise be re-litigated.
 When a later record **reverses** a decision, mark the old one `superseded by NNNN` rather than
 editing or deleting it, and list it under Historical. History stays; it is not silently deleted. An
 **additive** amendment keeps its record and is declared with machine-readable `Amends:` / `Amended:`
-status lines (ADR [0030](./0030-status-line-amendments.md)) — `check-decisions.mjs` validates the
+status lines (ADR [0029](./0029-status-line-amendments.md)) — `check-decisions.mjs` validates the
 pair and CI fails a one-sided amendment.
 
 ## Steering list
@@ -95,7 +95,7 @@ Open these before proposing a new primitive, surface, or storage home.
   surface only (extends [0003], [0026])
 - [0028](./0028-installer-serve-loop-availability.md) — Installer serve loop bounded by
   per-connection read deadlines (idle + total; 408 on expiry) — availability half of [0010]
-- [0030](./0030-status-line-amendments.md) — Decision amendments are first-class status lines
+- [0029](./0029-status-line-amendments.md) — Decision amendments are first-class status lines
   (`Amends:` / `Amended:`), validated by check-decisions.mjs; not prose, not silent supersede
 
 ## Historical

@@ -1,7 +1,7 @@
 // test/unit/tools/check-decisions.test.mjs — Unit tests for the ADR-log
 // checker (tools/check-decisions.mjs). The real docs/decisions tree is
 // validated by `pnpm check:decisions` itself; these tests pin the parser and
-// the ADR 0030 amendment rules with fixture directories.
+// the ADR 0029 amendment rules with fixture directories.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,7 +39,7 @@ const errorsFor = result => result.errors;
 test('parseStatusBlock: fields, blank-line end, wrapped continuation lines', () => {
   const fields = parseStatusBlock(
     [
-      '# 0030: Title',
+      '# 0029: Title',
       '',
       '- **Status:** accepted',
       '- **Date:** 2026-09-16',
@@ -119,7 +119,7 @@ test('duplicate number and title/filename mismatch are caught', () => {
   }
 });
 
-test('ADR 0030: reciprocal Amends/Amended pair is accepted', () => {
+test('ADR 0029: reciprocal Amends/Amended pair is accepted', () => {
   const dir = makeDir({
     'index.md': index(['0001-base.md', '0002-amendment.md']),
     '0001-base.md': record('0001', 'base', {
@@ -136,7 +136,7 @@ test('ADR 0030: reciprocal Amends/Amended pair is accepted', () => {
   }
 });
 
-test('ADR 0030: one-sided Amends fails; the missing reciprocal is named', () => {
+test('ADR 0029: one-sided Amends fails; the missing reciprocal is named', () => {
   const dir = makeDir({
     'index.md': index(['0001-base.md', '0002-amendment.md']),
     '0001-base.md': record('0001', 'base'),
@@ -160,7 +160,7 @@ test('ADR 0030: one-sided Amends fails; the missing reciprocal is named', () => 
   }
 });
 
-test('ADR 0030: one-sided Amended fails symmetrically', () => {
+test('ADR 0029: one-sided Amended fails symmetrically', () => {
   const dir = makeDir({
     'index.md': index(['0001-base.md', '0002-amendment.md']),
     '0001-base.md': record('0001', 'base', {
@@ -181,7 +181,7 @@ test('ADR 0030: one-sided Amended fails symmetrically', () => {
   }
 });
 
-test('ADR 0030: missing target, non-record target, number mismatch, self-link', () => {
+test('ADR 0029: missing target, non-record target, number mismatch, self-link', () => {
   const dir = makeDir({
     'index.md': index(['0001-a.md']),
     '0001-a.md': record('0001', 'a', {
@@ -212,7 +212,7 @@ test('ADR 0030: missing target, non-record target, number mismatch, self-link', 
   }
 });
 
-test('ADR 0030: date-only Amended line carries no link and is accepted', () => {
+test('ADR 0029: date-only Amended line carries no link and is accepted', () => {
   const dir = makeDir({
     'index.md': index(['0001-a.md']),
     '0001-a.md': record('0001', 'a', {
