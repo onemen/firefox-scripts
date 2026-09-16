@@ -3,6 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- CSP: content only from this chrome://firefox-scripts package (scripts,
+         generated updater.css, logos). No document-level network: package and
+         helper downloads go through the privileged Downloads API. The document
+         is XML-parsed XHTML — no inline script/handlers (repo convention). -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src chrome://firefox-scripts; style-src chrome://firefox-scripts; img-src chrome://firefox-scripts; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
     <title>Firefox Scripts - Update</title>
     <link rel="icon" type="image/svg+xml" href="logos/favicon.svg" />
     <!-- updater.css is generated at publish time (tools/publish/syncGeneratedFiles.mjs
