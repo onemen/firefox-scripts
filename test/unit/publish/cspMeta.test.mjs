@@ -73,9 +73,10 @@ test('installer page: CSP is present and strictly same-origin', () => {
   );
   assert.equal(directive(policy, 'object-src'), "'none'", 'no plugin content');
   assert.equal(directive(policy, 'base-uri'), "'none'", 'no base-tag hijack');
-  assert.ok(
-    (directive(policy, 'frame-ancestors') || '').includes("'none'"),
-    'page is not framable'
+  assert.equal(
+    directive(policy, 'frame-ancestors'),
+    null,
+    'frame-ancestors is meta-ignored by spec (CSP3) — keeping it would imply false protection'
   );
   assert.equal(directive(policy, 'form-action'), "'none'", 'no form targets');
 });
@@ -106,9 +107,10 @@ test('updater tab: CSP locks content to its own chrome:// package', () => {
   );
   assert.equal(directive(policy, 'object-src'), "'none'", 'no plugin content');
   assert.equal(directive(policy, 'base-uri'), "'none'", 'no base-tag hijack');
-  assert.ok(
-    (directive(policy, 'frame-ancestors') || '').includes("'none'"),
-    'tab content is not framable'
+  assert.equal(
+    directive(policy, 'frame-ancestors'),
+    null,
+    'frame-ancestors is meta-ignored by spec (CSP3) — chrome pages cannot be embedded regardless'
   );
 });
 

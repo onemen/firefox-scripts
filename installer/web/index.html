@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- CSP: strictly same-origin — /script.js, /style.css, /logos/*, /api/*
-         (session-token model, ADR 0010). No inline script/handlers. -->
+         (session-token model, ADR 0010). No inline script/handlers.
+         frame-ancestors is meta-ignored by spec; a header would need a C-server change (follow-up). -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Firefox Scripts Installer &amp; Updater</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
