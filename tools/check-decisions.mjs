@@ -94,7 +94,7 @@ function linkTargets(value) {
  *     file: string;
  *     number: string;
  *     status: string;
- *     fields: Map<string, string>;
+ *     fields: Map<string, string[]>;
  *   }[];
  * }}
  */
