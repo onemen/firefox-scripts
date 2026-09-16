@@ -3,6 +3,13 @@
 - **Status:** accepted <!-- accepted | superseded by [NNNN](./NNNN-slug.md) -->
 - **Date:** YYYY-MM-DD
 
+<!-- An amendment that keeps this record valid carries a machine-readable link line,
+     validated by check-decisions.mjs (ADR 0030) — on THIS record when it amends another:
+       - **Amends:** [NNNN](./NNNN-slug.md) (what changed)
+     ... and the reciprocal line on the amended record:
+       - **Amended:** [NNNN](./NNNN-slug.md) (what changed)
+     A date-only form is also valid:  - **Amended:** YYYY-MM-DD — what changed -->
+
 ## Context
 
 What proposal or situation forced the decision. A few sentences on the system state and constraints,

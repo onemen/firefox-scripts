@@ -2,6 +2,10 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-12
+- **Amended:** [0030](./0030-status-line-amendments.md) — its own amendment convention; the in-place
+  supersede below is now declared here
+- **Amends:** [0012](./0012-new-tab-daily-notification.md) — the dead-test-channel fallback carves a
+  scoped exception into 0012's silent-exit invariant (stable channel unchanged)
 - **Extends:** [0009](./0009-unified-publish-modes.md) (unified publish modes — the pipeline and the
   prod gate are unchanged; this record defines the channel model on top of them)
 

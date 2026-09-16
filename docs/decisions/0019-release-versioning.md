@@ -2,6 +2,8 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-27
+- **Amended:** [0030](./0030-status-line-amendments.md) — its own amendment convention; this
+  record's two amendment sections are now declared here
 
 ## Context
 
@@ -30,7 +32,8 @@ communicates freshness without pretending every package changed.
   GitHub renders the badge-holding release as the page's hero card, so the page reads: latest hero
   first, frozen date tags below (amended 2026-09-12, Latest Scripts scheme: the earlier
   `prerelease=true` badge-guard and the `make_latest=false` wording predate the verified
-  availability of `make_latest` on Update-a-release).
+  availability of `make_latest` on Update-a-release; declared per
+  [0030](./0030-status-line-amendments.md)).
 - `latest` (existing moving tag) always carries the **complete release asset set** — both package
   zips + the installers — and stays GitHub's "Latest". README, docs and the updater point only at
   `latest` — never at versioned URLs.
@@ -46,6 +49,9 @@ move already ships, P0-1/#40). Revisit-if: users need semantic version compariso
 semver aliases on top, never rename artifacts.
 
 ## Amendment 2026-09-13 — date-based installer self-update + Pages installer mirror
+
+(Declared in the Status block per [0030](./0030-status-line-amendments.md): this and the 2026-09-12
+amendment above are [0030]'s `Amends:` targets.)
 
 The installer's original self-update compared a hardcoded `VERSION` against the `latest` release's
 `tag_name` — a comparison that can never converge under this ADR (`latest` is a permanently-named

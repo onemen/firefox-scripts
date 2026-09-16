@@ -2,6 +2,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-01
+- **Amended:** [0026](./0026-publish-channels-and-dead-channel-fallback.md) — scoped test-channel
+  exception to the silent-exit invariant
+- **Amended:** [0030](./0030-status-line-amendments.md) — its own amendment convention
 
 ## Context
 

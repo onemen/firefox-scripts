@@ -492,10 +492,10 @@ generation/build steps are deliberately _not_ hook material — generated files 
 by the Makefile and publish scripts (ADR 0008), never per-edit. A mapping that matches the Testing &
 QA matrix:
 
-| Changed file                   | Hook                      | Cost  |
-| ------------------------------ | ------------------------- | ----- |
-| `**/*.md`, `**/*.{js,mjs,cjs}` | `prettier --check <file>` | ~0.5s |
-| `docs/decisions/**`            | `pnpm check:decisions`    | <1s   |
+| Changed file                   | Hook                                                                                                 | Cost  |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------- | ----- |
+| `**/*.md`, `**/*.{js,mjs,cjs}` | `prettier --check <file>`                                                                            | ~0.5s |
+| `docs/decisions/**`            | `pnpm check:decisions` (duplicate numbers, stale links, `Amends:`/`Amended:` reciprocity — ADR 0030) | <1s   |
 
 Skip in hooks: `pnpm test:hash` (may build a full snapshot), full `pnpm lint` (needs a C toolchain
 for `make analyze`), `syncGeneratedFiles.mjs` (on-demand only), anything that writes. Formatting
