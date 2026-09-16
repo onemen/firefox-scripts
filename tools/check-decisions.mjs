@@ -174,10 +174,25 @@ export function checkDecisionsDir(dir) {
   // bookkeeping. Reciprocity is checked from both ends so a one-sided link is
   // caught whichever record the author edited.
   const byNumber = new Map(records.map(record => [record.number, record]));
+  // An `Amended:` line without links is valid only as the documented date
+  // declaration (2026-09-16 — what changed); anything else link-free, and any
+  // `Amends:` value with no record link at all, is a declared-but-empty field.
+  const dateDeclarationPattern = /^\d{4}-\d{2}-\d{2}\s+—\s+\S/;
   for (const record of records) {
     for (const field of ['Amends', 'Amended']) {
       for (const value of record.fields.get(field) ?? []) {
-        for (const {num, path: target} of linkTargets(value)) {
+        const targets = linkTargets(value);
+        if (targets.length === 0) {
+          if (field === 'Amends' || !dateDeclarationPattern.test(value)) {
+            fail(
+              record.file,
+              `${field}: "${value}" declares no amendment target — link a record with ` +
+                `[NNNN](./NNNN-slug.md), or (Amended only) use "YYYY-MM-DD — what changed"`
+            );
+          }
+          continue;
+        }
+        for (const {num, path: target} of targets) {
           if (num === record.number) {
             fail(record.file, `${field} links to itself`);
             continue;
@@ -188,7 +203,15 @@ export function checkDecisionsDir(dir) {
             fail(record.file, `${field}: target missing: ${target}`);
             continue;
           }
-          if (targetFile === INDEX || targetFile === TEMPLATE || !/^\d{4}-/.test(targetFile)) {
+          // A target must be one of the parsed records inside this directory —
+          // a basename that merely looks like NNNN-slug (or a path outside the
+          // dir) must not associate with an ADR number below.
+          const isRecord =
+            path.dirname(resolved) === dir &&
+            targetFile !== INDEX &&
+            targetFile !== TEMPLATE &&
+            records.some(r => r.file === targetFile);
+          if (!isRecord) {
             fail(record.file, `${field}: ${target} is not a decision record`);
             continue;
           }

@@ -226,6 +226,49 @@ test('ADR 0029: date-only Amended line carries no link and is accepted', () => {
   }
 });
 
+test('ADR 0029: link-free Amends and non-date Amended prose fail (declared but empty)', () => {
+  const dir = makeDir({
+    'index.md': index(['0001-a.md']),
+    '0001-a.md': record('0001', 'a', {
+      fields:
+        '\n- **Amends:** typo, no link here\n- **Amends:** [1](./0001-a.md) (not a 4-digit link)\n- **Amended:** some free-form prose without a date',
+    }),
+  });
+  try {
+    const errors = errorsFor(checkDecisionsDir(dir));
+    assert.equal(
+      errors.filter(e => e.includes('declares no amendment target')).length,
+      3,
+      errors.join('\n')
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('ADR 0029: a non-record NNNN-looking file cannot satisfy reciprocity', () => {
+  const dir = makeDir({
+    'index.md': index(['0001-base.md', '0002-amendment.md']),
+    '0001-base.md': record('0001', 'base'),
+    '0002-amendment.md': record('0002', 'amendment', {
+      fields: '\n- **Amends:** [0001](./0001-note.txt) (points at a non-record file)',
+    }),
+    // A file whose basename looks like NNNN-slug but is not a .md record.
+    '0001-note.txt': 'not a record\n',
+  });
+  try {
+    const errors = errorsFor(checkDecisionsDir(dir));
+    assert.ok(
+      errors.some(e => e.includes('0002-amendment.md') && e.includes('is not a decision record')),
+      errors.join('\n')
+    );
+    // And it must never be treated as a reciprocal target.
+    assert.ok(!errors.some(e => e.includes('not reciprocated')), errors.join('\n'));
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('superseded-by still validated alongside amendments', () => {
   const dir = makeDir({
     'index.md': index(['0001-old.md']),
