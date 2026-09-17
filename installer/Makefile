@@ -153,7 +153,11 @@ $(SRC_DIR)/_config.h: ../config/installer.conf FORCE
 # Generate embedded resources from web/ files
 resources: $(SRC_DIR)/resources.h
 
-$(SRC_DIR)/resources.h: embed.mjs $(WEB_DIR)/index.html $(WEB_DIR)/style.css $(WEB_DIR)/script.js
+# web/script/*.js are the authored parts; embed.mjs concatenates them into the
+# single served script.js (§3.1 split). A part change must regenerate.
+SCRIPT_PARTS := $(wildcard $(WEB_DIR)/script/*.js)
+
+$(SRC_DIR)/resources.h: embed.mjs $(WEB_DIR)/index.html $(WEB_DIR)/style.css $(SCRIPT_PARTS)
 	node embed.mjs
 
 # Windows build (cross-compile or native on Windows)

@@ -9,12 +9,20 @@
  * arrays, because raw they would add ~150 KB of read-only data to the installer
  * binary on every platform. The local HTTP server serves them with
  * Content-Encoding: gzip, which browsers decompress transparently.
+ *
+ * script.js is authored as phase part files under web/script/ (§3.1 modularity
+ * split) and concatenated HERE in order: the served /script.js stays one
+ * plain-script asset (single RES_SCRIPT_JS_GZ resource, single <script> tag in
+ * index.html), while each phase lives in its own reviewed file. Every part
+ * shares the one IIFE scope, so the concatenation must remain order-dependent —
+ * 00-head opens it, 50-init closes it.
  */
 
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 import {fileURLToPath} from 'url';
+import {Script} from 'node:vm';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,13 +40,49 @@ const FILES = {
 const GZ_FILES = {
   RES_INDEX_HTML_GZ: 'index.html',
   RES_STYLE_CSS_GZ: 'style.css',
-  RES_SCRIPT_JS_GZ: 'script.js',
+  RES_SCRIPT_JS_GZ: 'script.js', // built from SCRIPT_PARTS, see buildScriptJs
   RES_LOGO_FIREFOX_GZ: path.join('logos', 'firefox.png'),
   RES_LOGO_WATERFOX_GZ: path.join('logos', 'waterfox.png'),
   RES_LOGO_ZEN_GZ: path.join('logos', 'zen.png'),
   RES_LOGO_LIBREWOLF_GZ: path.join('logos', 'librewolf.png'),
   RES_LOGO_FLOORP_GZ: path.join('logos', 'floorp.png'),
 };
+
+/**
+ * The script.js phase parts, in concatenation order (§3.1 split). Each part is
+ * a top-level section of the installer UI script sharing the single IIFE scope:
+ * 00-head opens the IIFE, 50-init closes it.
+ */
+const SCRIPT_PARTS = [
+  '00-head.js', // IIFE open, debug banner, logos, state
+  '10-ingest.js', // utilities, grouping, API/network helpers, remote-data ingestion
+  '20-banners.js', // self-update banner, test/dev build banner
+  '30-render.js', // browser list rendering
+  '40-install.js', // group installation, per-card progress, shutdown helpers
+  '50-init.js', // init/bootstrap, IIFE close
+];
+
+/**
+ * Build the served script.js from the phase parts (fail fast on a missing part
+ * — a silent skip would ship a UI missing a phase). Syntax-checks the exact
+ * concatenation: the parts are IIFE fragments (00-head opens the IIFE, 50-init
+ * closes it) and cannot be parsed individually, so this is the only parse gate
+ * the sources get — eslint/prettier deliberately skip them.
+ */
+function buildScriptJs() {
+  const parts = SCRIPT_PARTS.map(part => {
+    const partPath = path.join(WEB_DIR, 'script', part);
+    if (!fs.existsSync(partPath)) {
+      throw new Error(
+        `installer/web/script/${part} is missing — the built script.js would lose a phase`
+      );
+    }
+    return fs.readFileSync(partPath, 'utf-8');
+  });
+  const built = parts.join('\n');
+  new Script(built); // throws on a syntax error in the served asset
+  return built;
+}
 
 function escapeCString(text) {
   let result = '';
@@ -110,14 +154,17 @@ function generateOutput() {
 
   for (const [varName, filename] of Object.entries(GZ_FILES)) {
     const filepath = path.join(WEB_DIR, filename);
-    if (!fs.existsSync(filepath)) {
+    // script.js is built from the phase parts (web/script/*.js), not read
+    // from disk — check the parts, not a monolith that no longer exists.
+    if (filename !== 'script.js' && !fs.existsSync(filepath)) {
       console.error(`Warning: ${filepath} not found, embedding empty array`);
       lines.push(`static const unsigned char ${varName}[] = {0};`);
       lines.push('');
       continue;
     }
 
-    const raw = fs.readFileSync(filepath);
+    const raw =
+      filename === 'script.js' ? Buffer.from(buildScriptJs(), 'utf-8') : fs.readFileSync(filepath);
     const gz = zlib.gzipSync(raw, {level: 9});
     lines.push(emitByteArray(varName, gz));
   }

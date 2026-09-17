@@ -99,6 +99,11 @@ export default defineConfig([
     name: 'global-ignore',
     ignores: [
       '.github',
+      // installer/web/script/*.js are IIFE fragments concatenated by
+      // installer/embed.mjs into the single served script.js — not parseable
+      // standalone. The concat is syntax-checked inside embed.mjs on every
+      // build/publish (buildScriptJs).
+      'installer/web/script/',
       // Third-party agent skills — upstream style, never linted (ADR 0022).
       // Derived above from SKILL.md frontmatter; a new third-party skill is
       // ignored automatically. (config/-anchored ignores need the **/ prefix

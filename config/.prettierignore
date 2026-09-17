@@ -25,3 +25,7 @@ dist
 # third-party (gh metadata): grill-me
 # third-party (gh metadata): lavish
 # END managed
+# installer/web/script/*.js are IIFE fragments concatenated by installer/embed.mjs
+# into the single served script.js — not parseable standalone (see embed.mjs
+# buildScriptJs, which syntax-checks the exact concatenation on every build).
+**/installer/web/script/
