@@ -45,7 +45,7 @@ outputs:
     value: ${{ steps.url.outputs.key }}
   portable-dir:
     description: PORTABLE_BROWSER_DIR when inputs.portable == 'true', else empty
-    value: ${{ steps.portable-dir.outputs.dir }}
+    value: ${{ steps.portable-dir-unix.outputs.dir || steps.portable-dir-windows.outputs.dir }}
 
 runs:
   using: composite
@@ -77,6 +77,7 @@ runs:
         key: ${{ steps.url.outputs.key }}
 
     - name: Set portable browser directory (Linux/macOS)
+      id: portable-dir-unix
       if: inputs.portable == 'true' && runner.os != 'Windows'
       shell: bash
       env:
@@ -87,6 +88,7 @@ runs:
         echo "dir=$TEMPDIR/firefox-portable" >> "$GITHUB_OUTPUT"
 
     - name: Set portable browser directory (Windows)
+      id: portable-dir-windows
       if: inputs.portable == 'true' && runner.os == 'Windows'
       shell: pwsh
       env:
