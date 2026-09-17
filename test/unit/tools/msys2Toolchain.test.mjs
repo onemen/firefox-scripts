@@ -12,6 +12,7 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import path from 'node:path';
 
 const {
@@ -105,6 +106,30 @@ test('validateManifest rejects a non-exact version, bad role and wrong repo pref
   assert.match(problems, /ucrt64 packages are named mingw-w64-ucrt-x86_64-/);
 });
 
+test('validateManifest rejects an undeclared repo, a missing arch and a mingw package outside ucrt64', () => {
+  const m = manifest();
+  m.packages[0].repo = 'mingw64';
+  m.packages[1].arch = undefined;
+  m.packages[2].repo = 'msys';
+  const problems = validateManifest(m).join('\n');
+  assert.match(problems, /unknown repo 'mingw64' \(declared: ucrt64, msys\)/);
+  assert.match(problems, /arch is required/);
+  assert.match(problems, /mingw-w64-\* packages belong to the ucrt64 repo/);
+});
+
+test('validateManifest accepts an msys package that is not a mingw-w64-* one', () => {
+  const m = manifest();
+  m.packages.push({
+    name: 'make',
+    version: '4.4.1-3',
+    repo: 'msys',
+    arch: 'x86_64',
+    role: 'system',
+    sha256: 'b'.repeat(64),
+  });
+  assert.deepEqual(validateManifest(m), []);
+});
+
 test('packageFileName and packageUrl follow the MSYS2 naming rules', () => {
   const ucrt = {
     name: 'mingw-w64-ucrt-x86_64-gcc',
@@ -135,6 +160,26 @@ test('prefixInstructions points at the extracted prefix and the installer Makefi
   const lines = prefixInstructions(path.join(REPO_ROOT, 'dist', '.toolchain', 'ucrt64', 'bin'));
   assert.match(lines[0], /^export PATH="\$PWD\/dist\/\.toolchain\/ucrt64\/bin:\$PATH"$/);
   assert.match(lines[1], /make -C installer dist_win/);
+});
+
+test('the action writes $MINGW_PREFIX/bin to GITHUB_PATH last, so it wins', () => {
+  // GITHUB_PATH lines take effect in REVERSE write order: the runner collects
+  // them in file order (FileCommandManager.AddPathFileCommand) and joins the
+  // list reversed before prepending it to PATH
+  // (Handler.AddPrependPathToEnvironment), so the last write has the highest
+  // precedence. MSYS2 also ships ld/as/windres in /usr/bin once its binutils is
+  // installed, so writing the pinned dir first would let the MSYS copies shadow
+  // the pinned ones — the whole point of the pin.
+  const action = readFileSync(
+    path.join(REPO_ROOT, '.github', 'actions', 'pinned-msys2', 'action.yml'),
+    'utf8'
+  );
+  const writes = action
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('cygpath -w') && line.includes('$GITHUB_PATH'))
+    .map(line => line.replace(/^cygpath -w /, '').replace(/ >> .*$/, ''));
+  assert.deepEqual(writes, ['/usr/bin', '"$MINGW_PREFIX/bin"']);
 });
 
 test('the manifest path is the one the workflows install from', () => {

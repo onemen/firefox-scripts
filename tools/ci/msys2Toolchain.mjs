@@ -109,17 +109,25 @@ export function validateManifest(manifest) {
     if (pkg.role !== 'mingw' && pkg.role !== 'system') {
       problems.push(`${label}: role must be 'mingw' or 'system'`);
     }
-    // A repo URL that does not match the package's own prefix is the classic
-    // copy-paste slip in a pinned manifest (msys packages live under /msys).
-    if (
-      repos?.[pkg.repo] &&
-      pkg.arch &&
-      !packageFileName(pkg).endsWith(`-${pkg.arch}.pkg.tar.zst`)
-    ) {
-      problems.push(`${label}: arch '${pkg.arch}' does not match the file name`);
+    // Fail closed on the structural slips a hand-edited pin invites: a repo the
+    // manifest does not declare, a package without an arch (its download URL
+    // would silently become `…-undefined.pkg.tar.zst`), and either direction of
+    // a name/repo mismatch — MSYS packages live under /msys and mingw-w64-*
+    // packages in a mingw repo, so a copy-paste between them is a real slip.
+    // (A `packageFileName(pkg).endsWith(...)` check used to sit here; it could
+    // never fire, because packageFileName builds that exact suffix.)
+    if (!repos?.[pkg.repo]) {
+      const declared = Object.keys(repos ?? {}).join(', ') || 'none';
+      problems.push(`${label}: unknown repo '${pkg.repo}' (declared: ${declared})`);
+    }
+    if (!pkg.arch) {
+      problems.push(`${label}: arch is required`);
     }
     if (pkg.repo === 'ucrt64' && !pkg.name.startsWith('mingw-w64-ucrt-x86_64-')) {
       problems.push(`${label}: ucrt64 packages are named mingw-w64-ucrt-x86_64-*`);
+    }
+    if (pkg.repo !== 'ucrt64' && pkg.name.startsWith('mingw-w64-')) {
+      problems.push(`${label}: mingw-w64-* packages belong to the ucrt64 repo`);
     }
   }
   for (const required of REQUIRED_PACKAGES) {
