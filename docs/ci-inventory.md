@@ -50,13 +50,15 @@ Every Windows job builds through the shared `pinned-msys2` composite action
 (`.github/actions/pinned-msys2`): it installs the package set in `config/msys2-toolchain.json` with
 `pacman -U`, puts that tree first on the PATH the later (plain `shell: bash`) build steps use, then
 asserts the build shell actually resolves `gcc`/`ld`/`as`/`windres`/`make` from it
-(`node tools/ci/msys2Toolchain.mjs --provenance --require-root …`). The tooling locates the MSYS2
-install itself and calls pacman by absolute path, because the bootstrap defaults to
-`path-type: minimal` and installs through a private `msys2.cmd` — so neither pacman nor `ucrt64/bin`
-is on the job PATH, which is how a "pinned" build once compiled with the runner image's toolchain.
-The published PEs are unsigned with a per-hash AV verdict (issue #157), so a toolchain that drifts —
-or that is installed but shadowed by the runner image — changes the shipped hashes; that is a job
-failure, not a warning.
+(`node tools/ci/msys2Toolchain.mjs --provenance --require-root …`). One msys2-shell step asks the
+bootstrap where it actually extracted MSYS2 (`cygpath -m /` → `MSYS2_LOCATION`) and publishes the
+two bin dirs into `$GITHUB_PATH`; everything else runs in bash and calls pacman by absolute path.
+That indirection is required, not stylistic: the bootstrap defaults to `path-type: minimal`,
+extracts to a directory of its own choosing and installs through a private `msys2.cmd`, so neither
+pacman nor `ucrt64/bin` is on the job PATH — the mechanism by which a "pinned" build compiled with
+the runner image's toolchain instead. The published PEs are unsigned with a per-hash AV verdict
+(issue #157), so a toolchain that drifts — or that is installed but shadowed — changes the shipped
+hashes; that is a job failure, not a warning.
 
 ### Job timeouts
 

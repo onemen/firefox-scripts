@@ -425,14 +425,19 @@ export function msys2RootCandidates({env = process.env, pacman = ''} = {}) {
     if (dir.endsWith('/usr/bin')) candidates.push(dir.slice(0, -'/usr/bin'.length));
   }
   candidates.push('C:/msys64', 'C:/msys2');
+  // Note for the CI action: the bootstrap does NOT install to C:\msys64 (it
+  // extracts into the tool cache / a temp dir), so the msys2 shell — which
+  // knows its own root — exports MSYS2_LOCATION for the tool to read.
   return candidates;
 }
 
 /** Absolute pacman path inside a located install (falls back to PATH). */
 export function pacmanBin(root) {
   if (!root) return 'pacman';
-  const exe = `${root}/usr/bin/pacman.exe`;
-  return fs.existsSync(exe) ? exe : 'pacman';
+  for (const candidate of [`${root}/usr/bin/pacman.exe`, `${root}/usr/bin/pacman`]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return 'pacman';
 }
 
 /**
@@ -452,16 +457,31 @@ function whichTool(name) {
   return whichAllTool(name)[0] || '';
 }
 
-/** pacman invocation against a located install (never bare PATH luck). */
+/**
+ * pacman invocation against a located install. Fails with the candidates it
+ * tried rather than a bare "exit null": a runner whose MSYS2 lives somewhere
+ * unexpected must say so, not look like a pacman crash.
+ */
 function pacman(args, opts = {}) {
-  const root = findMsys2Install({
-    candidates: msys2RootCandidates({pacman: whichTool('pacman')}),
-  });
-  return spawnSync(pacmanBin(root), args, {
+  const candidates = msys2RootCandidates({pacman: whichTool('pacman')});
+  const root = findMsys2Install({candidates});
+  if (!root) {
+    const envs = ['MSYS2_LOCATION', 'MSYS2_ROOT', 'RUNNER_TOOL_CACHE'].filter(k => process.env[k]);
+    throw new Error(
+      `could not locate the MSYS2 install — no ucrt64/bin/gcc.exe under: ${candidates.join(', ')}\n` +
+        `  export MSYS2_LOCATION with the install root (the msys2 shell's \`cygpath -m /\`)` +
+        (envs.length > 0 ? `; seen: ${envs.map(k => `${k}=${process.env[k]}`).join(', ')}` : '')
+    );
+  }
+  const res = spawnSync(pacmanBin(root), args, {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
     ...opts,
   });
+  if (res.error) {
+    throw new Error(`could not run ${pacmanBin(root)} (${res.error.message})`);
+  }
+  return res;
 }
 
 /**
