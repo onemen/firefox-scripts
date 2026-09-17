@@ -30,6 +30,9 @@
 //   --prefix    (local dev) extract the mingw packages into a project-local
 //               prefix and print the PATH export: `make -C installer dist_win`
 //               then builds with CI's exact gcc/binutils/crt/headers.
+//   --print-bin  print the located install's `ucrt64/bin` + `usr/bin`, one per
+//               line — what the CI action appends to $GITHUB_PATH so the pinned
+//               toolchain outranks the runner image's for every later step.
 //   --fetch     download (sha256-verified) into the cache; used by both paths,
 //               and `--print-manifest` emits a refreshed manifest body.
 //
@@ -338,12 +341,17 @@ export function provenanceReport({tools, expected = {}, roots = []} = {}) {
 }
 
 /**
- * Observe the live toolchain: resolve each tool through PATH (`which -a`) and
- * ask it for its version. Thin by design — provenanceReport holds the logic.
+ * Observe the live toolchain: resolve each tool through PATH and ask it for its
+ * version. Thin by design — provenanceReport holds the logic. `resolvePath` is
+ * injectable so the version lookup itself is the only PATH-dependent part.
  */
-export function collectProvenance({tools = PINNED_TOOLS, run = defaultRunner} = {}) {
+export function collectProvenance({
+  tools = PINNED_TOOLS,
+  resolvePath = whichAllTool,
+  run = defaultRunner,
+} = {}) {
   return tools.map(name => {
-    const candidates = parseWhich(run('which', ['-a', name]));
+    const candidates = resolvePath(name);
     const version = (run(name, ['--version']) || '').split(/\r?\n/)[0].trim();
     return {name, path: candidates[0] || '', version, candidates};
   });
@@ -377,9 +385,83 @@ export function toolDigest(toolPath, sha = sha256File) {
   }
 }
 
-/** pacman binary: MSYS2 puts it on PATH for the workflow steps and dev shells. */
+/**
+ * Locate the MSYS2 install. Deliberately independent of PATH:
+ * `msys2/setup-msys2` defaults to `path-type: minimal` and does its own
+ * installing through a private `msys2.cmd`, so a later `shell: bash` step can
+ * see neither `pacman` nor `ucrt64/bin` on PATH — which is exactly how a
+ * "pinned" build silently compiles with the runner image's toolchain. A
+ * candidate root counts only when it really holds the mingw toolchain
+ * (`ucrt64/bin/gcc.exe`).
+ *
+ * Returns the root with forward slashes, or null when nothing matched.
+ */
+export function findMsys2Install({candidates = [], exists = fs.existsSync} = {}) {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const root = normalizeToolPath(candidate).replace(/\/+$/, '');
+    if (exists(`${root}/ucrt64/bin/gcc.exe`)) return root;
+  }
+  return null;
+}
+
+/** The two PATH directories of an MSYS2 install, highest priority first. */
+export function msys2BinDirs(root) {
+  const base = String(root).replace(/\/+$/, '');
+  return [`${base}/ucrt64/bin`, `${base}/usr/bin`];
+}
+
+/** Candidate MSYS2 roots, best evidence first (pure: caller supplies the probe). */
+export function msys2RootCandidates({env = process.env, pacman = ''} = {}) {
+  const candidates = [];
+  if (env.MSYS2_LOCATION) candidates.push(env.MSYS2_LOCATION);
+  if (env.MSYS2_ROOT) candidates.push(env.MSYS2_ROOT);
+  if (env.RUNNER_TOOL_CACHE) {
+    candidates.push(`${env.RUNNER_TOOL_CACHE}/msys2-installer/msys64`);
+  }
+  // <root>/usr/bin/pacman[.exe] sits two levels below the root.
+  if (pacman && /[/\\]/.test(pacman)) {
+    const dir = normalizeToolPath(pacman).replace(/\/[^/]*$/, '');
+    if (dir.endsWith('/usr/bin')) candidates.push(dir.slice(0, -'/usr/bin'.length));
+  }
+  candidates.push('C:/msys64', 'C:/msys2');
+  return candidates;
+}
+
+/** Absolute pacman path inside a located install (falls back to PATH). */
+export function pacmanBin(root) {
+  if (!root) return 'pacman';
+  const exe = `${root}/usr/bin/pacman.exe`;
+  return fs.existsSync(exe) ? exe : 'pacman';
+}
+
+/**
+ * Every PATH match for a tool, preferring Windows' `where -a` and falling back
+ * to `which -a` (which every Git-Bash/MSYS2 shell provides).
+ */
+function whichAllTool(name) {
+  const where = spawnSync('where', ['-a', name], {encoding: 'utf-8'});
+  const fromWhere = parseWhich(String(where.stdout || '').replace(/\\/g, '/'));
+  if (fromWhere.length > 0) return fromWhere;
+  const which = spawnSync('which', ['-a', name], {encoding: 'utf-8'});
+  return parseWhich(which.stdout);
+}
+
+/** First PATH match for a tool, or '' when absent. */
+function whichTool(name) {
+  return whichAllTool(name)[0] || '';
+}
+
+/** pacman invocation against a located install (never bare PATH luck). */
 function pacman(args, opts = {}) {
-  return spawnSync('pacman', args, {encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...opts});
+  const root = findMsys2Install({
+    candidates: msys2RootCandidates({pacman: whichTool('pacman')}),
+  });
+  return spawnSync(pacmanBin(root), args, {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...opts,
+  });
 }
 
 /**
@@ -466,6 +548,22 @@ if (isCli) {
     const i = argv.indexOf(name);
     return i === -1 ? null : (argv[i + 1] ?? true);
   };
+  // --print-bin only locates the MSYS2 install, so it must work even when the
+  // manifest cannot be read: the action sets PATH with it, and a broken pin
+  // should fail on its own terms (--install/--verify), not by hiding PATH here.
+  if (argv.includes('--print-bin')) {
+    const candidates = msys2RootCandidates({pacman: whichTool('pacman')});
+    const root = findMsys2Install({candidates});
+    if (!root) {
+      console.error(
+        `✗ could not locate an MSYS2 install — no ucrt64/bin/gcc.exe under: ${candidates.join(', ')}`
+      );
+      process.exit(1);
+    }
+    for (const dir of msys2BinDirs(root)) console.log(dir);
+    process.exit(0);
+  }
+
   const manifest = readManifest();
   const problems = validateManifest(manifest);
   if (problems.length > 0) {

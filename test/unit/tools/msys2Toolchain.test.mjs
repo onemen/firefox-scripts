@@ -22,9 +22,13 @@ const {
   TOOL_PACKAGE,
   expectedToolVersions,
   expectedVersionFor,
+  findMsys2Install,
+  msys2BinDirs,
+  msys2RootCandidates,
   normalizeToolPath,
   packageFileName,
   packageUrl,
+  pacmanBin,
   parsePacmanQuery,
   parseWhich,
   prefixInstructions,
@@ -253,6 +257,46 @@ test('provenanceReport rejects a mixed compiler/linker pair', () => {
   const report = provenanceReport(observed({tools}));
   assert.equal(report.ok, false);
   assert.match(report.problems.join('\n'), /resolve from 2 different directories/);
+});
+
+// ── Locating the install: the pin must not depend on the bootstrap's PATH ────
+// `msys2/setup-msys2` defaults to `path-type: minimal` and installs through a
+// private msys2.cmd, so the build steps can see neither pacman nor ucrt64/bin on
+// PATH. These helpers locate the install instead of trusting it.
+
+test('findMsys2Install accepts only a root that really holds the toolchain', () => {
+  const present = new Set(['c:/msys64/ucrt64/bin/gcc.exe']);
+  const exists = p => present.has(p);
+  assert.equal(findMsys2Install({candidates: ['C:\\msys64'], exists}), 'c:/msys64');
+  assert.equal(findMsys2Install({candidates: ['C:\\empty'], exists}), null);
+  // Trailing separators and Git-Bash spellings of the same root both work.
+  assert.equal(findMsys2Install({candidates: ['/c/msys64/'], exists}), 'c:/msys64');
+});
+
+test('msys2RootCandidates prefers the recorded location over a guess', () => {
+  const roots = msys2RootCandidates({
+    env: {MSYS2_LOCATION: 'D:\\tools\\msys64', RUNNER_TOOL_CACHE: 'C:\\hostedtoolcache'},
+    pacman: '/c/msys64/usr/bin/pacman',
+  });
+  assert.equal(roots[0], 'D:\\tools\\msys64', 'the recorded location wins, unslugified');
+  const normalized = roots.map(normalizeToolPath);
+  assert.ok(normalized.includes('c:/hostedtoolcache/msys2-installer/msys64'));
+  assert.ok(normalized.includes('c:/msys64'), 'the pacman location yields the install root');
+  assert.ok(
+    normalized.includes('c:/msys64') && roots.includes('C:/msys64'),
+    'the default location stays as a last resort'
+  );
+  // A bare `pacman` (or a which failure) contributes no candidate.
+  assert.deepEqual(msys2RootCandidates({env: {}, pacman: 'pacman'}), ['C:/msys64', 'C:/msys2']);
+});
+
+test('msys2BinDirs lists the mingw dir before the msys dir', () => {
+  assert.deepEqual(msys2BinDirs('c:/msys64/'), ['c:/msys64/ucrt64/bin', 'c:/msys64/usr/bin']);
+});
+
+test('pacmanBin falls back to PATH only when the install is unknown', () => {
+  assert.equal(pacmanBin(null), 'pacman');
+  assert.equal(pacmanBin('c:/definitely-not-here-12345'), 'pacman');
 });
 
 test('runtimeVersions reports the Node/zlib pair that shapes resources.h', () => {
