@@ -522,8 +522,8 @@ async function buildBinaries(platforms, storedHashes) {
   // anything downstream consumes it (fail fast, name the fix).
   const staged = {};
   for (const p of platforms) {
-    if (builtInstallers.includes(p)) staged[installerAssetName(p)] = p;
-    if (builtHelpers.includes(p)) staged[helperAssetName(p)] = p;
+    if (builtInstallers.includes(p)) staged[installerAssetName(p, ASSET_SUFFIX)] = p;
+    if (builtHelpers.includes(p)) staged[helperAssetName(p, ASSET_SUFFIX)] = p;
   }
   const corrupt = verifyStagedBinaries(staged, name => {
     const file = path.join(INSTALLER_DIST, name);
