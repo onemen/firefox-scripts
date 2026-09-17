@@ -202,6 +202,14 @@ static inline FILE *installer_log(void) {
 #endif
 }
 
+/** Verbose diagnostic printf — enabled by --verbose / --log-console
+ *  (installer_main.c sets installer_verbose_flag). Shared with restart.c. */
+extern int installer_verbose_flag;
+#define verbose_printf(...)                              \
+    do {                                                 \
+        if (installer_verbose_flag) printf(__VA_ARGS__); \
+    } while (0)
+
 static inline void log_msg(const char *fmt, ...) {
     FILE *f = installer_log();
     if (!f) return;
