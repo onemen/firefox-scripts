@@ -54,6 +54,10 @@ jobs:
               # `upload:local` rehearsal), so edits to them must re-trigger it.
               - 'tools/scan-av.mjs'
               - 'tools/scan-vt.mjs'
+              # The pinned Windows toolchain: the gate builds with it, so a pin
+              # edit must re-run the gate on the new pin.
+              - 'config/msys2-toolchain.json'
+              - 'tools/ci/msys2Toolchain.mjs'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - '.github/actions/**'
@@ -106,17 +110,12 @@ jobs:
       - uses: $/.github/actions/setup-repo
         if: needs.changes.outputs.publish == 'true'
 
-      - name: Set up MSYS2 toolchain (make + gcc)
+      # The publish gate rehearses the exact Windows build, so it uses the
+      # pinned toolchain (config/msys2-toolchain.json) rather than whatever
+      # MSYS2 happens to install — see the AV section of docs/DEVELOPING.md.
+      - name: Pinned MSYS2 toolchain (make + gcc)
         if: runner.os == 'Windows' && needs.changes.outputs.publish == 'true'
-        # update: false — see pages.yml: a mid-cycle toolchain upgrade changed
-        # the gcc version and the rebuilt installer was falsely AV-flagged the
-        # next day; the toolchain stays stable within a cycle.
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          msystem: UCRT64
-          update: false
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc make
+        uses: ./.github/actions/pinned-msys2
 
       # The runner image's third-party apt sources can churn out-of-band and
       # break `apt-get update` for everyone (2026-09-09 Google Chrome index).

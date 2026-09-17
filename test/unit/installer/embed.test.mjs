@@ -7,8 +7,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'child_process';
+import {createHash} from 'crypto';
 import path from 'path';
 import {fileURLToPath} from 'url';
+import zlib from 'zlib';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EMBED = path.join(__dirname, '..', '..', '..', 'installer', 'embed.mjs');
@@ -62,8 +64,39 @@ test('embed.mjs: gzip byte arrays are non-empty and well-formed', () => {
   const bytes = m[1].match(/0x[0-9a-f]{2}/g) || [];
   assert.ok(bytes.length > 0, 'gzip array is empty');
   for (const b of bytes) assert.match(b, /^0x[0-9a-f]{2}$/);
+  // gzip magic: a raw deflate/zlib stream would still look "well-formed" and
+  // the browser would silently fail to decompress it (Content-Encoding: gzip).
+  assert.equal(bytes[0], '0x1f');
+  assert.equal(bytes[1], '0x8b');
 });
 
 test('embed.mjs: deterministic output', () => {
   assert.equal(generate(), generate());
+});
+
+test('embed.mjs: the gzip emitted by this runtime is a pinned build input', () => {
+  // resources.h embeds Node-gzipped assets, so a runtime whose zlib emits
+  // different deflate bytes changes the installer binary and its published
+  // hashes while every tracked source stays identical — and those hashes are
+  // what the per-hash AV verdicts (issue #157) and the update manifest key on.
+  // Measured identical on node 24.20.0 (CI) and 26.8.2 (local) on 2026-09-17;
+  // this assertion is what notices when a future runtime diverges.
+  const raw = Buffer.from(
+    Array.from(
+      {length: 64},
+      (_, i) => `line-${i}: the quick brown fox jumps over the lazy dog`
+    ).join('\n'),
+    'utf-8'
+  );
+  const gz = zlib.gzipSync(raw, {level: 9});
+  assert.equal(gz.length, 236, 'gzip output length changed for the pinned sample');
+  assert.equal(
+    createHash('sha256').update(gz).digest('hex'),
+    '269ae9225f30a8af7303a7208c62d237426c29adfc6161c0b30029adc943f76a',
+    `this runtime (node ${process.version}, zlib ${process.versions.zlib}) compresses ` +
+      'differently than the runtime the published bytes were built with — the embedded ' +
+      'assets, the installer bytes and the published hashes all change; check the CI run ' +
+      'log for its node/zlib pair (tools/ci/msys2Toolchain.mjs --provenance) and re-verify ' +
+      'the AV/VT gates before publishing'
+  );
 });

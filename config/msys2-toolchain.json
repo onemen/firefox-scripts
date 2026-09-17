@@ -1,0 +1,182 @@
+{
+  "_comment": [
+    "Pinned MSYS2 toolchain for the Windows installer/helper builds.",
+    "",
+    "Why: the published Windows binaries are unsigned PEs whose AV verdict is",
+    "per-hash (issue #157), so the bytes that CI ships must be the bytes a",
+    "developer can rebuild.  msys2/setup-msys2 with update:false only skips",
+    "pacman -Syu — it still installs whatever versions the runner's package DB",
+    "offers, so binutils/crt/headers floated under a fixed gcc version and local",
+    "builds diverged by ~4 KB of code from the CI artifact (see",
+    "docs/DEVELOPING.md -> Why a clean local scan does not clear a CI build).",
+    "This file pins the WHOLE package set: .github/actions/pinned-msys2 installs",
+    "exactly these versions on the runner (pacman -U after the bootstrap, then",
+    "verified), and `pnpm toolchain:local` extracts the same files into a",
+    "project-local prefix so a local build can reproduce the shipped bytes.",
+    "",
+    "capturedFrom: the package set msys2/setup-msys2 installed in GitHub Actions",
+    "run 34935654811 (2026-09-15, windows-latest) — the run whose Windows",
+    "binaries VirusTotal flagged.  It is the best available starting point, not",
+    "a reconstruction of that artifact: building its commit from this set gives",
+    "binaries with a 2,752-byte-larger .text and one extra CRT import, because",
+    "the run recorded installed versions but never recorded which compiler",
+    "actually built them.  From the next publish on, every run logs the compiler",
+    "and linker it used (`--provenance`), so this cannot recur silently.",
+    "",
+    "Refresh with `node tools/ci/msys2Toolchain.mjs --fetch --print-manifest`",
+    "after a deliberate toolchain bump, then confirm the deterministic publish",
+    "job's environment-vs-prefix comparison still passes and re-verify the",
+    "AV/VT gates on the result."
+  ],
+  "capturedFrom": "gh run 34935654811 (2026-09-15, windows-latest)",
+  "repos": {
+    "ucrt64": "https://repo.msys2.org/mingw/ucrt64",
+    "msys": "https://repo.msys2.org/msys/x86_64"
+  },
+  "packages": [
+    {
+      "name": "mingw-w64-ucrt-x86_64-binutils",
+      "version": "2.46-4",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "32ed684d21ba1665ebb4093c71931b90ad445b8a948d32d22122b5855d49019e"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-crt",
+      "version": "14.0.0.r92.g818fa6510-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "dc1d67ba5e76acd46d7c9cc8046bd9838c8464bcadcd9a341187e8ee6f92fa4a"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-gcc",
+      "version": "16.1.0-5",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "2b5be791133f5fafac2537ad9d1579c9a421b791d7bf57fba6fb54484ec59622"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-gcc-libs",
+      "version": "16.1.0-5",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "4dab54c95756da3e18ca375ae4c7fdeb709fc04bf209eb131c120e27704fb5b3"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-gettext-runtime",
+      "version": "1.0-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "ba693dda4ac375af76ce481ff3a6e7481286546cc7dc6d56c7021dae34084157"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-gmp",
+      "version": "6.3.0-2",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "e82a75968a556484a50084578238a84eb60fb93e34986fd6695c537975bd39ea"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-headers",
+      "version": "14.0.0.r92.g818fa6510-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "660a996d685d8238ecd72e02a2c7ff004f49dfee0d3a42ded0146464bdd67f03"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-isl",
+      "version": "0.27-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "f23edcbe1206429e6fdb5f1dfc3053cf08c0d5bd1d8135a948a75146d65ce394"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-libiconv",
+      "version": "1.19-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "9a500f38c2b91808741c62fae746b3e9110b33a1ecf5c30fa0c66dbedddf7e16"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-libwinpthread",
+      "version": "14.0.0.r92.g818fa6510-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "f5d440cf021014e25098a763ebfd9f4e0339187848efdb194e821cc1fe3ae682"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-mpc",
+      "version": "1.4.1-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "f06556e811c711ce91609484e31d358e4f495811ba29813bf2284a3b236d82ce"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-mpfr",
+      "version": "4.2.2-3",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "6b70a275d2ec75c70aa50a236c218e6b7ee9a5ab4c6d52cb0b580267b7d200fe"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-tzdata",
+      "version": "2026b-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "fade60c68dc6dbe4afddc9111ee235a0ae90ff398ab7cc1222bfb0791a1c8ce4"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-windows-default-manifest",
+      "version": "6.4-4",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "6d1c9e2ab75aace04d30fb43974b24d5505bfd7872ca23fea773fc9ae70bd248"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-winpthreads",
+      "version": "14.0.0.r92.g818fa6510-1",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "5c9b5ee5c7af7af692f244776283c7729a2c648b365b0be62623012efdb11975"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-zlib",
+      "version": "1.3.2-2",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "841401182976d2f9e17e5c0ebaac51f2a8014140ea53d67625e91c8fb3c85ea0"
+    },
+    {
+      "name": "mingw-w64-ucrt-x86_64-zstd",
+      "version": "1.5.7-2",
+      "repo": "ucrt64",
+      "arch": "any",
+      "role": "mingw",
+      "sha256": "dbdb8427280046a2b41697780aa4c52983b708082b0da4755951dc3bea96ca89"
+    },
+    {
+      "name": "make",
+      "version": "4.4.1-3",
+      "repo": "msys",
+      "arch": "x86_64",
+      "role": "system",
+      "sha256": "af0bdba17f06fe037f0194069adaa31a8fe45f1a11381501896aea1fae37bd5d"
+    }
+  ]
+}

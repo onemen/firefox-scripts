@@ -228,8 +228,8 @@ Measured on commit `e393191` — the CI build that VirusTotal flagged on 2026-09
 | CI (`staged-win` artifact)  | 16.1.0-5 | 2.46-4        | 199,168 B               | 18,944 B             |
 | local (`pnpm upload:local`) | 16.1.0-5 | 2.47.20260726 | 203,264 B               | 19,456 B             |
 
-Reproducing the CI bytes locally needs CI's whole package set: the same gcc (already matched) plus
-binutils 2.46 **and** `mingw-w64-ucrt-x86_64-crt-14.0.0.r92`, and the headers package still differs.
+Reproducing the CI bytes locally needs CI's whole package set — which is what
+`config/msys2-toolchain.json` now installs on both sides (see the pinned-toolchain section below).
 Two consequences worth keeping in mind:
 
 - **A local `upload:local` run cannot validate or clear the bytes CI will ship.** Its scan is
@@ -240,9 +240,56 @@ Two consequences worth keeping in mind:
   bytes that VirusTotal's Microsoft engine flagged (`Trojan:Win32/Wacatac.B!ml`) as clean. Treat
   AV/VT as a gate, not as a truth.
 
-Pinning the whole MSYS2 package set (a cached MSYS2 snapshot, or `pacman -U` of fixed package files)
-is what would make CI bytes reproducible locally — worth doing if WDSI/VT verdicts are to be tied to
-reproducible inputs.
+### Pinned toolchain (`config/msys2-toolchain.json`)
+
+The comparison above is what the pin removes as a variable. `config/msys2-toolchain.json` fixes the
+whole Windows package set (gcc, gcc-libs, binutils, crt, headers, winpthreads, and the library
+packages behind them) with a per-file SHA-256; `.github/actions/pinned-msys2` installs exactly those
+files with `pacman -U`, puts that tree **first on the PATH the build steps use**, and then proves
+it: `node tools/ci/msys2Toolchain.mjs --provenance` resolves `gcc`/`ld`/`as`/`windres`/`make` the
+way the build does and fails the job unless every one reports the pinned version and all of them
+come from a single directory. `pacman -Q` says what is _installed_; provenance says what _compiles_
+— and it lands in the run log next to the uploaded artifact.
+
+On a local machine the same files are two commands away:
+
+```bash
+pnpm toolchain:local      # extract the pinned packages into dist/.toolchain/ (sha256-verified)
+export PATH="$PWD/dist/.toolchain/ucrt64/bin:$PATH"
+make -C installer dist_win helper_win
+```
+
+The `deterministic` publish job closes the loop: it builds one commit with the environment toolchain
+and again with that extracted prefix, and fails if the two are not byte-identical — i.e. if the pin
+does not cover everything that shapes the bytes. A published commit's hashes are therefore
+reproducible on a machine that ran `pnpm toolchain:local`. `pnpm toolchain:check` validates the
+manifest alone (no download).
+
+The MSYS2 pin is not the only byte input. `installer/embed.mjs` gzip-compresses the embedded web
+assets with Node's bundled zlib (`zlib.gzipSync(..., {level: 9})`), so a runtime whose zlib emits
+different deflate bytes would change `resources.h` — and the installer's bytes and hashes — while
+every tracked source stays identical. CI pins the Node major (`node-version: 24`; the flagged run
+resolved **24.20.0**), and `--provenance` logs the exact `node`/`zlib` pair on every build. Measured
+2026-09-17: the two runtimes I could compare (24.20.0 and 26.8.2, different zlib builds) emit
+identical gzip — so this is a latent input, not an active mismatch — and
+`test/unit/installer/embed.test.mjs` pins the compression behaviour, so a future runtime that
+diverges fails `pnpm test` with the reason instead of silently changing published hashes. The
+`deterministic` job cannot see this one: its two builds share one Node.
+
+One config-level gotcha when reproducing a **dev** build: the generated `_config.h` bakes
+`dev-build-<branch>-<sha>`, and a detached checkout (`git worktree add`, a `git checkout <sha>`)
+reports its branch as `HEAD` — so a dev-mode rebuild from a worktree carries `dev-build-HEAD-<sha>`
+URLs where CI's appends `dev-build-main-<sha>`, and the binaries differ even with an identical
+toolchain. Export `FIREFOX_SCRIPTS_REF_NAME=<branch>` to reproduce CI's spelling.
+
+**Not retroactive.** The 2026-09-15 artifact predates the pin and stays unattributable. Rebuilding
+`e393191` from the pinned package set gives `installer_win-dev.exe` at 202,752 B — `.text` 2,752 B
+larger, and a `helper_win-dev.exe` that links one extra CRT import
+(`api-ms-win-crt-multibyte-l1-1-0.dll`) — the same sources, demonstrably a different compiler. Which
+compiler is now unknowable, precisely because that run recorded versions but never provenance; that
+is the gap the `--provenance` step closes. Do not treat VT/WDSI verdicts on those specific bytes as
+re-derivable: re-scan the current pin's output instead. The pinned prefix itself is deterministic
+(two builds byte-identical) and hermetic (it built with nothing but the extracted packages).
 
 ### Partial publishes — holding back a flagged role
 

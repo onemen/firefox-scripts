@@ -35,12 +35,6 @@ on:
         description: 'Rebuild + re-upload even when hashes are unchanged (prod only)'
         type: boolean
         default: false
-      skip:
-        description:
-          'Partial publish (ADR 0030 AV holdback): artifact roles to hold back, comma-separated —
-          packages,installer,helper. Empty = full publish.'
-        type: string
-        default: ''
 
 permissions:
   contents: write # release assets + gh-pages pushes
@@ -176,20 +170,12 @@ jobs:
       - uses: $/.github/actions/setup-repo
         with:
           install: 'false'
-      - name: Set up MSYS2 toolchain (make + gcc)
-        # update: false — no pacman -Syu on every publish.  A full system
-        # upgrade mid-cycle changed the gcc version (16.1.0 → 16.2.0,
-        # published to MSYS2 repos 2026-09-04) and the rebuilt installer_win.exe
-        # was falsely flagged by Defender's ML (Program:Script/Wacapew.A!ml) the
-        # next day.  Skipping the system upgrade keeps the toolchain stable; the
-        # upload AV gate (tools/scan-av.mjs) is the enforcement that a rebuild
-        # with any new toolchain still scans clean before it ships.
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          msystem: UCRT64
-          update: false
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc make
+      # The exact toolchain the Windows binaries are built with lives in
+      # config/msys2-toolchain.json (installed via pacman -U + verified): the
+      # published PEs are unsigned with a per-hash AV verdict (issue #157), so
+      # the bytes must be reproducible, not merely "a recent MSYS2".
+      - name: Pinned MSYS2 toolchain (make + gcc)
+        uses: ./.github/actions/pinned-msys2
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: baseline-hashes
@@ -204,13 +190,9 @@ jobs:
           # Optional: multi-engine VirusTotal scan of the built binaries before
           # upload (tools/scan-vt.mjs).  Absent ⇒ skipped with a warning.
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030) — dispatch inputs reach the shell only
-          # through env vars, never interpolated into run: scripts.
-          UPLOAD_SKIP: ${{ inputs.skip }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=win"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
           # Prod: diff against the shared pre-run baseline, not whatever an
           # earlier job already pushed. Dev rebuilds everything anyway.
           if [ "${{ inputs.mode }}" = "prod" ]; then
@@ -246,13 +228,9 @@ jobs:
           # Pages-workflow marker for prodCiGuard.mjs (see the win job).
           FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030) — dispatch inputs reach the shell only
-          # through env vars, never interpolated into run: scripts.
-          UPLOAD_SKIP: ${{ inputs.skip }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=linux"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
           if [ "${{ inputs.mode }}" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
@@ -275,13 +253,9 @@ jobs:
           # Pages-workflow marker for prodCiGuard.mjs (see the win job).
           FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030) — dispatch inputs reach the shell only
-          # through env vars, never interpolated into run: scripts.
-          UPLOAD_SKIP: ${{ inputs.skip }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=mac"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
           if [ "${{ inputs.mode }}" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi

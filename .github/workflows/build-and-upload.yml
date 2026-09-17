@@ -25,7 +25,9 @@
 #      architecture. This job is also where a future SignPath code-signing
 #      step slots in (sign the staged bytes between the artifacts and pass 2).
 #   5. deterministic — advisory: two `upload:local --mode=prod --force` runs on
-#      one runner must produce byte-identical snapshots (#33's deterministic
+#      one runner must produce byte-identical snapshots, and a build from the
+#      pinned toolchain prefix must match the environment build byte for byte
+#      (#33's deterministic
 #      publish check; Windows builds are pinned via SOURCE_DATE_EPOCH, #162).
 #
 # Trigger is manual only. The default dispatch is STAGE-ONLY: nothing is
@@ -55,12 +57,6 @@ on:
         description: 'Rebuild + re-upload even when hashes are unchanged (prod only)'
         type: boolean
         default: false
-      skip:
-        description:
-          'Partial publish (ADR 0030 AV holdback): artifact roles to hold back, comma-separated —
-          packages,installer,helper. Empty = full publish.'
-        type: string
-        default: ''
 
 # Read-only by default; every write capability is scoped to the one job that
 # uses it (a job-level permissions block REPLACES this one — e2e.yml
@@ -186,17 +182,11 @@ jobs:
       - uses: $/.github/actions/setup-repo
         with:
           install: 'false'
-      - name: Set up MSYS2 toolchain (make + gcc)
+      # The pinned toolchain (config/msys2-toolchain.json) — the staged bytes
+      # ARE the ship-bound bytes, so they must be reproducible (issue #157).
+      - name: Pinned MSYS2 toolchain (make + gcc)
         if: matrix.msys2
-        # update: false — see pages.yml: a mid-cycle toolchain upgrade changed
-        # the gcc version and the rebuilt installer was falsely AV-flagged the
-        # next day; the toolchain stays stable within a cycle.
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          msystem: UCRT64
-          update: false
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc make
+        uses: ./.github/actions/pinned-msys2
       - name: Harden apt sources
         if: matrix.cross
         uses: ./.github/actions/harden-apt
@@ -227,13 +217,9 @@ jobs:
           UPLOAD_MODE: ${{ inputs.mode }}
           UPLOAD_PLATFORM: ${{ matrix.platform }}
           UPLOAD_FORCE: ${{ inputs.force }}
-          UPLOAD_SKIP: ${{ inputs.skip }}
         run: |
           ARGS="--mode=$UPLOAD_MODE --build-only --platform=$UPLOAD_PLATFORM"
           if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
-          # Partial publish (ADR 0030): hold the named roles back so a flagged
-          # binary cannot freeze the zips this same run publishes.
-          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
           if [ "$UPLOAD_MODE" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
@@ -291,13 +277,8 @@ jobs:
       - uses: $/.github/actions/setup-repo
         with:
           install: 'false'
-      - name: Set up MSYS2 toolchain (make + gcc)
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          msystem: UCRT64
-          update: false
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc make
+      - name: Pinned MSYS2 toolchain (make + gcc)
+        uses: ./.github/actions/pinned-msys2
       - run: pnpm install --frozen-lockfile
       # SOURCE_DATE_EPOCH pins the PE TimeDateStamp (#162), so two runs of the
       # same commit must produce byte-identical Windows binaries. The zips'
@@ -321,6 +302,31 @@ jobs:
             exit 1
           }
           echo "snapshots byte-identical"
+      - name: The pin, not the runner, decides the bytes
+        shell: bash
+        # The pair above proves one machine repeats itself. This proves the
+        # machine is reproducing the PIN: the same commit is built once with
+        # the environment toolchain (what the publish steps use) and once with
+        # the pinned packages extracted into a project-local prefix — exactly
+        # what `pnpm toolchain:local` hands a developer. Byte-equality means the
+        # pin covers every compiler/assembler/linker/crt input, so a local
+        # rebuild of a published commit reproduces the published hashes.
+        run: |
+          node tools/ci/msys2Toolchain.mjs --prefix
+          PREFIX_BIN=$(cd dist/.toolchain/ucrt64/bin && pwd)
+          # absolute DIST_DIR: make -C resolves a relative one against installer/
+          make -C installer dist_win helper_win DIST_DIR="$PWD/dist/.pin-env"
+          # the .res files are windres output kept in the source tree; drop them
+          # so the prefix build recompiles every input it is checking
+          rm -f installer/src/installer.res installer/src/helper/version.res
+          PATH="$PREFIX_BIN:$PATH" make -C installer dist_win helper_win DIST_DIR="$PWD/dist/.pin-prefix"
+          for f in installer_win.exe helper_win.exe; do
+            cmp "dist/.pin-env/$f" "dist/.pin-prefix/$f" || {
+              echo "::error::$f built with the pinned prefix differs from the environment build — the pin does not cover the toolchain that builds it"
+              exit 1
+            }
+            echo "$f: pinned prefix build == environment build"
+          done
 
   # ── Publisher (single writer) ─────────────────────────────────────────────
   # The determinism job is ADVISORY: a red `deterministic` marks the run but
@@ -378,13 +384,9 @@ jobs:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
           UPLOAD_MODE: ${{ inputs.mode }}
           UPLOAD_FORCE: ${{ inputs.force }}
-          UPLOAD_SKIP: ${{ inputs.skip }}
         run: |
           ARGS="--mode=$UPLOAD_MODE --skip-build --platform=win --platform=linux --platform=mac"
           if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
-          # Partial publish (ADR 0030): pass 2 must skip the same roles pass 1
-          # did — a held-back role has no staged bytes to gate or publish.
-          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
           if [ "$UPLOAD_MODE" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
