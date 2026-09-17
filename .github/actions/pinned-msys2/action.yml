@@ -21,7 +21,11 @@
 #                deliberate downgrade when the mirror has moved on), then
 #                assert every pinned version is the installed one.
 #   3. PATH      those dirs go first for every later step — including the plain
-#                `shell: bash` steps that actually run the build.
+#                `shell: bash` steps that actually run the build — with the
+#                pinned UCRT64 dir ahead of /usr/bin. GITHUB_PATH lines take
+#                effect in REVERSE write order (the runner joins them reversed
+#                before prepending them to PATH), so /usr/bin is written first
+#                on purpose.
 #   4. provenance print which gcc/ld/windres/make the build shell resolves and
 #                the version each reports, and fail if any is not the pinned
 #                one. `pacman -Q` says what is installed; this says what
@@ -65,9 +69,15 @@ runs:
       run: |
         echo "MSYS2_LOCATION=$(cygpath -m /)" >> "$(cygpath -u "$GITHUB_ENV")"
         echo "PINNED_TOOLCHAIN_PREFIX=$(cygpath -m "$MINGW_PREFIX/bin")" >> "$(cygpath -u "$GITHUB_ENV")"
-        cygpath -w "$MINGW_PREFIX/bin" >> "$(cygpath -u "$GITHUB_PATH")"
+        # Order matters, and not in the obvious direction: GITHUB_PATH lines
+        # take effect in REVERSE write order (the runner collects them in file
+        # order and Handler.AddPrependPathToEnvironment joins them reversed
+        # before prepending). /usr/bin is written first so it ends up second —
+        # the pinned UCRT64 dir must win, because MSYS binutils also ships
+        # ld/as/windres in /usr/bin and would otherwise shadow the pinned ones.
         cygpath -w /usr/bin >> "$(cygpath -u "$GITHUB_PATH")"
-        echo "pinned toolchain dirs first on PATH: $MINGW_PREFIX/bin, /usr/bin"
+        cygpath -w "$MINGW_PREFIX/bin" >> "$(cygpath -u "$GITHUB_PATH")"
+        echo "pinned toolchain first on PATH: $MINGW_PREFIX/bin, then /usr/bin"
 
     - name: Install the pinned toolchain versions
       shell: bash
