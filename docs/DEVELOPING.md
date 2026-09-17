@@ -161,6 +161,14 @@ this in check:
    when any engine reports a detection. A missing engine is only a warning (GitHub Windows runners
    often run Defender in passive mode), so the gate degrades gracefully but never ships a flagged
    artifact silently.
+3. **The magic-byte artifact check** — before hashing and publishing, `upload.mjs` verifies every
+   staged installer/helper binary starts with its platform's executable magic (PE `MZ`, ELF,
+   Mach-O). This guards against issue #233: Defender real-time protection on a local Windows host
+   can intermittently hold a write lock on the freshly linked exe and leave a truncated artifact
+   behind (`collect2: ld returned 5`, output starting `00 00`) — a partial file that would otherwise
+   be hashed and shipped. The check runs after the build/reuse pass and again before the pass-2
+   security gates. If it fires: delete the named artifact(s) and re-run the build (the link usually
+   succeeds on retry).
 
 ### Local scan (after `make dist_win`)
 

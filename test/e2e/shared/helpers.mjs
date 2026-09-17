@@ -119,6 +119,69 @@ export function summary(counter) {
   return counter.failed === 0;
 }
 
+/**
+ * Poll `fn` (sync or async) until it returns truthy or the timeout passes.
+ *
+ * Unlike a silent poll loop, per-attempt failures are VISIBLE: when `fn`
+ * throws, the error is logged (throttled — first, then every ~10th attempt) so
+ * a server that never comes up or keeps erroring shows _why_ in the job log
+ * instead of surfacing as an opaque timeout at some later check. Returns the
+ * first truthy value, or null on timeout.
+ *
+ * @param {() => Promise<unknown> | unknown} fn
+ * @param {number} timeoutMs
+ * @param {number} intervalMs
+ * @param {string} [label] what is being waited for (error lines only)
+ */
+export async function pollUntil(fn, timeoutMs, intervalMs = 500, label = '') {
+  const end = Date.now() + timeoutMs;
+  let attempt = 0;
+  let lastError;
+  // Race each fn() against the remaining deadline: a callback that hangs
+  // (fetch without a timeout, a wedged server) must not extend the poll past
+  // its budget — the caller's own timeout then governs, and the poll returns
+  // null on schedule instead of hanging the E2E run indefinitely.
+  const withDeadline = async promise => {
+    let timer;
+    const cap = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`poll attempt exceeded the ${timeoutMs}ms budget`)),
+        Math.max(1, end - Date.now())
+      );
+    });
+    try {
+      return await Promise.race([promise, cap]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  for (;;) {
+    attempt++;
+    try {
+      const v = await withDeadline(fn());
+      if (v) return v;
+    } catch (err) {
+      lastError = err;
+      if (attempt === 1 || attempt % 10 === 0) {
+        const why = err instanceof Error ? err.message : String(err);
+        console.warn(`  ⚠ poll #${attempt}${label ? ` (${label})` : ''}: ${why}`);
+      }
+    }
+    if (Date.now() >= end) {
+      if (lastError !== undefined) {
+        const why = lastError instanceof Error ? lastError.message : String(lastError);
+        console.warn(
+          `  ⚠ poll timed out after ${timeoutMs}ms${label ? ` (${label})` : ''} — last error: ${why}`
+        );
+      }
+      return null;
+    }
+    // Cap the inter-attempt sleep at the remaining budget so a late attempt
+    // cannot push the next fn() past the deadline either.
+    await new Promise(r => setTimeout(r, Math.min(intervalMs, Math.max(0, end - Date.now()))));
+  }
+}
+
 // ── Puppeteer ──────────────────────────────────────────────────────────────
 
 /**
