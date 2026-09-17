@@ -17,6 +17,9 @@
 
 #ifdef _WIN32
 #include <tlhelp32.h>
+#else
+#include <signal.h> /* kill() for the graceful PID close */
+#include <unistd.h> /* fork/setsid for the detached relaunch */
 #endif
 
 // ===== Restart helpers =====
