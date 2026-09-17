@@ -34,10 +34,16 @@ const PACKAGES = Object.keys(PACKAGE_ROOTS);
 
 // ---- Registry well-formedness -------------------------------------------
 
-test('registry: unique rels, existing sources, valid package names', () => {
+test('registry: unique rels, existing package roots, valid package names', () => {
   assert.equal(new Set(ALL_RELS).size, ALL_RELS.length);
   for (const f of GENERATED_FILES) {
-    assert.ok(fs.existsSync(path.join(REPO_ROOT, f.rel)), `missing source tree file: ${f.rel}`);
+    // Deliberately NOT an existence check on f.rel: the registry lists
+    // GENERATED build products (ADR 0008) — absent on a fresh clone and after
+    // every upload run, which deletes them (cleanGenerated). Asserting they
+    // exist made this test pass only when a sibling test file happened to
+    // regenerate them first, i.e. `pnpm test` failed (flakily) right after a
+    // publish. The invariant that matters — every generated file is gitignored
+    // and has a generator — is asserted by the two tests below.
     assert.ok(f.generatedBy, `${f.rel}: generatedBy required`);
     for (const pkg of Object.keys(f.shipsIn)) {
       assert.ok(pkg in PACKAGE_ROOTS, `${f.rel}: unknown package '${pkg}'`);
