@@ -135,6 +135,7 @@ import {
   helperAssetName,
   helperShaAssetName,
   installerAssetName,
+  verifyStagedBinaries,
 } from './platforms.mjs';
 import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
 import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
@@ -445,15 +446,33 @@ async function buildBinaries(platforms, storedHashes) {
     // dev). A genuinely idle prod pass (nothing changed, nothing staged) still
     // completes — it uploads nothing and leaves the manifest untouched.
     const missing = [];
+    const stagedPass2 = {};
     for (const p of platforms) {
-      if (installerChanged && !fs.existsSync(installerPath(p))) missing.push(installerAssetName(p));
-      if (helperChanged && !fs.existsSync(helperPath(p))) missing.push(helperAssetName(p));
+      if (installerChanged) {
+        if (!fs.existsSync(installerPath(p))) missing.push(installerAssetName(p, ASSET_SUFFIX));
+        else stagedPass2[installerAssetName(p, ASSET_SUFFIX)] = p;
+      }
+      if (helperChanged) {
+        if (!fs.existsSync(helperPath(p))) missing.push(helperAssetName(p, ASSET_SUFFIX));
+        else stagedPass2[helperAssetName(p, ASSET_SUFFIX)] = p;
+      }
     }
     if (missing.length > 0) {
       throw new Error(
         `--skip-build is missing the staged binaries this run would publish: ` +
           `${missing.join(', ')} — run pass 1 (--build-only) and preserve ` +
           `${BUILD_ROOT} before pass 2.`
+      );
+    }
+    // Same #233 guard as pass 1: SignPath round-trips the binary through
+    // artifact transport, so pass 2 verifies what it is about to gate+publish.
+    const corruptPass2 = verifyStagedBinaries(stagedPass2, name =>
+      fs.readFileSync(path.join(INSTALLER_DIST, name))
+    );
+    if (corruptPass2.length > 0) {
+      throw new Error(
+        `staged artifact(s) failed the magic-byte check before the security ` +
+          `gates (issue #233): ${corruptPass2.join(', ')} — re-run pass 1.`
       );
     }
     if (installerChanged) builtInstallers.push(...platforms);
@@ -494,6 +513,28 @@ async function buildBinaries(platforms, storedHashes) {
       fs.mkdirSync(path.dirname(helperPath(p)), {recursive: true});
       fs.copyFileSync(reusedHelper, helperPath(p));
     }
+  }
+
+  // Issue #233: Defender real-time protection on a local Windows host can
+  // leave a truncated/empty artifact behind a link that *reported* success
+  // earlier in the session — a later pass would then hash and publish the
+  // partial bytes. Check the magic of every binary staged for hashing before
+  // anything downstream consumes it (fail fast, name the fix).
+  const staged = {};
+  for (const p of platforms) {
+    if (builtInstallers.includes(p)) staged[installerAssetName(p, ASSET_SUFFIX)] = p;
+    if (builtHelpers.includes(p)) staged[helperAssetName(p, ASSET_SUFFIX)] = p;
+  }
+  const corrupt = verifyStagedBinaries(staged, name => {
+    const file = path.join(INSTALLER_DIST, name);
+    return fs.existsSync(file) ? fs.readFileSync(file) : null;
+  });
+  if (corrupt.length > 0) {
+    throw new Error(
+      `staged artifact(s) failed the magic-byte check (truncated output — ` +
+        `on Windows this is the Defender write-lock race, issue #233): ` +
+        `${corrupt.join(', ')} — delete them and re-run the build.`
+    );
   }
 
   const updated = {};
