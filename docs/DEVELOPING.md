@@ -464,7 +464,10 @@ and point the test at the result; the pure-Node `pnpm test` suite never needs a 
   status and age, so a silently evicted Actions cache is visible instead of masquerading as a first
   run. The PR mode (`--pr`) is stateless, always green, and surfaces findings as annotations. Run
   manually via `workflow_dispatch`, or locally with
-  `node tools/check-browser-downloads.mjs --dry-run`.
+  `node tools/check-browser-downloads.mjs --dry-run`. Its pure reporting layer — the domain
+  constants, drift classification, the E2E dispatch planner, and all GitHub-visible rendering
+  (status table, version history, issue titles/bodies) — lives in `tools/ci/watchdog-report.mjs`,
+  unit-testable without network access; the watchdog re-exports it for its importers.
 - **Skills watchdog** (`.github/workflows/skills-watchdog.yml`, weekly + on PRs touching the
   watchdog) — detects drift in the five third-party skills in `.agents/skills/` (ADR 0022): the
   gh-injected frontmatter metadata is the baseline (no cache, stateless in every mode), and each
