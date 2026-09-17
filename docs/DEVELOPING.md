@@ -214,10 +214,12 @@ poll times out is reported as a skip — never as clean.
 2. **Installer** (`installer/src/`): edit C files, then run `make resources` if web assets changed
    (regenerates `resources.h`).
 3. **Web UI** (`installer/web/`): the single design-system source — `index.html`, `style.css`,
-   `script.js`. Edit here, then run `node embed.mjs` to update the embedded assets. The remote
-   updater UI reuses the same CSS: at publish time `uploadToPages.mjs` builds the updater stylesheet
-   in-memory from `installer/web/style.css` plus the updater-only `tools/publish/updater.css` tail,
-   so the remote updater page and the installer UI always render from one CSS source.
+   `script/*.js` (the UI script, authored as phase part files concatenated by `embed.mjs` into the
+   single served `script.js`; see the header of `installer/embed.mjs`). Edit here, then run
+   `node embed.mjs` to update the embedded assets. The remote updater UI reuses the same CSS: at
+   publish time `uploadToPages.mjs` builds the updater stylesheet in-memory from
+   `installer/web/style.css` plus the updater-only `tools/publish/updater.css` tail, so the remote
+   updater page and the installer UI always render from one CSS source.
 
 ### Generated files
 
