@@ -144,8 +144,7 @@ int extract_zip(const char *zip_path, const char *dest_dir) {
 
 int mkdir_recursive(const char *path) {
     char tmp[MAX_PATH_LEN];
-    strncpy(tmp, path, sizeof(tmp) - 1);
-    tmp[sizeof(tmp) - 1] = '\0';
+    snprintf(tmp, sizeof(tmp), "%s", path);
 
     for (char *p = tmp + 1; *p; p++) {
         if (*p == PATH_SEPARATOR) {
@@ -375,8 +374,7 @@ static int extract_scan_visitor(const char *full, void *ctx) {
     if (path_is_dir(full)) {
         info->subdir_count++;
         if (info->subdir_count == 1) {
-            strncpy(info->only_subdir, full, sizeof(info->only_subdir) - 1);
-            info->only_subdir[sizeof(info->only_subdir) - 1] = '\0';
+            snprintf(info->only_subdir, sizeof(info->only_subdir), "%s", full);
         }
     } else {
         info->has_file = 1;
@@ -411,8 +409,7 @@ int extract_zip_flatten(const char *zip_path, const char *dest_dir) {
     }
 
     char base[MAX_PATH_LEN];
-    strncpy(base, tmp, sizeof(base) - 1);
-    base[sizeof(base) - 1] = '\0';
+    snprintf(base, sizeof(base), "%s", tmp);
 
     for (int depth = 0; depth < 4; depth++) {
         ExtractScanInfo info;
@@ -420,8 +417,7 @@ int extract_zip_flatten(const char *zip_path, const char *dest_dir) {
         walk_dir_entries(base, extract_scan_visitor, &info);
         if (info.has_file) break;
         if (info.subdir_count == 1) {
-            strncpy(base, info.only_subdir, sizeof(base) - 1);
-            base[sizeof(base) - 1] = '\0';
+            snprintf(base, sizeof(base), "%s", info.only_subdir);
             continue;
         }
         break;

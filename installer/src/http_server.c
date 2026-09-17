@@ -110,7 +110,7 @@ static int route_count = 0;
 
 void http_server_register(const char *route, route_handler_t handler) {
     if (route_count < MAX_ROUTES) {
-        strncpy(routes[route_count].route, route, MAX_ROUTE_LEN - 1);
+        snprintf(routes[route_count].route, MAX_ROUTE_LEN, "%s", route);
         routes[route_count].handler = handler;
         route_count++;
     }
@@ -121,15 +121,13 @@ static route_handler_t find_handler(const char *path, char *query_out, size_t qu
 
     // Split path and query string
     char path_copy[MAX_PATH_LEN];
-    strncpy(path_copy, path, sizeof(path_copy) - 1);
-    path_copy[sizeof(path_copy) - 1] = '\0';
+    snprintf(path_copy, sizeof(path_copy), "%s", path);
 
     char *query = strchr(path_copy, '?');
     if (query) {
         *query = '\0';
         query++;
-        strncpy(query_out, query, query_size - 1);
-        query_out[query_size - 1] = '\0';
+        snprintf(query_out, query_size, "%s", query);
     }
 
     for (int i = 0; i < route_count; i++) {

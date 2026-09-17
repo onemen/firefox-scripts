@@ -1197,13 +1197,13 @@ int handle_api_install(int client_fd, const char *query, const char *body, size_
     snprintf(g_work_dir, sizeof(g_work_dir), "%s%cfirefox-scripts-install", tmp_dir, PATH_SEPARATOR);
     mkdir_recursive(g_work_dir);
 
-    strncpy(g_binary_dir, detected_browsers[browser_idx].binary_path, MAX_PATH_LEN);
+    snprintf(g_binary_dir, MAX_PATH_LEN, "%s", detected_browsers[browser_idx].binary_path);
     get_parent_dir(g_binary_dir);
     // Snap installs keep their autoconfig in /etc/firefox, not the read-only
     // /snap/... app dir — fx-folder must be copied there.
     config_dir_for_app_dir(g_binary_dir, g_binary_dir, sizeof(g_binary_dir));
 
-    strncpy(g_profile_dir, detected_browsers[browser_idx].profile_path, MAX_PATH_LEN);
+    snprintf(g_profile_dir, MAX_PATH_LEN, "%s", detected_browsers[browser_idx].profile_path);
 
     // Set initial state - the status handler will advance the state machine.
     // The uploaded zip buffers are validated above; extraction reads them.
@@ -1595,16 +1595,14 @@ int handle_api_open_folder(int client_fd, const char *query, const char *body, s
             send_json_response(client_fd, err, (int)strlen(err));
             return 0;
         }
-        strncpy(path, b->profile_path, MAX_PATH_LEN - 1);
-        path[MAX_PATH_LEN - 1] = '\0';
+        snprintf(path, MAX_PATH_LEN, "%s", b->profile_path);
     } else {
         if (strlen(b->binary_path) == 0) {
             const char *err = "{\"error\":\"No application folder detected\"}";
             send_json_response(client_fd, err, (int)strlen(err));
             return 0;
         }
-        strncpy(path, b->binary_path, MAX_PATH_LEN - 1);
-        path[MAX_PATH_LEN - 1] = '\0';
+        snprintf(path, MAX_PATH_LEN, "%s", b->binary_path);
         get_parent_dir(path); /* open the install dir, not the exe file */
     }
 
@@ -2129,7 +2127,7 @@ static int do_restart_work(const restart_plan_t *plan) {
         log_msg("[restart] relaunching profile %s%s\n", rb->profile_path,
                 url ? " (with UI URL)" : "");
         if (launch_browser_profile(rb, url)) started = 1;
-        strncpy(relaunched_profiles[relaunch_count], rb->profile_path, MAX_PATH_LEN);
+        snprintf(relaunched_profiles[relaunch_count], MAX_PATH_LEN, "%s", rb->profile_path);
         relaunch_count++;
     }
 
@@ -2267,8 +2265,7 @@ int handle_api_restart(int client_fd, const char *query, const char *body, size_
     restart_plan_t plan;
     memset(&plan, 0, sizeof(plan));
     plan.config_changed = config_changed;
-    strncpy(plan.binary_path, target->binary_path, MAX_PATH_LEN - 1);
-    plan.binary_path[MAX_PATH_LEN - 1] = '\0';
+    snprintf(plan.binary_path, MAX_PATH_LEN, "%s", target->binary_path);
     memcpy(plan.restart_idx, restart_idx, sizeof(int) * (size_t)restart_count);
     plan.restart_count = restart_count;
 
@@ -2474,8 +2471,7 @@ static int main_impl(int argc, char *argv[]) {
                 fprintf(stderr, "Usage: %s --env-file <path>\n", argv[0]);
                 return 1;
             }
-            strncpy(g_env_file_path, argv[++i], MAX_PATH_LEN - 1);
-            g_env_file_path[MAX_PATH_LEN - 1] = '\0';
+            snprintf(g_env_file_path, MAX_PATH_LEN, "%s", argv[++i]);
             continue;
         }
     }
@@ -2799,8 +2795,7 @@ static int main_impl(int argc, char *argv[]) {
             // Record which profile hosts the UI tab so the restart worker can
             // reopen the UI there after a restart that kills this browser.
             if (strlen(detected_browsers[ui_host_idx].profile_path) > 0) {
-                strncpy(g_ui_host_profile, detected_browsers[ui_host_idx].profile_path, MAX_PATH_LEN - 1);
-                g_ui_host_profile[MAX_PATH_LEN - 1] = '\0';
+                snprintf(g_ui_host_profile, MAX_PATH_LEN, "%s", detected_browsers[ui_host_idx].profile_path);
             }
             open_url_in_profile(detected_browsers[ui_host_idx].binary_path,
                                 detected_browsers[ui_host_idx].profile_path, g_ui_url);

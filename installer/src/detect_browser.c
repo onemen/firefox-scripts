@@ -247,8 +247,7 @@ static int compute_file_sha256(const char *filepath, char *out_hash, size_t hash
                 }
             }
             if (all_hex) {
-                strncpy(out_hash, line, hash_size - 1);
-                out_hash[hash_size - 1] = '\0';
+                snprintf(out_hash, hash_size, "%s", line);
                 found = 1;
                 break;
             }
@@ -356,8 +355,7 @@ int compute_directory_sha256(const char *base_dir,
     if (GetTempPathA(MAX_PATH_LEN, tmp_dir) == 0) return -1;
     char tmp_name[MAX_PATH_LEN];
     if (GetTempFileNameA(tmp_dir, "fsh", 0, tmp_name) == 0) return -1;
-    strncpy(tmp_path, tmp_name, sizeof(tmp_path) - 1);
-    tmp_path[sizeof(tmp_path) - 1] = '\0';
+    snprintf(tmp_path, sizeof(tmp_path), "%s", tmp_name);
     tmp_file = fopen(tmp_path, "wb");
     if (!tmp_file) {
         remove(tmp_path);
@@ -468,12 +466,10 @@ static int fetch_remote_hashes(char *utils_hash, size_t utils_hash_size,
     if (g_hash_cache_time > 0 && (now - g_hash_cache_time) < HASH_CACHE_TTL_SEC &&
         g_utils_files_count > 0 && g_fx_files_count > 0) {
         if (strlen(g_cached_utils_hash) > 0) {
-            strncpy(utils_hash, g_cached_utils_hash, utils_hash_size);
-            utils_hash[utils_hash_size - 1] = '\0';
+            snprintf(utils_hash, utils_hash_size, "%s", g_cached_utils_hash);
         }
         if (strlen(g_cached_fx_folder_hash) > 0) {
-            strncpy(fx_folder_hash, g_cached_fx_folder_hash, fx_hash_size);
-            fx_folder_hash[fx_hash_size - 1] = '\0';
+            snprintf(fx_folder_hash, fx_hash_size, "%s", g_cached_fx_folder_hash);
         }
         return 0;
     }
@@ -509,12 +505,10 @@ static int fetch_remote_hashes(char *utils_hash, size_t utils_hash_size,
     }
 
     if (strlen(g_cached_utils_hash) > 0) {
-        strncpy(utils_hash, g_cached_utils_hash, utils_hash_size);
-        utils_hash[utils_hash_size - 1] = '\0';
+        snprintf(utils_hash, utils_hash_size, "%s", g_cached_utils_hash);
     }
     if (strlen(g_cached_fx_folder_hash) > 0) {
-        strncpy(fx_folder_hash, g_cached_fx_folder_hash, fx_hash_size);
-        fx_folder_hash[fx_hash_size - 1] = '\0';
+        snprintf(fx_folder_hash, fx_hash_size, "%s", g_cached_fx_folder_hash);
     }
     return (strlen(g_cached_utils_hash) > 0 && strlen(g_cached_fx_folder_hash) > 0) ? 0 : -1;
 }
@@ -880,7 +874,7 @@ static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
     int count = 0;
     ZipTreeCollector c;
     memset(&c, 0, sizeof(c));
-    strncpy(c.root, work, sizeof(c.root) - 1);
+    snprintf(c.root, sizeof(c.root), "%s", work);
     c.root_len = strlen(c.root);
     c.list = &files;
     c.count = &count;
@@ -1019,10 +1013,10 @@ int ingest_remote_manifest(const char *json, size_t len) {
         return -1;
     }
 
-    strncpy(g_cached_utils_hash, utils_hash, sizeof(g_cached_utils_hash));
-    strncpy(g_cached_fx_folder_hash, fx_hash, sizeof(g_cached_fx_folder_hash));
-    strncpy(g_cached_utils_date, utils_date, sizeof(g_cached_utils_date));
-    strncpy(g_cached_fx_folder_date, fx_date, sizeof(g_cached_fx_folder_date));
+    snprintf(g_cached_utils_hash, sizeof(g_cached_utils_hash), "%s", utils_hash);
+    snprintf(g_cached_fx_folder_hash, sizeof(g_cached_fx_folder_hash), "%s", fx_hash);
+    snprintf(g_cached_utils_date, sizeof(g_cached_utils_date), "%s", utils_date);
+    snprintf(g_cached_fx_folder_date, sizeof(g_cached_fx_folder_date), "%s", fx_date);
     set_package_files(1, utils_files, utils_count);
     set_package_files(0, fx_files, fx_count);
     g_hash_cache_time = time(NULL);
@@ -1090,7 +1084,7 @@ void config_dir_for_app_dir(const char *app_dir, char *out, size_t out_sz) {
 
 void refresh_install_status_full(RunningBrowser *browser) {
     char app_dir[MAX_PATH_LEN];
-    strncpy(app_dir, browser->binary_path, MAX_PATH_LEN);
+    snprintf(app_dir, MAX_PATH_LEN, "%s", browser->binary_path);
     get_parent_dir(app_dir);
     char config_dir[MAX_PATH_LEN];
     config_dir_for_app_dir(app_dir, config_dir, sizeof(config_dir));
@@ -1673,8 +1667,7 @@ static void read_waterfox_version_from_github(const char *binary_path, char *out
     // Cache the outcome — empty too, so a lookup before the releases JSON
     // arrives does not re-scan for the next profile of the same install.
     if (g_wf_cached_count < (int)(sizeof(g_wf_cached_binary) / sizeof(g_wf_cached_binary[0]))) {
-        strncpy(g_wf_cached_binary[g_wf_cached_count], binary_path, MAX_PATH_LEN);
-        g_wf_cached_binary[g_wf_cached_count][MAX_PATH_LEN - 1] = '\0';
+        snprintf(g_wf_cached_binary[g_wf_cached_count], MAX_PATH_LEN, "%s", binary_path);
         snprintf(g_wf_cached_version[g_wf_cached_count], sizeof(g_wf_cached_version[g_wf_cached_count]), "%s", out);
         g_wf_cached_count++;
     }
@@ -1831,8 +1824,7 @@ static void find_profile_from_macos_argv(pid_t pid, const char *binary_path,
                                 lookup_profile_by_name(base_dir, val, out, out_size);
                             }
                         } else {
-                            strncpy(out, val, out_size - 1);
-                            out[out_size - 1] = '\0';
+                            snprintf(out, out_size, "%s", val);
                         }
                     }
                 }
@@ -1897,8 +1889,7 @@ static int lookup_profile_by_name(const char *base_dir, const char *profile_name
     if (is_relative) {
         snprintf(out_path, out_size, "%s/%s", base_dir, rel_path);
     } else {
-        strncpy(out_path, rel_path, out_size - 1);
-        out_path[out_size - 1] = '\0';
+        snprintf(out_path, out_size, "%s", rel_path);
     }
 
     // Normalize separators
@@ -1955,8 +1946,7 @@ static void find_profile_for_pid(unsigned long pid, const char *binary_path,
     }
 
     if (profile_path_arg && strlen(profile_path_arg) > 0) {
-        strncpy(out_profile_path, profile_path_arg, MAX_PATH_LEN);
-        out_profile_path[MAX_PATH_LEN - 1] = '\0';
+        snprintf(out_profile_path, MAX_PATH_LEN, "%s", profile_path_arg);
     } else if (profile_name && strlen(profile_name) > 0) {
         // Look up profile name in profiles.ini
         char base_dir[MAX_PATH_LEN] = { 0 };
@@ -2070,8 +2060,7 @@ static bool check_compatibility_ini(const char *profile_dir, const char *binary_
 
     // Extract installation directory from binary_path
     char binary_dir[MAX_PATH_LEN];
-    strncpy(binary_dir, binary_path, sizeof(binary_dir) - 1);
-    binary_dir[sizeof(binary_dir) - 1] = '\0';
+    snprintf(binary_dir, sizeof(binary_dir), "%s", binary_path);
     char *last_slash = strrchr(binary_dir, PATH_SEPARATOR);
     if (last_slash) *last_slash = '\0';
 
@@ -2190,7 +2179,7 @@ static void find_active_profile_readonly(const char *binary_path, char *out_prof
             snprintf(lock_file, sizeof(lock_file), "%s%c%s", candidate_path, PATH_SEPARATOR, LOCK_FILE);
 
             if (is_file_locked(lock_file)) {
-                strncpy(out_profile_path, candidate_path, MAX_PATH_LEN);
+                snprintf(out_profile_path, MAX_PATH_LEN, "%s", candidate_path);
                 break;
             }
         }
@@ -2276,8 +2265,7 @@ static int collect_locked_profiles(const char *binary_path, char (*out_profiles)
 
             if (is_file_locked(lock_file)) {
                 if (check_compatibility_ini(candidate_path, binary_path)) {
-                    strncpy(out_profiles[count], candidate_path, MAX_PATH_LEN);
-                    out_profiles[count][MAX_PATH_LEN - 1] = '\0';
+                    snprintf(out_profiles[count], MAX_PATH_LEN, "%s", candidate_path);
                     count++;
                 }
             }
@@ -2429,7 +2417,7 @@ void refresh_install_status(RunningBrowser *browser) {
     int saved = g_is_initial_scan;
     g_is_initial_scan = 1;
     char app_dir[MAX_PATH_LEN];
-    strncpy(app_dir, browser->binary_path, MAX_PATH_LEN);
+    snprintf(app_dir, MAX_PATH_LEN, "%s", browser->binary_path);
     get_parent_dir(app_dir);
     browser->config_installed = check_config_status(app_dir);
     browser->utils_installed = check_utils_status(browser->profile_path);
@@ -2491,8 +2479,8 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
                         if (strlen(full_path) == 0) continue;
 
                         ProcessEntry *rp = &raw_procs[raw_count];
-                        strncpy(rp->exe_name, pe.szExeFile, sizeof(rp->exe_name));
-                        strncpy(rp->binary_path, full_path, MAX_PATH_LEN);
+                        snprintf(rp->exe_name, sizeof(rp->exe_name), "%s", pe.szExeFile);
+                        snprintf(rp->binary_path, MAX_PATH_LEN, "%s", full_path);
                         rp->pid = pe.th32ProcessID;
                         rp->parent_pid = pe.th32ParentProcessID;
                         rp->cmdline[0] = '\0';
@@ -2561,8 +2549,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
         char profile[MAX_PATH_LEN];
         if (extract_profile_from_cmdline(proc_list[p].cmdline, profile, sizeof(profile)) &&
             path_is_dir(profile)) {
-            strncpy(proc_list[p].cmdline_profile, profile, MAX_PATH_LEN);
-            proc_list[p].cmdline_profile[MAX_PATH_LEN - 1] = '\0';
+            snprintf(proc_list[p].cmdline_profile, MAX_PATH_LEN, "%s", profile);
         }
     }
 
@@ -2617,8 +2604,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
             }
         }
         if (!dup) {
-            strncpy(claimed_profiles[claimed_count], proc_list[q].cmdline_profile, MAX_PATH_LEN);
-            claimed_profiles[claimed_count][MAX_PATH_LEN - 1] = '\0';
+            snprintf(claimed_profiles[claimed_count], MAX_PATH_LEN, "%s", proc_list[q].cmdline_profile);
             claimed_count++;
         }
     }
@@ -2637,8 +2623,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
         if (pool_idx < 0) {
             // New binary: collect profiles for it
             pool_idx = cached_pool_count;
-            strncpy(cached_binary[pool_idx], proc_list[p].binary_path, MAX_PATH_LEN);
-            cached_binary[pool_idx][MAX_PATH_LEN - 1] = '\0';
+            snprintf(cached_binary[pool_idx], MAX_PATH_LEN, "%s", proc_list[p].binary_path);
 
             int n = collect_locked_profiles(proc_list[p].binary_path, cached_pools[pool_idx], MAX_BROWSERS);
             cached_pool_sizes[pool_idx] = n;
@@ -2650,8 +2635,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
 
         // Strong match from the command line
         if (strlen(proc_list[p].cmdline_profile) > 0) {
-            strncpy(proc_list[p].assigned_profile, proc_list[p].cmdline_profile, MAX_PATH_LEN);
-            proc_list[p].assigned_profile[MAX_PATH_LEN - 1] = '\0';
+            snprintf(proc_list[p].assigned_profile, MAX_PATH_LEN, "%s", proc_list[p].cmdline_profile);
             for (int a = 0; a < cached_pool_sizes[pool_idx]; a++) {
                 if (strcmp(cached_pools[pool_idx][a], proc_list[p].cmdline_profile) == 0)
                     pool_assigned[pool_idx][a] = 1;
@@ -2672,8 +2656,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
                 }
             }
             if (claimed) continue;
-            strncpy(proc_list[p].assigned_profile, cached_pools[pool_idx][a], MAX_PATH_LEN);
-            proc_list[p].assigned_profile[MAX_PATH_LEN - 1] = '\0';
+            snprintf(proc_list[p].assigned_profile, MAX_PATH_LEN, "%s", cached_pools[pool_idx][a]);
             pool_assigned[pool_idx][a] = 1;
             assigned = 1;
             break;
@@ -2683,8 +2666,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
             // More processes than profiles, or collect_locked_profiles returned 0
             // (compatibility.ini check too strict).
             if (cached_pool_sizes[pool_idx] > 0) {
-                strncpy(proc_list[p].assigned_profile, cached_pools[pool_idx][0], MAX_PATH_LEN);
-                proc_list[p].assigned_profile[MAX_PATH_LEN - 1] = '\0';
+                snprintf(proc_list[p].assigned_profile, MAX_PATH_LEN, "%s", cached_pools[pool_idx][0]);
             } else {
                 // Fall back to find_active_profile_readonly when the strict
                 // collect_locked_profiles couldn't find any compatible profile.
@@ -2698,9 +2680,9 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
         if (!is_duplicate_entry(results, count,
                                 proc_list[p].binary_path,
                                 proc_list[p].assigned_profile)) {
-            strncpy(results[count].exe_name, proc_list[p].exe_name, sizeof(results[count].exe_name));
-            strncpy(results[count].binary_path, proc_list[p].binary_path, MAX_PATH_LEN);
-            strncpy(results[count].profile_path, proc_list[p].assigned_profile, MAX_PATH_LEN);
+            snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", proc_list[p].exe_name);
+            snprintf(results[count].binary_path, MAX_PATH_LEN, "%s", proc_list[p].binary_path);
+            snprintf(results[count].profile_path, MAX_PATH_LEN, "%s", proc_list[p].assigned_profile);
             results[count].pid = proc_list[p].pid;
 
             resolve_browser_name(proc_list[p].binary_path, results[count].identified_browser,
@@ -2711,7 +2693,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
 
             if (strlen(results[count].profile_path) > 0) {
                 char binary_dir[MAX_PATH_LEN];
-                strncpy(binary_dir, proc_list[p].binary_path, MAX_PATH_LEN);
+                snprintf(binary_dir, MAX_PATH_LEN, "%s", proc_list[p].binary_path);
                 get_parent_dir(binary_dir);
 
                 results[count].config_installed = check_config_status(binary_dir);
@@ -2760,8 +2742,8 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
                         const char *exe_name = strrchr(full_path, '/');
                         exe_name = exe_name ? exe_name + 1 : full_path;
                         snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", exe_name);
-                        strncpy(results[count].binary_path, full_path, MAX_PATH_LEN);
-                        strncpy(results[count].profile_path, profile_path, MAX_PATH_LEN);
+                        snprintf(results[count].binary_path, MAX_PATH_LEN, "%s", full_path);
+                        snprintf(results[count].profile_path, MAX_PATH_LEN, "%s", profile_path);
                         results[count].pid = (unsigned long)pid;
 
                         resolve_browser_name(full_path, results[count].identified_browser, sizeof(results[count].identified_browser));
@@ -2771,7 +2753,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
 
                         if (strlen(results[count].profile_path) > 0) {
                             char binary_dir[MAX_PATH_LEN];
-                            strncpy(binary_dir, full_path, MAX_PATH_LEN);
+                            snprintf(binary_dir, MAX_PATH_LEN, "%s", full_path);
                             get_parent_dir(binary_dir);
 
                             results[count].config_installed = check_config_status(binary_dir);
@@ -2818,8 +2800,8 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
                     const char *exe_name = strrchr(full_path, '/');
                     exe_name = exe_name ? exe_name + 1 : full_path;
                     snprintf(results[count].exe_name, sizeof(results[count].exe_name), "%s", exe_name);
-                    strncpy(results[count].binary_path, full_path, MAX_PATH_LEN);
-                    strncpy(results[count].profile_path, profile_path, MAX_PATH_LEN);
+                    snprintf(results[count].binary_path, MAX_PATH_LEN, "%s", full_path);
+                    snprintf(results[count].profile_path, MAX_PATH_LEN, "%s", profile_path);
                     results[count].pid = (unsigned long)pid;
 
                     resolve_browser_name(full_path, results[count].identified_browser,
@@ -2830,7 +2812,7 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
 
                     if (strlen(results[count].profile_path) > 0) {
                         char binary_dir[MAX_PATH_LEN];
-                        strncpy(binary_dir, full_path, MAX_PATH_LEN);
+                        snprintf(binary_dir, MAX_PATH_LEN, "%s", full_path);
                         get_parent_dir(binary_dir);
 
                         results[count].config_installed = check_config_status(binary_dir);

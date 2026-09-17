@@ -127,7 +127,7 @@ files are produced on demand by the build/publish tooling.
 
 ```bash
 pnpm install
-pnpm lint          # eslint + markdownlint (MD056 table integrity) + C format check + gcc -fanalyzer + check-skills (frontmatter + vendored skill tests)
+pnpm lint          # eslint + strncpy gate (installer/src is snprintf-only) + markdownlint (MD056 table integrity) + C format check + gcc -fanalyzer + check-skills (frontmatter + vendored skill tests); the strncpy stage also runs standalone via `pnpm lint:ncpy`
 pnpm format        # check: C + prettier
 pnpm format:fix    # apply both
 pnpm test          # unit tests (test/unit/, pure Node, no build)
