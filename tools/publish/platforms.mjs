@@ -90,8 +90,10 @@ export function helperShaAssetName(p, suffix = '') {
  * here is subtler: a build step that "succeeded" earlier in a session that hit
  * the race can leave a partial file that a later pass then hashes and ships.
  * Every PE must start with the bytes 'MZ'; ELF with 0x7f 'E' 'L' 'F'; Mach-O
- * with the 32/64-bit magic (feedface/feedfacf) or the fat variants
- * (cafebabe/cafebabf). Anything else is a truncated artifact — throw.
+ * with one of the mach_header magics or the fat-wrapper magic (Apple cctools
+ * mach-o/loader.h + fat.h; the cigam variants are byte-identical to their magic
+ * twins — they differ only in the reader's byte-order interpretation). Anything
+ * else is a truncated artifact — throw.
  *
  * `access` indirection keeps this pure: tests pass a fake name→Buffer map.
  */
@@ -99,12 +101,12 @@ const MAGIC = {
   win: [0x4d, 0x5a], // "MZ"
   linux: [0x7f, 0x45, 0x4c, 0x46], // ELF
   aarch64: [0x7f, 0x45, 0x4c, 0x46], // ELF (arm64)
-  mac: [0xcf, 0xfa, 0xed, 0xfe], // MH_MAGIC_64 (arm64 default); caller also accepts the other Mach-O magics
+  mac: [0xcf, 0xfa, 0xed, 0xfe], // MH_MAGIC_64 as stored in an x86_64/arm64 file
 };
 const MACHO_EXTRA = [
-  [0xce, 0xfa, 0xed, 0xfe], // MH_MAGIC (32-bit)
-  [0xfe, 0xed, 0xfa, 0xce], // FAT_MAGIC (big-endian)
-  [0xfe, 0xed, 0xfa, 0xcf], // FAT_MAGIC_64 / big-endian MH_MAGIC_64
+  [0xce, 0xfa, 0xed, 0xfe], // MH_MAGIC / MH_CIGAM (32-bit arch)
+  [0xca, 0xfe, 0xba, 0xbe], // FAT_MAGIC / FAT_CIGAM (universal wrapper)
+  [0xca, 0xfe, 0xba, 0xbf], // FAT_MAGIC_64 / FAT_CIGAM_64
 ];
 
 export function verifyStagedBinaries(files, access) {

@@ -37,12 +37,12 @@ test('accepts valid magics for every platform', () => {
   assert.deepEqual(verifyStagedBinaries(files, access), []);
 });
 
-test('accepts all four Mach-O variants for mac', () => {
+test('accepts all Mach-O header magics for mac (cctools loader.h + fat.h)', () => {
   const variants = [
-    [0xcf, 0xfa, 0xed, 0xfe], // MH_MAGIC_64
-    [0xce, 0xfa, 0xed, 0xfe], // MH_MAGIC (32-bit)
-    [0xfe, 0xed, 0xfa, 0xce], // FAT_MAGIC
-    [0xfe, 0xed, 0xfa, 0xcf], // FAT_MAGIC_64
+    [0xcf, 0xfa, 0xed, 0xfe], // MH_MAGIC_64 (x86_64/arm64 file bytes)
+    [0xce, 0xfa, 0xed, 0xfe], // MH_MAGIC / MH_CIGAM (32-bit arch)
+    [0xca, 0xfe, 0xba, 0xbe], // FAT_MAGIC / FAT_CIGAM (universal wrapper)
+    [0xca, 0xfe, 0xba, 0xbf], // FAT_MAGIC_64 / FAT_CIGAM_64
   ];
   for (const magic of variants) {
     const bad = verifyStagedBinaries({installer_mac: 'mac'}, () => buf(...magic, 0x00));
