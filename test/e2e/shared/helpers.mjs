@@ -137,10 +137,28 @@ export async function pollUntil(fn, timeoutMs, intervalMs = 500, label = '') {
   const end = Date.now() + timeoutMs;
   let attempt = 0;
   let lastError;
+  // Race each fn() against the remaining deadline: a callback that hangs
+  // (fetch without a timeout, a wedged server) must not extend the poll past
+  // its budget — the caller's own timeout then governs, and the poll returns
+  // null on schedule instead of hanging the E2E run indefinitely.
+  const withDeadline = async promise => {
+    let timer;
+    const cap = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`poll attempt exceeded the ${timeoutMs}ms budget`)),
+        Math.max(1, end - Date.now())
+      );
+    });
+    try {
+      return await Promise.race([promise, cap]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   for (;;) {
     attempt++;
     try {
-      const v = await fn();
+      const v = await withDeadline(fn());
       if (v) return v;
     } catch (err) {
       lastError = err;
@@ -158,7 +176,9 @@ export async function pollUntil(fn, timeoutMs, intervalMs = 500, label = '') {
       }
       return null;
     }
-    await new Promise(r => setTimeout(r, intervalMs));
+    // Cap the inter-attempt sleep at the remaining budget so a late attempt
+    // cannot push the next fn() past the deadline either.
+    await new Promise(r => setTimeout(r, Math.min(intervalMs, Math.max(0, end - Date.now()))));
   }
 }
 
