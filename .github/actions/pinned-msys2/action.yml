@@ -56,6 +56,12 @@ runs:
       # `cygpath` is the only reliable way to speak to the GitHub env files from
       # it ($GITHUB_PATH is a Windows path, which this shell cannot open raw).
       # Later steps inherit MSYS2_LOCATION and the PATH order from here.
+      # Consequence to expect in a run log: `shell: bash` steps now report
+      # `msys64\usr\bin\bash.EXE` instead of Git-Bash, since this shell's dirs
+      # precede the system PATH. The publish flow was verified end-to-end under
+      # it (build → zips → upload → VT gate); MSYS2's GNU tar is stricter than
+      # Git-Bash's bsdtar about drive-letter file arguments, which is why
+      # tools/ci/msys2Toolchain.mjs passes archive paths colon-free.
       run: |
         echo "MSYS2_LOCATION=$(cygpath -m /)" >> "$(cygpath -u "$GITHUB_ENV")"
         echo "PINNED_TOOLCHAIN_PREFIX=$(cygpath -m "$MINGW_PREFIX/bin")" >> "$(cygpath -u "$GITHUB_ENV")"

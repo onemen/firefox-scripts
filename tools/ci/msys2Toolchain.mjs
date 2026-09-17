@@ -287,7 +287,10 @@ export function provenanceReport({tools, expected = {}, roots = []} = {}) {
   const problems = [];
   const rows = [];
   const dirs = new Map();
-  const normRoots = roots.map(normalizeToolPath).map(r => r.replace(/^\/+/, ''));
+  const normRoots = roots
+    .map(normalizeToolPath)
+    .map(r => r.replace(/^\/+/, ''))
+    .filter(Boolean);
 
   for (const tool of tools) {
     const {name, path: toolPath, version = '', candidates = []} = tool;
@@ -518,8 +521,38 @@ export function verifyInstalled({manifest, log = console.log} = {}) {
 }
 
 /**
+ * The tar invocation for one package archive. Split out because the argument
+ * shape is load-bearing, not cosmetic: GNU tar (what an MSYS2 shell provides,
+ * and the CI action now puts that shell's tools first on PATH) treats a
+ * `host:path` file argument as an rsh target — `-f D:/a/…` fails with "Cannot
+ * connect to D: resolve failed". Passing the bare file name with the cache dir
+ * as cwd keeps the file argument colon-free for every tar flavour (bsdtar,
+ * which Git-Bash ships, would accept either, so only CI caught this).
+ */
+export function tarArgs({file, prefix}) {
+  // Forward slashes for the destination too: MSYS2/Git GNU tar escapes a
+  // backslashy `-C C:\dir` into a literal name and reports it as unopenable.
+  const dest = String(prefix).replace(/\\/g, '/');
+  return {args: ['-xf', path.basename(file), '-C', dest], cwd: path.dirname(file)};
+}
+
+/**
+ * Read an option that is meaningful BOTH bare and with a value: `--prefix`
+ * extracts to the default prefix, `--prefix <dir>` to a chosen one. Returns the
+ * value, '' when the flag was given bare, or null when it is absent. A
+ * following `--flag` is never swallowed as the value — `--prefix` bare used to
+ * become the string 'true' and extracted into a directory called `true`.
+ */
+export function optionValue(argv, name) {
+  const i = argv.indexOf(name);
+  if (i === -1) return null;
+  const next = argv[i + 1];
+  return next === undefined || next.startsWith('--') ? '' : next;
+}
+
+/**
  * Extract the mingw packages into a project-local prefix (dev machines without
- * an MSYS2 install, or a developer reproducing CI bytes). MSYS2 ningw package
+ * an MSYS2 install, or a developer reproducing CI bytes). MSYS2 mingw package
  * archives carry a `ucrt64/` tree, so the prefix ends up
  * `<prefix>/ucrt64/bin/gcc` — put that bin dir first on PATH and the Makefile's
  * `CC ?= gcc` / `WINDRES ?= windres` resolve to the pinned ones.
@@ -531,9 +564,12 @@ export function extractPrefix({manifest, files, prefix = DEFAULT_PREFIX, log = c
     const base = packageFileName(pkg);
     const file = files.find(f => path.basename(f) === base);
     if (!file) throw new Error(`missing downloaded file for ${base}`);
-    const res = spawnSync('tar', ['-xf', file, '-C', prefix], {encoding: 'utf-8'});
+    const {args, cwd} = tarArgs({file, prefix});
+    const res = spawnSync('tar', args, {encoding: 'utf-8', cwd});
     if (res.status !== 0) {
-      throw new Error(`tar failed for ${base} (exit ${res.status}): ${res.stderr || ''}`);
+      throw new Error(
+        `tar failed for ${base} in ${cwd} (exit ${res.status}): ${res.stderr || res.error?.message || ''}`
+      );
     }
     log(`  extract ${base}`);
   }
@@ -564,10 +600,6 @@ const isCli =
 
 if (isCli) {
   const argv = process.argv.slice(2);
-  const argOf = name => {
-    const i = argv.indexOf(name);
-    return i === -1 ? null : (argv[i + 1] ?? true);
-  };
   // --print-bin only locates the MSYS2 install, so it must work even when the
   // manifest cannot be read: the action sets PATH with it, and a broken pin
   // should fail on its own terms (--install/--verify), not by hiding PATH here.
@@ -590,8 +622,8 @@ if (isCli) {
     console.error(`config/msys2-toolchain.json is invalid:\n  ${problems.join('\n  ')}`);
     process.exit(2);
   }
-  const cache = argOf('--dir') === null ? DEFAULT_CACHE : String(argOf('--dir'));
-  const prefix = argOf('--prefix') === null ? DEFAULT_PREFIX : String(argOf('--prefix'));
+  const cache = optionValue(argv, '--dir') || DEFAULT_CACHE;
+  const prefix = optionValue(argv, '--prefix') || DEFAULT_PREFIX;
 
   const run = async () => {
     console.log(
@@ -604,8 +636,15 @@ if (isCli) {
     if (argv.includes('--provenance')) {
       // No downloads: this inspects the shell that is about to build.
       const roots = [];
-      for (let i = 0; i < argv.length - 1; i++) {
-        if (argv[i] === '--require-root') roots.push(argv[i + 1]);
+      for (let i = 0; i < argv.length; i++) {
+        if (argv[i] !== '--require-root') continue;
+        const value = argv[i + 1];
+        // A valueless --require-root would silently disable the check (an
+        // empty root matches every directory).
+        if (!value || value.startsWith('--')) {
+          throw new Error('--require-root needs a directory (the pinned toolchain bin dir)');
+        }
+        roots.push(value);
       }
       const tools = collectProvenance();
       const expected = expectedToolVersions(manifest);

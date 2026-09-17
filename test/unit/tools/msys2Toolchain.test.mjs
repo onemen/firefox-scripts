@@ -26,12 +26,14 @@ const {
   msys2BinDirs,
   msys2RootCandidates,
   normalizeToolPath,
+  optionValue,
   packageFileName,
   packageUrl,
   pacmanBin,
   parsePacmanQuery,
   parseWhich,
   prefixInstructions,
+  tarArgs,
   provenanceReport,
   readManifest,
   runtimeVersions,
@@ -288,6 +290,34 @@ test('msys2RootCandidates prefers the recorded location over a guess', () => {
   );
   // A bare `pacman` (or a which failure) contributes no candidate.
   assert.deepEqual(msys2RootCandidates({env: {}, pacman: 'pacman'}), ['C:/msys64', 'C:/msys2']);
+});
+
+test('optionValue distinguishes a bare flag from a value and a following flag', () => {
+  // `pnpm toolchain:local` passes --prefix bare; reading the next argument
+  // blindly made that the string 'true' and extracted into a `true` directory.
+  assert.equal(optionValue(['--prefix'], '--prefix'), '');
+  assert.equal(optionValue(['--prefix', 'dist/pin'], '--prefix'), 'dist/pin');
+  assert.equal(optionValue(['--prefix', '--provenance'], '--prefix'), '');
+  assert.equal(optionValue(['--fetch'], '--prefix'), null);
+  assert.equal(optionValue(['--prefix', 'C:\\msys64\\ucrt64'], '--prefix'), 'C:\\msys64\\ucrt64');
+});
+
+test('tarArgs never hands tar a drive-lettered file argument', () => {
+  // GNU tar reads `D:/a/cache/x.pkg.tar.zst` as host `D` and fails with
+  // "Cannot connect to D: resolve failed" — the exact CI failure that a local
+  // bsdtar (Git-Bash) cannot reproduce, so it is pinned here instead.
+  const root = path.join(REPO_ROOT, 'dist', '.toolchain-cache');
+  const file = path.join(root, 'mingw-w64-ucrt-x86_64-binutils-2.46-4-any.pkg.tar.zst');
+  const {args, cwd} = tarArgs({file, prefix: 'D:\\pin'});
+  assert.deepEqual(args, [
+    '-xf',
+    'mingw-w64-ucrt-x86_64-binutils-2.46-4-any.pkg.tar.zst',
+    '-C',
+    'D:/pin',
+  ]);
+  assert.equal(cwd, root);
+  assert.ok(!args[1].includes(':'), 'the file argument must stay colon-free');
+  assert.ok(!args[3].includes('\\'), 'the destination must be forward-slashed for GNU tar');
 });
 
 test('msys2BinDirs lists the mingw dir before the msys dir', () => {
