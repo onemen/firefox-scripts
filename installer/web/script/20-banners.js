@@ -20,8 +20,13 @@
         return postRaw('/api/self-update', buf);
       })
       .then(function (res) {
-        if (res && res.ok) selfUpdateIngested = true;
-        return true;
+        // Return the actual success so ingestSelfUpdateSources falls through
+        // to the selfUpdateUrl fallback when the releases POST is rejected
+        // (CodeRabbit review:batch, PR #238); selfUpdateIngested still only
+        // sticks on a successful ingest.
+        const ok = Boolean(res && res.ok);
+        if (ok) selfUpdateIngested = true;
+        return ok;
       })
       .catch(function (err) {
         console.error('[ingest] self-update release fetch failed: ' + (err && err.message));
