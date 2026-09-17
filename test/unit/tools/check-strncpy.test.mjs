@@ -13,7 +13,9 @@ import {findStrncpyCalls} from '../../../tools/check-strncpy.mjs';
 function makeDir(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-strncpy-'));
   for (const [name, content] of Object.entries(files)) {
-    fs.writeFileSync(path.join(dir, name), content);
+    const full = path.join(dir, name);
+    fs.mkdirSync(path.dirname(full), {recursive: true});
+    fs.writeFileSync(full, content);
   }
   return dir;
 }
@@ -42,10 +44,11 @@ test('matches spaced call syntax and calls wrapped across lines', () => {
   const dir = makeDir({
     'spaced.c': 'strncpy (a, b, c);\n',
     'wrapped.c': 'strncpy(\n    a, b, c);\n',
+    'split-paren.c': 'strncpy\n(a, b, c);\n',
   });
   try {
     const findings = findStrncpyCalls(
-      [path.join(dir, 'spaced.c'), path.join(dir, 'wrapped.c')],
+      [path.join(dir, 'spaced.c'), path.join(dir, 'wrapped.c'), path.join(dir, 'split-paren.c')],
       dir
     );
     assert.deepEqual(
@@ -53,8 +56,40 @@ test('matches spaced call syntax and calls wrapped across lines', () => {
       [
         ['spaced.c', 1],
         ['wrapped.c', 1],
+        ['split-paren.c', 1],
       ]
     );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('scans nested directories (helper/), skips vendor/, reports paths relative to root', () => {
+  const dir = makeDir({
+    'top.c': 'strncpy(a, b, c);\n',
+    'nested/helper.c': 'strncpy(x, y, z);\n',
+    'vendor/vendored.c': 'strncpy(v, w, u);\n',
+  });
+  try {
+    // Recursive listing with the same vendor/ exclusion the CLI's listCSources
+    // applies — the pure function itself takes an explicit file list.
+    const list = [];
+    (function walk(d) {
+      for (const e of fs
+        .readdirSync(d, {withFileTypes: true})
+        .sort((a, b) => a.name.localeCompare(b.name))) {
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== 'vendor') walk(full);
+        } else if (e.isFile() && /\.c$/.test(e.name)) {
+          list.push(full);
+        }
+      }
+    })(dir);
+    const files = findStrncpyCalls(list, dir).map(f => f.file);
+    assert.ok(files.includes('top.c'), 'top-level scanned');
+    assert.ok(files.includes('nested/helper.c'), 'nested dirs scanned');
+    assert.ok(!files.some(f => f.includes('vendor')), 'vendor/ excluded');
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
   }
