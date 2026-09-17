@@ -1,0 +1,22 @@
+# .github/actions/linux-test-prereqs/action.yml — Linux-only test
+# prerequisites for the GUI-headed E2E legs: harden apt sources, then install
+# xvfb (the BiDi run needs a display server even headless).
+#
+# Extracted from e2e.yml (2026-09): the harden-apt + apt-get install xvfb
+# pair was duplicated in five jobs; callers guard with their own runner.os /
+# snapd condition so the action itself stays unconditional-free.
+
+name: Install Linux test prerequisites
+description: Harden apt sources, install xvfb for the display-headed E2E runs
+
+runs:
+  using: composite
+  steps:
+    - name: Harden apt sources
+      uses: ./.github/actions/harden-apt
+
+    - name: Install xvfb
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq xvfb

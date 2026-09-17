@@ -1,0 +1,114 @@
+# .github/actions/setup-browser/action.yml — Resolve a browser's official
+# download URL, cache the downloaded installer (keyed on the exact URL — it
+# embeds the release version, so the key invalidates when the browser bumps),
+# and install it via test/e2e/shared/downloads.mjs, which exports FIREFOX_BINARY
+# through $GITHUB_ENV.
+#
+# Extracted from e2e.yml (2026-09): the resolve/cache/install step group was
+# duplicated across the installer, updater, browser-matrix, updater-waterfox
+# and fork-portable jobs; the per-job copies had drifted (different cache-key
+# prefixes, single- vs two-hop redirect resolution) and every fix had to be
+# applied N times. The composite is the single copy — a recipe change lands
+# once, and check-gate-coverage keeps path-filter coverage unchanged because
+# the filter lists `.github/actions/**` already.
+#
+# `browser` is the downloads.mjs key (firefox, firefox-dev, nightly,
+# librewolf, floorp, zen, waterfox); `portable-dir-suffix` distinguishes
+# cache scopes that share a runner (the installer job's firefox-portable vs
+# the portable-firefox job's keyed scope).
+
+name: Set up browser (portable install)
+description: >-
+  Resolve the official download URL, cache installer + portable dir, install via downloads.mjs
+  (exports FIREFOX_BINARY)
+
+inputs:
+  browser:
+    description: downloads.mjs browser key (firefox, firefox-dev, nightly, a fork, …)
+    required: true
+  cache-key-prefix:
+    description: >-
+      Cache key prefix (defaults to firefox-dl). Jobs that share a runner with a different install
+      layout use their own prefix (e.g. firefox-portable) so the cached scopes cannot collide.
+    required: false
+    default: firefox-dl
+  portable:
+    description: >-
+      'true' also sets PORTABLE_BROWSER_DIR and caches the extracted dir (used by the legs whose E2E
+      asserts a portable layout)
+    required: false
+    default: 'false'
+
+outputs:
+  cache-key:
+    description: The resolved cache key (URL-hash derived) — for a second cache step
+    value: ${{ steps.url.outputs.key }}
+  portable-dir:
+    description: PORTABLE_BROWSER_DIR when inputs.portable == 'true', else empty
+    value: ${{ steps.portable-dir.outputs.dir }}
+
+runs:
+  using: composite
+  steps:
+    # The ~100 MB official browser download is the bulk of the install step;
+    # cache it keyed on the exact download URL (which embeds the release
+    # version — Firefox stable bumps ~monthly, invalidating the key). Only the
+    # downloaded installer is cached; the install itself still runs per job.
+    # BROWSER_DL_DIR is exported here (step context, where ${{ runner.temp }}
+    # is valid) so downloads.mjs saves into the cache-backed dir.
+    - name: Resolve download URL
+      id: url
+      shell: bash
+      env:
+        BROWSER: ${{ inputs.browser }}
+        PREFIX: ${{ inputs.cache-key-prefix }}
+        OS: ${{ runner.os }}
+        TEMPDIR: ${{ runner.temp }}
+      run: |
+        URL=$(node test/e2e/shared/downloads.mjs "$BROWSER" --url)
+        KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+        echo "key=$PREFIX-$OS-$KEY" >> "$GITHUB_OUTPUT"
+        echo "BROWSER_DL_DIR=$TEMPDIR/browser-dl" >> "$GITHUB_ENV"
+
+    - name: Cache browser installer
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ env.BROWSER_DL_DIR }}
+        key: ${{ steps.url.outputs.key }}
+
+    - name: Set portable browser directory (Linux/macOS)
+      if: inputs.portable == 'true' && runner.os != 'Windows'
+      shell: bash
+      env:
+        TEMPDIR: ${{ runner.temp }}
+      run: |
+        echo "PORTABLE_BROWSER_DIR=$TEMPDIR/firefox-portable" >> "$GITHUB_ENV"
+        mkdir -p "$TEMPDIR/firefox-portable"
+        echo "dir=$TEMPDIR/firefox-portable" >> "$GITHUB_OUTPUT"
+
+    - name: Set portable browser directory (Windows)
+      if: inputs.portable == 'true' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        PREFIX: ${{ inputs.cache-key-prefix }}
+      run: |
+        $dir = Join-Path $env:RUNNER_TEMP 'firefox-portable'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "dir=$dir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+    - name: Cache extracted portable browser
+      if: inputs.portable == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ env.PORTABLE_BROWSER_DIR }}
+        key: ${{ steps.url.outputs.key }}-x
+
+    # The browser itself always comes from downloads.mjs's official recipe
+    # (apt's Snap wrapper breaks BiDi); it downloads via the official channel
+    # redirect and exports FIREFOX_BINARY through $GITHUB_ENV.
+    - name: Install ${{ inputs.browser }}
+      shell: bash
+      env:
+        BROWSER: ${{ inputs.browser }}
+      run: node test/e2e/shared/downloads.mjs "$BROWSER"

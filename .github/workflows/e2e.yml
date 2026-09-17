@@ -210,52 +210,19 @@ jobs:
       # The UI layer launches a real Firefox (even headless it needs a display
       # server on Linux runners), so install xvfb and run under it — same as
       # the updater job below.
-      - name: Harden apt sources
-        if: startsWith(matrix.os, 'ubuntu')
-        uses: ./.github/actions/harden-apt
-
       - name: Install Linux test prerequisites
         if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb
+        uses: ./.github/actions/linux-test-prereqs
 
       # The UI layer and the restart-scope leg (#180) launch a real Firefox.
       # Hosted runners cannot be relied on to ship one, so install Firefox
       # Release PORTABLY (runner temp — user-writable, unregistered) like the
       # portable-firefox and updater jobs do; downloads.mjs exports
       # FIREFOX_BINARY through $GITHUB_ENV.
-      - name: Resolve Firefox download URL
-        id: ffurl
-        shell: bash
-        run: |
-          URL=$(node test/e2e/shared/downloads.mjs firefox --url)
-          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
-          echo "key=firefox-dl-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
-          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
-      - name: Cache Firefox installer
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.BROWSER_DL_DIR }}
-          key: ${{ steps.ffurl.outputs.key }}
-
-      - name: Set portable browser directory (Linux/macOS)
-        if: ${{ !startsWith(matrix.os, 'windows') }}
-        shell: bash
-        run: |
-          echo "PORTABLE_BROWSER_DIR=${{ runner.temp }}/firefox-portable" >> "$GITHUB_ENV"
-          mkdir -p "${{ runner.temp }}/firefox-portable"
-
-      - name: Set portable browser directory (Windows)
-        if: startsWith(matrix.os, 'windows')
-        shell: pwsh
-        run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'firefox-portable'
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       - name: Install Firefox Release (portable)
-        run: node test/e2e/shared/downloads.mjs firefox
+        uses: ./.github/actions/setup-browser
+        with:
+          browser: firefox
 
       - name: Run installer E2E (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -327,43 +294,16 @@ jobs:
     steps:
       - uses: $/.github/actions/setup-repo
 
-      # The ~100 MB official Firefox download is the bulk of the install step;
-      # cache it keyed on the exact download URL (which embeds the release
-      # version — Firefox stable bumps ~monthly, invalidating the key). Only the
-      # downloaded installer is cached; the install itself still runs per job.
-      # BROWSER_DL_DIR is exported here (step context, where ${{ runner.temp }}
-      # is valid) so downloads.mjs saves into the cache-backed dir.
-      - name: Resolve Firefox download URL
-        id: ffurl
-        shell: bash
-        run: |
-          URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
-          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-          echo "key=firefox-dl-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
-          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
-      - name: Cache Firefox installer
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.BROWSER_DL_DIR }}
-          key: ${{ steps.ffurl.outputs.key }}
-
-      # Linux needs xvfb for the BiDi run. The browser itself always comes
-      # from downloads.mjs's official recipe (apt's Snap wrapper breaks BiDi);
-      # it downloads via the official channel redirect and exports
-      # FIREFOX_BINARY through $GITHUB_ENV.
-      - name: Harden apt sources
-        if: matrix.os == 'ubuntu-latest'
-        uses: ./.github/actions/harden-apt
-
+      # Linux needs xvfb for the BiDi run; the browser itself always comes
+      # from downloads.mjs's official recipe (apt's Snap wrapper breaks BiDi).
       - name: Install Linux test prerequisites
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb
+        uses: ./.github/actions/linux-test-prereqs
 
       - name: Install ${{ matrix.browser }}
-        run: node test/e2e/shared/downloads.mjs ${{ matrix.browser }}
+        uses: ./.github/actions/setup-browser
+        with:
+          browser: ${{ matrix.browser }}
 
       # Restores dist/dev-<branch>-<sha>/ built once by the `snapshot` job.
       # On non-ubuntu legs the baked LOCAL_DIST_PATH differs from this
@@ -449,89 +389,22 @@ jobs:
       # commit — a ./ local action would need a checkout step first.
       - uses: $/.github/actions/setup-repo
 
-      - name: Set portable browser directory (Linux/macOS)
-        if: ${{ runner.os != 'Windows' }}
-        shell: bash
-        run: |
-          echo "PORTABLE_BROWSER_DIR=${{ runner.temp }}/firefox-portable" >> "$GITHUB_ENV"
-          mkdir -p "${{ runner.temp }}/firefox-portable"
-
-      - name: Set portable browser directory (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'firefox-portable'
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       # The key hashes the version-embedded final CDN URL, not the stable
       # `?product=firefox-latest` redirect: that redirect never changes, so a
       # key derived from it would pin yesterday's extracted browser in the
       # portable-dir cache forever — the skip check would happily keep testing
       # a stale Firefox. One redirect hop lands on the CDN URL that embeds the
-      # version (155.0.1 today); read it with a HEAD and hash THAT. This key
-      # guards both caches below (installer + extracted dir); downloadTo's
-      # HEAD-size check additionally self-heals the installer cache.
-      - name: Resolve Firefox Release download URL (Linux/macOS)
-        id: portable-url-unix
-        if: ${{ runner.os != 'Windows' }}
-        shell: bash
-        run: |
-          URL=$(node test/e2e/shared/downloads.mjs firefox --url)
-          FINAL=$(curl -fsSI -o /dev/null -w '%{redirect_url}' "$URL")
-          test -n "$FINAL" || FINAL="$URL"
-          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$FINAL")
-          echo "key=firefox-portable-${{ runner.os }}-$KEY" >> "$GITHUB_OUTPUT"
-          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
-
-      - name: Resolve Firefox Release download URL (Windows)
-        id: portable-url-windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $url = node test/e2e/shared/downloads.mjs firefox --url
-          # One redirect hop lands on the version-embedded CDN URL (see the
-          # Linux/macOS step for why the redirect URL itself is not enough).
-          $req = [System.Net.HttpWebRequest]::Create($url)
-          $req.AllowAutoRedirect = $false
-          $req.Method = 'HEAD'
-          $resp = $req.GetResponse()
-          $final = $resp.Headers['Location']
-          if (-not $final) { $final = $url }
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($final)
-          $sha = [System.Security.Cryptography.SHA256]::HashData($bytes)
-          $key = ([Convert]::ToHexString($sha)).ToLowerInvariant().Substring(0, 16)
-          "key=firefox-portable-${{ runner.os }}-$key" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "BROWSER_DL_DIR=$(Join-Path $env:RUNNER_TEMP 'browser-dl')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Cache Firefox Release download
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # version (155.0.1 today); downloads.mjs resolves it with a HEAD and
+      # hashes THAT (see downloads.mjs resolveDownloadUrl). The key guards both
+      # caches (installer + extracted dir); downloadTo's HEAD-size check
+      # additionally self-heals the installer cache.
+      - name: Install Firefox Release portably
+        id: portable-install
+        uses: ./.github/actions/setup-browser
         with:
-          path: ${{ env.BROWSER_DL_DIR }}
-          key: ${{ steps.portable-url-unix.outputs.key || steps.portable-url-windows.outputs.key }}
-
-      # The extracted portable dir is cached too (same FINAL-URL-derived key,
-      # so it invalidates with the browser version): the installer is the
-      # cheap part on a cache hit, the extract/install step is not —
-      # especially the Windows exe re-extract and the macOS dmg mount+copy.
-      # install-portable skips its work when the expected binary is already
-      # present.
-      - name: Cache extracted portable Firefox
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.PORTABLE_BROWSER_DIR }}
-          key:
-            ${{ steps.portable-url-unix.outputs.key || steps.portable-url-windows.outputs.key }}-x
-
-      - name: Install Firefox Release portably (Linux/macOS)
-        if: ${{ runner.os != 'Windows' }}
-        shell: bash
-        run: node test/e2e/shared/downloads.mjs firefox
-
-      - name: Install Firefox Release portably (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: node test/e2e/shared/downloads.mjs firefox
+          browser: firefox
+          cache-key-prefix: firefox-portable
+          portable: 'true'
 
       - name: Assert portable layout (Linux/macOS)
         if: ${{ runner.os != 'Windows' }}
@@ -566,48 +439,11 @@ jobs:
       # Linux installer. Build the native installer locally for this runner;
       # package zips remain sourced from the shared snapshot.
       - name: Build native installer
-        shell: bash
-        run: |
-          case "${{ runner.os }}" in
-            Linux) make -C installer dist_linux MODE=dev ;;
-            macOS) make -C installer dist_mac MODE=dev ;;
-            Windows) make -C installer dist_win MODE=dev ;;
-          esac
-          # Universal-binary check (#132): dist_mac now builds x86_64 + arm64 in
-          # one fat installer_mac — assert both slices are really present and
-          # executable, not just that the file exists.
-          if [ "${{ runner.os }}" = macOS ]; then
-            LIPO_ARCHS=$(lipo -archs dist/installer/installer_mac-dev)
-            echo "installer_mac architectures: $LIPO_ARCHS"
-            for arch in x86_64 arm64; do
-              case " $LIPO_ARCHS " in
-                *" $arch "*) ;;
-                *) echo "::error::installer_mac-dev is missing the $arch slice (universal build broken)"; exit 1 ;;
-              esac
-            done
-            lipo -thin x86_64 -output /tmp/installer_mac_x64 dist/installer/installer_mac-dev
-            lipo -thin arm64 -output /tmp/installer_mac_arm dist/installer/installer_mac-dev
-            echo "x86_64 slice: $(/tmp/installer_mac_x64 --version)"
-            echo "arm64 slice:  $(/tmp/installer_mac_arm --version)"
-          fi
-          case "${{ runner.os }}" in
-            Linux) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_linux-dev" >> "$GITHUB_ENV" ;;
-            macOS) echo "INSTALLER_BIN=$PWD/installer/../dist/installer/installer_mac-dev" >> "$GITHUB_ENV" ;;
-            # github.workspace expands to a native Windows path (D:\a\...);
-            # $PWD would be MSYS-style (/d/a/...) which Node's fs cannot use.
-            Windows) echo "INSTALLER_BIN=${{ github.workspace }}\\dist\\installer\\installer_win-dev.exe" >> "$GITHUB_ENV" ;;
-          esac
-          chmod +x dist/installer/installer_* 2>/dev/null || true
-
-      - name: Harden apt sources
-        if: startsWith(matrix.os, 'ubuntu')
-        uses: ./.github/actions/harden-apt
+        uses: ./.github/actions/build-installer
 
       - name: Install Linux test prerequisites
         if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb
+        uses: ./.github/actions/linux-test-prereqs
 
       - name: Run portable installer E2E (Linux)
         if: startsWith(matrix.os, 'ubuntu')
@@ -672,15 +508,9 @@ jobs:
             echo "::warning::snapd unavailable on this runner — snap E2E leg skipped (#55)"
           fi
 
-      - name: Harden apt sources
-        if: steps.snapd.outputs.available == 'true'
-        uses: ./.github/actions/harden-apt
-
       - name: Install Linux test prerequisites
         if: steps.snapd.outputs.available == 'true'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb
+        uses: ./.github/actions/linux-test-prereqs
 
       # The snap store resolves the revision at install time (no cacheable
       # URL, so no actions/cache step here); downloads.mjs wraps
@@ -739,15 +569,12 @@ jobs:
       # Same as the portable-firefox job: the shared snapshot is built on
       # Ubuntu but artifact upload/download drops the execute bit, so build
       # the native installer locally (package zips stay from the snapshot).
+      # findInstaller() prefers INSTALLER_BIN: the E2E looks in the
+      # SNAPSHOT dir (dist/dev-HEAD-<sha>/), where the artifact copy
+      # lacks the execute bit — point it at the freshly built binary.
       - name: Build native installer
         if: steps.snapd.outputs.available == 'true'
-        run: |
-          make -C installer dist_linux MODE=dev
-          chmod +x dist/installer/installer_linux-dev
-          # findInstaller() prefers INSTALLER_BIN: the E2E looks in the
-          # SNAPSHOT dir (dist/dev-HEAD-<sha>/), where the artifact copy
-          # lacks the execute bit — point it at the freshly built binary.
-          echo "INSTALLER_BIN=$PWD/dist/installer/installer_linux-dev" >> "$GITHUB_ENV"
+        uses: ./.github/actions/build-installer
 
       # Snap-environment preparation for the two E2E runs:
       #
@@ -846,30 +673,18 @@ jobs:
     steps:
       - uses: $/.github/actions/setup-repo
 
-      # The ~100 MB installers dominate the job; cache them keyed on the
-      # resolved download URL (embeds the version for LibreWolf/Waterfox).
-      # Floorp/Zen's stable latest URLs keep a constant key — downloadTo()
-      # re-fetches when the remote size changes, and save-always re-caches.
-      - name: Resolve download URL
-        id: dlurl
-        shell: bash
-        run: |
-          URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
-          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
-          echo "key=browser-dl-${{ runner.os }}-${{ matrix.browser }}-$KEY" >> "$GITHUB_OUTPUT"
-          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
-      - name: Cache ${{ matrix.browser }} installer
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.BROWSER_DL_DIR }}
-          key: ${{ steps.dlurl.outputs.key }}
-          save-always: true
-
-      # downloads.mjs installs via the official recipe and resolves the real
-      # binary from install dirs (never a PATH shim or app-execution alias,
-      # whose parent dir is not the browser's GreD), exporting FIREFOX_BINARY.
+      # The ~100 MB installers dominate the job; the composite caches them
+      # keyed on the resolved download URL (embeds the version for
+      # LibreWolf/Waterfox). Floorp/Zen's stable latest URLs keep a constant
+      # key — downloadTo() re-fetches when the remote size changes, and
+      # save-always re-caches. downloads.mjs resolves the real binary from
+      # install dirs (never a PATH shim or app-execution alias, whose parent
+      # dir is not the browser's GreD), exporting FIREFOX_BINARY.
       - name: Install ${{ matrix.browser }}
-        run: node test/e2e/shared/downloads.mjs ${{ matrix.browser }}
+        uses: ./.github/actions/setup-browser
+        with:
+          browser: ${{ matrix.browser }}
+          cache-key-prefix: browser-dl
 
       # Restores dist/dev-<branch>-<sha>/ built by the `snapshot` job. The
       # ubuntu snapshot's baked LOCAL_DIST_PATH differs from this Windows
@@ -934,48 +749,18 @@ jobs:
     steps:
       - uses: $/.github/actions/setup-repo
 
-      - name: Set portable browser directory
-        shell: pwsh
-        run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'fork-portable'
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       # Zen/Floorp resolve to STABLE latest/download URLs, so the URL hash
-      # alone cannot invalidate a cache when the browser releases. One HEAD
-      # hop lands on the vendor's version-bearing CDN/asset URL — hash THAT
-      # for the key (the exact pattern the portable Firefox leg uses for the
-      # same reason). downloadTo's HEAD-size check additionally self-heals the
-      # installer cache when the stable URL still serves a new file size.
-      - name: Resolve download URL
-        id: dlurl
-        shell: bash
-        run: |
-          URL=$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --url)
-          FINAL=$(curl -fsSI -o /dev/null -w '%{redirect_url}' "$URL")
-          test -n "$FINAL" || FINAL="$URL"
-          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$FINAL")
-          echo "key=browser-dl-${{ runner.os }}-${{ matrix.browser }}-$KEY" >> "$GITHUB_OUTPUT"
-          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
-
-      - name: Cache ${{ matrix.browser }} installer
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.BROWSER_DL_DIR }}
-          key: ${{ steps.dlurl.outputs.key }}
-          save-always: true
-
-      # Same FINAL-URL-derived key family as the portable Firefox leg
-      # (<key>-x): a version bump changes the redirect target, so a stale
-      # extracted dir can never be restored under the new release's key.
-      - name: Cache extracted portable ${{ matrix.browser }}
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.PORTABLE_BROWSER_DIR }}
-          key: ${{ steps.dlurl.outputs.key }}-x
-
+      # alone cannot invalidate a cache when the browser releases. downloads.mjs
+      # resolves the version-bearing CDN/asset URL with a HEAD hop and hashes
+      # THAT for the key (the portable Firefox leg's pattern); downloadTo's
+      # HEAD-size check additionally self-heals the installer cache when a
+      # stable URL still serves a new file size.
       - name: Install ${{ matrix.browser }} portably
-        run: node test/e2e/shared/downloads.mjs ${{ matrix.browser }}
+        uses: ./.github/actions/setup-browser
+        with:
+          browser: ${{ matrix.browser }}
+          cache-key-prefix: browser-dl
+          portable: 'true'
 
       - name: Assert portable layout
         shell: pwsh
@@ -1035,23 +820,10 @@ jobs:
 
       # Same URL-keyed installer cache as the fork legs — the CDN setup URL
       # embeds the version, so each release gets its own cache entry.
-      - name: Resolve download URL
-        id: dlurl
-        shell: bash
-        run: |
-          URL=$(node test/e2e/shared/downloads.mjs waterfox --url)
-          KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
-          echo "key=browser-dl-${{ runner.os }}-waterfox-$KEY" >> "$GITHUB_OUTPUT"
-          echo "BROWSER_DL_DIR=${{ runner.temp }}/browser-dl" >> "$GITHUB_ENV"
-      - name: Cache waterfox installer
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.BROWSER_DL_DIR }}
-          key: ${{ steps.dlurl.outputs.key }}
-          save-always: true
-
       - name: Install waterfox
-        run: node test/e2e/shared/downloads.mjs waterfox
+        uses: ./.github/actions/setup-browser
+        with:
+          browser: waterfox
 
       - name: Download dev snapshot
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
