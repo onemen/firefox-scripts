@@ -108,19 +108,45 @@ const MACHO_EXTRA = [
   [0xca, 0xfe, 0xba, 0xbe], // FAT_MAGIC / FAT_CIGAM (universal wrapper)
   [0xca, 0xfe, 0xba, 0xbf], // FAT_MAGIC_64 / FAT_CIGAM_64
 ];
+// Floor for "this is a binary, not a header-only stub": larger than any
+// header the formats define (a real installer/helper is hundreds of KB).
+const MIN_BYTES = {win: 0x200, linux: 0x80, aarch64: 0x80, mac: 0x80};
 
 export function verifyStagedBinaries(files, access) {
   const bad = [];
   for (const [name, p] of Object.entries(files)) {
     const buf = access(name);
-    const magic = MAGIC[p];
-    if (!magic) continue; // unknown platform — naming tests cover the registry
-    const ok =
-      buf &&
-      buf.length >= magic.length &&
-      (magic.every((b, i) => buf[i] === b) ||
-        (p === 'mac' && MACHO_EXTRA.some(m => m.every((b, i) => buf[i] === b))));
-    if (!ok) bad.push(name);
+    if (!looksLikeExecutable(buf, p)) bad.push(name);
   }
   return bad;
+}
+
+/**
+ * Structural check behind verifyStagedBinaries: the platform's header magic
+ * must match AND the file must be long enough to be more than a header — a bare
+ * `MZ` (or any header-only stub) is exactly the truncation the check exists to
+ * catch.
+ */
+function looksLikeExecutable(buf, p) {
+  const magic = MAGIC[p];
+  if (!magic) return true; // unknown platform — naming tests cover the registry
+  if (!buf || buf.length < MIN_BYTES[p]) return false;
+  const magicOk =
+    magic.every((b, i) => buf[i] === b) ||
+    (p === 'mac' && MACHO_EXTRA.some(m => m.every((b, i) => buf[i] === b)));
+  if (!magicOk) return false;
+  if (p === 'win') {
+    // PE: e_lfanew (DOS header offset 0x3c, little-endian uint32) must point
+    // at the "PE\0\0" signature inside the file.
+    const peOffset = buf.readUInt32LE(0x3c);
+    if (peOffset < 0 || peOffset + 4 > buf.length) return false;
+    if (!(
+      buf[peOffset] === 0x50 &&
+      buf[peOffset + 1] === 0x45 &&
+      buf[peOffset + 2] === 0 &&
+      buf[peOffset + 3] === 0
+    ))
+      return false;
+  }
+  return true;
 }
