@@ -449,12 +449,12 @@ async function buildBinaries(platforms, storedHashes) {
     const stagedPass2 = {};
     for (const p of platforms) {
       if (installerChanged) {
-        if (!fs.existsSync(installerPath(p))) missing.push(installerAssetName(p));
-        else stagedPass2[installerAssetName(p)] = p;
+        if (!fs.existsSync(installerPath(p))) missing.push(installerAssetName(p, ASSET_SUFFIX));
+        else stagedPass2[installerAssetName(p, ASSET_SUFFIX)] = p;
       }
       if (helperChanged) {
-        if (!fs.existsSync(helperPath(p))) missing.push(helperAssetName(p));
-        else stagedPass2[helperAssetName(p)] = p;
+        if (!fs.existsSync(helperPath(p))) missing.push(helperAssetName(p, ASSET_SUFFIX));
+        else stagedPass2[helperAssetName(p, ASSET_SUFFIX)] = p;
       }
     }
     if (missing.length > 0) {
