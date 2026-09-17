@@ -45,8 +45,17 @@ runs:
           done
           lipo -thin x86_64 -output /tmp/installer_mac_x64 dist/installer/installer_mac-dev
           lipo -thin arm64 -output /tmp/installer_mac_arm dist/installer/installer_mac-dev
-          echo "x86_64 slice: $(/tmp/installer_mac_x64 --version)"
-          echo "arm64 slice:  $(/tmp/installer_mac_arm --version)"
+          # Execute only the host-arch slice (on an x86_64 runner the arm64
+          # slice cannot run); assert the other slice structurally with `lipo
+          # -info`, which does not depend on the host arch.
+          HOST_ARCH=$(uname -m)
+          if [ "$HOST_ARCH" = arm64 ]; then
+            echo "arm64 slice:  $(/tmp/installer_mac_arm --version)"
+            echo "x86_64 slice: $(lipo -info /tmp/installer_mac_x64)"
+          else
+            echo "x86_64 slice: $(/tmp/installer_mac_x64 --version)"
+            echo "arm64 slice:  $(lipo -info /tmp/installer_mac_arm)"
+          fi
         fi
         chmod +x dist/installer/installer_* 2>/dev/null || true
 
