@@ -318,15 +318,27 @@ static int launch_browser_profile(const RunningBrowser *b, const char *url) {
 #else
     char launch[MAX_PATH_LEN];
     snap_launcher_path(b->binary_path, launch, sizeof(launch));
+    const char *tab = (url && url[0]) ? url : NULL;  // execl's argv ends at
+    // the first NULL, so a NULL url must drop --new-tab entirely, not pass a
+    // dangling switch (same guard as the Windows branch above).
     pid_t child = fork();
     if (child == 0) {
         setsid();
         if (strlen(b->profile_path) > 0) {
-            execl(launch, launch, "-profile", b->profile_path,
-                  "-purgecaches", "--new-tab", url, (char *)NULL);
+            if (tab) {
+                execl(launch, launch, "-profile", b->profile_path,
+                      "-purgecaches", "--new-tab", tab, (char *)NULL);
+            } else {
+                execl(launch, launch, "-profile", b->profile_path,
+                      "-purgecaches", (char *)NULL);
+            }
         } else {
-            execl(launch, launch, "-purgecaches", "--new-tab", url,
-                  (char *)NULL);
+            if (tab) {
+                execl(launch, launch, "-purgecaches", "--new-tab", tab,
+                      (char *)NULL);
+            } else {
+                execl(launch, launch, "-purgecaches", (char *)NULL);
+            }
         }
         _exit(1);
     }

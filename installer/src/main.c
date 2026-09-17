@@ -32,7 +32,7 @@
 #include <stdbool.h>
 
 // ===== Verbose logging =====
-static int g_verbose = 0;
+int installer_verbose_flag = 0;  // shared via platform.h (restart.c reads it)
 
 // --smoke-test: run headless for CI security smoke tests — never abort when
 // no browser is detected, never open a browser tab, and print the session
@@ -47,8 +47,6 @@ static int g_server_only = 0;
 // session token, run id, UI URL) to this file so the E2E harness can read the
 // deployment facts instead of scraping stdout or the fixed default port.
 static char g_env_file_path[MAX_PATH_LEN] = "";
-
-int installer_verbose_flag = 0;  // shared via platform.h (restart.c reads it)
 
 // Per-run session token, embedded in the UI URL as ?t=<token>.  A restored tab
 // from a PREVIOUS installer run carries an old token; /api/claim compares it
@@ -1930,12 +1928,12 @@ static int main_impl(int argc, char *argv[]) {
             freopen("CONOUT$", "w", stdout);
             freopen("CONOUT$", "w", stderr);
 #endif
-            g_verbose = 1;
+            installer_verbose_flag = 1;
             continue;
         }
         if (strcmp(argv[i], "--smoke-test") == 0) {
             g_smoke_test = 1;
-            g_verbose = 1;
+            installer_verbose_flag = 1;
             continue;
         }
         if (strcmp(argv[i], "--server-only") == 0) {
@@ -1943,7 +1941,7 @@ static int main_impl(int argc, char *argv[]) {
             // Implies the smoke rules (never abort on zero browsers).
             g_server_only = 1;
             g_smoke_test = 1;
-            g_verbose = 1;
+            installer_verbose_flag = 1;
             continue;
         }
         if (strcmp(argv[i], "--port") == 0) {
@@ -2060,7 +2058,7 @@ static int main_impl(int argc, char *argv[]) {
             freopen("CONOUT$", "w", stdout);
             freopen("CONOUT$", "w", stderr);
 #endif
-            g_verbose = 1;
+            installer_verbose_flag = 1;
             detected_count = scan_and_filter_browsers(detected_browsers, MAX_BROWSERS);
             printf("Found %d browser(s):\n", detected_count);
             for (int i = 0; i < detected_count; i++) {
