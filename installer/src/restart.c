@@ -392,7 +392,9 @@ void open_url_in_profile(const char *binary, const char *profile, const char *ur
 // unreliable and duplicates tabs); its URL is passed on the relaunch command
 // line so it opens as part of the new browser's startup.
 
+#ifdef _WIN32
 static volatile int g_restart_worker_running = 0;
+#endif
 
 int do_restart_work(const restart_plan_t *plan) {
     if (plan->config_changed) {
@@ -519,8 +521,12 @@ int restart_start_async(const restart_plan_t *plan) {
     free(heap_plan);
     return 0;
 }
+#endif /* _WIN32 */
 
 int restart_worker_busy(void) {
+#ifdef _WIN32
     return g_restart_worker_running;
-}
+#else
+    return 0; /* restarts run synchronously off-Windows */
 #endif
+}
