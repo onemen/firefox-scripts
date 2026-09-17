@@ -153,8 +153,11 @@ this in check:
 1. **PE metadata** — `installer/src/installer.rc` + `installer.manifest` (compiled by `windres` on
    the Windows build) give the exe a version resource (FileDescription/CompanyName/ProductName), an
    asInvoker manifest and Win10/11 compatibility GUIDs. A stripped PE with _no_ version info is the
-   #1 ML false-positive profile; this mirrors what `installer/src/helper/version.rc` already did for
-   `helper_win.exe`.
+   #1 ML false-positive profile — and an **unmanifested** exe is the other: Windows applies
+   installer-detection and UAC virtualization heuristics to it. `helper_win.exe` therefore carries
+   the same pair as the installer (`installer/src/helper/version.rc` + `helper.manifest`), instead
+   of relying on the mingw crt's auto-linked `default-manifest.o`: the crt version CI installs did
+   not supply one, so the shipped helper used to have a version resource and no manifest at all.
 2. **The AV scan gate** — `tools/scan-av.mjs` scans built binaries before they are published
    (Windows: Windows Defender via `MpCmdRun.exe`; Linux/macOS: ClamAV `clamscan`). The publish flow
    (`tools/publish/upload.mjs`) scans the EXACT bytes about to be uploaded and refuses to publish
@@ -196,8 +199,9 @@ poll times out is reported as a skip — never as clean.
 ### False-positive handling
 
 - If a scanner flags a freshly built binary, do **not** publish it — investigate first. Local builds
-  and the CI artifact differ (toolchain version), so a clean local scan does not guarantee the CI
-  build is clean; the upload gate is what enforces that.
+  and the CI artifact differ (toolchain package set — measured below), so a clean local scan does
+  not guarantee the CI build is clean; the upload gate is what enforces that. To keep shipping the
+  parts that are clean, use the partial-publish holdback below instead of freezing the whole run.
 - Report confirmed false positives to Microsoft (Defender/other Microsoft engines):
   <https://www.microsoft.com/en-us/wdsi/filesubmission> — select “Your app or file was incorrectly
   detected as malware” and attach the flagged binary. Microsoft can clear the hash/family in
@@ -207,6 +211,86 @@ poll times out is reported as a skip — never as clean.
   sponsors free Authenticode signing for accepted open-source projects (Windows binaries only —
   exactly the flagged artifacts here). The measures above are the zero-cost alternative while the
   signing application is pending.
+- AV-shape changes are a lottery, not a dial: the 2026-09-07 PE subsystem bump (5.2 → 6.0, the
+  XP-era "packer profile" signal) was reverted the same day because it _flipped_ Microsoft's ML
+  verdict (#160 → #161). Do not churn binary bytes expecting a fix — the gate plus signing are the
+  levers; measure before/after with `pnpm scan:av` / `pnpm scan:vt`.
+
+### Why a clean local scan does not clear a CI build (measured 2026-09-17)
+
+`upload:local` and the CI publish build the same sources but **not the same bytes**. Only the gcc
+version is effectively pinned (`msys2/setup-msys2` with `update: false` still installs the current
+`mingw-w64-ucrt-x86_64-*` packages); binutils, the mingw-w64 crt and the headers package float.
+Measured on commit `e393191` — the CI build that VirusTotal flagged on 2026-09-15 (issue #157):
+
+| Build                       | gcc      | binutils      | `installer_win-dev.exe` | `helper_win-dev.exe` |
+| --------------------------- | -------- | ------------- | ----------------------- | -------------------- |
+| CI (`staged-win` artifact)  | 16.1.0-5 | 2.46-4        | 199,168 B               | 18,944 B             |
+| local (`pnpm upload:local`) | 16.1.0-5 | 2.47.20260726 | 203,264 B               | 19,456 B             |
+
+Reproducing the CI bytes locally needs CI's whole package set: the same gcc (already matched) plus
+binutils 2.46 **and** `mingw-w64-ucrt-x86_64-crt-14.0.0.r92`, and the headers package still differs.
+Two consequences worth keeping in mind:
+
+- **A local `upload:local` run cannot validate or clear the bytes CI will ship.** Its scan is
+  evidence about the local toolchain only; the publish gates (host AV on the runner + the VirusTotal
+  veto) are what cover the ship-bound bytes. To inspect them locally, download what a run staged:
+  `gh run download <run-id> -n staged-win`.
+- Engine verdicts are as version-dependent as the compiler: local Windows Defender reported the CI
+  bytes that VirusTotal's Microsoft engine flagged (`Trojan:Win32/Wacatac.B!ml`) as clean. Treat
+  AV/VT as a gate, not as a truth.
+
+Pinning the whole MSYS2 package set (a cached MSYS2 snapshot, or `pacman -U` of fixed package files)
+is what would make CI bytes reproducible locally — worth doing if WDSI/VT verdicts are to be tied to
+reproducible inputs.
+
+### Partial publishes — holding back a flagged role
+
+A flag usually hits one binary, not the packages: the zips are plain JS/text and are what installed
+browsers actually pull. `--skip=<role>` publishes the rest of the run instead of freezing all of it
+(decision: [ADR 0030](./decisions/0030-partial-publishes.md)):
+
+```bash
+pnpm upload:local -- --mode=prod --skip=installer,helper  # offline rehearsal (zips + hashes.json)
+pnpm upload -- --mode=dev --skip=installer                # dev build: ship a clean helper,
+                                                          # withhold the installer
+# prod is CI-only: dispatch the publish with the same list
+gh workflow run pages.yml -f mode=prod -f skip=installer,helper
+```
+
+A skipped role is not built, hashed, scanned or uploaded, and its `hashes.json` entry stays frozen
+at its last published value — the manifest keeps describing what is on the branch, so no installed
+copy is ever pointed at bytes that were never published. The run logs a PARTIAL PUBLISH banner
+naming the held-back roles, and the AV/VT gates state that they had nothing in scope. Whenever the
+withheld role's sources really changed, its frozen entry is exactly one revision stale, so the next
+full run rebuilds and ships it (self-healing).
+
+CI dispatches take the same list in their `skip` input:
+
+```bash
+gh workflow run pages.yml -f mode=prod -f skip=installer,helper
+```
+
+### Verifying the elevated-copy helper by hand (the updater path)
+
+The helper is the one artifact that runs outside the browser sandbox, so verify it end-to-end after
+publishing helper bytes (or after a `--skip=installer` run that shipped a new helper):
+
+1. Install the packages from the published branch — or, for a local snapshot, install `utils.zip`
+   into `<ProfD>/chrome/utils/` by hand and copy `fx-folder.zip`'s files next to the browser binary.
+2. In the browser's install dir (admin-protected by default on Windows), modify a tracked config
+   file — e.g. append a comment to `config.js` — to force a fx-folder update, and confirm the hash
+   change with `about:config` → `extensions.firefox-scripts.*` / the updater tab's status card.
+3. Let the daily check run (or trigger it: Browser Console → `checkForUpdates(window)`). The updater
+   downloads `fx-folder.zip`, detects the unwritable install dir, fetches
+   `<HELPER_BASE_URL>/helper_win.exe` plus its `.sha256` sidecar, verifies the digest, then runs the
+   helper — exactly one UAC prompt, then the elevated copy.
+4. Check the outcome: the status card flips to up to date, `config.js` carries the edit after a
+   browser restart, and the helper's exit code is `0` (`2` = the user cancelled the UAC prompt,
+   which the updater reports as a cancel, not a failure).
+
+A missing sidecar only warns (pre-#33 publishes), a **mismatched** one aborts the elevated copy — so
+a partial publish that ships the helper must ship its sidecar too (`upload.mjs` always writes both).
 
 ## Making changes
 
@@ -703,19 +787,20 @@ needs the full cross-OS binary set, buildable only in CI). The one local prod ex
 applies to `pnpm upload:local` too unless noted (its only differences: `--local` is implied, no
 token needed, nothing leaves the machine).
 
-| Flag                            | Modes         | What it does                                                                                                                                                                        |
-| ------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--mode=prod\|dev`              | both          | **Required.** `prod` → `latest` release + `gh-pages` (CI-only, ADR 0026); `dev` → the disposable `dev-build-<id>` branch                                                            |
-| `--tag`                         | dev           | Create the RC-style prerelease page for this dev build. **The only release-creating path** — without it a dev publish touches no release at all                                     |
-| `--note="<label>"`              | dev           | Label the build: the slug joins the branch id (`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`); with `--tag` it leads the page title + body                                      |
-| `--ref=<branch\|commit>`        | both          | Build that ref in a temporary detached worktree — your checkout is left untouched; the ref's own publish scripts run                                                                |
-| `--force`                       | prod          | Rebuild + re-upload even when hashes are unchanged (dev always rebuilds everything)                                                                                                 |
-| `--platform=win\|linux\|mac`    | binary builds | Platform set, repeatable; `linux` also builds the aarch64 twin. Defaults to the current OS — CI passes one per job; a local prod run cannot widen past its own OS (the guard below) |
-| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                                                             |
-| `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                         |
-| `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                 |
-| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                                                            |
-| `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                                                      |
+| Flag                            | Modes         | What it does                                                                                                                                                                                                                                        |
+| ------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--mode=prod\|dev`              | both          | **Required.** `prod` → `latest` release + `gh-pages` (CI-only, ADR 0026); `dev` → the disposable `dev-build-<id>` branch                                                                                                                            |
+| `--tag`                         | dev           | Create the RC-style prerelease page for this dev build. **The only release-creating path** — without it a dev publish touches no release at all                                                                                                     |
+| `--note="<label>"`              | dev           | Label the build: the slug joins the branch id (`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`); with `--tag` it leads the page title + body                                                                                                      |
+| `--ref=<branch\|commit>`        | both          | Build that ref in a temporary detached worktree — your checkout is left untouched; the ref's own publish scripts run                                                                                                                                |
+| `--force`                       | prod          | Rebuild + re-upload even when hashes are unchanged (dev always rebuilds everything)                                                                                                                                                                 |
+| `--skip=<roles>`                | both          | **Partial publish** (AV holdback): `packages`, `installer`, `helper` — comma-separated/repeatable. A held-back role is not built, scanned or uploaded, and its `hashes.json` entry stays frozen (ADR [0030](./decisions/0030-partial-publishes.md)) |
+| `--platform=win\|linux\|mac`    | binary builds | Platform set, repeatable; `linux` also builds the aarch64 twin. Defaults to the current OS — CI passes one per job; a local prod run cannot widen past its own OS (the guard below)                                                                 |
+| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                                                                                                                             |
+| `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                                                                                         |
+| `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                                                                                 |
+| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                                                                                                                            |
+| `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                                                                                                                      |
 
 A real (non-`--local`) `--mode=prod` run outside the Pages workflow is **aborted before building**
 (`prodCiGuard.mjs`, ADR 0026): a dev machine builds only its own OS's binaries, while the `latest`

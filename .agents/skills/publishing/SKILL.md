@@ -23,6 +23,13 @@ Prod publishes to the **live** `latest` release and gh-pages site. Dev lands on 
 branch; dev URLs are baked into the regenerated generated files **on purpose**. Delete the dev
 branch after testing (`pnpm dev-clean` automates it).
 
+A **partial publish** (`--skip=<roles>`, ADR
+[0030](../../../docs/decisions/0030-partial-publishes.md)) holds back `packages`, `installer` and/or
+`helper`: a held-back role is not built, scanned or uploaded and its `hashes.json` entry stays
+frozen — the AV holdback (issue #157) that keeps the zips, and with them script delivery, flowing
+while a flagged binary is withheld. CI takes the same list in the `skip` input
+(`gh workflow run pages.yml -f mode=prod -f skip=installer,helper`).
+
 ## Commands
 
 ```bash

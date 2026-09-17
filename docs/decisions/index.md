@@ -97,6 +97,9 @@ Open these before proposing a new primitive, surface, or storage home.
   per-connection read deadlines (idle + total; 408 on expiry) — availability half of [0010]
 - [0029](./0029-status-line-amendments.md) — Decision amendments are first-class status lines
   (`Amends:` / `Amended:`), validated by check-decisions.mjs; not prose, not silent supersede
+- [0030](./0030-partial-publishes.md) — Partial publishes: `--skip=<role>` holds a role back (not
+  built/scanned/uploaded; its manifest entry frozen) so a flagged binary cannot freeze script
+  delivery (amends [0024])
 
 ## Historical
 

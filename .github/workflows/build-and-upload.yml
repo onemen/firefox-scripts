@@ -55,6 +55,12 @@ on:
         description: 'Rebuild + re-upload even when hashes are unchanged (prod only)'
         type: boolean
         default: false
+      skip:
+        description:
+          'Partial publish (ADR 0030 AV holdback): artifact roles to hold back, comma-separated —
+          packages,installer,helper. Empty = full publish.'
+        type: string
+        default: ''
 
 # Read-only by default; every write capability is scoped to the one job that
 # uses it (a job-level permissions block REPLACES this one — e2e.yml
@@ -221,9 +227,13 @@ jobs:
           UPLOAD_MODE: ${{ inputs.mode }}
           UPLOAD_PLATFORM: ${{ matrix.platform }}
           UPLOAD_FORCE: ${{ inputs.force }}
+          UPLOAD_SKIP: ${{ inputs.skip }}
         run: |
           ARGS="--mode=$UPLOAD_MODE --build-only --platform=$UPLOAD_PLATFORM"
           if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
+          # Partial publish (ADR 0030): hold the named roles back so a flagged
+          # binary cannot freeze the zips this same run publishes.
+          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
           if [ "$UPLOAD_MODE" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
@@ -368,9 +378,13 @@ jobs:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
           UPLOAD_MODE: ${{ inputs.mode }}
           UPLOAD_FORCE: ${{ inputs.force }}
+          UPLOAD_SKIP: ${{ inputs.skip }}
         run: |
           ARGS="--mode=$UPLOAD_MODE --skip-build --platform=win --platform=linux --platform=mac"
           if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
+          # Partial publish (ADR 0030): pass 2 must skip the same roles pass 1
+          # did — a held-back role has no staged bytes to gate or publish.
+          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
           if [ "$UPLOAD_MODE" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi

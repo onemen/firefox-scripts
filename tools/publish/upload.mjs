@@ -30,6 +30,13 @@
 //                      copy of what was uploaded, instead of leaving dist/ empty.
 //   --force            rebuild + re-upload even when hashes are unchanged
 //                      (prod only — dev always behaves this way).
+//   --skip=packages|installer|helper   (repeatable / comma-separated) publish
+//                      a PARTIAL set: the named roles are neither built nor
+//                      scanned nor uploaded, and their hashes.json entries stay
+//                      frozen at the last published values.  The AV-holdback
+//                      path (issue #157): the zips keep flowing to gh-pages
+//                      while a flagged binary is withheld — see
+//                      docs/DEVELOPING.md → "Partial publishes".
 //   --ref=<branch|commit>  build a specific branch/commit in a temporary
 //                      detached worktree (your checkout is left untouched).
 //   --platform=win|linux|mac (repeatable)  binary platform set (default:
@@ -138,6 +145,7 @@ import {
   verifyStagedBinaries,
 } from './platforms.mjs';
 import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
+import {noBinaryScope, parseSkip, scopeFor, skipBanner} from './publishScope.mjs';
 import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
 import {readInstallerConf, runStagingGuard} from './stagingGuard.mjs';
 
@@ -185,6 +193,12 @@ const ALWAYS = PUBLISH_MODE === 'dev' || FORCE;
 const PLATFORMS = process.argv
   .filter(a => a.startsWith('--platform='))
   .map(a => a.slice('--platform='.length));
+// --skip=… (partial publish, issue #157): the roles held back from this run and
+// the in-scope decision derived from them.  Skipped roles are never built,
+// hashed, scanned or uploaded — their manifest entries stay frozen (see
+// publishScope.mjs for why that matters).
+const SKIP = parseSkip(process.argv);
+const SCOPE = scopeFor(SKIP);
 
 // Staging-target guard (#33): environment variables that redirect the publish
 // target abort a prod run before anything is built (warn in dev; --local
@@ -394,7 +408,20 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
  * Hash the binary source trees, rebuild changed binaries, return manifest
  * entries.
  */
-async function buildBinaries(platforms, storedHashes) {
+/**
+ * One Binaries-section status line for a binary role: a held-back role says so
+ * (and is never hashed — a skipped role's published manifest entry must stay
+ * untouched), otherwise the usual rebuild/up-to-date + short hash.
+ */
+function binaryStatusLine(role, inScope, changed, hash) {
+  const label = bold(role.padEnd(10));
+  if (!inScope) return `  ${label} ${dim(`held back (--skip=${role})`)}`;
+  return (
+    `  ${label} ${changed ? yellow('rebuild') : dim('up to date')}  ` + `${dim(shortHash(hash))}`
+  );
+}
+
+async function buildBinaries(platforms, storedHashes, scope) {
   const installerPatterns = loadSharedPatterns(INSTALLER_SRC, ['helper/**']);
   const helperPatterns = loadSharedPatterns(HELPER_SRC, []);
   const webPatterns = loadSharedPatterns(INSTALLER_WEB, []);
@@ -404,31 +431,33 @@ async function buildBinaries(platforms, storedHashes) {
   // hash what they are derived from: installer/src (minus helper/ and the two
   // generated headers), installer/web/* and config/installer.conf — so a UI or
   // config change still bumps the hash and triggers a rebuild.
-  const {hash: installerHash} = computeFileSetHash([
-    ...collectDirEntries(
-      INSTALLER_SRC,
-      installerPatterns,
-      'installer',
-      INSTALLER_SRC,
-      INSTALLER_HASH_EXCLUDE
-    ),
-    ...collectDirEntries(INSTALLER_WEB, webPatterns, 'web'),
-    {rel: 'config/installer.conf', absPath: path.join(REPO_ROOT, 'config', 'installer.conf')},
-  ]);
-  const {hash: helperHash} = computeDirectoryHash(HELPER_SRC, helperPatterns);
-  const installerDate = getLatestCommitDate(INSTALLER_SRC, installerPatterns);
-  const helperDate = getLatestCommitDate(HELPER_SRC, helperPatterns);
+  // A role held back by --skip is not hashed at all: its stored manifest entry
+  // must stay byte-identical to the published one (publishScope.mjs).
+  const {hash: installerHash} =
+    scope.installer ?
+      computeFileSetHash([
+        ...collectDirEntries(
+          INSTALLER_SRC,
+          installerPatterns,
+          'installer',
+          INSTALLER_SRC,
+          INSTALLER_HASH_EXCLUDE
+        ),
+        ...collectDirEntries(INSTALLER_WEB, webPatterns, 'web'),
+        {rel: 'config/installer.conf', absPath: path.join(REPO_ROOT, 'config', 'installer.conf')},
+      ])
+    : {hash: null};
+  const {hash: helperHash} =
+    scope.helper ? computeDirectoryHash(HELPER_SRC, helperPatterns) : {hash: null};
+  const installerDate =
+    scope.installer ? getLatestCommitDate(INSTALLER_SRC, installerPatterns) : '';
+  const helperDate = scope.helper ? getLatestCommitDate(HELPER_SRC, helperPatterns) : '';
 
-  const installerChanged = ALWAYS || storedHashes.installer?.hash !== installerHash;
-  const helperChanged = ALWAYS || storedHashes.helper?.hash !== helperHash;
-  info(
-    `  ${bold('installer'.padEnd(10))} ${installerChanged ? yellow('rebuild') : dim('up to date')}  ` +
-      `${dim(shortHash(installerHash))}`
-  );
-  info(
-    `  ${bold('helper'.padEnd(10))} ${helperChanged ? yellow('rebuild') : dim('up to date')}  ` +
-      `${dim(shortHash(helperHash))}`
-  );
+  const installerChanged =
+    scope.installer && (ALWAYS || storedHashes.installer?.hash !== installerHash);
+  const helperChanged = scope.helper && (ALWAYS || storedHashes.helper?.hash !== helperHash);
+  info(binaryStatusLine('installer', scope.installer, installerChanged, installerHash));
+  info(binaryStatusLine('helper', scope.helper, helperChanged, helperHash));
 
   const builtInstallers = [];
   const builtHelpers = [];
@@ -494,24 +523,30 @@ async function buildBinaries(platforms, storedHashes) {
   };
 
   for (const p of platforms) {
-    const instAsset = installerAssetName(p);
-    const reusedInst = reuseBinary(instAsset, installerChanged);
-    if (installerChanged || (LOCAL && !reusedInst)) {
-      runMake(PLATFORM[p].makeInstaller);
-      builtInstallers.push(p);
-    } else if (reusedInst) {
-      fs.mkdirSync(path.dirname(installerPath(p)), {recursive: true});
-      fs.copyFileSync(reusedInst, installerPath(p));
+    // A held-back role is never built, never reused from a previous snapshot
+    // and never staged — nothing of it reaches the gates or the publish step.
+    if (scope.installer) {
+      const instAsset = installerAssetName(p);
+      const reusedInst = reuseBinary(instAsset, installerChanged);
+      if (installerChanged || (LOCAL && !reusedInst)) {
+        runMake(PLATFORM[p].makeInstaller);
+        builtInstallers.push(p);
+      } else if (reusedInst) {
+        fs.mkdirSync(path.dirname(installerPath(p)), {recursive: true});
+        fs.copyFileSync(reusedInst, installerPath(p));
+      }
     }
 
-    const helperAsset = helperAssetName(p);
-    const reusedHelper = reuseBinary(helperAsset, helperChanged);
-    if (helperChanged || (LOCAL && !reusedHelper)) {
-      runMake(PLATFORM[p].makeHelper);
-      builtHelpers.push(p);
-    } else if (reusedHelper) {
-      fs.mkdirSync(path.dirname(helperPath(p)), {recursive: true});
-      fs.copyFileSync(reusedHelper, helperPath(p));
+    if (scope.helper) {
+      const helperAsset = helperAssetName(p);
+      const reusedHelper = reuseBinary(helperAsset, helperChanged);
+      if (helperChanged || (LOCAL && !reusedHelper)) {
+        runMake(PLATFORM[p].makeHelper);
+        builtHelpers.push(p);
+      } else if (reusedHelper) {
+        fs.mkdirSync(path.dirname(helperPath(p)), {recursive: true});
+        fs.copyFileSync(reusedHelper, helperPath(p));
+      }
     }
   }
 
@@ -797,8 +832,13 @@ async function publishToGitHub({
   }
 }
 
-/** Assemble a complete snapshot dir: zips + binaries + UI + manifest. */
-function writeSnapshot({merged, platforms, dir, label}) {
+/**
+ * Assemble a snapshot dir: zips + binaries + UI + manifest. A role held back by
+ * --skip is neither rebuilt nor reused: the snapshot documents what this run
+ * publishes, so filling a held-back binary in from an older snapshot would
+ * misrepresent the run.
+ */
+function writeSnapshot({merged, platforms, dir, label, scope}) {
   // Any artifact this run didn't rebuild (an unchanged zip or binary) is
   // reused from the newest previous snapshot so the folder is complete. Local
   // mode always rebuilds zips, so this mainly fills in --keep-copy runs.
@@ -811,11 +851,24 @@ function writeSnapshot({merged, platforms, dir, label}) {
       fs.copyFileSync(src, dst);
     }
   };
-  for (const {name} of PACKAGES) reuse(zipFileName(name), zipPath(name));
-  for (const p of platforms) {
-    reuse(installerAssetName(p), installerPath(p));
-    reuse(helperAssetName(p), helperPath(p));
+  if (scope.packages) {
+    for (const {name} of PACKAGES) reuse(zipFileName(name), zipPath(name));
   }
+  for (const p of platforms) {
+    if (scope.installer) reuse(installerAssetName(p), installerPath(p));
+    if (scope.helper) reuse(helperAssetName(p), helperPath(p));
+  }
+
+  // The snapshot dir name is commit-based, so a re-run of the same commit writes
+  // into the SAME folder: drop a held-back role's artifacts from it, or a stale
+  // binary from an earlier full run would misrepresent this partial one.
+  const stale = [];
+  if (!scope.packages) for (const {name} of PACKAGES) stale.push(zipFileName(name));
+  for (const p of platforms) {
+    if (!scope.installer) stale.push(installerAssetName(p));
+    if (!scope.helper) stale.push(helperAssetName(p), helperShaAssetName(p));
+  }
+  for (const asset of stale) fs.rmSync(path.join(dir, asset), {force: true});
 
   fs.mkdirSync(dir, {recursive: true});
   info(`\n  ${bold(label)} → ${path.relative(process.cwd(), dir)}/`);
@@ -980,6 +1033,11 @@ async function main() {
       )
     );
 
+    // A partial publish must be unmistakable in a CI log (the issue #157 AV
+    // holdback): the banner names the held-back roles and explains the frozen
+    // manifest entries.
+    if (SKIP.size > 0) warn(skipBanner(SKIP, {mode: PUBLISH_MODE, local: LOCAL}));
+
     // Load createZip.mjs: its top-level block regenerates the untracked
     // updater-config.sys.mjs from installer.conf (with this run's mode URLs),
     // so the utils hash/files list below reflect the current config.
@@ -991,19 +1049,25 @@ async function main() {
     const storedHashes = await getStoredHashes({localOnly: LOCAL});
 
     section('Packages');
-    const {updated: zipUpdated, built: builtZips} = await buildPackages(
-      createZip,
-      storedHashes,
-      zipPatterns,
-      hashPatterns
-    );
+    let zipUpdated = {};
+    let builtZips = [];
+    if (SCOPE.packages) {
+      ({updated: zipUpdated, built: builtZips} = await buildPackages(
+        createZip,
+        storedHashes,
+        zipPatterns,
+        hashPatterns
+      ));
+    } else {
+      warn('packages held back (--skip=packages) — their hashes.json entries stay frozen');
+    }
 
     section('Binaries');
     const {
       updated: binUpdated,
       builtInstallers,
       builtHelpers,
-    } = await buildBinaries(platforms, storedHashes);
+    } = await buildBinaries(platforms, storedHashes, SCOPE);
 
     // SignPath flow pass 1 (--build-only): stop here with the staged binaries
     // and the build manifest. The workflow code-signs each staged file, then
@@ -1023,6 +1087,12 @@ async function main() {
     // scanner only warns; a positive detection hard-fails the run.
     section('AV scan');
     const avFiles = [...builtInstallers.map(installerPath), ...builtHelpers.map(helperPath)];
+    if (avFiles.length === 0 && noBinaryScope(SCOPE)) {
+      warn(
+        'no binaries in scope (--skip) — the AV/VT gates had nothing to scan; ' +
+          'the held-back roles are not published by this run'
+      );
+    }
     if (avFiles.length > 0) {
       const {findings, scanned, notes} = await scanBinaries(avFiles);
       for (const n of notes) warn(n);
@@ -1097,7 +1167,7 @@ async function main() {
       manifestChanged;
 
     if (LOCAL) {
-      writeSnapshot({merged, platforms, dir: snapshotDir(false), label: 'Snapshot'});
+      writeSnapshot({merged, platforms, dir: snapshotDir(false), label: 'Snapshot', scope: SCOPE});
     } else {
       section('Publishing');
       const octokit = createOctokit(getGitHubToken());
@@ -1111,7 +1181,13 @@ async function main() {
         anythingUploaded,
       });
       if (KEEP_COPY) {
-        writeSnapshot({merged, platforms, dir: snapshotDir(true), label: 'Keep copy'});
+        writeSnapshot({
+          merged,
+          platforms,
+          dir: snapshotDir(true),
+          label: 'Keep copy',
+          scope: SCOPE,
+        });
       }
     }
 

@@ -217,7 +217,10 @@ dist_all: dist_win dist_linux dist_linux_aarch64 dist_mac
 # A tiny elevated-copy binary downloaded by the in-browser updater when the
 # browser install dir is admin-protected.  Kept separate from $(SRC_DIR)/*.c
 # so it is NOT compiled into the installer.
-helper_win: $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.rc | $(DIST_DIR)
+# The PE manifest is compiled into the binary through version.rc
+# (1 RT_MANIFEST), so a manifest edit must relink the helper — hence the
+# explicit prerequisite.
+helper_win: $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.rc $(SRC_DIR)/helper/helper.manifest | $(DIST_DIR)
 	windres $(SRC_DIR)/helper/version.rc -O coff -o $(SRC_DIR)/helper/version.res
 	$(CC) $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.res -o $(DIST_DIR)/helper_win$(ASSET_SUFFIX).exe $(CFLAGS) -static -static-libgcc -luser32 -lshell32 "-Wl,--gc-sections" "-Wl,--strip-all" "-Wl,--subsystem,windows"
 

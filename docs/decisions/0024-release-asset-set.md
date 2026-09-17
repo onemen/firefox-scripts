@@ -5,6 +5,8 @@
 - **Extends:** [0019](./0019-release-versioning.md) (release versioning — stable names, date tags,
   moving `latest`). The versioning decision is unchanged; this record enumerates what the asset set
   is.
+- **Amended:** [0030](./0030-partial-publishes.md) — the "carries exactly" set below describes a
+  FULL publish; a run may publish a subset when a role is deliberately held back (the AV holdback).
 
 ## Context
 

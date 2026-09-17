@@ -31,3 +31,12 @@ BEGIN
         VALUE "Translation", 0x409, 1200
     END
 END
+
+// Application manifest (helper.manifest), mirroring installer.rc: asInvoker —
+// the helper self-elevates via ShellExecuteExW("runas") — plus the Win10/11
+// compatibility GUIDs and DPI awareness.  Declared explicitly instead of
+// relying on the mingw crt's auto-linked default-manifest.o, which the older
+// crt package CI installs did not provide: the shipped helper then had a
+// version resource and NO manifest, the unmanifested-exe profile Windows
+// applies installer-detection/virtualization heuristics to.
+1 RT_MANIFEST "helper.manifest"
