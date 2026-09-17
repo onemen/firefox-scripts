@@ -68,9 +68,7 @@ export function installerAssetName(p, suffix = '') {
 /** Pages-branch asset name of the elevated-copy helper for platform p. */
 export function helperAssetName(p, suffix = '') {
   return withExt(`helper_${assetPlatform(p)}`, p, suffix);
-}
-
-/**
+} /**
  * Name of the checksum sidecar published next to each helper
  * (`helper_<platform>.sha256`, hex SHA-256 of the binary). The updater tab
  * verifies the freshly downloaded helper against it before executing — the
@@ -82,4 +80,45 @@ export function helperShaAssetName(p, suffix = '') {
   // — the updater fetches `<helperFilename()>.sha256`, so the sidecar must be
   // the full binary name + .sha256, never a re-derivation from the base.
   return `${helperAssetName(p, suffix)}.sha256`;
+}
+
+/**
+ * Artifact integrity check for freshly built/reused binaries (issue #233):
+ * Defender real-time protection on a local Windows host intermittently holds a
+ * write lock on the output while ld is finishing, which leaves a truncated or
+ * empty artifact behind a _failed_ link — but the failure mode that matters
+ * here is subtler: a build step that "succeeded" earlier in a session that hit
+ * the race can leave a partial file that a later pass then hashes and ships.
+ * Every PE must start with the bytes 'MZ'; ELF with 0x7f 'E' 'L' 'F'; Mach-O
+ * with the 32/64-bit magic (feedface/feedfacf) or the fat variants
+ * (cafebabe/cafebabf). Anything else is a truncated artifact — throw.
+ *
+ * `access` indirection keeps this pure: tests pass a fake name→Buffer map.
+ */
+const MAGIC = {
+  win: [0x4d, 0x5a], // "MZ"
+  linux: [0x7f, 0x45, 0x4c, 0x46], // ELF
+  aarch64: [0x7f, 0x45, 0x4c, 0x46], // ELF (arm64)
+  mac: [0xcf, 0xfa, 0xed, 0xfe], // MH_MAGIC_64 (arm64 default); caller also accepts the other Mach-O magics
+};
+const MACHO_EXTRA = [
+  [0xce, 0xfa, 0xed, 0xfe], // MH_MAGIC (32-bit)
+  [0xfe, 0xed, 0xfa, 0xce], // FAT_MAGIC (big-endian)
+  [0xfe, 0xed, 0xfa, 0xcf], // FAT_MAGIC_64 / big-endian MH_MAGIC_64
+];
+
+export function verifyStagedBinaries(files, access) {
+  const bad = [];
+  for (const [name, p] of Object.entries(files)) {
+    const buf = access(name);
+    const magic = MAGIC[p];
+    if (!magic) continue; // unknown platform — naming tests cover the registry
+    const ok =
+      buf &&
+      buf.length >= magic.length &&
+      (magic.every((b, i) => buf[i] === b) ||
+        (p === 'mac' && MACHO_EXTRA.some(m => m.every((b, i) => buf[i] === b))));
+    if (!ok) bad.push(name);
+  }
+  return bad;
 }
