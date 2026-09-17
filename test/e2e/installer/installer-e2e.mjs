@@ -33,6 +33,7 @@ import {
   check,
   createCounter,
   launchFirefox,
+  pollUntil,
   seedStartupHygienePrefs,
   waitForCondition,
   waitForProcessExit,
@@ -666,17 +667,6 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** Poll fn (sync or async) until it returns truthy or the timeout passes. */
-async function pollUntil(fn, timeoutMs, intervalMs = 500) {
-  const end = Date.now() + timeoutMs;
-  for (;;) {
-    const v = await fn();
-    if (v) return v;
-    if (Date.now() >= end) return null;
-    await sleep(intervalMs);
-  }
-}
-
 function readJsonIfExists(p) {
   try {
     return JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -918,15 +908,25 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     console.log(`  launching target B (${launchB})`);
     launchDetachedFirefox(launchB, profB, opts.headless);
 
-    const setA = await pollUntil(() => {
-      const s = firefoxPidsForProfile(workDir, profA);
-      return s && s.length > 0 ? s : null;
-    }, 30_000);
+    const setA = await pollUntil(
+      () => {
+        const s = firefoxPidsForProfile(workDir, profA);
+        return s && s.length > 0 ? s : null;
+      },
+      30_000,
+      500,
+      'bystander A main-process PIDs'
+    );
     check(counter, Boolean(setA), 'RS-02 bystander A is running');
-    const setB = await pollUntil(() => {
-      const s = firefoxPidsForProfile(workDir, profB);
-      return s && s.length > 0 ? s : null;
-    }, 30_000);
+    const setB = await pollUntil(
+      () => {
+        const s = firefoxPidsForProfile(workDir, profB);
+        return s && s.length > 0 ? s : null;
+      },
+      30_000,
+      500,
+      'target B main-process PIDs'
+    );
     check(counter, Boolean(setB), 'RS-03 target B is running');
     if (!setA || !setB) throw new Error('copied Firefox instances did not start');
 
@@ -938,7 +938,12 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     installer.stdout.on('data', d => console.log(`  [installer] ${d}`.trimEnd()));
     installer.stderr.on('data', d => console.log(`  [installer-err] ${d}`.trimEnd()));
 
-    const manifest = await pollUntil(() => readJsonIfExists(envFile), 20_000, 200);
+    const manifest = await pollUntil(
+      () => readJsonIfExists(envFile),
+      20_000,
+      200,
+      'installer env manifest'
+    );
     check(
       counter,
       Boolean(manifest?.token && manifest?.port),
@@ -1004,13 +1009,17 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
           const j = JSON.parse(await res.text());
           if (j.step === 'done') return j;
           if (j.step === 'error') return {error: j.message};
-        } catch {
-          /* transient */
+        } catch (err) {
+          // Surface (throttled) instead of swallowing: a server that stopped
+          // answering /api/status must be visible while it happens, not as an
+          // opaque RS-10 timeout 45s later (#233-adjacent RS-10 flake).
+          console.warn(`  ⚠ /api/status poll failed: ${err instanceof Error ? err.message : err}`);
         }
         return null;
       },
       45_000,
-      400
+      400,
+      'config install completion'
     );
     check(
       counter,
@@ -1137,7 +1146,8 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
         return pids.length === 0 ? pids : null;
       },
       30_000,
-      500
+      500,
+      'target B process exit after close-browser'
     );
     if (!closedB) {
       // Diagnostics: show the raw pgrep matches so a surviving process's
