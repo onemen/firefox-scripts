@@ -3,15 +3,6 @@
 [![CI](https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml/badge.svg)](https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml)
 [![E2E](https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml/badge.svg)](https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml)
 
-> **Windows note:** the installer is currently **unsigned** — SmartScreen may show _"Windows
-> protected your PC"_ on first run; click **More info → Run anyway**, and approve the single **UAC
-> prompt** if it appears (one checksum-verified elevation, for the copy step only). If your
-> antivirus quarantines the file, please report the false positive at
-> [Microsoft WDSI](https://www.microsoft.com/en-us/wdsi/filesubmission) — see
-> [#157](https://github.com/onemen/firefox-scripts/issues/157) for details. Found any other problem?
-> [Open an issue](https://github.com/onemen/firefox-scripts/issues) and include your browser version
-> and OS.
-
 Install and keep Firefox-family browser scripts up to date.
 
 **firefox-scripts** installs and keeps up to date the helper scripts that let Firefox-family
@@ -39,9 +30,12 @@ inspection).
    - `installer_linux` — Linux (x86_64) · `installer_linux_aarch64` — Linux (ARM64)
    - `installer_mac` — macOS (universal: Intel + Apple Silicon)
 
-2. **Run** the downloaded installer. It connects to a running Firefox-family browser (Firefox,
-   Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets
-   you pick which browser to set up.
+2. **Run** the downloaded installer. The installer is currently **unsigned**, so on Windows
+   SmartScreen may show _"Windows protected your PC"_ on first run — click **More info → Run
+   anyway** to continue, and approve the single **UAC prompt** if it appears (one checksum-verified
+   elevation, for the copy step only). It then connects to a running Firefox-family browser
+   (Firefox, Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab,
+   and lets you pick which browser to set up.
 3. **Choose the components** to install:
    - **Configuration files** (`config.js`, `config-prefs.js`) — copied to the browser's installation
      directory
