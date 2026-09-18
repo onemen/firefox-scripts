@@ -115,7 +115,7 @@ output immediately (MZ/e_lfanew/PE-signature check). If it fires:
 
 1. Just re-run the link — the race is transient and a retry usually succeeds.
 2. If it recurs, exclude the build output dir from real-time scanning (Windows Security → Virus &
-   threat protection → Exclusions → `C:\code\TabMixPlus-Hub\firefox-scripts\dist`), or pause
+   threat protection → Exclusions → `<repo>\dist`, your repository's `dist` directory), or pause
    real-time protection for the build.
 3. CI is unaffected: GitHub Actions Windows runners have Defender's real-time scan disabled, and the
    publish gate re-checks every staged binary's magic bytes before hashing (#234).
