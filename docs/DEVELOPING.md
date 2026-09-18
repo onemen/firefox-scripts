@@ -270,11 +270,13 @@ assets with Node's bundled zlib (`zlib.gzipSync(..., {level: 9})`), so a runtime
 different deflate bytes would change `resources.h` — and the installer's bytes and hashes — while
 every tracked source stays identical. CI pins the Node major (`node-version: 24`; the flagged run
 resolved **24.20.0**), and `--provenance` logs the exact `node`/`zlib` pair on every build. Measured
-2026-09-17: the two runtimes I could compare (24.20.0 and 26.8.2, different zlib builds) emit
-identical gzip — so this is a latent input, not an active mismatch — and
-`test/unit/installer/embed.test.mjs` pins the compression behaviour, so a future runtime that
-diverges fails `pnpm test` with the reason instead of silently changing published hashes. The
-`deterministic` job cannot see this one: its two builds share one Node.
+2026-09-17: two runtimes with different zlib builds (26.8.2, and CI's 24.20.0 /
+1.3.2.1-motley-42c2f19) emit **different** deflate bytes for the same input — the output of this
+input cannot be pinned across runtimes, so treat it as version-sensitive: reproduce published bytes
+with the node/zlib pair `--provenance` recorded. What the unit test pins instead are the
+runtime-independent invariants (in-runtime determinism, round-trip, gzip magic) plus a plausible
+size band, so a wild format change still fails `pnpm test`. The `deterministic` job cannot see this
+one: its two builds share one Node.
 
 One config-level gotcha when reproducing a **dev** build: the generated `_config.h` bakes
 `dev-build-<branch>-<sha>`, and a detached checkout (`git worktree add`, a `git checkout <sha>`)
