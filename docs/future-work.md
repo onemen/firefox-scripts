@@ -199,6 +199,14 @@ as of 2026-09-15. The proposed tracking home is listed per item.
 - ~~**E2E profile/process hygiene**~~ — shipped in #155 (`test/e2e/shared/processHygiene.mjs`:
   `killStrayProcesses()`, `removeProfileCompatibilityIni()`, `closeBrowser()`; unit tests in
   `test/unit/e2e/processHygiene.test.mjs`) — deterministic repeat runs on all three OSes.
+- ~~**chrome.manifest\* startup sweep — cross-channel validation**~~ — shipped in #245 and validated
+  manually on 2026-09-18 against the channels CI does not run: the
+  `test/e2e/core/manifest-lifecycle-e2e.mjs` suite passes **15/15** on Firefox **Nightly 158.0a1**
+  (local copy of the `Program Files` install for a writable GreD), **ESR 140.16.0esr** and **ESR
+  128.14.0esr** (the ESR floor this project still supports), same snapshot, same harness. CI
+  deliberately runs no ESR legs — the hard gate is stable + Dev Edition + Nightly (first-party
+  channels, #35), and ESR coverage rides on the shared chrome lifecycle rather than per-channel
+  legs. Re-run this suite on an ESR build after any loader lifecycle change.
 - ~~**`FIREFOX_BINARY` pinning**~~ — resolved by decision rather than by a pin: E2E keeps tracking
   the newest vendor release at run time, with `BROWSER_PIN_VERSION` as the manual escape hatch (ADR
   [0023](./decisions/0023-e2e-browser-version-pinning.md), #154).
