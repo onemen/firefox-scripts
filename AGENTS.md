@@ -143,6 +143,8 @@ pnpm test:hash
 ```bash
 pnpm upload:local -- --mode=prod         # full snapshot to dist/prod-<branch>-<hash>/ (no token)
 pnpm release                             # prod publish: dispatches the CI cross-OS matrix (gh)
+pnpm release:packages                    # partial: zips + updater-ui only (--skip=installer,helper)
+pnpm release:installer                   # partial: installer + helper only (--skip=packages)
 ```
 
 `--mode=prod|dev` is required; prod publishes the `latest` release + gh-pages from `main` only, dev

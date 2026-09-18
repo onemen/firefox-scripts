@@ -311,8 +311,9 @@ A skipped role is not built, hashed, scanned or uploaded, and its `hashes.json` 
 at its last published value — the manifest keeps describing what is on the branch, so no installed
 copy is ever pointed at bytes that were never published. The run logs a PARTIAL PUBLISH banner
 naming the held-back roles, and the AV/VT gates state that they had nothing in scope. Whenever the
-withheld role's sources really changed, its frozen entry is exactly one revision stale, so the next
-full run rebuilds and ships it (self-healing).
+withheld role's sources really changed, its frozen entry stays stale until the next full publish of
+that role — one revision when the very next run is full, longer under repeated holdbacks — which is
+what makes that run rebuild and ship it (self-healing).
 
 CI dispatches take the same list in their `skip` input:
 
@@ -835,6 +836,19 @@ needs the full cross-OS binary set, buildable only in CI). The one local prod ex
 `upload:local`, the offline snapshot: same command, nothing leaves the machine. Everything here
 applies to `pnpm upload:local` too unless noted (its only differences: `--local` is implied, no
 token needed, nothing leaves the machine).
+
+For the common cases you do not need this table — the role-oriented front doors dispatch CI with the
+right pre-set (`pnpm release` accepts `--mode/--skip/--ref/--force` and passes any other
+`-f key=value` to gh verbatim):
+
+```bash
+pnpm release              # full prod publish (all roles)
+pnpm release:packages     # the script zips + updater-ui only — a held-back installer/helper
+                          # keeps serving its last published bytes (the AV holdback)
+pnpm release:installer    # installer + helper only — a held-back packages role is rarely
+                          # what you want in prod (see the dev-strand warning in ADR 0030)
+pnpm release -- --mode=dev --skip=installer --ref=<branch>   # any combination
+```
 
 | Flag                            | Modes         | What it does                                                                                                                                                                                                                                        |
 | ------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

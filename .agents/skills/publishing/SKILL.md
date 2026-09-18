@@ -40,6 +40,13 @@ pnpm upload:local -- --mode=prod    # snapshot to dist/prod-<branch>-<hash>/
 # Real publish (needs GITHUB_TOKEN_VAR in .env; GITHUB_TOKEN_VAR is the fixed name — never rename)
 pnpm upload -- --mode=dev           # dev-build-<id> branch + pre-release
 pnpm upload -- --mode=prod          # latest release + gh-pages (main only)
+
+# CI dispatch front doors (thin alias for gh workflow run pages.yml; the same
+# gates apply — prod stays main-only):
+pnpm release                        # full prod publish
+pnpm release:packages               # zips + updater-ui only (--skip=installer,helper)
+pnpm release:installer              # installer + helper only (--skip=packages)
+pnpm release -- --mode=dev --skip=installer --ref=<branch>   # any combination
 ```
 
 Prerequisites: Node ≥ 24 + pnpm; token with `contents:write` in the untracked root `.env` (copied
