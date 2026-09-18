@@ -93,15 +93,17 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           VALIDATED_DIR: .watchdog-validated
 
-      # save-always: the script rewrites baseline.json every run even when the
-      # restore step hit; the fresh key persists a version bump for the next
-      # run (immutable old entries just expire after 7 days).
+      # Explicit save (not save-always): the script rewrites baseline.json
+      # every run even when the restore step hit; the fresh key persists a
+      # version bump for the next run (immutable old entries just expire after
+      # 7 days). if: always() keeps that behavior; the save-always input is
+      # deprecated upstream and slated for removal.
       - name: Save baseline
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .watchdog
           key: url-watchdog-baseline-${{ github.run_id }}
-          save-always: true
+        if: always()
 
     # Job-level scoping (the E2E workflow's precedent): dispatching the browser
     # E2E when a new release is recorded needs actions: write; the issue

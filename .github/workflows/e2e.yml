@@ -998,11 +998,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node tools/ci/record-validated-versions.mjs
       - name: Save validated-versions record
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # Explicit cache/save with if: always() — the record must persist even
+        # when a later leg fails (the save-always input is deprecated upstream
+        # and slated for removal).
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .watchdog-validated
           key: browser-validated-${{ github.run_id }}
-          save-always: true
+        if: always()
 
   # ── Manual-escape cleanup (ADR 0021) ─────────────────────────────────────
   # A single-browser dispatch may consume an installer from the temporary
