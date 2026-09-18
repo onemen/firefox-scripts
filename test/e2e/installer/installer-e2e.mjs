@@ -48,6 +48,7 @@ import {
   killStrayProcesses,
   removeProfileCompatibilityIni,
 } from '../shared/processHygiene.mjs';
+import {withLegWatchdog} from '../shared/legWatchdog.mjs';
 
 const PORT = 8777;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -1434,6 +1435,14 @@ async function run() {
   const parsedWatchdogMin = Number.parseInt(process.env.E2E_WATCHDOG_MIN ?? '', 10);
   const WATCHDOG_MIN = Number.isFinite(parsedWatchdogMin) ? Math.max(1, parsedWatchdogMin) : 10;
   const WATCHDOG_MS = WATCHDOG_MIN * 60_000;
+  // Per-leg budgets (legWatchdog.mjs): name the wedged layer in the log — the
+  // global timer above stays the backstop that sweeps orphans on a hard
+  // wedge, but it cannot say which leg hung. LEG_WATCHDOG_MIN overrides the
+  // per-leg default (6 min) for slow machines, same shape as E2E_WATCHDOG_MIN.
+  const parsedLegMin = Number.parseInt(process.env.LEG_WATCHDOG_MIN ?? '', 10);
+  const LEG_MIN = Number.isFinite(parsedLegMin) ? Math.max(1, parsedLegMin) : undefined;
+  const legOpts = {timeoutMin: LEG_MIN};
+  const leg = (name, fn) => withLegWatchdog(name, fn, legOpts);
   const watchdog = setTimeout(() => {
     console.error(
       `\n[watchdog] run exceeded ${WATCHDOG_MIN} min — killing stray installer children and failing`
@@ -1503,7 +1512,7 @@ async function run() {
   // layer starts its own installer in normal mode, or both fight over port
   // 8777 and waitForServer answers from the wrong process.
   try {
-    await runHttpLayer(counter, sessionToken);
+    await leg('http', () => runHttpLayer(counter, sessionToken));
   } finally {
     proc.kill();
     await waitForProcessExit(proc, 10_000);
@@ -1513,18 +1522,18 @@ async function run() {
   // non-default ports, so it must also wait for the smoke-test instance to
   // be gone first.
   if (opts.testSurface) {
-    await runTestSurfaceLayer(counter, bin);
+    await leg('test-surface', () => runTestSurfaceLayer(counter, bin));
   }
 
   // Restart-scope layer (#180, default on) — needs a real Firefox + the
   // snapshot's fx-folder zip; skips gracefully when neither is available.
   if (opts.restartScope) {
-    await runRestartScopeLayer(counter, opts, snapshotDir, bin);
+    await leg('restart-scope', () => runRestartScopeLayer(counter, opts, snapshotDir, bin));
   }
 
   // UI layer (optional) — spawns a fresh installer that now owns the port.
   if (opts.ui) {
-    await runUiLayer(counter, opts, snapshotDir);
+    await leg('ui', () => runUiLayer(counter, opts, snapshotDir));
   }
 
   if (!summary(counter)) process.exitCode = 1;
