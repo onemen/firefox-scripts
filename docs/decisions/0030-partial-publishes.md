@@ -36,11 +36,16 @@ copies to admin-protected install dirs.
 
 Script delivery survives an AV holdback, and the withheld binary keeps serving its last published
 (accepted) bytes instead of regressing to nothing. A held-back role also skips its rebuild, so
-whenever its sources really did change the frozen entry stays stale by exactly one revision — which
-is what makes the next full publish rebuild and ship it (the withheld state is self-healing, and an
-idle "nothing to rebuild" verdict correctly means the published binary already matches the sources).
-Partial publishes are deliberate, operator-initiated acts — prod stays CI-only, the workflow input
-is explicit, and the log says PARTIAL — and the flag exists for the case where a flag is a false
-positive the maintainer has decided to route around; WDSI per-hash submissions and SignPath code
-signing remain the durable fixes. Revisit-if: signing lands and rebuild verdicts stop being a
-lottery — then this escape hatch can be retired.
+whenever its sources really did change the frozen entry stays stale until the next full publish of
+that role — exactly one revision when the very next run is full, longer under repeated holdbacks of
+the same role (the withheld state is self-healing, and an idle "nothing to rebuild" verdict
+correctly means the published binary already matches the sources). One shape needs care:
+`--skip=packages` on a dev publish that _creates_ its dev-build branch births the manifest without
+the zips it names (permanent "update available" + zip 404s on that branch). The tooling probes
+whether the branch exists and warns loudly before building — prefer holding packages back only in
+prod, or on an existing dev branch whose zips keep serving. Partial publishes are deliberate,
+operator-initiated acts — prod stays CI-only, the workflow input is explicit, and the log says
+PARTIAL — and the flag exists for the case where a flag is a false positive the maintainer has
+decided to route around; WDSI per-hash submissions and SignPath code signing remain the durable
+fixes. Revisit-if: signing lands and rebuild verdicts stop being a lottery — then this escape hatch
+can be retired.
