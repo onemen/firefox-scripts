@@ -96,4 +96,10 @@ explain why (CI gate tracked in issue #30).
 - no `.local` files were used as authoritative sources;
 - no unrelated files were modified;
 - failed/unavailable validation is reported;
-- when the PR is ready for review, run the ADR 0020 review step (see the `ai-review` skill).
+- when the PR is ready for review, run the ADR 0020 review step (see the `ai-review` skill);
+- **merged-PR issues with open checklist items:** when the merge auto-closes a tracking issue that
+  still has unchecked `- [ ]` items, the merge solved only part of the issue — re-open it (REST:
+  `gh api -X PATCH repos/<owner>/<repo>/issues/<n> -f state=open`; `gh issue edit --reopen` can
+  silently no-op), verify the state, and post a comment recording what the merge solved and what
+  stays open (precedent: #239 auto-closed #157, reopened 2026-09-18 with the outstanding
+  WDSI/SignPath checklist).
