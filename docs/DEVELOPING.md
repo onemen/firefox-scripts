@@ -105,6 +105,20 @@ uses a compatible `mkdir` either way, so the same targets work from cmd.exe, Pow
 **Note:** `-mwindows` links the executable as a GUI-subsystem app so double-clicking from File
 Explorer does not open a terminal. Verify with:
 `objdump -p dist\installer\installer_win.exe | grep Subsystem` should show `2` (GUI).
+`mingw32-make verify` checks both this and the PE structure (see the Defender note below).
+
+**Defender write-lock race on local links (issue #233).** Windows Defender's real-time scan can
+intermittently hold a write lock on the freshly linked `installer_win.exe` while `collect2`/`ld` is
+still writing it — the link dies with `collect2.exe: error: ld returned 5 exit status` and/or the
+exe is left truncated (a few hundred bytes, no PE structure). `make verify` catches the truncated
+output immediately (MZ/e_lfanew/PE-signature check). If it fires:
+
+1. Just re-run the link — the race is transient and a retry usually succeeds.
+2. If it recurs, exclude the build output dir from real-time scanning (Windows Security → Virus &
+   threat protection → Exclusions → `C:\code\TabMixPlus-Hub\firefox-scripts\dist`), or pause
+   real-time protection for the build.
+3. CI is unaffected: GitHub Actions Windows runners have Defender's real-time scan disabled, and the
+   publish gate re-checks every staged binary's magic bytes before hashing (#234).
 
 ### Linux (native or WSL)
 

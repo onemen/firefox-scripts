@@ -238,10 +238,25 @@ helper_mac: $(SRC_DIR)/helper/helper_mac.c $(SRC_DIR)/helper/common_posix.c $(SR
 # Build all helper platforms (requires cross-compilation toolchain)
 helper_all: helper_win helper_linux helper_linux_aarch64 helper_mac
 
-# Verify the built Windows executable has GUI subsystem (no terminal on double-click)
+# Verify the built Windows executable: (1) structural PE check — valid MZ header,
+# e_lfanew -> PE\\0\\0 signature, non-truncated (issue #233: Defender's real-time
+# scan can hold a write lock on the freshly linked exe and leave ld's output
+# truncated; the publish gate runs the same structural check via
+# tools/publish/platforms.mjs — this catches it at build time too) — and
+# (2) GUI subsystem (no terminal on double-click).
 # On Windows: dumpbin /headers installer_win.exe | findstr Subsystem should show 2 (GUI)
 # With objdump (MinGW/MSYS2): objdump -p installer_win.exe | grep Subsystem should show 2
 verify: $(TARGET)
+	@node -e "\
+	  const fs = require('fs');\
+	  const buf = fs.readFileSync('$(TARGET)');\
+	  const pe = buf.length > 0x40 && buf[0] === 0x4d && buf[1] === 0x5a;\
+	  if (!pe) { console.error('✗ TRUNCATED/INVALID PE: no MZ header — re-run the link (issue #233: AV write-lock race)'); process.exit(1); }\
+	  const off = buf.readUInt32LE(0x3c);\
+	  const sig = off > 0 && off + 4 <= buf.length && buf[off] === 0x50 && buf[off + 1] === 0x45 && buf[off + 2] === 0 && buf[off + 3] === 0;\
+	  if (!sig) { console.error('✗ TRUNCATED/INVALID PE: PE signature not at e_lfanew — re-run the link (issue #233)'); process.exit(1); }\
+	  console.log('✓ PE structure confirmed (MZ + e_lfanew -> PE signature, ' + buf.length + ' bytes)');\
+	"
 	@if command -v objdump >/dev/null 2>&1; then \
 		if objdump -p "$(TARGET)" 2>/dev/null | grep -q 'Subsystem.*2$$'; then \
 			echo "✓ GUI subsystem confirmed (subsystem=2, no terminal on double-click)"; \
