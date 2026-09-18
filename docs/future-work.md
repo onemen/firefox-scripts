@@ -198,7 +198,13 @@ as of 2026-09-15. The proposed tracking home is listed per item.
   sets.
 - ~~**E2E profile/process hygiene**~~ — shipped in #155 (`test/e2e/shared/processHygiene.mjs`:
   `killStrayProcesses()`, `removeProfileCompatibilityIni()`, `closeBrowser()`; unit tests in
-  `test/unit/e2e/processHygiene.test.mjs`) — deterministic repeat runs on all three OSes.
+  `test/unit/e2e/processHygiene.test.mjs`) — deterministic repeat runs on all three OSes. CI
+  observation (2026-09-18, PR #248 context): the pre-run sweep has never had to kill anything on a
+  hosted runner (fresh VMs) — by design it protects _local repeat runs_; the **final** sweep is what
+  fires in CI, killing the detached installer on the Ubuntu legs every run (Windows/macOS reap it
+  naturally). The only two observed multi-job cancellations in the last 100 e2e runs were both
+  `pull_request` runs superseded by a follow-up push — cancel-in-progress working as designed, never
+  on `main`.
 - ~~**`FIREFOX_BINARY` pinning**~~ — resolved by decision rather than by a pin: E2E keeps tracking
   the newest vendor release at run time, with `BROWSER_PIN_VERSION` as the manual escape hatch (ADR
   [0023](./decisions/0023-e2e-browser-version-pinning.md), #154).
