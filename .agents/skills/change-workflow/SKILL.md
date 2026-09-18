@@ -101,5 +101,5 @@ explain why (CI gate tracked in issue #30).
   still has unchecked `- [ ]` items, the merge solved only part of the issue — re-open it (REST:
   `gh api -X PATCH repos/<owner>/<repo>/issues/<n> -f state=open`; `gh issue edit --reopen` can
   silently no-op), verify the state, and post a comment recording what the merge solved and what
-  stays open (precedent: #239 auto-closed #157, reopened 2026-09-18 with the outstanding
-  WDSI/SignPath checklist).
+  stays open (precedent: #239 auto-closed #157 on 2026-09-18; the issue was reopened with its
+  checklist intact).
