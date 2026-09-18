@@ -293,41 +293,45 @@ is the gap the `--provenance` step closes. Do not treat VT/WDSI verdicts on thos
 re-derivable: re-scan the current pin's output instead. The pinned prefix itself is deterministic
 (two builds byte-identical) and hermetic (it built with nothing but the extracted packages).
 
-### Partial publishes — holding back a flagged role
+### Partial publishes — publishing only the roles you name
 
 A flag usually hits one binary, not the packages: the zips are plain JS/text and are what installed
-browsers actually pull. `--skip=<role>` publishes the rest of the run instead of freezing all of it
-(decision: [ADR 0030](./decisions/0030-partial-publishes.md)):
+browsers actually pull. `--include=<roles>` (or the `pnpm release:*` presets) publishes exactly the
+named roles instead of freezing all of them (decision:
+[ADR 0030](./decisions/0030-partial-publishes.md)):
 
 ```bash
-pnpm upload:local -- --mode=prod --skip=installer,helper  # offline rehearsal (zips + hashes.json)
-pnpm upload -- --mode=dev --skip=installer                # dev build: ship a clean helper,
-                                                          # withhold the installer
+pnpm upload:local -- --mode=prod --include=packages  # offline rehearsal (zips + hashes.json)
+pnpm upload -- --mode=dev --include=packages,helper  # dev build: ship a clean helper,
+                                                     # withhold the installer
 # prod is CI-only: dispatch the publish with the same list
-gh workflow run pages.yml -f mode=prod -f skip=installer,helper
+gh workflow run pages.yml -f mode=prod -f include=packages
 ```
 
-A skipped role is not built, hashed, scanned or uploaded, and its `hashes.json` entry stays frozen
-at its last published value — the manifest keeps describing what is on the branch, so no installed
-copy is ever pointed at bytes that were never published. The run logs a PARTIAL PUBLISH banner
-naming the held-back roles, and the AV/VT gates state that they had nothing in scope. Whenever the
-withheld role's sources really changed, its frozen entry stays stale until the next full publish of
-that role — one revision when the very next run is full, longer under repeated holdbacks — which is
-what makes that run rebuild and ship it (self-healing).
+The flag is required on every run: a missing, empty or unknown role fails loudly instead of guessing
+a scope, and `--include=all` is the explicit full publish. A role left out is not built, hashed,
+scanned or uploaded, and its `hashes.json` entry stays frozen at its last published value — the
+manifest keeps describing what is on the branch, so no installed copy is ever pointed at bytes that
+were never published. The run logs a PARTIAL PUBLISH banner naming the held-back roles, and the
+AV/VT gates state that they had nothing in scope. Whenever the withheld role's sources really
+changed, its frozen entry stays stale until the next full publish of that role — one revision when
+the very next run is full, longer under repeated holdbacks — which is what makes that run rebuild
+and ship it (self-healing).
 
-CI dispatches take the same list in their `skip` input:
+CI dispatches take the same list in their `include` input (`all` = full publish):
 
 ```bash
-gh workflow run pages.yml -f mode=prod -f skip=installer,helper
+gh workflow run pages.yml -f mode=prod -f include=packages
 ```
 
 ### Verifying the elevated-copy helper by hand (the updater path)
 
 The helper is the one artifact that runs outside the browser sandbox, so verify it end-to-end after
-publishing helper bytes (or after a `--skip=installer` run that shipped a new helper):
+publishing helper bytes (or after an `--include=packages,helper` run that shipped a new helper):
 
 1. Install the packages from the published branch — or, for a local snapshot, install `utils.zip`
    into `<ProfD>/chrome/utils/` by hand and copy `fx-folder.zip`'s files next to the browser binary.
+   (Verify after publishing helper bytes — e.g. an `--include=packages,helper` run — or a full one.)
 2. In the browser's install dir (admin-protected by default on Windows), modify a tracked config
    file — e.g. append a comment to `config.js` — to force a fx-folder update, and confirm the hash
    change with `about:config` → `extensions.firefox-scripts.*` / the updater tab's status card.
@@ -838,32 +842,32 @@ applies to `pnpm upload:local` too unless noted (its only differences: `--local`
 token needed, nothing leaves the machine).
 
 For the common cases you do not need this table — the role-oriented front doors dispatch CI with the
-right pre-set (`pnpm release` accepts `--mode/--skip/--ref/--force` and passes any other
+right pre-set (`pnpm release` accepts `--mode/--include/--ref/--force` and passes any other
 `-f key=value` to gh verbatim):
 
 ```bash
-pnpm release              # full prod publish (all roles)
-pnpm release:packages     # the script zips + updater-ui only — a held-back installer/helper
-                          # keeps serving its last published bytes (the AV holdback)
-pnpm release:installer    # installer + helper only — a held-back packages role is rarely
-                          # what you want in prod (see the dev-strand warning in ADR 0030)
-pnpm release -- --mode=dev --skip=installer --ref=<branch>   # any combination
+pnpm release:all         # full prod publish (all roles)
+pnpm release:packages    # the script zips + updater-ui only — a held-back installer/helper
+                         # keeps serving its last published bytes (the AV holdback)
+pnpm release:installer   # installer + helper only — a held-back packages role is rarely
+                         # what you want in prod (see the dev-strand warning in ADR 0030)
+pnpm release -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
 ```
 
-| Flag                            | Modes         | What it does                                                                                                                                                                                                                                        |
-| ------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--mode=prod\|dev`              | both          | **Required.** `prod` → `latest` release + `gh-pages` (CI-only, ADR 0026); `dev` → the disposable `dev-build-<id>` branch                                                                                                                            |
-| `--tag`                         | dev           | Create the RC-style prerelease page for this dev build. **The only release-creating path** — without it a dev publish touches no release at all                                                                                                     |
-| `--note="<label>"`              | dev           | Label the build: the slug joins the branch id (`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`); with `--tag` it leads the page title + body                                                                                                      |
-| `--ref=<branch\|commit>`        | both          | Build that ref in a temporary detached worktree — your checkout is left untouched; the ref's own publish scripts run                                                                                                                                |
-| `--force`                       | prod          | Rebuild + re-upload even when hashes are unchanged (dev always rebuilds everything)                                                                                                                                                                 |
-| `--skip=<roles>`                | both          | **Partial publish** (AV holdback): `packages`, `installer`, `helper` — comma-separated/repeatable. A held-back role is not built, scanned or uploaded, and its `hashes.json` entry stays frozen (ADR [0030](./decisions/0030-partial-publishes.md)) |
-| `--platform=win\|linux\|mac`    | binary builds | Platform set, repeatable; `linux` also builds the aarch64 twin. Defaults to the current OS — CI passes one per job; a local prod run cannot widen past its own OS (the guard below)                                                                 |
-| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                                                                                                                             |
-| `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                                                                                         |
-| `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                                                                                 |
-| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                                                                                                                            |
-| `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                                                                                                                      |
+| Flag                            | Modes         | What it does                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--mode=prod\|dev`              | both          | **Required.** `prod` → `latest` release + `gh-pages` (CI-only, ADR 0026); `dev` → the disposable `dev-build-<id>` branch                                                                                                                                                                         |
+| `--tag`                         | dev           | Create the RC-style prerelease page for this dev build. **The only release-creating path** — without it a dev publish touches no release at all                                                                                                                                                  |
+| `--note="<label>"`              | dev           | Label the build: the slug joins the branch id (`--note="RC 1"` → `dev-build-<branch>-RC-1-<sha>`); with `--tag` it leads the page title + body                                                                                                                                                   |
+| `--ref=<branch\|commit>`        | both          | Build that ref in a temporary detached worktree — your checkout is left untouched; the ref's own publish scripts run                                                                                                                                                                             |
+| `--force`                       | prod          | Rebuild + re-upload even when hashes are unchanged (dev always rebuilds everything)                                                                                                                                                                                                              |
+| `--include=<roles>`             | both          | **Required.** Roles this run publishes: `packages`, `installer`, `helper`, or `all` — comma-separated/repeatable. Partial publish (AV holdback): a role left out is not built, scanned or uploaded, and its `hashes.json` entry stays frozen (ADR [0030](./decisions/0030-partial-publishes.md)) |
+| `--platform=win\|linux\|mac`    | binary builds | Platform set, repeatable; `linux` also builds the aarch64 twin. Defaults to the current OS — CI passes one per job; a local prod run cannot widen past its own OS (the guard below)                                                                                                              |
+| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                                                                                                                                                                          |
+| `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                                                                                                                                      |
+| `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                                                                                                                              |
+| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                                                                                                                                                                         |
+| `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                                                                                                                                                                   |
 
 A real (non-`--local`) `--mode=prod` run outside the Pages workflow is **aborted before building**
 (`prodCiGuard.mjs`, ADR 0026): a dev machine builds only its own OS's binaries, while the `latest`
@@ -873,12 +877,14 @@ still have published a partial release. The workflow sets an internal marker env
 nothing else passes the guard.
 
 The local front door for the prod publish is the **`pnpm release`** alias — a thin wrapper that runs
-exactly `gh workflow run pages.yml -f mode=prod` (no local build, no watch mode; follow the run in
-the Actions tab):
+exactly `gh workflow run pages.yml -f mode=<mode> -f include=<roles>` (no local build, no watch
+mode; follow the run in the Actions tab). Its scope is opt-in like upload.mjs's: `--include=all` (or
+the `release:all` preset) is the full publish, and a bare `pnpm release` fails loudly rather than
+guessing:
 
 ```bash
-pnpm release              # dispatch the prod publish (full cross-OS matrix in CI)
-pnpm release -- --force   # rebuild even when hashes are unchanged
+pnpm release:all              # dispatch the prod publish (full cross-OS matrix in CI)
+pnpm release -- --include=all --force   # rebuild even when hashes are unchanged
 ```
 
 Prod dispatch never runs from a branch other than `main` (the workflow's own gate), and the run diff
@@ -909,7 +915,7 @@ What a run publishes (the hash comparison itself is [status-logic.md](./status-l
 ### Run
 
 ```bash
-pnpm release                             # prod publish: dispatch the CI cross-OS matrix (gh)
+pnpm release:all                         # prod publish: dispatch the CI cross-OS matrix (gh)
 pnpm upload -- --mode=dev                # always rebuild + upload, to the dev-build-<id> branch (branch-only, no release)
 pnpm upload -- --mode=dev --tag          # + create the RC-style prerelease page for this dev build
 pnpm upload -- --mode=dev --note="RC 1" --tag   # label: branch dev-build-<branch>-RC-1-<sha>, page title `… — RC 1`

@@ -23,12 +23,13 @@ Prod publishes to the **live** `latest` release and gh-pages site. Dev lands on 
 branch; dev URLs are baked into the regenerated generated files **on purpose**. Delete the dev
 branch after testing (`pnpm dev-clean` automates it).
 
-A **partial publish** (`--skip=<roles>`, ADR
-[0030](../../../docs/decisions/0030-partial-publishes.md)) holds back `packages`, `installer` and/or
-`helper`: a held-back role is not built, scanned or uploaded and its `hashes.json` entry stays
-frozen — the AV holdback (issue #157) that keeps the zips, and with them script delivery, flowing
-while a flagged binary is withheld. CI takes the same list in the `skip` input
-(`gh workflow run pages.yml -f mode=prod -f skip=installer,helper`).
+A **partial publish** (`--include=<roles>`, ADR
+[0030](../../../docs/decisions/0030-partial-publishes.md)) publishes exactly the named roles —
+`packages`, `installer`, `helper`, or `all`. The flag is required on every run (missing, empty or
+unknown roles fail loudly; `all` is the explicit full publish). A role left out is not built,
+scanned or uploaded and its `hashes.json` entry stays frozen — the AV holdback (issue #157) that
+keeps the zips, and with them script delivery, flowing while a flagged binary is withheld. CI takes
+the same list in the `include` input (`gh workflow run pages.yml -f mode=prod -f include=packages`).
 
 ## Commands
 
@@ -43,10 +44,10 @@ pnpm upload -- --mode=prod          # latest release + gh-pages (main only)
 
 # CI dispatch front doors (thin alias for gh workflow run pages.yml; the same
 # gates apply — prod stays main-only):
-pnpm release                        # full prod publish
-pnpm release:packages               # zips + updater-ui only (--skip=installer,helper)
-pnpm release:installer              # installer + helper only (--skip=packages)
-pnpm release -- --mode=dev --skip=installer --ref=<branch>   # any combination
+pnpm release:all                    # full prod publish (--include=all)
+pnpm release:packages               # zips + updater-ui only (--include=packages)
+pnpm release:installer              # installer + helper only (--include=installer)
+pnpm release -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
 ```
 
 Prerequisites: Node ≥ 24 + pnpm; token with `contents:write` in the untracked root `.env` (copied

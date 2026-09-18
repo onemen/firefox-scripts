@@ -30,10 +30,11 @@
 //                      copy of what was uploaded, instead of leaving dist/ empty.
 //   --force            rebuild + re-upload even when hashes are unchanged
 //                      (prod only — dev always behaves this way).
-//   --skip=packages|installer|helper   (repeatable / comma-separated) publish
-//                      a PARTIAL set: the named roles are neither built nor
+//   --include=<roles>  REQUIRED. Publish exactly the named roles —
+//                      packages|installer|helper, comma-separated, or `all`.
+//                      A PARTIAL set: roles left out are neither built nor
 //                      scanned nor uploaded, and their hashes.json entries stay
-//                      frozen at the last published values.  The AV-holdback
+//                      frozen at the last published values. The AV-holdback
 //                      path (issue #157): the zips keep flowing to gh-pages
 //                      while a flagged binary is withheld — see
 //                      docs/DEVELOPING.md → "Partial publishes".
@@ -147,10 +148,10 @@ import {
 import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
 import {
   devBranchStrandWarning,
+  includeBanner,
   noBinaryScope,
-  parseSkip,
+  parseInclude,
   scopeFor,
-  skipBanner,
 } from './publishScope.mjs';
 import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
 import {readInstallerConf, runStagingGuard} from './stagingGuard.mjs';
@@ -180,12 +181,15 @@ if (BUILD_ONLY && SKIP_BUILD) {
   throw new Error('--build-only and --skip-build are mutually exclusive.');
 }
 // Removed flags fail loudly: an old --dry-run / --packages-only /
-// --binaries-only invocation must never silently turn into a real upload.
+// --binaries-only / --skip invocation must never silently turn into a real upload.
 // The offline check is now `--local` (upload:local). --ci was removed with
 // the workflow-only prod guard: it only widened the platform set, so a local
 // `--ci` prod run would still have published a partial release.
-const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only', '--ci'].filter(f =>
-  process.argv.includes(f)
+const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only', '--ci', '--skip'].filter(
+  f =>
+    f === '--skip' ?
+      process.argv.some(a => a === '--skip' || a.startsWith('--skip='))
+    : process.argv.includes(f)
 );
 if (REMOVED_FLAGS.length > 0) {
   throw new Error(
@@ -199,12 +203,13 @@ const ALWAYS = PUBLISH_MODE === 'dev' || FORCE;
 const PLATFORMS = process.argv
   .filter(a => a.startsWith('--platform='))
   .map(a => a.slice('--platform='.length));
-// --skip=… (partial publish, issue #157): the roles held back from this run and
-// the in-scope decision derived from them.  Skipped roles are never built,
+// --include=… (partial publish, issue #157): the roles this run publishes and
+// the in-scope decision derived from them.  Roles left out are never built,
 // hashed, scanned or uploaded — their manifest entries stay frozen (see
-// publishScope.mjs for why that matters).
-const SKIP = parseSkip(process.argv);
-const SCOPE = scopeFor(SKIP);
+// publishScope.mjs for why that matters).  The flag is REQUIRED: a missing,
+// empty or invalid value fails loudly instead of guessing a scope.
+const INCLUDE = parseInclude(process.argv);
+const SCOPE = scopeFor(INCLUDE);
 
 // Staging-target guard (#33): environment variables that redirect the publish
 // target abort a prod run before anything is built (warn in dev; --local
@@ -318,7 +323,9 @@ function runMake(target) {
     if (out.trim()) detail(out.trimEnd());
   } catch (error) {
     if (error.stdout?.trim()) process.stdout.write(error.stdout);
-    throw new Error(`make ${target} failed: ${error.message}`, {cause: error});
+    throw new Error(`make ${target} failed: ${error.message}`, {
+      cause: error,
+    });
   }
 }
 
@@ -340,7 +347,10 @@ function gitRef() {
     /* keep fallback */
   }
   try {
-    sha = execSync('git rev-parse --short=7 HEAD', {encoding: 'utf-8', cwd: REPO_ROOT}).trim();
+    sha = execSync('git rev-parse --short=7 HEAD', {
+      encoding: 'utf-8',
+      cwd: REPO_ROOT,
+    }).trim();
   } catch {
     /* keep fallback */
   }
@@ -421,7 +431,7 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
  */
 function binaryStatusLine(role, inScope, changed, hash) {
   const label = bold(role.padEnd(10));
-  if (!inScope) return `  ${label} ${dim(`held back (--skip=${role})`)}`;
+  if (!inScope) return `  ${label} ${dim('held back (not in --include)')}`;
   return (
     `  ${label} ${changed ? yellow('rebuild') : dim('up to date')}  ` + `${dim(shortHash(hash))}`
   );
@@ -450,7 +460,10 @@ async function buildBinaries(platforms, storedHashes, scope) {
           INSTALLER_HASH_EXCLUDE
         ),
         ...collectDirEntries(INSTALLER_WEB, webPatterns, 'web'),
-        {rel: 'config/installer.conf', absPath: path.join(REPO_ROOT, 'config', 'installer.conf')},
+        {
+          rel: 'config/installer.conf',
+          absPath: path.join(REPO_ROOT, 'config', 'installer.conf'),
+        },
       ])
     : {hash: null};
   const {hash: helperHash} =
@@ -643,7 +656,10 @@ function writeBuildManifest(platforms, builtInstallers, builtHelpers) {
 // the page title + body. Both flags are rejected outside dev mode.
 
 async function getOrCreateDevRelease(octokit) {
-  const shortSha = execSync('git rev-parse --short HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'})
+  const shortSha = execSync('git rev-parse --short HEAD', {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8',
+  })
     .trim()
     .slice(0, 7);
   const {title, body} = renderDevRelease({
@@ -787,11 +803,18 @@ async function publishToGitHub({
   // it is, since the release assets did not change either. --no-tag skips.
   if (PUBLISH_MODE === 'prod' && release && !NO_TAG && anythingUploaded) {
     const tagRef = `tags/${RELEASE_NAME}`;
-    const headSha = execSync('git rev-parse HEAD', {cwd: REPO_ROOT, encoding: 'utf-8'}).trim();
+    const headSha = execSync('git rev-parse HEAD', {
+      cwd: REPO_ROOT,
+      encoding: 'utf-8',
+    }).trim();
     let oldSha = '(none)';
     let missing = false;
     try {
-      const {data} = await octokit.git.getRef({owner: REPO_OWNER, repo: REPO_NAME, ref: tagRef});
+      const {data} = await octokit.git.getRef({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        ref: tagRef,
+      });
       oldSha = data.object.sha;
     } catch (err) {
       if (err.status !== 404) throw err;
@@ -990,7 +1013,10 @@ function runRefBuild(ref) {
       stdio: 'inherit',
     });
     if (remove.status !== 0) {
-      spawnSync('git', ['worktree', 'prune'], {cwd: REPO_ROOT, stdio: 'inherit'});
+      spawnSync('git', ['worktree', 'prune'], {
+        cwd: REPO_ROOT,
+        stdio: 'inherit',
+      });
     }
   }
 }
@@ -1040,16 +1066,17 @@ async function main() {
     );
 
     // A partial publish must be unmistakable in a CI log (the issue #157 AV
-    // holdback): the banner names the held-back roles and explains the frozen
+    // holdback): the banner names the included roles and explains the frozen
     // manifest entries.
-    if (SKIP.size > 0) warn(skipBanner(SKIP, {mode: PUBLISH_MODE, local: LOCAL}));
-    // --skip=packages on a DEV publish has one stranding shape: a run that
+    const banner = includeBanner(INCLUDE, {mode: PUBLISH_MODE, local: LOCAL});
+    if (banner) warn(banner);
+    // A dev publish without `packages` has one stranding shape: a run that
     // CREATES its dev-build branch births a manifest naming zips the branch
     // has never carried (prod never strands — its zips stay on the existing
     // latest release + gh-pages). Probe the branch when a token is available;
     // a failed probe downgrades to the generic note. LOCAL snapshots always
     // take the generic note (no token needed, no live branch).
-    if (SKIP.has('packages')) {
+    if (!INCLUDE.has('packages')) {
       let exists = null;
       if (!LOCAL) {
         try {
@@ -1058,7 +1085,7 @@ async function main() {
           exists = null;
         }
       }
-      warn(devBranchStrandWarning(SKIP, {branchExists: exists}));
+      warn(devBranchStrandWarning(INCLUDE, {branchExists: exists}));
     }
 
     // Load createZip.mjs: its top-level block regenerates the untracked
@@ -1082,7 +1109,7 @@ async function main() {
         hashPatterns
       ));
     } else {
-      warn('packages held back (--skip=packages) — their hashes.json entries stay frozen');
+      warn('packages not in --include — their hashes.json entries stay frozen');
     }
 
     section('Binaries');
@@ -1112,7 +1139,7 @@ async function main() {
     const avFiles = [...builtInstallers.map(installerPath), ...builtHelpers.map(helperPath)];
     if (avFiles.length === 0 && noBinaryScope(SCOPE)) {
       warn(
-        'no binaries in scope (--skip) — the AV/VT gates had nothing to scan; ' +
+        'no binaries in --include — the AV/VT gates had nothing to scan; ' +
           'the held-back roles are not published by this run'
       );
     }
@@ -1190,7 +1217,13 @@ async function main() {
       manifestChanged;
 
     if (LOCAL) {
-      writeSnapshot({merged, platforms, dir: snapshotDir(false), label: 'Snapshot', scope: SCOPE});
+      writeSnapshot({
+        merged,
+        platforms,
+        dir: snapshotDir(false),
+        label: 'Snapshot',
+        scope: SCOPE,
+      });
     } else {
       section('Publishing');
       const octokit = createOctokit(getGitHubToken());

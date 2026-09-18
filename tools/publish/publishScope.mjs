@@ -1,19 +1,22 @@
-// publishScope.mjs — which artifact roles a publish run covers (`--skip=…`).
+// publishScope.mjs — which artifact roles a publish run covers (`--include=…`).
 //
 // Why this exists (issue #157): the Windows binaries are unsigned, stripped
 // MinGW PEs whose AV verdict is effectively per-hash — a rebuild can land in
 // Microsoft's ML detection pocket while the package zips (plain JS/text) never
-// do. Without a way to hold back a single role, one flagged binary freezes
+// do. Without a way to ship a single role, one flagged binary freezes
 // EVERY delivery, including the script updates the in-browser updater
 // consumes. A partial publish keeps the scripts flowing (`utils.zip`,
-// `fx-folder.zip`, `updater-ui.zip`, `hashes.json`) while the flagged role is
-// withheld.
+// `fx-folder.zip`, `updater-ui.zip`, `hashes.json`) while the flagged role
+// stays unpublished.
 //
-// A skipped role is NOT built, NOT hashed, NOT scanned and NOT uploaded, and
-// its `hashes.json` entry stays frozen at the last published value. That last
-// part is the trap this module exists to prevent: bumping a hash without
-// uploading the artifact would make the installer/updater chase bytes that are
-// not on the branch (a permanent "update available" that can never converge).
+// OPT-IN, not opt-out: a run publishes exactly the roles it names
+// (`--include=<role>[,<role>]` — required on every invocation). `all` is the
+// explicit full-publish spelling. Roles left out are NOT built, NOT hashed,
+// NOT scanned and NOT uploaded, and their `hashes.json` entries stay frozen at
+// the last published value. That last part is the trap this module exists to
+// prevent: bumping a hash without uploading the artifact would make the
+// installer/updater chase bytes that are not on the branch (a permanent
+// "update available" that can never converge).
 //
 // Roles:
 //   packages  → utils.zip / fx-folder.zip / updater-ui.zip + their hashes
@@ -23,47 +26,73 @@
 // Dependency-free on purpose (no paths.js/publishMode argv chain): the parser
 // and the scope decision are unit-tested directly (publishScope.test.mjs).
 
-/** Roles that may be held back from a run. */
-export const SKIP_ROLES = ['packages', 'installer', 'helper'];
+/** Roles a run may publish, plus the `all` shorthand for every one of them. */
+export const INCLUDE_ROLES = ['packages', 'installer', 'helper'];
+export const INCLUDE_ALL = 'all';
 
 /**
- * Parse every `--skip=<role>[,<role>]` occurrence in argv.
+ * Parse the required `--include=<role>[,<role>|all]` from argv.
+ *
+ * Every publish invocation must state its scope — there is no implicit default,
+ * so a missing or empty flag fails loudly instead of silently publishing
+ * something the operator did not choose.
  *
  * @param {string[]} [argv] argv to scan (defaults to the live process argv)
- * @returns {Set<string>} skipped roles (empty set = a full publish)
+ * @returns {Set<string>} roles to publish (subset of INCLUDE_ROLES;
+ *   `--include=all` yields all of them)
+ * @throws when the flag is missing, empty, or names an unknown role
  */
-export function parseSkip(argv = process.argv) {
+export function parseInclude(argv = process.argv) {
   const roles = new Set();
+  let seen = false;
   for (const arg of argv) {
-    if (!arg.startsWith('--skip=')) continue;
-    const value = arg.slice('--skip='.length).trim();
+    if (!arg.startsWith('--include=')) continue;
+    seen = true;
+    const value = arg.slice('--include='.length).trim();
     if (value === '') {
       throw new Error(
-        `--skip= needs at least one role (expected ${SKIP_ROLES.join('|')}, comma-separated)`
+        `--include= needs at least one role (expected ${INCLUDE_ROLES.join('|')}|all, comma-separated)`
       );
+    }
+    if (value === INCLUDE_ALL) {
+      for (const role of INCLUDE_ROLES) roles.add(role);
+      continue;
     }
     for (const raw of value.split(',')) {
       const role = raw.trim();
-      if (!SKIP_ROLES.includes(role)) {
-        throw new Error(`Unknown --skip role '${role}' (expected ${SKIP_ROLES.join('|')})`);
+      // `all` is accepted anywhere in the list and expands to every role.
+      if (role === INCLUDE_ALL) {
+        for (const r of INCLUDE_ROLES) roles.add(r);
+        continue;
+      }
+      if (!INCLUDE_ROLES.includes(role)) {
+        throw new Error(
+          `Unknown --include role '${role}' (expected ${INCLUDE_ROLES.join('|')}|all)`
+        );
       }
       roles.add(role);
     }
+  }
+  if (!seen) {
+    throw new Error(
+      `Missing --include=<roles> — state what this run publishes ` +
+        `(${INCLUDE_ROLES.join('|')}, comma-separated, or all)`
+    );
   }
   return roles;
 }
 
 /**
- * Role → in-scope flag. A role is in scope unless it was skipped.
+ * Role → in-scope flag: a role is in scope only when included.
  *
- * @param {Set<string>} [skip] skipped roles
+ * @param {Set<string>} include roles to publish
  * @returns {{packages: boolean; installer: boolean; helper: boolean}}
  */
-export function scopeFor(skip = new Set()) {
+export function scopeFor(include = new Set()) {
   return {
-    packages: !skip.has('packages'),
-    installer: !skip.has('installer'),
-    helper: !skip.has('helper'),
+    packages: include.has('packages'),
+    installer: include.has('installer'),
+    helper: include.has('helper'),
   };
 }
 
@@ -76,13 +105,13 @@ export function noBinaryScope(scope) {
  * The loud multi-line banner printed for any partial publish, so a held-back
  * run is never mistaken for a full one in a CI log.
  *
- * @param {Set<string>} skip skipped roles (may be empty)
+ * @param {Set<string>} include roles to publish (a full set prints nothing)
  * @param {{mode?: string; local?: boolean}} [opts]
  * @returns {string} banner text (empty string for a full publish)
  */
-export function skipBanner(skip, {mode, local = false} = {}) {
-  if (skip.size === 0) return '';
-  const held = [...skip];
+export function includeBanner(include, {mode, local = false} = {}) {
+  if (include.size === INCLUDE_ROLES.length) return '';
+  const heldBack = INCLUDE_ROLES.filter(role => !include.has(role));
   const tail =
     local ?
       ['(--local: the snapshot simply omits the held-back roles.)']
@@ -92,12 +121,12 @@ export function skipBanner(skip, {mode, local = false} = {}) {
       ];
   const lines = [
     '============================================================',
-    `  PARTIAL ${mode ? `${mode.toUpperCase()} ` : ''}PUBLISH — held back: ${held.join(', ')}`,
+    `  PARTIAL ${mode ? `${mode.toUpperCase()} ` : ''}PUBLISH — publishing: ${[...include].join(', ')}`,
     '============================================================',
-    'The role(s) above are not built, scanned or uploaded, and their',
-    'hashes.json entries stay frozen at the last published values —',
-    'installed copies keep pointing at the binaries already on the',
-    'branch. Everything else publishes as usual.',
+    `Held back (not built, scanned or uploaded): ${heldBack.join(', ')}.`,
+    'Their hashes.json entries stay frozen at the last published',
+    'values — installed copies keep pointing at the binaries already',
+    'on the branch. Everything included publishes as usual.',
     ...tail,
     '============================================================',
   ];
@@ -115,29 +144,30 @@ export function skipBanner(skip, {mode, local = false} = {}) {
  * prevent). Prod never warns: its zips stay on the existing `latest` release +
  * gh-pages regardless.
  *
- * @param {Set<string>} skip skipped roles
+ * @param {Set<string>} include roles to publish
  * @param {{branchExists?: boolean | null}} [opts] whether the target branch
  *   already exists; null (or an omitted probe) when the caller could not tell
  * @returns {string} warning text ('' when nothing applies)
  */
-export function devBranchStrandWarning(skip, {branchExists = null} = {}) {
-  if (!skip.has('packages')) return '';
+export function devBranchStrandWarning(include, {branchExists = null} = {}) {
+  if (include.has('packages')) return '';
+  const flag = '--include=installer,helper';
   if (branchExists === false) {
     return [
-      'WARNING: --skip=packages on a dev publish that CREATES its dev-build branch.',
+      `WARNING: ${flag} on a dev publish that CREATES its dev-build branch.`,
       'The branch is born with a hashes.json naming zips it has never carried —',
       'dev-channel browsers will report "update available" forever and the',
-      'installer will 404 on the zips. Re-run without --skip=packages.',
+      `installer will 404 on the zips. Re-run with --include=all (or at least ${flag} + packages).`,
     ].join('\n');
   }
   if (branchExists === true) {
     return (
-      'NOTE: --skip=packages on an EXISTING dev branch: its current zips keep serving under the ' +
+      `NOTE: ${flag} on an EXISTING dev branch: its current zips keep serving under the ` +
       'frozen manifest entries (the upload never deletes), so this run stays consistent.'
     );
   }
   return (
-    'NOTE: --skip=packages on a dev publish: fine on an existing branch (its zips keep serving), ' +
+    `NOTE: ${flag} on a dev publish: fine on an existing branch (its zips keep serving), ` +
     'but if this run CREATES the dev-build branch the branch is born with a manifest naming zips ' +
     'it has never carried — permanent "update available" + zip 404s.'
   );

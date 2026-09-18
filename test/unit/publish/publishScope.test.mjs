@@ -1,6 +1,6 @@
 // test/unit/publish/publishScope.test.mjs — unit tests for the partial-publish
-// scope (tools/publish/publishScope.mjs, issue #157 AV holdback: hold back one
-// artifact role instead of freezing every delivery).
+// scope (tools/publish/publishScope.mjs, issue #157 AV holdback: publish only
+// the named artifact roles instead of freezing every delivery).
 //
 // publishScope.mjs is dependency-free (no paths.js/publishMode import chain),
 // so nothing has to be pushed onto argv before importing it.
@@ -8,107 +8,151 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
-const {SKIP_ROLES, devBranchStrandWarning, noBinaryScope, parseSkip, scopeFor, skipBanner} =
-  await import('../../../tools/publish/publishScope.mjs');
+const {
+  INCLUDE_ROLES,
+  devBranchStrandWarning,
+  noBinaryScope,
+  parseInclude,
+  scopeFor,
+  includeBanner,
+} = await import('../../../tools/publish/publishScope.mjs');
 
-test('parseSkip: no --skip= argument means a full publish', () => {
-  assert.deepEqual([...parseSkip(['--mode=prod', '--local'])], []);
+test('parseInclude: the flag is required — no argv means a loud error, never a guess', () => {
+  assert.throws(() => parseInclude(['--mode=prod', '--local']), /Missing --include=<roles>/);
+  assert.throws(() => parseInclude([]), /Missing --include=<roles>/);
 });
 
-test('parseSkip: a single role', () => {
-  assert.deepEqual([...parseSkip(['--mode=prod', '--skip=installer'])], ['installer']);
+test('parseInclude: a single role', () => {
+  assert.deepEqual([...parseInclude(['--mode=prod', '--include=installer'])], ['installer']);
 });
 
-test('parseSkip: comma list, repeats and whitespace are folded into one set', () => {
-  const skip = parseSkip(['--skip=installer, helper', '--skip=helper']);
-  assert.deepEqual([...skip].sort(), ['helper', 'installer']);
-  assert.equal(skip.size, 2);
+test('parseInclude: comma list, repeats and whitespace are folded into one set', () => {
+  const include = parseInclude(['--include=installer, helper', '--include=helper']);
+  assert.deepEqual([...include].sort(), ['helper', 'installer']);
+  assert.equal(include.size, 2);
 });
 
-test('parseSkip: every documented role is accepted', () => {
-  for (const role of SKIP_ROLES) {
-    assert.deepEqual([...parseSkip([`--skip=${role}`])], [role]);
+test('parseInclude: every documented role is accepted', () => {
+  for (const role of INCLUDE_ROLES) {
+    assert.deepEqual([...parseInclude([`--include=${role}`])], [role]);
   }
 });
 
-test('parseSkip: an unknown role fails loud with the expected list', () => {
-  assert.throws(() => parseSkip(['--skip=binaries']), /Unknown --skip role 'binaries'/);
-  assert.throws(() => parseSkip(['--skip=binaries']), /packages\|installer\|helper/);
+test('parseInclude: --include=all expands to every role', () => {
+  assert.deepEqual([...parseInclude(['--include=all'])].sort(), [...INCLUDE_ROLES].sort());
+  // `all` mixed with explicit roles is the same full set.
+  assert.deepEqual(
+    [...parseInclude(['--include=all,installer'])].sort(),
+    [...INCLUDE_ROLES].sort()
+  );
 });
 
-test('parseSkip: an empty value is rejected, never silently a full publish', () => {
-  assert.throws(() => parseSkip(['--skip=']), /--skip= needs at least one role/);
-  assert.throws(() => parseSkip(['--skip=,']), /Unknown --skip role ''/);
+test('parseInclude: an unknown role fails loud with the expected list', () => {
+  assert.throws(() => parseInclude(['--include=binaries']), /Unknown --include role 'binaries'/);
+  assert.throws(() => parseInclude(['--include=binaries']), /packages\|installer\|helper\|all/);
 });
 
-test('scopeFor: nothing skipped → every role in scope', () => {
-  assert.deepEqual(scopeFor(parseSkip([])), {packages: true, installer: true, helper: true});
+test('parseInclude: an empty value is rejected, never silently a full publish', () => {
+  assert.throws(() => parseInclude(['--include=']), /--include= needs at least one role/);
+  assert.throws(() => parseInclude(['--include=,']), /Unknown --include role ''/);
 });
 
-test('scopeFor: each role flips only its own flag', () => {
-  assert.deepEqual(scopeFor(parseSkip(['--skip=installer'])), {
-    packages: true,
-    installer: false,
-    helper: true,
-  });
-  assert.deepEqual(scopeFor(parseSkip(['--skip=packages'])), {
+test('scopeFor: an empty set (the old implicit default) is not reachable via the parser', () => {
+  // scopeFor keeps a default for unit callers, but parseInclude can never
+  // produce it — the flag is required.
+  assert.deepEqual(scopeFor(), {
     packages: false,
-    installer: true,
-    helper: true,
-  });
-  assert.deepEqual(scopeFor(parseSkip(['--skip=installer,helper'])), {
-    packages: true,
     installer: false,
     helper: false,
   });
 });
 
-test('noBinaryScope: true only when both binary roles are held back', () => {
-  assert.equal(noBinaryScope(scopeFor(parseSkip(['--skip=installer,helper']))), true);
-  assert.equal(noBinaryScope(scopeFor(parseSkip(['--skip=installer']))), false);
-  assert.equal(noBinaryScope(scopeFor(parseSkip(['--skip=packages']))), false);
-  assert.equal(noBinaryScope(scopeFor(parseSkip([]))), false);
+test('scopeFor: each included role flips only its own flag', () => {
+  assert.deepEqual(scopeFor(parseInclude(['--include=installer'])), {
+    packages: false,
+    installer: true,
+    helper: false,
+  });
+  assert.deepEqual(scopeFor(parseInclude(['--include=packages'])), {
+    packages: true,
+    installer: false,
+    helper: false,
+  });
+  assert.deepEqual(scopeFor(parseInclude(['--include=installer,helper'])), {
+    packages: false,
+    installer: true,
+    helper: true,
+  });
+  assert.deepEqual(scopeFor(parseInclude(['--include=all'])), {
+    packages: true,
+    installer: true,
+    helper: true,
+  });
 });
 
-test('skipBanner: a full publish prints nothing', () => {
-  assert.equal(skipBanner(parseSkip([])), '');
+test('noBinaryScope: true only when both binary roles are left out', () => {
+  assert.equal(noBinaryScope(scopeFor(parseInclude(['--include=packages']))), true);
+  assert.equal(noBinaryScope(scopeFor(parseInclude(['--include=installer']))), false);
+  assert.equal(noBinaryScope(scopeFor(parseInclude(['--include=helper']))), false);
+  assert.equal(noBinaryScope(scopeFor(parseInclude(['--include=all']))), false);
 });
 
-test('skipBanner: names the held-back roles and the frozen manifest entries', () => {
-  const banner = skipBanner(parseSkip(['--skip=installer,helper']), {mode: 'prod'});
-  assert.match(banner, /PARTIAL PROD PUBLISH — held back: installer, helper/);
+test('includeBanner: a full publish prints nothing', () => {
+  assert.equal(includeBanner(parseInclude(['--include=all'])), '');
+});
+
+test('includeBanner: names the included roles, the held-back ones and the frozen entries', () => {
+  const banner = includeBanner(parseInclude(['--include=packages']), {
+    mode: 'prod',
+  });
+  assert.match(banner, /PARTIAL PROD PUBLISH — publishing: packages/);
+  assert.match(banner, /Held back \(not built, scanned or uploaded\): installer, helper/);
   assert.match(banner, /hashes\.json entries stay frozen/);
   assert.match(banner, /#157/);
 });
 
-test('skipBanner: --local explains the snapshot variant instead', () => {
-  const banner = skipBanner(parseSkip(['--skip=helper']), {mode: 'dev', local: true});
-  assert.match(banner, /PARTIAL DEV PUBLISH — held back: helper/);
+test('includeBanner: --local explains the snapshot variant instead', () => {
+  const banner = includeBanner(parseInclude(['--include=packages,installer']), {
+    mode: 'dev',
+    local: true,
+  });
+  assert.match(banner, /PARTIAL DEV PUBLISH — publishing: packages, installer/);
   assert.match(banner, /snapshot simply omits the held-back roles/);
   assert.doesNotMatch(banner, /#157/);
 });
 
-test('devBranchStrandWarning: silent when packages are in scope', () => {
-  assert.equal(devBranchStrandWarning(parseSkip(['--skip=installer']), {branchExists: false}), '');
-  assert.equal(devBranchStrandWarning(parseSkip([])), '');
+test('devBranchStrandWarning: silent when packages are included', () => {
+  assert.equal(
+    devBranchStrandWarning(parseInclude(['--include=packages,helper']), {
+      branchExists: false,
+    }),
+    ''
+  );
+  assert.equal(devBranchStrandWarning(parseInclude(['--include=all'])), '');
 });
 
-test('devBranchStrandWarning: a NEW dev branch with held-back packages is a hard warning', () => {
-  const text = devBranchStrandWarning(parseSkip(['--skip=packages']), {branchExists: false});
+test('devBranchStrandWarning: a NEW dev branch without packages is a hard warning', () => {
+  const text = devBranchStrandWarning(parseInclude(['--include=installer,helper']), {
+    branchExists: false,
+  });
   assert.match(text, /WARNING/);
   assert.match(text, /CREATES its dev-build branch/);
-  assert.match(text, /Re-run without --skip=packages/);
+  assert.match(text, /--include=all/);
 });
 
 test('devBranchStrandWarning: an existing dev branch stays consistent', () => {
-  const text = devBranchStrandWarning(parseSkip(['--skip=packages']), {branchExists: true});
+  const text = devBranchStrandWarning(parseInclude(['--include=installer']), {
+    branchExists: true,
+  });
   assert.match(text, /NOTE/);
   assert.match(text, /keep serving/);
   assert.doesNotMatch(text, /WARNING/);
 });
 
 test('devBranchStrandWarning: unknown branch state downgrades to the generic note', () => {
-  const text = devBranchStrandWarning(parseSkip(['--skip=packages']), {branchExists: null});
+  const text = devBranchStrandWarning(parseInclude(['--include=installer']), {
+    branchExists: null,
+  });
   assert.match(text, /NOTE/);
   assert.match(text, /CREATES the dev-build branch/);
   assert.doesNotMatch(text, /WARNING/);

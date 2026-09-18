@@ -142,10 +142,13 @@ pnpm test:hash
 
 ```bash
 pnpm upload:local -- --mode=prod         # full snapshot to dist/prod-<branch>-<hash>/ (no token)
-pnpm release                             # prod publish: dispatches the CI cross-OS matrix (gh)
-pnpm release:packages                    # partial: zips + updater-ui only (--skip=installer,helper)
-pnpm release:installer                   # partial: installer + helper only (--skip=packages)
+pnpm release:all                         # prod publish: dispatches the CI cross-OS matrix (gh)
+pnpm release:packages                    # partial: zips + updater-ui only (--include=packages)
+pnpm release:installer                   # partial: installer + helper only (--include=installer)
 ```
+
+Every publish states its scope: `--include=packages|installer|helper|all` (required, validated —
+missing/empty/unknown roles fail loudly; ADR 0030).
 
 `--mode=prod|dev` is required; prod publishes the `latest` release + gh-pages from `main` only, dev
 publishes to `dev-build-<id>` **branch-only** — no release unless `--tag` (dev), and `--note` labels

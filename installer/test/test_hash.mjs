@@ -86,7 +86,7 @@ function requireSnapshot() {
   let dir = findSnapshot();
   if (!dir) {
     console.log('No prod snapshot found — generating via upload:local...');
-    execSync('node tools/publish/upload.mjs --local --mode=prod', {
+    execSync('node tools/publish/upload.mjs --local --mode=prod --include=all', {
       cwd: REPO_ROOT,
       stdio: 'inherit',
     });
@@ -297,7 +297,10 @@ function adversarialComparatorProbe(installerBinary) {
       fs.mkdirSync(path.dirname(abs), {recursive: true});
       fs.writeFileSync(abs, contents[rel]);
     }
-    const entries = rels.map(rel => ({rel, absPath: path.join(tmp, ...rel.split('/'))}));
+    const entries = rels.map(rel => ({
+      rel,
+      absPath: path.join(tmp, ...rel.split('/')),
+    }));
     const {hash: jsHash} = computeFileSetHash(entries);
 
     // C side: drive --test-hash with a minimal manifest whose files list is

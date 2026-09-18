@@ -1,4 +1,4 @@
-# 0030: Partial publishes — hold back one artifact role (the AV holdback)
+# 0030: Partial publishes — publish only the named artifact roles (the AV holdback)
 
 - **Status:** accepted
 - **Date:** 2026-09-17
@@ -20,17 +20,19 @@ nothing at all.
 
 ## Decision
 
-`tools/publish/upload.mjs` accepts `--skip=packages|installer|helper` (repeatable or
-comma-separated), and the CI dispatches (`pages.yml`, `build-and-upload.yml`) take the same list in
-a `skip` input. A skipped role is **not built, not hashed, not scanned and not uploaded**, and its
+`tools/publish/upload.mjs` requires `--include=packages|installer|helper` (repeatable or
+comma-separated, or `all` for the full set), and the CI dispatches (`pages.yml`,
+`build-and-upload.yml`) take the same list in an `include` input. The scope is opt-in and validated:
+a missing, empty or unknown role fails the run loudly instead of guessing — there is no implicit
+default. A role left out is **not built, not hashed, not scanned and not uploaded**, and its
 `hashes.json` entry stays frozen at the last published value: the manifest keeps describing what is
 actually on the branch, so no installed copy is ever pointed at bytes that were never published (a
 bumped hash with no uploaded artifact would strand the installer/updater in a permanent "update
 available" that can never converge). The run prints a PARTIAL PUBLISH banner naming the held-back
 roles, and the AV/VT gates report that they had nothing in scope — every gate still covers exactly
-the bytes that ship. The no-`--skip` path is unchanged, and the roles are independent: withholding
-the installer can still ship a clean helper, which is what the in-browser updater needs for elevated
-copies to admin-protected install dirs.
+the bytes that ship. The roles are independent: withholding the installer can still ship a clean
+helper, which is what the in-browser updater needs for elevated copies to admin-protected install
+dirs.
 
 ## Consequences
 
@@ -39,8 +41,8 @@ Script delivery survives an AV holdback, and the withheld binary keeps serving i
 whenever its sources really did change the frozen entry stays stale until the next full publish of
 that role — exactly one revision when the very next run is full, longer under repeated holdbacks of
 the same role (the withheld state is self-healing, and an idle "nothing to rebuild" verdict
-correctly means the published binary already matches the sources). One shape needs care:
-`--skip=packages` on a dev publish that _creates_ its dev-build branch births the manifest without
+correctly means the published binary already matches the sources). One shape needs care: an
+installer/helper-only dev publish that _creates_ its dev-build branch births the manifest without
 the zips it names (permanent "update available" + zip 404s on that branch). The tooling probes
 whether the branch exists and warns loudly before building — prefer holding packages back only in
 prod, or on an existing dev branch whose zips keep serving. Partial publishes are deliberate,

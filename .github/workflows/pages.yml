@@ -35,12 +35,12 @@ on:
         description: 'Rebuild + re-upload even when hashes are unchanged (prod only)'
         type: boolean
         default: false
-      skip:
+      include:
         description:
-          'Partial publish (ADR 0030): roles to hold back — packages|installer|helper,
-          comma-separated'
+          'Roles to publish — packages|installer|helper|all, comma-separated (an explicitly empty
+          value is rejected by upload.mjs; the default is a full publish)'
         type: string
-        default: ''
+        default: 'all'
 
 permissions:
   contents: write # release assets + gh-pages pushes
@@ -196,14 +196,17 @@ jobs:
           # Optional: multi-engine VirusTotal scan of the built binaries before
           # upload (tools/scan-vt.mjs).  Absent ⇒ skipped with a warning.
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030): the roles to hold back (--skip), '' = full.
-          UPLOAD_SKIP: ${{ inputs.skip }}
+          # Partial publish (ADR 0030): the roles to publish (--include); 'all' =
+          # full. Passed through verbatim — an explicitly empty value fails
+          # loudly inside upload.mjs, never a silent default scope.
+          UPLOAD_INCLUDE: ${{ inputs.include }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=win"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          # Partial publish (ADR 0030): the skipped roles reach upload.mjs as
-          # one --skip=… argument; empty input = a full publish.
-          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
+          # Partial publish (ADR 0030): the included roles reach upload.mjs as
+          # one --include=… argument; 'all' = a full publish. The flag is
+          # REQUIRED inside upload.mjs — an empty input aborts the run.
+          ARGS="$ARGS --include=$UPLOAD_INCLUDE"
           # Prod: diff against the shared pre-run baseline, not whatever an
           # earlier job already pushed. Dev rebuilds everything anyway.
           if [ "${{ inputs.mode }}" = "prod" ]; then
@@ -239,12 +242,14 @@ jobs:
           # Pages-workflow marker for prodCiGuard.mjs (see the win job).
           FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030): the roles to hold back (--skip), '' = full.
-          UPLOAD_SKIP: ${{ inputs.skip }}
+          # Partial publish (ADR 0030): the roles to publish (--include); 'all' =
+          # full. Passed through verbatim — an explicitly empty value fails
+          # loudly inside upload.mjs, never a silent default scope.
+          UPLOAD_INCLUDE: ${{ inputs.include }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=linux"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
+          ARGS="$ARGS --include=$UPLOAD_INCLUDE"
           if [ "${{ inputs.mode }}" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
@@ -267,12 +272,14 @@ jobs:
           # Pages-workflow marker for prodCiGuard.mjs (see the win job).
           FXS_INTERNAL_CI: '1'
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030): the roles to hold back (--skip), '' = full.
-          UPLOAD_SKIP: ${{ inputs.skip }}
+          # Partial publish (ADR 0030): the roles to publish (--include); 'all' =
+          # full. Passed through verbatim — an explicitly empty value fails
+          # loudly inside upload.mjs, never a silent default scope.
+          UPLOAD_INCLUDE: ${{ inputs.include }}
         run: |
           ARGS="--mode=${{ inputs.mode }} --platform=mac"
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          if [ -n "$UPLOAD_SKIP" ]; then ARGS="$ARGS --skip=$UPLOAD_SKIP"; fi
+          ARGS="$ARGS --include=$UPLOAD_INCLUDE"
           if [ "${{ inputs.mode }}" = "prod" ]; then
             export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
           fi
