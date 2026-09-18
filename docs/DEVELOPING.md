@@ -207,10 +207,9 @@ poll times out is reported as a skip — never as clean.
   detected as malware” and attach the flagged binary. Microsoft can clear the hash/family in
   Defender’s cloud, which also clears it for users.
 - A durable long-term fix is **code signing**; it is the only measure that systematically improves
-  AV/OS reputation. Paid options exist (Azure Trusted Signing), and the **SignPath Foundation**
-  sponsors free Authenticode signing for accepted open-source projects (Windows binaries only —
-  exactly the flagged artifacts here). The measures above are the zero-cost alternative while the
-  signing application is pending.
+  AV/OS reputation. The measures above are the zero-cost alternative until a signing path lands —
+  the signing plan and its status live on the tracking issue (#157) and are deliberately not
+  documented here until a provider is approved and wired in (#159).
 - AV-shape changes are a lottery, not a dial: the 2026-09-07 PE subsystem bump (5.2 → 6.0, the
   XP-era "packer profile" signal) was reverted the same day because it _flipped_ Microsoft's ML
   verdict (#160 → #161). Do not churn binary bytes expecting a fix — the gate plus signing are the
@@ -866,7 +865,7 @@ pnpm release -- --include=packages,helper --mode=dev --ref=<branch>   # any comb
 | `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                                                                                                                                                                          |
 | `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                                                                                                                                      |
 | `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                                                                                                                              |
-| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the SignPath signing flow (stage-and-exit / publish signed artifacts)                                                                                                                                                                                                         |
+| `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the two-pass signing flow (stage-and-exit / publish signed artifacts) — the signing step itself is unwired pending the provider decision (#157)                                                                                                                               |
 | `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                                                                                                                                                                   |
 
 A real (non-`--local`) `--mode=prod` run outside the Pages workflow is **aborted before building**
