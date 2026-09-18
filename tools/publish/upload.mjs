@@ -104,7 +104,7 @@ import {
   loadSharedPatterns,
   REPO_ROOT,
 } from './publishCommon.mjs';
-import {pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {branchExistsOnPages, pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
 import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
@@ -145,7 +145,13 @@ import {
   verifyStagedBinaries,
 } from './platforms.mjs';
 import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
-import {noBinaryScope, parseSkip, scopeFor, skipBanner} from './publishScope.mjs';
+import {
+  devBranchStrandWarning,
+  noBinaryScope,
+  parseSkip,
+  scopeFor,
+  skipBanner,
+} from './publishScope.mjs';
 import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
 import {readInstallerConf, runStagingGuard} from './stagingGuard.mjs';
 
@@ -1037,6 +1043,23 @@ async function main() {
     // holdback): the banner names the held-back roles and explains the frozen
     // manifest entries.
     if (SKIP.size > 0) warn(skipBanner(SKIP, {mode: PUBLISH_MODE, local: LOCAL}));
+    // --skip=packages on a DEV publish has one stranding shape: a run that
+    // CREATES its dev-build branch births a manifest naming zips the branch
+    // has never carried (prod never strands — its zips stay on the existing
+    // latest release + gh-pages). Probe the branch when a token is available;
+    // a failed probe downgrades to the generic note. LOCAL snapshots always
+    // take the generic note (no token needed, no live branch).
+    if (SKIP.has('packages')) {
+      let exists = null;
+      if (!LOCAL) {
+        try {
+          exists = await branchExistsOnPages(createOctokit(getGitHubToken()));
+        } catch {
+          exists = null;
+        }
+      }
+      warn(devBranchStrandWarning(SKIP, {branchExists: exists}));
+    }
 
     // Load createZip.mjs: its top-level block regenerates the untracked
     // updater-config.sys.mjs from installer.conf (with this run's mode URLs),

@@ -8,7 +8,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
-const {SKIP_ROLES, noBinaryScope, parseSkip, scopeFor, skipBanner} =
+const {SKIP_ROLES, devBranchStrandWarning, noBinaryScope, parseSkip, scopeFor, skipBanner} =
   await import('../../../tools/publish/publishScope.mjs');
 
 test('parseSkip: no --skip= argument means a full publish', () => {
@@ -86,4 +86,30 @@ test('skipBanner: --local explains the snapshot variant instead', () => {
   assert.match(banner, /PARTIAL DEV PUBLISH — held back: helper/);
   assert.match(banner, /snapshot simply omits the held-back roles/);
   assert.doesNotMatch(banner, /#157/);
+});
+
+test('devBranchStrandWarning: silent when packages are in scope', () => {
+  assert.equal(devBranchStrandWarning(parseSkip(['--skip=installer']), {branchExists: false}), '');
+  assert.equal(devBranchStrandWarning(parseSkip([])), '');
+});
+
+test('devBranchStrandWarning: a NEW dev branch with held-back packages is a hard warning', () => {
+  const text = devBranchStrandWarning(parseSkip(['--skip=packages']), {branchExists: false});
+  assert.match(text, /WARNING/);
+  assert.match(text, /CREATES its dev-build branch/);
+  assert.match(text, /Re-run without --skip=packages/);
+});
+
+test('devBranchStrandWarning: an existing dev branch stays consistent', () => {
+  const text = devBranchStrandWarning(parseSkip(['--skip=packages']), {branchExists: true});
+  assert.match(text, /NOTE/);
+  assert.match(text, /keep serving/);
+  assert.doesNotMatch(text, /WARNING/);
+});
+
+test('devBranchStrandWarning: unknown branch state downgrades to the generic note', () => {
+  const text = devBranchStrandWarning(parseSkip(['--skip=packages']), {branchExists: null});
+  assert.match(text, /NOTE/);
+  assert.match(text, /CREATES the dev-build branch/);
+  assert.doesNotMatch(text, /WARNING/);
 });

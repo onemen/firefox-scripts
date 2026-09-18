@@ -103,3 +103,42 @@ export function skipBanner(skip, {mode, local = false} = {}) {
   ];
   return lines.join('\n');
 }
+
+/**
+ * The extra caution a DEV publish needs when `packages` is held back: a dev
+ * branch ships the zips AND their manifest entries together, and the Pages
+ * upload never deletes. On an existing branch the prior zips keep serving under
+ * the frozen entries, so the run stays consistent — but a run that CREATES its
+ * dev-build branch births a manifest naming zips the branch has never carried:
+ * installed dev builds then report "update available" forever and the installer
+ * 404s on the zips (the exact stranding the frozen-entry rule exists to
+ * prevent). Prod never warns: its zips stay on the existing `latest` release +
+ * gh-pages regardless.
+ *
+ * @param {Set<string>} skip skipped roles
+ * @param {{branchExists?: boolean | null}} [opts] whether the target branch
+ *   already exists; null (or an omitted probe) when the caller could not tell
+ * @returns {string} warning text ('' when nothing applies)
+ */
+export function devBranchStrandWarning(skip, {branchExists = null} = {}) {
+  if (!skip.has('packages')) return '';
+  if (branchExists === false) {
+    return [
+      'WARNING: --skip=packages on a dev publish that CREATES its dev-build branch.',
+      'The branch is born with a hashes.json naming zips it has never carried —',
+      'dev-channel browsers will report "update available" forever and the',
+      'installer will 404 on the zips. Re-run without --skip=packages.',
+    ].join('\n');
+  }
+  if (branchExists === true) {
+    return (
+      'NOTE: --skip=packages on an EXISTING dev branch: its current zips keep serving under the ' +
+      'frozen manifest entries (the upload never deletes), so this run stays consistent.'
+    );
+  }
+  return (
+    'NOTE: --skip=packages on a dev publish: fine on an existing branch (its zips keep serving), ' +
+    'but if this run CREATES the dev-build branch the branch is born with a manifest naming zips ' +
+    'it has never carried — permanent "update available" + zip 404s.'
+  );
+}

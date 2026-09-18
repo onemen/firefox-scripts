@@ -124,6 +124,26 @@ async function ensureBranch(octokit) {
 }
 
 /**
+ * Does the target branch already exist? `null` when the probe itself fails
+ * (network, permissions) — callers downgrade their message instead of
+ * asserting. Mode-aware through the module constants: prod probes gh-pages, dev
+ * probes this run's dev-build-<id> branch.
+ */
+export async function branchExistsOnPages(octokit) {
+  try {
+    await octokit.git.getRef({
+      owner: REPO_OWNER,
+      repo: ZIP_PAGES_REPO,
+      ref: `heads/${ZIP_PAGES_BRANCH}`,
+    });
+    return true;
+  } catch (e) {
+    if (e?.status === 404) return false;
+    return null;
+  }
+}
+
+/**
  * Push a set of named files to the Pages branch. `files` maps the target path
  * on the branch (e.g. 'helper_win.exe', 'hashes.json') to a Buffer with the
  * file content. Callers pass only the files that changed, so a stale dist/ copy
