@@ -159,6 +159,20 @@ export function parseJobs(text) {
         else jobs.get(current).with[wi[1]] = wi[2].trim();
         continue;
       }
+      // Continuation line: prettier wraps a long 10-space input value onto the
+      // next line at 12 spaces (e.g. `required:` split over two lines). Append
+      // it to the open scalar instead of treating it as an outdent — otherwise
+      // the classification lists silently lose their tail.
+      if (
+        withKey !== null &&
+        /^ {12}\S/.test(line) &&
+        withKey !== 'results' &&
+        withKey !== 'applicability'
+      ) {
+        jobs.get(current).with[withKey] =
+          `${jobs.get(current).with[withKey]} ${line.trim()}`.trim();
+        continue;
+      }
       withKey = null; // left the with block
     }
 
@@ -385,6 +399,7 @@ const CONTRACTS = [
       'updater': "needs.changes.outputs.updater == 'true'",
       'updater-waterfox':
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox'",
+      'core-lifecycle': "needs.changes.outputs.core == 'true'",
       'browser-matrix':
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
       'fork-portable':
@@ -396,6 +411,7 @@ const CONTRACTS = [
       'helper',
       'updater',
       'updater-waterfox',
+      'core-lifecycle',
       'browser-matrix',
       'fork-portable',
     ],
@@ -411,12 +427,101 @@ const CONTRACTS = [
   },
 ];
 
+/**
+ * Script-coverage contract (the `test:e2e:legacy` rule, 2026-09): every
+ * `test:*` npm script must be reachable from automation — a workflow step, the
+ * `lint` pipeline, another test script, or a unit-test import — or be listed in
+ * MANUAL_TEST_SCRIPTS with a reason. An unreferenced script is the exact
+ * failure mode PR #245 shipped: `test:e2e:legacy` existed but nothing ever ran
+ * it, so the legacy-chrome lifecycle it exercises was "tested" only on the
+ * author's machine.
+ *
+ * The reachability walk covers: .github/workflows + .github/actions (any
+ * `test:<name>` mention), package.json `lint`/`format` chains (a script
+ * invoking another script counts), and explicit allowlist entries. Unit tests
+ * importing the underlying .mjs directly (e.g. manifest-lifecycle's helpers) do
+ * NOT count — the point is that the end-to-end script runs.
+ */
+export const MANUAL_TEST_SCRIPTS = new Map([
+  // test:e2e / :installer / :updater wrap the same scripts CI runs directly
+  // (e2e.yml invokes installer-e2e.mjs / updater-e2e.mjs itself); run.mjs is
+  // the local orchestrator. test:skills is the --skip-tests variant of the
+  // check-skills stage that pnpm lint runs in full.
+  ['test:e2e', 'local orchestrator — CI runs installer-e2e/updater-e2e directly'],
+  ['test:e2e:installer', 'local convenience — e2e.yml runs installer-e2e.mjs directly'],
+  ['test:e2e:updater', 'local convenience — e2e.yml runs updater-e2e.mjs directly'],
+  ['test:skills', 'frontmatter-only variant of the lint pipeline stage'],
+]);
+
+/**
+ * Collect every test:* script name from package.json and return the ones no
+ * automation surface references.
+ *
+ * @param {{
+ *   pkg?: string;
+ *   workflowDir?: string;
+ *   readFileSync?: typeof fs.readFileSync;
+ * }} [opts]
+ *   injectable paths/readers for unit tests
+ * @returns {string[]} human-readable violations (empty = contract holds)
+ */
+export function checkTestScriptCoverage(opts = {}) {
+  const read = opts.readFileSync ?? fs.readFileSync;
+  const pkgPath = opts.pkg ?? path.join(REPO_ROOT, 'package.json');
+  const wfDir = opts.workflowDir ?? path.join(REPO_ROOT, '.github');
+  const errors = [];
+
+  let scripts;
+  try {
+    scripts = Object.keys(JSON.parse(read(pkgPath, 'utf8')).scripts ?? {}).filter(s =>
+      s.startsWith('test:')
+    );
+  } catch {
+    return ['package.json unreadable — cannot verify test script coverage'];
+  }
+
+  // Automation surfaces: every workflow/action file's text plus the lint and
+  // format pipelines from package.json (a script chain counts as a reference).
+  const surfaces = [];
+  const stack = [wfDir];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, {withFileTypes: true});
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) stack.push(p);
+      else surfaces.push(read(p, 'utf8'));
+    }
+  }
+  const pkg = JSON.parse(read(pkgPath, 'utf8'));
+  surfaces.push(pkg.scripts?.lint ?? '', pkg.scripts?.format ?? '');
+  // Scripts invoked by other scripts count (e.g. test:hash inside build:ci).
+  for (const v of Object.values(pkg.scripts ?? {})) surfaces.push(v);
+
+  for (const script of scripts) {
+    if (MANUAL_TEST_SCRIPTS.has(script)) continue;
+    const referenced = surfaces.some(t => t.includes(script));
+    if (!referenced) {
+      errors.push(
+        `test script '${script}' is not referenced by any workflow, action, script chain, or allowlist — wire it into CI (like test:e2e:legacy now is) or add it to MANUAL_TEST_SCRIPTS with a reason`
+      );
+    }
+  }
+  return errors;
+}
+
 export function main() {
   const errors = [];
   for (const contract of CONTRACTS) {
     const text = fs.readFileSync(path.join(REPO_ROOT, contract.file), 'utf-8');
     errors.push(...checkWorkflow(text, contract));
   }
+  errors.push(...checkTestScriptCoverage());
   if (errors.length > 0) {
     for (const e of errors) console.error(`✗ ${e}`);
     console.error(`\nGate contracts violated (${errors.length}).`);

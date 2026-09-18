@@ -5,6 +5,8 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
@@ -258,4 +260,72 @@ test('checkWorkflow: a post-gate job in verify-gate results is rejected', () => 
   assert.ok(
     errors.some(e => e.includes("results must not include post-gate job 'record-validation'"))
   );
+});
+
+// ── checkTestScriptCoverage (the `test:e2e:legacy` rule) ────────────────────
+
+const {checkTestScriptCoverage, MANUAL_TEST_SCRIPTS} = await import(scriptUrl);
+
+test('checkTestScriptCoverage: unreferenced script is reported with guidance', () => {
+  // Real files, real walker: package.json in a temp dir tree.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-cov-'));
+  const wfDir = path.join(tmp, '.github', 'workflows');
+  fs.mkdirSync(wfDir, {recursive: true});
+  fs.writeFileSync(
+    path.join(tmp, 'package.json'),
+    JSON.stringify({scripts: {'test:lonely': 'node lonely.mjs', 'test': 'node --test'}})
+  );
+  fs.writeFileSync(path.join(wfDir, 'e2e.yml'), 'run: node --test\n');
+  try {
+    const errors = checkTestScriptCoverage({
+      pkg: path.join(tmp, 'package.json'),
+      workflowDir: path.join(tmp, '.github'),
+    });
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /test:lonely/);
+    assert.match(errors[0], /MANUAL_TEST_SCRIPTS/);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('checkTestScriptCoverage: script referenced by a workflow passes', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-cov-'));
+  const wfDir = path.join(tmp, '.github', 'workflows');
+  fs.mkdirSync(wfDir, {recursive: true});
+  fs.writeFileSync(
+    path.join(tmp, 'package.json'),
+    JSON.stringify({scripts: {'test:wired': 'node wired.mjs'}})
+  );
+  fs.writeFileSync(path.join(wfDir, 'e2e.yml'), 'run: pnpm test:wired\n');
+  try {
+    const errors = checkTestScriptCoverage({
+      pkg: path.join(tmp, 'package.json'),
+      workflowDir: path.join(tmp, '.github'),
+    });
+    assert.deepEqual(errors, []);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('checkTestScriptCoverage: allowlisted script needs no reference', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-cov-'));
+  const wfDir = path.join(tmp, '.github');
+  fs.mkdirSync(wfDir, {recursive: true});
+  const scripts = Object.fromEntries([...MANUAL_TEST_SCRIPTS.keys()].map(k => [k, 'node x.mjs']));
+  fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({scripts}));
+  try {
+    const errors = checkTestScriptCoverage({
+      pkg: path.join(tmp, 'package.json'),
+      workflowDir: wfDir,
+    });
+    assert.deepEqual(errors, []);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('checkTestScriptCoverage: the live repo satisfies the contract', () => {
+  assert.deepEqual(checkTestScriptCoverage(), []);
 });

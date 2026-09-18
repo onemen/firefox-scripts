@@ -176,7 +176,9 @@ try {
 // ── Args ───────────────────────────────────────────────────────────────────
 
 function parseArgs() {
-  const args = process.argv.slice(2);
+  // pnpm run forwards a literal `--` separator argument; skip it so both
+  // `pnpm test:e2e:legacy -- --headless` and direct `node … --headless` work.
+  const args = process.argv.slice(2).filter(a => a !== '--');
   const opts = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--firefox' && args[i + 1]) opts.firefox = args[++i];

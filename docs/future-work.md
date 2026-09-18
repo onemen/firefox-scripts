@@ -205,6 +205,14 @@ as of 2026-09-15. The proposed tracking home is listed per item.
   naturally). The only two observed multi-job cancellations in the last 100 e2e runs were both
   `pull_request` runs superseded by a follow-up push — cancel-in-progress working as designed, never
   on `main`.
+- ~~**chrome.manifest\* startup sweep — CI coverage**~~ — shipped in #245; initially manual-only
+  (`test:e2e:legacy` had zero automation references — the failure class the script-coverage contract
+  in `tools/check-gate-coverage.mjs` now rejects). The `core lifecycle E2E` job in `e2e.yml` runs
+  the harness on all 3 OSes (portable Firefox, writable GreD) whenever `core/**` changes. Manual
+  cross-channel record (2026-09-18): 15/15 on Nightly 158.0a1, ESR 140.16.0esr and ESR 128.14.0esr.
+  ESR channel legs (channel-keyed `firefox-esr`/`firefox-esr-next`, auto-rotating with Mozilla's ESR
+  transitions — 153 replaces 140 as served ESR on 2026-09-29, 164 follows on 2027-01-26) are the
+  tracked follow-up.
 - ~~**`FIREFOX_BINARY` pinning**~~ — resolved by decision rather than by a pin: E2E keeps tracking
   the newest vendor release at run time, with `BROWSER_PIN_VERSION` as the manual escape hatch (ADR
   [0023](./decisions/0023-e2e-browser-version-pinning.md), #154).
