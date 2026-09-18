@@ -323,7 +323,7 @@ function today() {
 
 function probeChunk(profileDir, byteOffset) {
   const logPath = path.join(profileDir, 'chrome-probe.log');
-  if (!fs.existsSync(logPath)) return '';
+  if (!fs.existsSync(logPath)) return {size: 0, chunk: ''};
   const size = fs.statSync(logPath).size;
   return {size, chunk: fs.readFileSync(logPath, 'utf-8').slice(byteOffset)};
 }
@@ -451,6 +451,11 @@ async function main() {
   })();
   check(counter, !seedErr, 'seed GreD (config.js + probe)', seedErr || '');
   if (seedErr) {
+    // Restore the installation dir before exiting — a partial seed must not
+    // leave the Firefox install modified (the finally below does not run).
+    for (const error of restoreGreState(savedGre)) {
+      check(counter, false, 'GreD configuration restored (after seed failure)', error);
+    }
     console.log(
       'GreD not writable? Pass a writable Firefox install (portable/tarball) or run elevated.'
     );
@@ -515,6 +520,12 @@ async function main() {
     // ── S2: plain restart ──
     const s2 = await runSession(firefoxBin, profileDir, prefs, 'manifest-lifecycle', 2, opts);
     check(counter, s2.okCount > 0, 'S2 restart: chrome live (probe OK)');
+    check(
+      counter,
+      s2.trailingErr === 0,
+      'S2 restart: chrome stays live after the first OK (no trailing ERR)',
+      `${s2.okCount} OK / ${s2.errCount} ERR`
+    );
     check(counter, s2.lifeDelta > 0, 'S2 restart: extension started again');
     check(
       counter,
@@ -530,7 +541,13 @@ async function main() {
     }
     const s3 = await runSession(firefoxBin, profileDir, prefs, 'manifest-lifecycle', 3, opts);
     check(counter, s3.okCount > 0, 'S3 cache-clear restart: chrome live (probe OK)');
-    check(counter, s3.lifeDelta > 0, 'S3 cache-clear restart: extension started again');
+    check(
+      counter,
+      s3.trailingErr === 0,
+      'S3 cache-clear restart: chrome stays live after the first OK (no trailing ERR)',
+      `${s3.okCount} OK / ${s3.errCount} ERR`
+    );
+    check(counter, s3.lifeDelta > 0, 'S3 restart: extension started again');
     check(
       counter,
       bedFiles(bedDir).length === 1 && bedFiles(bedDir)[0] === 'chrome.manifest',
