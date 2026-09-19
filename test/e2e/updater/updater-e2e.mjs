@@ -513,7 +513,19 @@ function applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig) {
   const configContent =
     pristineConfig.toString('utf-8') +
     (configStale ? `\n${CONFIG_PROBE_SNIPPET}${FORCE_CONFIG_STALE_MARKER}` : '');
-  fs.writeFileSync(configJs, configContent);
+  try {
+    fs.writeFileSync(configJs, configContent);
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EACCES') {
+      // Friendly message for the local-dev case (read-only GreD); in CI the
+      // portable install's GreD is always writable and this never fires.
+      throw new Error(
+        `GreD not writable (${err.code}) — run with admin or use a writable Firefox install`,
+        {cause: err}
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -814,7 +826,7 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
 
       console.log(`  tab URL: ${page.url()}`);
 
-      // ── Per-variant: mutate disk → reload → assert ──
+      // ── Per-variant: mutate disk → re-render → assert ──
       let variantFailure = false;
       for (const variant of variants) {
         // Errors are collected per variant, attached BEFORE the reload that
@@ -836,6 +848,13 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
             variantFailure = true;
             break;
           }
+        } catch (err) {
+          // Disk mutation failed (e.g. GreD became unwritable): record it as
+          // the variant's failed check with a readable message and stop — the
+          // harness keeps running the remaining scenarios via fail-fast.
+          check(counter, false, `variant fixture update (${variant})`, err.message);
+          variantFailure = true;
+          break;
         } finally {
           page.off('pageerror', onErr);
         }
