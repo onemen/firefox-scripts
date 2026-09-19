@@ -1095,6 +1095,8 @@ jobs:
             core-lifecycle:${{ needs.core-lifecycle.result }}
             browser-matrix:${{ needs.browser-matrix.result }}
             fork-portable:${{ needs.fork-portable.result }}
+            esr-matrix:${{ needs.esr-matrix.result }}
+            esr-portable:${{ needs.esr-portable.result }}
           required:
             snapshot installer helper updater updater-waterfox portable-firefox core-lifecycle
           advisory: snap-firefox browser-matrix fork-portable esr-matrix esr-portable
