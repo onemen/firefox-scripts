@@ -71,7 +71,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {resolveBrowserVersion} from '../test/e2e/shared/browserResolver.mjs';
+import {fetchJsonWithRetry, resolveBrowserVersion} from '../test/e2e/shared/browserResolver.mjs';
 import {downloadTo, resolveDownloadUrl} from '../test/e2e/shared/downloads.mjs';
 import {
   BROWSERS,
@@ -84,6 +84,7 @@ import {
   collectDrift,
   collectValidatedDrift,
   compareBaseline,
+  esrLedgerNames,
   formatAge,
   isFailureIssueTitle,
   issueBody,
@@ -91,6 +92,7 @@ import {
   planDispatches,
   renderHistory,
   seedHistoryFromBaseline,
+  updateEsrState,
   updateHistory,
 } from './ci/watchdog-report.mjs';
 
@@ -99,17 +101,21 @@ import {
 // keep importing them from this module.
 export {
   BROWSERS,
+  ESR_BROWSER_PREFIX,
   FORK_BROWSERS,
   HISTORY_PER_BROWSER,
   META_ISSUE_TITLE,
   VALIDATED_BROWSERS,
   WATCHDOG_LABEL,
+  buildEsrMatrix,
   buildMetaIssueBody,
   buildStatusTable,
   collectDrift,
   collectValidatedDrift,
   compareBaseline,
   escapeTableCell,
+  esrLedgerNames,
+  esrMajorOf,
   formatAge,
   formatCheck,
   formatDownloadMs,
@@ -123,6 +129,7 @@ export {
   seedHistoryFromBaseline,
   shortSha,
   statusTag,
+  updateEsrState,
   updateHistory,
   validatedCell,
 } from './ci/watchdog-report.mjs';
@@ -150,6 +157,22 @@ const E2E_WORKFLOW = 'e2e.yml';
 export async function resolveVersion(browser) {
   const {version} = await resolveBrowserVersion(browser);
   return version;
+}
+
+/**
+ * Fetch Mozilla's product-details keys for the ESR state machine. Returns the
+ * raw FIREFOX_ESR / FIREFOX_ESR_NEXT strings (null when absent — NEXT comes and
+ * goes across the ESR overlap cycle). Throws on a total product-details outage;
+ * the caller decides how to degrade.
+ */
+export async function fetchEsrVersions() {
+  const versions = await fetchJsonWithRetry(
+    'https://product-details.mozilla.org/1.0/firefox_versions.json'
+  );
+  return {
+    esr: typeof versions.FIREFOX_ESR === 'string' ? versions.FIREFOX_ESR : null,
+    next: typeof versions.FIREFOX_ESR_NEXT === 'string' ? versions.FIREFOX_ESR_NEXT : null,
+  };
 }
 
 /**
@@ -482,6 +505,22 @@ export async function main() {
         }
       }
     }
+    // Advisory ESR rows: a point release on a watched ESR line warns instead
+    // of blocking (the E2E legs are advisory — see the esr-portable job).
+    for (const browser of esrLedgerNames(baseline.esr)) {
+      try {
+        const version = String(await resolveVersion(browser));
+        const prev = baseline[browser]?.version;
+        if (prev && prev !== version) {
+          console.log(
+            `::warning file=tools/check-browser-downloads.mjs::${browser}: ` +
+              `advisory ESR drift ${prev} → ${version} — run the url-watchdog to refresh`
+          );
+        }
+      } catch (err) {
+        console.log(`  ${browser}: advisory ESR lookup failed (non-blocking): ${err.message}`);
+      }
+    }
     const drift = collectDrift(baseline, versions, {ignoreLookupFailureFor: FORK_BROWSERS});
     if (drift.length > 0) {
       console.error('Browser version drift since the last watchdog run:');
@@ -604,8 +643,43 @@ export async function main() {
     }
   }
 
-  for (const browser of BROWSERS) {
-    console.log(`\n${browser}:`);
+  // ── ESR state machine (the dynamic firefox-esr-<major> rows) ─────────────
+  // Rotate the watched two-major window from Mozilla's serving keys BEFORE the
+  // check loop, so the new rows are checked (and re-baselined) this same run.
+  // A product-details outage keeps the previous window — the state machine is
+  // never fed nulls that would shrink it.
+  let esrState = baseline.esr ?? null;
+  try {
+    const {esr, next: esrNext} = await fetchEsrVersions();
+    const rotated = updateEsrState(esrState, esr, esrNext);
+    esrState = rotated.state;
+    // Slide cleanup: a dropped major leaves the ledger — its baseline entry and
+    // history rows go with it (the rebuilt meta issue sheds the row too).
+    for (const major of rotated.droppedMajors) {
+      const dropped = `firefox-esr-${major}`;
+      delete next[dropped];
+      if (Array.isArray(next.history)) {
+        next.history = next.history.map(h => {
+          const c = {...h, changes: (h.changes || []).filter(ch => ch.browser !== dropped)};
+          return c;
+        });
+      }
+      console.log(`  esr: major ${major} dropped from the watched window (${dropped})`);
+    }
+    next.esr = esrState;
+    console.log(
+      `  esr window: ${esrState.majors.join(' + ')}` +
+        ` (${esrState.majors.map(m => esrState.versions[m] || '?').join(', ')})`
+    );
+  } catch (err) {
+    console.log(
+      `  esr: product-details unavailable (${err.message}) — keeping the previous window`
+    );
+  }
+  const esrNames = esrLedgerNames(esrState);
+
+  /** One browser's full check: resolve → endpoint → verify/record. */
+  const runCheck = async browser => {
     let version;
     try {
       version = await resolveVersion(browser);
@@ -616,7 +690,7 @@ export async function main() {
       console.log(`  ✗ ${reason}`);
       results[browser] = {status: 'lookup-failed'};
       findings.push({kind: 'rot', browser, reason});
-      continue;
+      return;
     }
     const prev = prMode ? undefined : baseline[browser];
     const change = compareBaseline(prev, {version});
@@ -634,7 +708,7 @@ export async function main() {
       console.log(`  ✗ ${endpoint.reason}`);
       results[browser] = {status: 'endpoint-failed'};
       findings.push({kind: 'rot', browser, reason: endpoint.reason, version});
-      continue; // broken chain — do not touch the baseline for this browser
+      return; // broken chain — do not touch the baseline for this browser
     }
     console.log(
       `  endpoint ok${endpoint.total ? ` (${endpoint.total} bytes)` : ' (no size reported)'}`
@@ -643,7 +717,7 @@ export async function main() {
     // PR mode: stateless, always green — surface findings as annotations.
     if (prMode) {
       results[browser] = {status: 'ok'};
-      continue;
+      return;
     }
 
     // New release (or first run): one-time full download + SHA-256.
@@ -663,7 +737,7 @@ export async function main() {
         // the CI-cache fallback instead.
         results[browser] = {status: 'download-failed'};
         findings.push({kind: 'rot', browser, reason: verified.reason, version});
-        continue;
+        return;
       }
       console.log(`  sha256 ${verified.sha256}`);
       next[browser] = {
@@ -688,7 +762,7 @@ export async function main() {
       } else {
         console.log('  first run — baseline recorded');
       }
-      continue;
+      return;
     }
 
     // Same version: keep the recorded hash, flag a binary replacement. A server
@@ -723,6 +797,13 @@ export async function main() {
       results[browser] = {status: 'ok'};
       console.log('  unchanged');
     }
+  };
+
+  for (const browser of BROWSERS) {
+    await runCheck(browser);
+  }
+  for (const browser of esrNames) {
+    await runCheck(browser);
   }
 
   // ── GitHub surface (schedule mode only) ─────────────────────────────────
@@ -761,7 +842,7 @@ export async function main() {
   //    (ok / new version / first run). A size-change finding keeps its issue
   //    open until the binary returns to normal or the version bumps.
   if (!prMode) {
-    for (const browser of BROWSERS) {
+    for (const browser of [...BROWSERS, ...esrNames]) {
       const status = (results[browser] || {}).status;
       if (!status || !OK_STATUSES.has(status)) continue;
       if (dryRun || !token) {
@@ -798,7 +879,12 @@ export async function main() {
   //    cache eviction) the body falls back to a date-free 'baseline' seed
   //    derived from the baseline itself, so it stays stable across no-op runs.
   if (!prMode) {
-    const table = buildStatusTable({results, baseline: next, validated});
+    const table = buildStatusTable({
+      results,
+      baseline: next,
+      validated,
+      browsers: [...BROWSERS, ...esrNames],
+    });
     const history = (next.history || []).length > 0 ? next.history : seedHistoryFromBaseline(next);
     const metaBody = buildMetaIssueBody({table, history: renderHistory(history)});
     if (dryRun || !token) {

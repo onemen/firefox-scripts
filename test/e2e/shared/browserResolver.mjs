@@ -188,6 +188,136 @@ const VERSION_CHAINS = {
   'librewolf': LIBREWOLF_VERSION_CHAIN,
 };
 
+// ── Firefox ESR (dynamic majors: firefox-esr-<major>) ───────────────────────
+
+/**
+ * ESR browsers are keyed by major (`firefox-esr-140`, `firefox-esr-153`) so two
+ * ESR chains can be watched at once. The majors live in the watchdog baseline
+ * (watchdog-report.mjs's ESR state machine); the resolver only ever sees the
+ * concrete keys and needs no state of its own.
+ */
+const ESR_BROWSER_REGEXP = /^firefox-esr-(\d+)$/;
+
+/** Product-details keys that can carry a serving ESR version, newest first. */
+const ESR_PRODUCT_DETAILS_KEYS = ['FIREFOX_ESR_NEXT', 'FIREFOX_ESR'];
+
+/**
+ * Parse an ESR version into {major, minor, patch}, or null when the string is
+ * not an ESR version (`140.16.0esr`, `153.3.0esr`).
+ *
+ * @param {string} version
+ * @returns {{major: number; minor: number; patch: number} | null}
+ */
+export function parseEsrVersion(version) {
+  // Anchored numeric pattern over a vendor version string — no backtracking risk.
+  const m = version.match(/^(\d+)\.(\d+)\.(\d+)esr$/);
+  if (!m) return null;
+  return {major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3])};
+}
+
+/**
+ * The newest point release of `major` found on the Mozilla releases index
+ * (https://ftp.mozilla.org/pub/firefox/releases/, archive.mozilla.org
+ * fallback). This is how a RETIRED major keeps being watched after Mozilla
+ * drops its product-details key: the index lists every 140.x.yesr directory
+ * forever, so the chain just reads the max.
+ *
+ * @param {number} major
+ * @returns {Promise<{version: string; source: string}>}
+ */
+export async function newestEsrOnReleaseIndex(major) {
+  const hosts = ['https://ftp.mozilla.org', 'https://archive.mozilla.org'];
+  const errors = [];
+  for (const host of hosts) {
+    try {
+      const html = await fetchWithRetry(`${host}/pub/firefox/releases/`, {as: 'text'});
+      const found = [];
+      for (const m of html.matchAll(/href=["'][^"']*?\/(\d+\.\d+\.\d+)esr\/["']/g)) {
+        const parsed = parseEsrVersion(`${m[1]}esr`);
+        if (parsed?.major === major) found.push(parsed);
+      }
+      if (found.length === 0) {
+        throw new Error(`no ${major}.x.yesr entries on the releases index`);
+      }
+      const newest = found.sort((a, b) => a.minor - b.minor || a.patch - b.patch).at(-1);
+      return {version: `${newest.major}.${newest.minor}.${newest.patch}esr`, source: host};
+    } catch (err) {
+      errors.push(`${host}: ${err.message}`);
+    }
+  }
+  throw new Error(`ESR releases index unusable for major ${major}: ${errors.join('; ')}`);
+}
+
+/**
+ * Version chain for a concrete ESR major. ① product-details (serving keys — the
+ * cheap path while Mozilla still lists the major) ② the releases index scrape
+ * (works for retired majors, and as a fallback when product-details is
+ * mid-rotation).
+ *
+ * @param {number} major
+ * @returns {{
+ *   source: string;
+ *   fetch: () => Promise<{version: string} | null>;
+ * }[]}
+ */
+function esrVersionChain(major) {
+  return [
+    {
+      source: 'product-details',
+      fetch: async () => {
+        const versions = await fetchJsonWithRetry(
+          'https://product-details.mozilla.org/1.0/firefox_versions.json'
+        );
+        for (const key of ESR_PRODUCT_DETAILS_KEYS) {
+          const v = versions[key];
+          if (typeof v === 'string' && parseEsrVersion(v)?.major === major) return {version: v};
+        }
+        return null; // major not on any serving key — retire to the index scrape
+      },
+    },
+    {
+      source: 'mozilla-releases-index',
+      fetch: async () => newestEsrOnReleaseIndex(major),
+    },
+  ];
+}
+
+/** Installer chain for a concrete ESR major (version-embedded release URLs). */
+function esrInstallerChain() {
+  return {
+    sources: [
+      // The releases index stores installers per-locale under win64/<lang>/;
+      // en-US is the canonical archive copy the E2E runs.
+      v =>
+        `https://ftp.mozilla.org/pub/firefox/releases/${v}/win64/en-US/Firefox%20Setup%20${v}.exe`,
+      v =>
+        `https://archive.mozilla.org/pub/firefox/releases/${v}/win64/en-US/Firefox%20Setup%20${v}.exe`,
+    ],
+    assetName: v => `firefox-${v}-setup.exe`,
+  };
+}
+
+/**
+ * Resolve the version chain for a browser name, expanding the dynamic
+ * `firefox-esr-<major>` keys. Returns null for unknown non-ESR browsers.
+ *
+ * @param {string} browser
+ * @returns {{source: string; fetch: () => Promise<{version: string} | null>}[] | null}
+ */
+function versionChainFor(browser) {
+  if (VERSION_CHAINS[browser]) return VERSION_CHAINS[browser];
+  const esr = browser.match(ESR_BROWSER_REGEXP);
+  if (esr) return esrVersionChain(Number(esr[1]));
+  return null;
+}
+
+/** Same expansion for installer chains. */
+function installerChainFor(browser) {
+  if (INSTALLER_CHAINS[browser]) return INSTALLER_CHAINS[browser];
+  if (ESR_BROWSER_REGEXP.test(browser)) return esrInstallerChain();
+  return null;
+}
+
 /**
  * Resolve a browser's current release version by walking its version chain.
  *
@@ -202,7 +332,7 @@ export async function resolveBrowserVersion(browser, {pin = null} = {}) {
   // `version` input (empty on ordinary runs — no effect).
   pin ??= process.env.BROWSER_PIN_VERSION || null;
   if (pin) return {version: pin, source: 'pinned'};
-  const chain = VERSION_CHAINS[browser];
+  const chain = versionChainFor(browser);
   if (!chain) throw new Error(`no version chain for browser '${browser}'`);
   const errors = [];
   for (const link of chain) {
@@ -398,6 +528,8 @@ export async function verifySha256(filePath, sha256Url) {
   return actual;
 }
 
+// The generic `firefox-esr` key (the cold-cache matrix fallback in
+// watchdog-report.mjs buildEsrMatrix) tracks the SERVING ESR only — the
 /** Small streaming download helper (no retry — callers own the ladder). */
 async function downloadFile(url, dest) {
   const res = await fetch(url, {signal: AbortSignal.timeout(300_000)});
@@ -466,10 +598,25 @@ const INSTALLER_CHAINS = {
  * @returns {string}
  */
 export function ciDownloadsAssetName(browser, version) {
-  const chain = INSTALLER_CHAINS[browser];
+  const chain = installerChainFor(browser);
   if (!chain) throw new Error(`no installer chain for browser '${browser}'`);
   return chain.assetName(version);
 }
+
+// The generic `firefox-esr` key (the cold-cache matrix fallback in
+// watchdog-report.mjs buildEsrMatrix) tracks the SERVING ESR only — the
+// concrete-major keys do the two-ESR watching and need baseline state.
+VERSION_CHAINS['firefox-esr'] = [
+  {
+    source: 'product-details',
+    fetch: async () => ({
+      version: (
+        await fetchJsonWithRetry('https://product-details.mozilla.org/1.0/firefox_versions.json')
+      ).FIREFOX_ESR,
+    }),
+  },
+];
+INSTALLER_CHAINS['firefox-esr'] = esrInstallerChain();
 
 /**
  * Resolve the installer download URL for a browser, walking its source chain.
@@ -498,7 +645,7 @@ export function ciDownloadsAssetName(browser, version) {
  *   `sha256Url` is set for LibreWolf (vendor publishes sums for every source).
  */
 export async function resolveInstallerUrl(browser, {version = null} = {}) {
-  const chain = INSTALLER_CHAINS[browser];
+  const chain = installerChainFor(browser);
   if (!chain) throw new Error(`no installer chain for browser '${browser}'`);
   const pin = version ?? process.env.BROWSER_PIN_VERSION ?? null;
   const resolved = await resolveBrowserVersion(browser, {pin});
