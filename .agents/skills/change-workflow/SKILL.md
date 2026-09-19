@@ -15,10 +15,9 @@ Do task work in a fresh `git worktree add ../<parent>/worktrees/<slug> -b <branc
 task, trivially deletable, out of the parent dir). A stale-husk sweep after threads exit is just
 `rmdir worktrees/*`.
 
-**Carve-out — small in-place edits:** the worktree discipline binds work that will be committed,
-pushed, or PR'd, or that needs installs/builds. Tiny edits under review in the shared checkout
-(docs, skill text, comments) may stay in the main worktree: nothing is installed, nothing is
-committed, and the user sees and quotes the diff directly.
+**The main worktree is read-only for task work.** Make every change — docs and skill text included,
+however small — in a task worktree; never edit files in the shared checkout. It is the one place
+other threads and the user rely on to stay stable, and "small" edits collide with parallel work.
 
 **Removing a worktree (Windows gotcha):** `git worktree remove` — even `--force` — can silently
 leave the pnpm `node_modules` behind: the deep `.pnpm` paths exceed `MAX_PATH`, part of the

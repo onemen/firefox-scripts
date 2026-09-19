@@ -62,12 +62,33 @@ Scan the batch for tasks that touch the same files or subsystems.
 5. No `pending` tasks left but CI is running: run the ADR 0020 review step (`pnpm review:local`) on
    your own open PRs — that is the designated wait-filler, per the `ai-review` skill. Then end the
    turn with the status line and: "All tasks in CI — send more tasks to fill the wait, or 'stop' to
-   close this session."
-6. ALL TASKS SETTLED (done/blocked). Do NOT stop, do NOT sleep, do NOT say "waiting". Post the batch
-   summary — PR links, what is ready to merge, what is blocked — and end the turn with exactly:
-   "Batch complete — send the next batch, or 'stop' to close this session." Optionally render a
-   big-font status board in the app's Preview tab (a small local HTML file, refreshed each turn) as
-   the availability signal.
+   close this session."6. ALL TASKS SETTLED (done/blocked). Do NOT stop, do NOT sleep, do NOT say
+   "waiting". Run the post-run smoke checklist below, then post the batch summary — PR links, what
+   is ready to merge, what is blocked — and end the turn with exactly: "Batch complete — send the
+   next batch, or 'stop' to close this session." Optionally render a big-font status board in the
+   app's Preview tab (a small local HTML file, refreshed each turn) as the availability signal.
+
+## Post-run smoke checklist
+
+Run before the step-6 summary — every item is a one-command verification:
+
+- [ ] **Terminal states only** — every task is `done` (PR open, checks green) or `blocked` (listed
+      in the summary); nothing is silently `pending` or `ci`.
+- [ ] **No worktree residue** — `git worktree list` shows no batch worktrees and the
+      `<workspace>/worktrees/` listing confirms the directories are gone; the husk recipe ran
+      (`rm -rf node_modules` → `git worktree remove --force` → verify) and `git worktree prune`
+      reports nothing.
+- [ ] **No orphan branches** — every batch branch is either pushed with an open PR or deleted; no
+      unpushed local batch branch lingers.
+- [ ] **Main checkout clean** — `git status --short` shows no uncommitted duplicates of work that
+      was committed to the batch branches (verify byte-identity against the branch, then discard);
+      untracked files the agent did not create are reported, never deleted.
+- [ ] **Per-PR verification reported** — each open PR's summary states the one-shot `gh pr checks`
+      result (green, or still-running at turn end) and the ADR 0020 `pnpm review:local` step ran (0
+      findings, or findings posted/resolved per the `ai-review` skill).
+- [ ] **Companion changes landed** — PRs that add an authored skill (or otherwise shift a pinned
+      inventory) updated the matching live-repo test in the same change — the `sync-skill-gates`
+      inventory test is the trap the first dry run caught.
 
 ## Rules
 

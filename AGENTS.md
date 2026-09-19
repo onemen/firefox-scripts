@@ -223,6 +223,8 @@ Before finishing:
 - if a code change invalidates any statement in AGENTS.md, skills, or docs/, update those documents
   in the same step. Do not leave stale instructions;
 - failed/unavailable validation is reported;
+- **Never edit files in the main worktree.** All task changes — however small, docs included —
+  happen in a task worktree; the shared checkout stays clean.
 - the task worktree is removed and the directory verified gone (see the `change-workflow` skill).
 
 ## Roadmap tracking
