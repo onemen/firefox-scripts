@@ -387,10 +387,15 @@ const CONTRACTS = [
     gate: 'e2e-gate',
     // Independent filter outputs (installer/updater/core) — each gated job
     // must carry exactly its expected changed-paths `if:` and be listed in
-    // the gate's `applicability:` block. browser-matrix AND snapshot
-    // additionally run for a single-browser manual-escape dispatch (ADR 0021;
-    // snapshot must run because browser-matrix needs it and a needs-chain
-    // skip is transitive, #143) — the combined `if:` is their contract.
+    // the gate's `applicability:` block. The 2026-09-19 dispatch audit:
+    // dorny/paths-filter diffs HEAD against its parent on workflow_dispatch
+    // (an arbitrary, unrelated diff), so PATH-BASED legs must never key off a
+    // raw filter output on dispatches — the changes job dispatch-guards its
+    // outputs instead (full dispatch = full revalidation set; partial escape =
+    // nothing path-based). browser-matrix AND snapshot additionally run for a
+    // single-browser manual-escape dispatch (ADR 0021; snapshot must run
+    // because browser-matrix needs it and a needs-chain skip is transitive,
+    // #143) — the combined `if:` is their contract.
     gatedIfs: {
       'snapshot':
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
@@ -401,9 +406,11 @@ const CONTRACTS = [
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox'",
       'core-lifecycle': "needs.changes.outputs.core == 'true'",
       'browser-matrix':
-        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
+        "(github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr'",
       'fork-portable':
-        "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser != 'librewolf'",
+        "(github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr'",
+      'esr-matrix':
+        "github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr'",
     },
     applicability: [
       'snapshot',
@@ -414,6 +421,7 @@ const CONTRACTS = [
       'core-lifecycle',
       'browser-matrix',
       'fork-portable',
+      'esr-matrix',
     ],
     // Runs after e2e-gate: records the validated browser versions (#4) only
     // when every browser leg passed, and cleans up the temporary
