@@ -6,17 +6,19 @@
  * updater.html) renders the correct state for every package-status combination
  * and all user actions work:
  *
- * Scenario 1 (utils-stale): utils Update Available, config Up To Date +
- * identity, all 8 buttons, checkbox wiring, skip checkbox, no page/console
- * errors, screenshot Scenario 2 (config-stale): config Update Available, utils
- * Up To Date Scenario 3 (both-stale): both Update Available Scenario 4
- * (up-to-date): tab does NOT open (no state to surface) Scenario 5 (skipped):
- * skip pref suppresses the tab entirely Scenario 6 (install-applies): click
- * btn-install and assert the packages are actually copied to disk (issue #37);
- * under Snap the config package is never offered in-tab — the checkbox is
- * hidden and the manual-install band shown, so the run installs utils only and
- * asserts the config files stay untouched Scenario 7 (manual-install-upgrade):
- * a hand-installed utils.zip brings the updater — no tab with a pre-updater
+ * Scenario 1 (stale-variants, merged session per #197): one browser session
+ * renders all three stale combinations — utils-stale → config-stale →
+ * both-stale — by mutating the stale fixtures on disk between tab reloads (the
+ * tab re-hashes from disk on every load, so no re-seed or relaunch is needed).
+ * Full card assertions per variant: identity, all 8 buttons, checkbox wiring,
+ * skip checkbox, no page/console errors, screenshot Scenario 4 (up-to-date):
+ * tab does NOT open (no state to surface) Scenario 5 (skipped): skip pref
+ * suppresses the tab entirely Scenario 6 (install-applies): click btn-install
+ * and assert the packages are actually copied to disk (issue #37); under Snap
+ * the config package is never offered in-tab — the checkbox is hidden and the
+ * manual-install band shown, so the run installs utils only and asserts the
+ * config files stay untouched Scenario 7 (manual-install-upgrade): a
+ * hand-installed utils.zip brings the updater — no tab with a pre-updater
  * utils, tab after replacing it (issue #53) Scenario 8 (manual-install-no-ui):
  * a hand-installed utils.zip ships NO ui folder (the tab UI lives in the
  * separate updater-ui.zip); after a fresh check the scheduler self-installs the
@@ -24,7 +26,10 @@
  *
  * Each scenario: fresh temp profile → seed utils + fx-folder → modify files to
  * force desired state → launch Firefox → wait for tab (or assert none) → run
- * assertions → close.
+ * assertions → close. The merged stale session (scenario 1) keeps ONE session
+ * across its three variants (#197); a startup flake there would fail all three
+ * at once, so it is wrapped in a retry-once-with-fresh-profile guard ([retry]
+ * logged separately — a real regression still fails the leg).
  *
  * Usage: node test/e2e/updater/updater-e2e.mjs --firefox <path> --snapshot<dir>
  */
@@ -145,7 +150,7 @@ function parseArgs() {
       opts.scenarios = args[++i].split(',').map(s => s.trim());
     else if (args[i] === '--help') {
       console.log(
-        '        Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,2,3] [--repeat 2]'
+        'Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,4,5] [--repeat 2]'
       );
       process.exit(0);
     }
@@ -317,30 +322,6 @@ function computeInstalledHash(files, dir) {
   return hash.digest('hex');
 }
 
-function modifyGreConfig(greDir) {
-  const configJs = path.join(greDir, 'config.js');
-  if (fs.existsSync(configJs)) {
-    let content = fs.readFileSync(configJs, 'utf-8');
-    if (!content.includes(FORCE_CONFIG_STALE_MARKER)) {
-      content += FORCE_CONFIG_STALE_MARKER;
-      fs.writeFileSync(configJs, content);
-    }
-  }
-}
-
-/** Try modifyGreConfig; return null on success, error message on EPERM. */
-function tryModifyGreConfig(greDir) {
-  try {
-    modifyGreConfig(greDir);
-    return null;
-  } catch (err) {
-    if (err.code === 'EPERM' || err.code === 'EACCES') {
-      return `GreD not writable (${err.code}) — run with admin or use a writable Firefox install`;
-    }
-    throw err;
-  }
-}
-
 // ── Scenario runners ───────────────────────────────────────────────────────
 
 /**
@@ -489,216 +470,430 @@ function greShownToday(profileDir) {
   }
 }
 
-async function runStaleScenario(
-  counter,
-  opts,
-  snapshotDir,
-  label,
-  {forceConfigStale, forceUtilsStale, skipUtils, skipConfig}
-) {
-  console.log(`\n## Scenario: ${label}`);
+/**
+ * One stale variant's tab state as the UI must show it.
+ *
+ * @returns {{utilsStale: boolean; configStale: boolean}}
+ */
+function expectedStaleState(variant) {
+  return {
+    'utils-stale': {utilsStale: true, configStale: false},
+    'config-stale': {utilsStale: false, configStale: true},
+    'both-stale': {utilsStale: true, configStale: true},
+  }[variant];
+}
+
+/**
+ * Prepare the disk fixtures for one stale variant in the RUNNING session's
+ * seeded trees (#197): the utils marker lives in the profile's chrome/utils
+ * copy and the config marker in the GreD config.js. The tab re-hashes from disk
+ * on every engine init ("must render the truth"), so re-running init after this
+ * mutation re-renders the new variant — no re-seed or relaunch.
+ *
+ * config.js is written WHOLE from the captured pristine bytes: the startup
+ * probe is itself an append that makes config stale as a side effect, so a
+ * config-OK variant can only be produced by restoring the exact zip bytes
+ * (dropping the probe — fine, the watcher is only needed before the tab handle
+ * exists).
+ */
+function applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig) {
+  const {utilsStale, configStale} = expectedStaleState(variant);
+  const utilsFile = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
+  const utilsMarked = fs.readFileSync(utilsFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER);
+  if (utilsStale && !utilsMarked) {
+    fs.appendFileSync(utilsFile, FORCE_UTILS_STALE_MARKER);
+  } else if (!utilsStale && utilsMarked) {
+    // Restore the pristine module bytes: strip the marker line. The marker is
+    // exactly what seedProfile appends, so removing it restores the zip state.
+    const content = fs.readFileSync(utilsFile, 'utf-8');
+    fs.writeFileSync(utilsFile, content.replace(FORCE_UTILS_STALE_MARKER, ''));
+  }
+
+  const configJs = path.join(findGreDir(firefoxBin), 'config.js');
+  const configContent =
+    pristineConfig.toString('utf-8') +
+    (configStale ? `\n${CONFIG_PROBE_SNIPPET}${FORCE_CONFIG_STALE_MARKER}` : '');
+  try {
+    fs.writeFileSync(configJs, configContent);
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EACCES') {
+      // Friendly message for the local-dev case (read-only GreD); in CI the
+      // portable install's GreD is always writable and this never fires.
+      throw new Error(
+        `GreD not writable (${err.code}) — run with admin or use a writable Firefox install`,
+        {cause: err}
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Read the tab's badge state, tolerating an in-flight navigation: a reload of
+ * the privileged chrome:// page makes evaluate() throw until the new document
+ * is ready, and puppeteer's own navigation waiter times out on chrome:// URLs
+ * (it cannot observe the trusted document's lifecycle) — so the poll, not the
+ * reload promise, is the synchronization point.
+ */
+async function readBadgeState(page) {
+  try {
+    return await page.evaluate(() => ({
+      title: Boolean(document.getElementById('card-title')?.textContent),
+      utils: {
+        update: !document.getElementById('utils-badge-update')?.hidden,
+        ok: !document.getElementById('utils-badge-ok')?.hidden,
+      },
+      config: {
+        update: !document.getElementById('config-badge-update')?.hidden,
+        ok: !document.getElementById('config-badge-ok')?.hidden,
+      },
+    }));
+  } catch {
+    return null; // navigation in flight or page not ready — retry
+  }
+}
+
+/** Poll until the tab renders `variant`'s expected state (or timeout). */
+async function waitForStaleState(page, variant, timeoutMs = 20_000) {
+  const want = expectedStaleState(variant);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const s = await readBadgeState(page);
+    if (
+      s &&
+      s.title &&
+      s.utils.update === want.utilsStale &&
+      s.utils.ok === !want.utilsStale &&
+      s.config.update === want.configStale &&
+      s.config.ok === !want.configStale
+    ) {
+      return true;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return false;
+}
+
+/**
+ * Run the full stale-variant card assertions against one live updater tab.
+ * Shared by the merged session (all three variants over reloads) and by the
+ * retry attempt (single variant, fresh profile) — the assertion set is the same
+ * either way (per-variant labels keep the output attributable). `pageErrors` is
+ * owned by the caller (attached before the reload that triggered this variant's
+ * render) and only read here.
+ */
+async function assertStaleCard(counter, page, variant, pageErrors) {
+  const {utilsStale, configStale} = expectedStaleState(variant);
+
+  // Wait for the card to render the variant's expected state — the
+  // navigation-tolerant poll (see readBadgeState) is the reload sync point.
+  const rendered = await waitForStaleState(page, variant);
+  check(
+    counter,
+    rendered,
+    `card re-rendered with ${variant} state`,
+    rendered ? '' : 'badges never matched the expected combination after reload'
+  );
+  if (!rendered) return false;
+
+  // ── Identity ──
+  const identity = await page.evaluate(() => ({
+    title: document.getElementById('card-title')?.textContent || '',
+    version: document.getElementById('card-version')?.textContent || '',
+    binary: document.getElementById('binary-path')?.textContent || '',
+    profile: document.getElementById('profile-path')?.textContent || '',
+  }));
+  check(counter, identity.title.length > 0, `browser name shown: ${identity.title}`);
+  check(counter, identity.binary.length > 0, 'binary path shown');
+  check(counter, identity.profile.length > 0, 'profile path shown');
+
+  // ── Package status ──
+  const utilsStatus = await page.evaluate(() => ({
+    update: !document.getElementById('utils-badge-update')?.hidden,
+    ok: !document.getElementById('utils-badge-ok')?.hidden,
+  }));
+  const configStatus = await page.evaluate(() => ({
+    update: !document.getElementById('config-badge-update')?.hidden,
+    ok: !document.getElementById('config-badge-ok')?.hidden,
+  }));
+
+  check(
+    counter,
+    utilsStatus.update === utilsStale && utilsStatus.ok === !utilsStale,
+    `utils badge = ${utilsStale ? 'Update Available' : 'Up To Date'} (${variant})`
+  );
+  check(
+    counter,
+    configStatus.update === configStale && configStatus.ok === !configStale,
+    `config badge = ${configStale ? 'Update Available' : 'Up To Date'} (${variant})`
+  );
+
+  // ── Buttons ──
+  const buttons = await page.evaluate(() =>
+    [
+      'btn-install',
+      'btn-restart',
+      'btn-close',
+      'btn-remind-tomorrow',
+      'link-download-fx',
+      'link-download-utils',
+      'btn-open-folder-binary',
+      'btn-open-folder-profile',
+    ].map(id => Boolean(document.getElementById(id)))
+  );
+  check(counter, buttons.every(Boolean), `all 8 buttons present (${variant})`);
+
+  // ── Checkbox → Update button wiring ──
+  const cbWired = await page.evaluate(async () => {
+    // Only visible checkboxes can be clicked by the user — under Snap the
+    // hidden config checkbox must not drive the Update button.
+    const chks = document.querySelectorAll('.chk-component:not([hidden])');
+    if (chks.length === 0) return null;
+    const btn = document.getElementById('btn-install');
+    if (!btn) return null;
+    const first = chks[0];
+    first.click();
+    const enabled = btn.disabled === false;
+    first.click();
+    const disabled = btn.disabled === true;
+    return {enabled, disabled};
+  });
+  check(
+    counter,
+    cbWired?.enabled && cbWired?.disabled,
+    `checkbox toggles Update button (${variant})`
+  );
+
+  // ── Skip checkbox visible for stale packages (hidden for up-to-date) ──
+  const skipLabels = await page.evaluate(() => ({
+    config: !document.getElementById('skip-config')?.hidden,
+    utils: !document.getElementById('skip-utils')?.hidden,
+  }));
+  check(
+    counter,
+    skipLabels.utils === utilsStale && skipLabels.config === configStale,
+    `skip checkboxes match staleness (${variant})`
+  );
+
+  // ── No page errors ──
+  check(
+    counter,
+    pageErrors.length === 0,
+    `no page errors (${variant})`,
+    pageErrors.slice(0, 3).join(' | ')
+  );
+
+  // ── Screenshot ──
+  const shotPath = path.join(REPO_ROOT, 'dist', `updater-e2e-${variant.replace(/\s+/g, '_')}.png`);
+  fs.mkdirSync(path.dirname(shotPath), {recursive: true});
+  const shotOk = await screenshotPrivileged(page, shotPath);
+  if (shotOk) check(counter, true, `screenshot saved (${variant})`);
+
+  return true;
+}
+
+/**
+ * #197 — the three stale variants (utils-stale / config-stale / both-stale)
+ * share ONE browser session: seed once (utils stale + GreD probe installed),
+ * then per variant mutate the stale fixtures on disk and reload the tab (the
+ * engine re-hashes from disk on every load). Two Firefox launches per leg
+ * become one; only the disk state changes between variants.
+ *
+ * Wrapped in a retry-once guard with a fresh profile: a browser-internal
+ * startup race (observed live on waterfox, run 35460461221 —
+ * NS_ERROR_NOT_INITIALIZED from the URL-classifier service) would otherwise
+ * fail all three variants at once. The retry is logged on its own [retry] lines
+ * so a real regression cannot hide behind it; a second failure fails the leg.
+ */
+async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
+  const label = variants.join('+');
+  console.log(`\n## Scenario: stale variants (${label}) — one session (#197)`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error('Firefox not found');
 
-  const seeded = seedProfile(snapshotDir, {
-    forceConfigStale,
-    forceUtilsStale,
-    skipUtils,
-    skipConfig,
-  });
+  const t0 = Date.now();
+  const phases = {};
+  // Every profile this function creates (attempt 1 + optional retry) is
+  // returned for run()'s centralized cleanup; a retry's first profile also
+  // stays on disk until then for post-mortem.
+  const createdProfiles = [];
 
-  // GreD install — a silent seed failure means the loader never runs and every
-  // later assertion misfires, so report it as its own failed check and stop.
+  // Seed: first variant's state (utils stale; config stale comes from the GreD
+  // probe, which is installed for every variant — the marker toggles it).
+  let seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
+  createdProfiles.push(seeded.profileDir);
+  phases.seed = Date.now() - t0;
+
   const greDir = findGreDir(firefoxBin);
   const greSeed = installFxFolder(snapshotDir, greDir);
   check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
-  if (!greSeed.ok) return seeded.profileDir;
-  if (seeded._greModNeeded) {
-    const err = tryModifyGreConfig(greDir);
-    if (err) {
-      check(counter, false, `mark config stale (${label})`, err);
-      return seeded.profileDir;
-    }
-  }
+  if (!greSeed.ok) return createdProfiles;
+
+  // Capture the pristine config.js BEFORE the probe lands on it — variant 1
+  // (config OK) restores exactly these bytes.
+  let pristineConfig = fs.readFileSync(path.join(greDir, 'config.js'));
 
   appendConfigProbe(greDir);
 
   let browser;
-  let openedPage = null;
+  let attempted = 0;
   try {
-    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
-      headless: opts.headless,
-      extraPrefsFirefox: seeded.prefs,
-    });
-    attachProcessLogging(browser, label);
-
-    // Wait on both channels: BiDi page enumeration (needed for UI assertions)
-    // and the probe's TAB_OPENED mirror line (fast, BiDi-independent). When
-    // only the mirror fires, close early and let the finally block decide via
-    // the persisted lastUpdateTabShown pref instead of burning the full window.
-    // The scheduler runs at startup: if the tab has not opened in ~15 s it
-    // will not open at all. The mirror-line + pref fast paths still fire
-    // early, so a working scenario returns in a couple of seconds.
-    const deadline = Date.now() + 15_000;
-    let sawMirrorLine = false;
-    let page = null;
-    while (Date.now() < deadline && !page && !sawMirrorLine) {
-      try {
-        page =
-          (await browser.pages()).find(p => {
-            try {
-              return p.url().startsWith(UPDATER_URL);
-            } catch {
-              return false;
-            }
-          }) || null;
-      } catch {
-        /* browser not ready yet */
+    // ── attempt loop (retry-once) ──
+    while (attempted < 2) {
+      attempted++;
+      const attemptLabel = attempted === 1 ? label : `[retry ${attempted - 1}] ${label}`;
+      if (attempted > 1) {
+        console.log(`\n  [retry] attempt 2/2 for (${label}) with a FRESH profile —`);
+        console.log('  [retry] attempt 1 never opened the tab ([diag] above; likely a');
+        console.log('  [retry] browser startup race, e.g. waterfox run 35460461221). A');
+        console.log('  [retry] second failure fails the leg — the retry never masks regressions.');
+        // Fresh profile: the previous attempt's seeded trees stay behind for
+        // post-mortem; seedProfile makes a new temp dir each call.
+        seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
+        createdProfiles.push(seeded.profileDir);
+        const greSeed2 = installFxFolder(snapshotDir, greDir);
+        check(counter, greSeed2.ok, `seed GreD (retry ${label})`, greSeed2.error);
+        if (!greSeed2.ok) break;
+        pristineConfig = fs.readFileSync(path.join(greDir, 'config.js'));
+        appendConfigProbe(greDir);
       }
-      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-        sawMirrorLine = true;
+
+      const launchStart = Date.now();
+      browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+        headless: opts.headless,
+        extraPrefsFirefox: seeded.prefs,
+      });
+      attachProcessLogging(browser, attemptLabel);
+      phases.launch = Date.now() - launchStart;
+
+      // Wait on both channels: BiDi page enumeration (needed for UI assertions)
+      // and the probe's TAB_OPENED mirror line (fast, BiDi-independent).
+      const deadline = Date.now() + 15_000;
+      let sawMirrorLine = false;
+      let page = null;
+      while (Date.now() < deadline && !page && !sawMirrorLine) {
+        try {
+          page =
+            (await browser.pages()).find(p => {
+              try {
+                return p.url().startsWith(UPDATER_URL);
+              } catch {
+                return false;
+              }
+            }) || null;
+        } catch {
+          /* browser not ready yet */
+        }
+        if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
+          sawMirrorLine = true;
+          break;
+        }
+        if (!page) await new Promise(r => setTimeout(r, 500));
+      }
+      const viaPref = greShownToday(seeded.profileDir);
+      const tabOpened = Boolean(page) || viaPref || sawMirrorLine;
+
+      if (!page && tabOpened) {
+        // Tab opened (probe mirror / persisted pref) but BiDi cannot attach to
+        // the trusted chrome:// tab in this environment — a deterministic
+        // limitation on some CI runners (observed on Windows), not a startup
+        // race, so a retry cannot help. Record the tab-open proof with the
+        // limitation spelled out in the label (the historical CI contract for
+        // these legs, previously silent); full card assertions run where BiDi
+        // attaches (locally, other runners).
+        check(
+          counter,
+          true,
+          `tab opens (${attemptLabel}; no card assertions — BiDi cannot attach to the trusted tab in this environment)`
+        );
+        console.log('  [diag] probe/pref verified the tab; BiDi missed the handle');
+        return createdProfiles;
+      }
+
+      if (!tabOpened) {
+        // Scheduler never opened the tab: the startup-race case the retry
+        // exists for. Only the FINAL attempt records the verdict — a FAIL is
+        // permanent in the counter (fail-fast would skip the remaining
+        // scenarios even if attempt 2 succeeded).
+        if (attempted < 2) {
+          console.log(
+            `  [diag] tab never opened within 15 s (attempt ${attempted}) — retrying with a fresh profile`
+          );
+          try {
+            await closeBrowser(browser);
+          } catch {
+            /* ignore */
+          }
+          browser = null;
+          continue;
+        }
+        check(
+          counter,
+          false,
+          `tab opens (${attemptLabel})`,
+          'scheduler never reached addTrustedTab'
+        );
+        await dumpPages(browser);
+        dumpUpdaterPrefs(seeded.profileDir);
+        dumpConsoleLog(seeded.profileDir);
         break;
       }
-      if (!page) await new Promise(r => setTimeout(r, 500));
-    }
-    openedPage = page;
-    if (page) check(counter, true, `tab opens (${label})`);
 
-    if (!page && sawMirrorLine) {
-      console.log('  [diag] probe reported the tab open; closing early');
-      return seeded.profileDir;
-    }
+      console.log(`  tab URL: ${page.url()}`);
 
-    if (!page) {
-      await dumpPages(browser);
-      return seeded.profileDir;
-    }
+      // ── Per-variant: mutate disk → re-render → assert ──
+      let variantFailure = false;
+      for (const variant of variants) {
+        // Errors are collected per variant, attached BEFORE the reload that
+        // triggers this variant's render.
+        const pageErrors = [];
+        const onErr = err => pageErrors.push(err.message);
+        page.on('pageerror', onErr);
+        try {
+          applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig);
+          // Re-render through the production path: UpdaterEngine.init() re-runs
+          // the fresh hash check (manifest fetch + local re-hash) and pushes
+          // state in-document. A page.reload() was tried first — BiDi cannot
+          // observe chrome:// navigations (its waiter times out and the
+          // evaluation channel wedges), so the engine's own re-check entry
+          // point is the reliable in-document equivalent.
+          await page.evaluate(() => window.UpdaterEngine.init());
+          const ok = await assertStaleCard(counter, page, variant, pageErrors);
+          if (!ok) {
+            variantFailure = true;
+            break;
+          }
+        } catch (err) {
+          // Disk mutation failed (e.g. GreD became unwritable): record it as
+          // the variant's failed check with a readable message and stop — the
+          // harness keeps running the remaining scenarios via fail-fast.
+          check(counter, false, `variant fixture update (${variant})`, err.message);
+          variantFailure = true;
+          break;
+        } finally {
+          page.off('pageerror', onErr);
+        }
+      }
 
-    console.log(`  tab URL: ${page.url()}`);
-
-    // Collect errors
-    const pageErrors = [];
-    page.on('pageerror', err => pageErrors.push(err.message));
-
-    // Wait for card to render
-    const rendered = await waitForCondition(
-      page,
-      () => {
-        const title = document.getElementById('card-title');
-        return Boolean(title && title.textContent);
-      },
-      15_000,
-      'card rendered'
-    );
-    check(counter, rendered, `card rendered (${label})`);
-
-    if (!rendered) return seeded.profileDir;
-
-    // ── Identity ──
-    const identity = await page.evaluate(() => ({
-      title: document.getElementById('card-title')?.textContent || '',
-      version: document.getElementById('card-version')?.textContent || '',
-      binary: document.getElementById('binary-path')?.textContent || '',
-      profile: document.getElementById('profile-path')?.textContent || '',
-    }));
-    check(counter, identity.title.length > 0, `browser name shown: ${identity.title}`);
-    check(counter, identity.binary.length > 0, 'binary path shown');
-    check(counter, identity.profile.length > 0, 'profile path shown');
-
-    // ── Package status ──
-    const utilsStatus = await page.evaluate(() => ({
-      update: !document.getElementById('utils-badge-update')?.hidden,
-      ok: !document.getElementById('utils-badge-ok')?.hidden,
-    }));
-    const configStatus = await page.evaluate(() => ({
-      update: !document.getElementById('config-badge-update')?.hidden,
-      ok: !document.getElementById('config-badge-ok')?.hidden,
-    }));
-
-    if (forceUtilsStale) {
-      check(
-        counter,
-        utilsStatus.update && !utilsStatus.ok,
-        `utils shows Update Available (${label})`
+      if (!variantFailure) {
+        phases.total = Date.now() - t0;
+        logScenarioTime(attemptLabel, t0, phases);
+        return createdProfiles;
+      }
+      // Assertion failure: retry only makes sense for startup-shaped failures;
+      // a card assertion failure is deterministic (bad fixture/code), so do
+      // not burn the retry on it — fail fast.
+      console.log(
+        `  [retry] card assertions failed on attempt ${attempted} — deterministic, not retrying`
       );
+      break;
     }
-    check(
-      counter,
-      configStatus.update !== configStatus.ok,
-      `config shows exactly one badge (${label})`
-    );
-    if (forceConfigStale) {
-      check(counter, configStatus.update, 'config shows Update Available');
-    }
-
-    // ── Buttons ──
-    const buttons = await page.evaluate(() =>
-      [
-        'btn-install',
-        'btn-restart',
-        'btn-close',
-        'btn-remind-tomorrow',
-        'link-download-fx',
-        'link-download-utils',
-        'btn-open-folder-binary',
-        'btn-open-folder-profile',
-      ].map(id => Boolean(document.getElementById(id)))
-    );
-    check(counter, buttons.every(Boolean), 'all 8 buttons present');
-
-    // ── Checkbox → Update button wiring ──
-    const cbWired = await page.evaluate(async () => {
-      // Only visible checkboxes can be clicked by the user — under Snap the
-      // hidden config checkbox must not drive the Update button.
-      const chks = document.querySelectorAll('.chk-component:not([hidden])');
-      if (chks.length === 0) return null;
-      const btn = document.getElementById('btn-install');
-      if (!btn) return null;
-      const first = chks[0];
-      first.click();
-      const enabled = btn.disabled === false;
-      first.click();
-      const disabled = btn.disabled === true;
-      return {enabled, disabled};
-    });
-    check(counter, cbWired?.enabled && cbWired?.disabled, 'checkbox toggles Update button');
-
-    // ── Skip checkbox visible for stale packages ──
-    const skipLabels = await page.evaluate(() => ({
-      config: !document.getElementById('skip-config')?.hidden,
-      utils: !document.getElementById('skip-utils')?.hidden,
-    }));
-    if (forceUtilsStale) check(counter, skipLabels.utils, 'skip checkbox shown for utils');
-    if (forceConfigStale) check(counter, skipLabels.config, 'skip checkbox shown for config');
-
-    // ── No page errors ──
-    check(counter, pageErrors.length === 0, 'no page errors', pageErrors.slice(0, 3).join(' | '));
-
-    // ── Screenshot ──
-    const shotPath = path.join(REPO_ROOT, 'dist', `updater-e2e-${label.replace(/\s+/g, '_')}.png`);
-    fs.mkdirSync(path.dirname(shotPath), {recursive: true});
-    const shotOk = await screenshotPrivileged(page, shotPath);
-    if (shotOk) check(counter, true, `screenshot saved (${label})`);
-
-    return seeded.profileDir;
+    return createdProfiles;
   } finally {
     try {
       await closeBrowser(browser);
     } catch {
       /* ignore */
-    }
-    if (!openedPage) {
-      const viaPref = greShownToday(seeded.profileDir);
-      check(
-        counter,
-        viaPref,
-        `tab opens (${label})`,
-        viaPref ?
-          '(verified via lastUpdateTabShown; BiDi could not enumerate the chrome tab)'
-        : 'scheduler never reached addTrustedTab'
-      );
-      dumpUpdaterPrefs(seeded.profileDir);
-      dumpConsoleLog(seeded.profileDir);
     }
   }
 }
@@ -1530,7 +1725,7 @@ async function run() {
   console.log(`  firefox: ${firefoxBin}`);
   console.log(`  GreD:    ${findGreDir(firefoxBin)}`);
 
-  const scenarios = opts.scenarios || ['1', '2', '3', '4', '5', '6', '7', '8'];
+  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8'];
 
   const profiles = [];
 
@@ -1540,40 +1735,20 @@ async function run() {
   try {
     // Scenario steps run in order; after the first failure the remaining
     // scenarios almost always fail for the same root cause, so skip them
-    // (opt out with --no-fail-fast).
+    // (opt out with --no-fail-fast). Scenarios 1–3 are ONE step (#197): the
+    // three stale variants share a browser session (fresh profile on retry).
+    // --scenario 1 still runs the whole merged step — the variants are no
+    // longer separable because they share the session.
     const scenarioSteps = [
       {
         id: '1',
         run: async () => {
           profiles.push(
-            await runStaleScenario(counter, opts, snapshotDir, 'utils-stale', {
-              forceUtilsStale: true,
-            })
-          );
-        },
-      },
-      {
-        id: '2',
-        pre: () => tryModifyGreConfig(findGreDir(firefoxBin)),
-        skipLabel: 'config-stale',
-        run: async () => {
-          profiles.push(
-            await runStaleScenario(counter, opts, snapshotDir, 'config-stale', {
-              forceConfigStale: true,
-            })
-          );
-        },
-      },
-      {
-        id: '3',
-        pre: () => tryModifyGreConfig(findGreDir(firefoxBin)),
-        skipLabel: 'both-stale',
-        run: async () => {
-          profiles.push(
-            await runStaleScenario(counter, opts, snapshotDir, 'both-stale', {
-              forceUtilsStale: true,
-              forceConfigStale: true,
-            })
+            ...(await runStaleVariantsScenario(counter, opts, snapshotDir, [
+              'utils-stale',
+              'config-stale',
+              'both-stale',
+            ]))
           );
         },
       },
