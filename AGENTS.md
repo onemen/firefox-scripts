@@ -128,7 +128,9 @@ files are produced on demand by the build/publish tooling.
 
 ```bash
 pnpm install
-pnpm lint          # eslint + strncpy gate (installer/src is snprintf-only) + markdownlint (MD056 table integrity) + C format check + gcc -fanalyzer + check-skills (frontmatter + vendored skill tests); the strncpy stage also runs standalone via `pnpm lint:ncpy`
+pnpm lint          # strict fail-fast aggregate (what CI + the pre-push hook enforce): eslint + strncpy gate (installer/src is snprintf-only) + tsc + C format check + gcc -fanalyzer + markdownlint (MD056 table integrity) + check-skills (frontmatter + vendored skill tests)
+pnpm lint:all      # report-all view — every stage runs even after a failure, output prefixed with the stage label (npm-run-all2); dev convenience, never used by CI/hooks
+# granular stages (single source of truth — `pnpm lint` composes these): lint:js lint:ncpy lint:types lint:c lint:analyze lint:md lint:skills
 pnpm format        # check: C + prettier
 pnpm format:fix    # apply both
 pnpm test          # unit tests (test/unit/, pure Node, no build)
