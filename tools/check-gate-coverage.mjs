@@ -409,6 +409,8 @@ const CONTRACTS = [
         "(github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr'",
       'fork-portable':
         "(github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr'",
+      'esr-matrix':
+        "github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr'",
     },
     applicability: [
       'snapshot',
@@ -419,6 +421,7 @@ const CONTRACTS = [
       'core-lifecycle',
       'browser-matrix',
       'fork-portable',
+      'esr-matrix',
     ],
     // Runs after e2e-gate: records the validated browser versions (#4) only
     // when every browser leg passed, and cleans up the temporary
