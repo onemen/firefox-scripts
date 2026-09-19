@@ -48,6 +48,6 @@ whether the branch exists and warns loudly before building — prefer holding pa
 prod, or on an existing dev branch whose zips keep serving. Partial publishes are deliberate,
 operator-initiated acts — prod stays CI-only, the workflow input is explicit, and the log says
 PARTIAL — and the flag exists for the case where a flag is a false positive the maintainer has
-decided to route around; WDSI per-hash submissions and SignPath code signing remain the durable
-fixes. Revisit-if: signing lands and rebuild verdicts stop being a lottery — then this escape hatch
-can be retired.
+decided to route around; the durable fixes (per-hash vendor submissions and code signing) are
+tracked on the AV issue (#157). Revisit-if: signing lands and rebuild verdicts stop being a lottery
+— then this escape hatch can be retired.
