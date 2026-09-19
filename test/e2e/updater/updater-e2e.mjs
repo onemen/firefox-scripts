@@ -322,30 +322,6 @@ function computeInstalledHash(files, dir) {
   return hash.digest('hex');
 }
 
-function modifyGreConfig(greDir) {
-  const configJs = path.join(greDir, 'config.js');
-  if (fs.existsSync(configJs)) {
-    let content = fs.readFileSync(configJs, 'utf-8');
-    if (!content.includes(FORCE_CONFIG_STALE_MARKER)) {
-      content += FORCE_CONFIG_STALE_MARKER;
-      fs.writeFileSync(configJs, content);
-    }
-  }
-}
-
-/** Try modifyGreConfig; return null on success, error message on EPERM. */
-function tryModifyGreConfig(greDir) {
-  try {
-    modifyGreConfig(greDir);
-    return null;
-  } catch (err) {
-    if (err.code === 'EPERM' || err.code === 'EACCES') {
-      return `GreD not writable (${err.code}) — run with admin or use a writable Firefox install`;
-    }
-    throw err;
-  }
-}
-
 // ── Scenario runners ───────────────────────────────────────────────────────
 
 /**
@@ -511,12 +487,16 @@ function expectedStaleState(variant) {
  * Prepare the disk fixtures for one stale variant in the RUNNING session's
  * seeded trees (#197): the utils marker lives in the profile's chrome/utils
  * copy and the config marker in the GreD config.js. The tab re-hashes from disk
- * on every load (engineInit comment: "must render the truth"), so a reload
- * after this mutation re-renders the new variant — no re-seed or relaunch. GreD
- * writes are attempted before launch too (seeding), so the mutation here is
- * only a marker add/remove on a file we already own.
+ * on every engine init ("must render the truth"), so re-running init after this
+ * mutation re-renders the new variant — no re-seed or relaunch.
+ *
+ * config.js is written WHOLE from the captured pristine bytes: the startup
+ * probe is itself an append that makes config stale as a side effect, so a
+ * config-OK variant can only be produced by restoring the exact zip bytes
+ * (dropping the probe — fine, the watcher is only needed before the tab handle
+ * exists).
  */
-function applyStaleVariantOnDisk(firefoxBin, seeded, variant) {
+function applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig) {
   const {utilsStale, configStale} = expectedStaleState(variant);
   const utilsFile = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
   const utilsMarked = fs.readFileSync(utilsFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER);
@@ -529,42 +509,79 @@ function applyStaleVariantOnDisk(firefoxBin, seeded, variant) {
     fs.writeFileSync(utilsFile, content.replace(FORCE_UTILS_STALE_MARKER, ''));
   }
 
-  const greDir = findGreDir(firefoxBin);
-  const configJs = path.join(greDir, 'config.js');
-  const configMarked = fs.readFileSync(configJs, 'utf-8').includes(FORCE_CONFIG_STALE_MARKER);
-  if (configStale && !configMarked) {
-    const err = tryModifyGreConfig(greDir);
-    if (err) throw new Error(`mark config stale (${variant}): ${err}`);
-  } else if (!configStale && configMarked) {
-    const content = fs.readFileSync(configJs, 'utf-8');
-    fs.writeFileSync(configJs, content.replace(FORCE_CONFIG_STALE_MARKER, ''));
+  const configJs = path.join(findGreDir(firefoxBin), 'config.js');
+  const configContent =
+    pristineConfig.toString('utf-8') +
+    (configStale ? `\n${CONFIG_PROBE_SNIPPET}${FORCE_CONFIG_STALE_MARKER}` : '');
+  fs.writeFileSync(configJs, configContent);
+}
+
+/**
+ * Read the tab's badge state, tolerating an in-flight navigation: a reload of
+ * the privileged chrome:// page makes evaluate() throw until the new document
+ * is ready, and puppeteer's own navigation waiter times out on chrome:// URLs
+ * (it cannot observe the trusted document's lifecycle) — so the poll, not the
+ * reload promise, is the synchronization point.
+ */
+async function readBadgeState(page) {
+  try {
+    return await page.evaluate(() => ({
+      title: Boolean(document.getElementById('card-title')?.textContent),
+      utils: {
+        update: !document.getElementById('utils-badge-update')?.hidden,
+        ok: !document.getElementById('utils-badge-ok')?.hidden,
+      },
+      config: {
+        update: !document.getElementById('config-badge-update')?.hidden,
+        ok: !document.getElementById('config-badge-ok')?.hidden,
+      },
+    }));
+  } catch {
+    return null; // navigation in flight or page not ready — retry
   }
+}
+
+/** Poll until the tab renders `variant`'s expected state (or timeout). */
+async function waitForStaleState(page, variant, timeoutMs = 20_000) {
+  const want = expectedStaleState(variant);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const s = await readBadgeState(page);
+    if (
+      s &&
+      s.title &&
+      s.utils.update === want.utilsStale &&
+      s.utils.ok === !want.utilsStale &&
+      s.config.update === want.configStale &&
+      s.config.ok === !want.configStale
+    ) {
+      return true;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return false;
 }
 
 /**
  * Run the full stale-variant card assertions against one live updater tab.
  * Shared by the merged session (all three variants over reloads) and by the
  * retry attempt (single variant, fresh profile) — the assertion set is the same
- * either way (per-variant labels keep the output attributable).
+ * either way (per-variant labels keep the output attributable). `pageErrors` is
+ * owned by the caller (attached before the reload that triggered this variant's
+ * render) and only read here.
  */
-async function assertStaleCard(counter, page, variant) {
+async function assertStaleCard(counter, page, variant, pageErrors) {
   const {utilsStale, configStale} = expectedStaleState(variant);
 
-  // Collect errors from (re)load to assertion end.
-  const pageErrors = [];
-  page.on('pageerror', err => pageErrors.push(err.message));
-
-  // Wait for card to render (engineInit's fresh check pushes state).
-  const rendered = await waitForCondition(
-    page,
-    () => {
-      const title = document.getElementById('card-title');
-      return Boolean(title && title.textContent);
-    },
-    15_000,
-    'card rendered'
+  // Wait for the card to render the variant's expected state — the
+  // navigation-tolerant poll (see readBadgeState) is the reload sync point.
+  const rendered = await waitForStaleState(page, variant);
+  check(
+    counter,
+    rendered,
+    `card re-rendered with ${variant} state`,
+    rendered ? '' : 'badges never matched the expected combination after reload'
   );
-  check(counter, rendered, `card rendered (${variant})`);
   if (!rendered) return false;
 
   // ── Identity ──
@@ -700,6 +717,10 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
   check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
   if (!greSeed.ok) return createdProfiles;
 
+  // Capture the pristine config.js BEFORE the probe lands on it — variant 1
+  // (config OK) restores exactly these bytes.
+  let pristineConfig = fs.readFileSync(path.join(greDir, 'config.js'));
+
   appendConfigProbe(greDir);
 
   let browser;
@@ -721,6 +742,7 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
         const greSeed2 = installFxFolder(snapshotDir, greDir);
         check(counter, greSeed2.ok, `seed GreD (retry ${label})`, greSeed2.error);
         if (!greSeed2.ok) break;
+        pristineConfig = fs.readFileSync(path.join(greDir, 'config.js'));
         appendConfigProbe(greDir);
       }
 
@@ -795,13 +817,27 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
       // ── Per-variant: mutate disk → reload → assert ──
       let variantFailure = false;
       for (const variant of variants) {
-        applyStaleVariantOnDisk(firefoxBin, seeded, variant);
-        // A reload re-runs engineInit → fresh hash check → re-render.
-        await page.reload({waitUntil: 'domcontentloaded'});
-        const ok = await assertStaleCard(counter, page, variant);
-        if (!ok) {
-          variantFailure = true;
-          break;
+        // Errors are collected per variant, attached BEFORE the reload that
+        // triggers this variant's render.
+        const pageErrors = [];
+        const onErr = err => pageErrors.push(err.message);
+        page.on('pageerror', onErr);
+        try {
+          applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig);
+          // Re-render through the production path: UpdaterEngine.init() re-runs
+          // the fresh hash check (manifest fetch + local re-hash) and pushes
+          // state in-document. A page.reload() was tried first — BiDi cannot
+          // observe chrome:// navigations (its waiter times out and the
+          // evaluation channel wedges), so the engine's own re-check entry
+          // point is the reliable in-document equivalent.
+          await page.evaluate(() => window.UpdaterEngine.init());
+          const ok = await assertStaleCard(counter, page, variant, pageErrors);
+          if (!ok) {
+            variantFailure = true;
+            break;
+          }
+        } finally {
+          page.off('pageerror', onErr);
         }
       }
 
