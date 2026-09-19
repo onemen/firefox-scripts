@@ -877,6 +877,9 @@ jobs:
     outputs:
       matrix: ${{ steps.mtx.outputs.matrix }}
     steps:
+      # tools/ci/esrMatrix.mjs runs from the repo — checkout first (the
+      # cache/restore below does not materialize it).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Read-only against the baseline cache — save stays with the watchdog
       # workflow (this restore is best-effort; cache miss → generic serving-ESR
       # leg via buildEsrMatrix's fallback).
