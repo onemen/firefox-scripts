@@ -87,19 +87,34 @@ jobs:
     timeout-minutes: 5
     outputs:
       installer: ${{ steps.filter.outputs.installer }}
-      # A FULL manual dispatch (browser input '' or 'all') means "re-validate
-      # the current releases against main" — the post-release escape that
-      # re-records the validated versions the publish gate requires (#4). The
-      # path filter sees no commit diff on dispatch, so forcing updater=true
-      # here makes the helper/updater/portable-firefox legs run; a partial
-      # single-browser dispatch does NOT force it (ADR 0021) — its snapshot +
-      # browser-matrix legs are forced by their own job-level escape conditions
-      # instead (the snapshot needs-cascade would otherwise skip the whole
-      # matrix, see #143).
+      # Path filters are meaningful only where a commit diff exists (PR, push,
+      # merge queue). On workflow_dispatch dorny/paths-filter diffs the head
+      # commit against its parent — an arbitrary diff that made installer/
+      # updater/core legs run on unrelated browser escapes (observed 2026-09-19:
+      # a zen escape ran the full Firefox matrix because HEAD's parent was the
+      # #254 merge). So every path-based output is dispatch-guarded:
+      #   partial single-browser dispatch → forces NOTHING path-based (ADR 0021;
+      #     its snapshot + collapsed browser legs are forced by job-level escape
+      #     conditions — the snapshot needs-cascade would otherwise skip the
+      #     whole matrix, see #143);
+      #   FULL dispatch (browser '' or 'all') → forces the complete
+      #     revalidation set (installer + updater legs + core lifecycle): the
+      #     post-release "re-validate the current releases against main" escape
+      #     that re-records the validated versions the publish gate requires
+      #     (#4). ESR is deliberately NOT forced — it tracks Firefox back-compat,
+      #     not our releases, and runs on its own dedicated dispatch.
+      installer:
+        ${{ (github.event_name != 'workflow_dispatch' && steps.filter.outputs.installer == 'true')
+        || (github.event_name == 'workflow_dispatch' && (inputs.browser == '' || inputs.browser ==
+        'all')) }}
       updater:
-        ${{ steps.filter.outputs.updater == 'true' || (github.event_name == 'workflow_dispatch' &&
-        (inputs.browser == '' || inputs.browser == 'all')) }}
-      core: ${{ steps.filter.outputs.core }}
+        ${{ (github.event_name != 'workflow_dispatch' && steps.filter.outputs.updater == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.browser == '' || inputs.browser ==
+        'all')) }}
+      core:
+        ${{ (github.event_name != 'workflow_dispatch' && steps.filter.outputs.core == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.browser == '' || inputs.browser ==
+        'all')) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -715,8 +730,9 @@ jobs:
     # stay ADVISORY in the gate: their failures warn instead of blocking.
     needs: [changes, snapshot]
     if:
-      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
-      github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
+      (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' ||
+      needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' &&
+      inputs.browser != 'firefox-esr'
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
@@ -728,8 +744,8 @@ jobs:
       # though its steady-state leg is the required `updater-waterfox` job.
       matrix:
         browser:
-          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
-          inputs.browser) || '["librewolf", "floorp", "zen"]') }}
+          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && inputs.browser !=
+          'firefox-esr' && format('["{0}"]', inputs.browser) || '["librewolf", "floorp", "zen"]') }}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
       # Manual escape: pin the resolver to the requested version (empty input
@@ -791,14 +807,14 @@ jobs:
     name: 'fork portable E2E · ${{ matrix.browser }} · windows-latest'
     needs: [changes, snapshot]
     # A single-browser librewolf escape is excluded (no portable recipe → the
-    # leg would install registered and the layout assert would fail); its
-    # applicability entry below carries the same predicate. All other
-    # single-browser escapes collapse the matrix to that fork (waterfox's
-    # break-glass pin then exercises the portable path too).
+    # leg would install registered and the layout assert would fail — observed
+    # live 2026-09-19, run 35452996723). A full dispatch runs the default
+    # matrix (the revalidation escape covers everything); firefox-esr is not a
+    # fork and never lands here.
     if:
-      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
-      github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser !=
-      'librewolf'
+      (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' ||
+      needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' &&
+      inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr'
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
@@ -807,8 +823,8 @@ jobs:
       # leg (empty/non-dispatch input = the full matrix).
       matrix:
         browser:
-          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && format('["{0}"]',
-          inputs.browser) || '["zen", "floorp", "waterfox"]') }}
+          ${{ fromJSON(inputs.browser != '' && inputs.browser != 'all' && inputs.browser !=
+          'firefox-esr' && format('["{0}"]', inputs.browser) || '["zen", "floorp", "waterfox"]') }}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
       BROWSER_PIN_VERSION: ${{ inputs.version }}
@@ -869,9 +885,16 @@ jobs:
   esr-matrix:
     name: esr matrix
     needs: [changes]
+    # ESR is a Firefox back-compat surface — it has nothing to do with fork
+    # releases. Path-based triggers (core/** or updater-impacting changes) run
+    # on PRs and main pushes only; on workflow_dispatch the ONLY way in is the
+    # explicit `browser=firefox-esr` escape (the weekly watchdog's ESR-drift
+    # validation). Fork escapes and full revalidation dispatches never run the
+    # ESR legs — a same-day fork-release dispatch storm must not re-run them.
     if:
-      needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
-      github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr'
+      github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' ||
+      needs.changes.outputs.core == 'true') || github.event_name == 'workflow_dispatch' &&
+      inputs.browser == 'firefox-esr'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -968,6 +991,8 @@ jobs:
     # `browser=waterfox` dispatches run this required leg (ADR 0025 break-glass
     # pin); other partial dispatches don't apply it — the gate's applicability
     # entry and the check-gate-coverage contract carry the same predicate.
+    # (core/** pushes/PRs reach it through changes.updater, which the changes
+    # job sets from the core filter — see the changes-job outputs.)
     if:
       needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
       github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox'
@@ -1077,9 +1102,9 @@ jobs:
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
             snap-firefox:${{ needs.changes.outputs.updater == 'true' }}
             core-lifecycle:${{ needs.changes.outputs.core == 'true' }}
-            browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
-            fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all' && inputs.browser != 'librewolf') }}
-            esr-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr') }}
+            browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr') }}
+            fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr') }}
+            esr-matrix:${{ (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr') }}
             esr-portable:${{ needs.esr-matrix.result == 'success' }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
