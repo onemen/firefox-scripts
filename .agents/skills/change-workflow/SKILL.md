@@ -15,6 +15,11 @@ Do task work in a fresh `git worktree add ../<parent>/worktrees/<slug> -b <branc
 task, trivially deletable, out of the parent dir). A stale-husk sweep after threads exit is just
 `rmdir worktrees/*`.
 
+**Carve-out — small in-place edits:** the worktree discipline binds work that will be committed,
+pushed, or PR'd, or that needs installs/builds. Tiny edits under review in the shared checkout
+(docs, skill text, comments) may stay in the main worktree: nothing is installed, nothing is
+committed, and the user sees and quotes the diff directly.
+
 **Removing a worktree (Windows gotcha):** `git worktree remove` — even `--force` — can silently
 leave the pnpm `node_modules` behind: the deep `.pnpm` paths exceed `MAX_PATH`, part of the
 filesystem deletion fails, and git deregisters the worktree anyway. `git worktree list` then looks
@@ -89,6 +94,22 @@ passed if the required toolchain or environment was unavailable.**
 
 PRs that modify `core/**` must add or extend a test where feasible; if not, the PR description must
 explain why (CI gate tracked in issue #30).
+
+## Never idle-wait
+
+Never call `sleep`, busy-wait, or sit in a polling loop while CI, local tests, builds, or other
+background processes run — and never re-run a finished command just to "check again soon".
+
+- **Local commands** (builds, test suites, publish snapshots) run once in the foreground; when they
+  finish, report the result — no progress theater, no retry loops.
+- **Remote CI** is checked at natural pauses only, one-shot — `gh pr checks <branch>` or a single
+  `gh run list` / `gh run view`. No `gh run watch`, no backgrounded `&` watchers: background jobs do
+  not reliably survive between turns in this environment.
+- **While CI runs, either do useful work or end the turn.** Useful work: the next batch task (see
+  the `batch-loop` skill) or the ADR 0020 review step (`pnpm review:local` on your own open PRs, see
+  the `ai-review` skill). If nothing is actionable, end the turn with a status summary and an
+  explicit question — the turn end itself is the user's cue. Idle time is the user's decision, not
+  yours to manage.
 
 ## Before finishing
 

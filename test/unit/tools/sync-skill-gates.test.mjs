@@ -24,7 +24,7 @@ const {
   REPO_ROOT: TOOL_ROOT,
 } = await import(syncUrl);
 
-test('classifySkills: live repo — five third-party, four authored', () => {
+test('classifySkills: live repo — five third-party, five authored', () => {
   const {thirdParty, authored} = classifySkills(TOOL_ROOT);
   assert.deepEqual(thirdParty, [
     'cavecrew',
@@ -33,7 +33,13 @@ test('classifySkills: live repo — five third-party, four authored', () => {
     'grill-me',
     'lavish',
   ]);
-  assert.deepEqual(authored, ['ai-review', 'change-workflow', 'generated-files', 'publishing']);
+  assert.deepEqual(authored, [
+    'ai-review',
+    'batch-loop',
+    'change-workflow',
+    'generated-files',
+    'publishing',
+  ]);
 });
 
 test('renderPrettierignore: appends a managed block to a fresh file', () => {
