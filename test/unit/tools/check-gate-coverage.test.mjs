@@ -329,3 +329,88 @@ test('checkTestScriptCoverage: allowlisted script needs no reference', () => {
 test('checkTestScriptCoverage: the live repo satisfies the contract', () => {
   assert.deepEqual(checkTestScriptCoverage(), []);
 });
+
+test('checkTestScriptCoverage: an unreferenced wrapper cannot launder its callee', () => {
+  // test:wrapper is invoked by nobody; test:callee is invoked ONLY by
+  // test:wrapper — the wrapper's command text must not join the surfaces,
+  // so both are reported.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-cov-'));
+  const wfDir = path.join(tmp, '.github', 'workflows');
+  fs.mkdirSync(wfDir, {recursive: true});
+  fs.writeFileSync(
+    path.join(tmp, 'package.json'),
+    JSON.stringify({
+      scripts: {
+        'test:wrapper': 'pnpm test:callee',
+        'test:callee': 'node callee.mjs',
+        'lint': 'eslint .',
+      },
+    })
+  );
+  fs.writeFileSync(path.join(wfDir, 'e2e.yml'), 'run: pnpm lint\n');
+  try {
+    const errors = checkTestScriptCoverage({
+      pkg: path.join(tmp, 'package.json'),
+      workflowDir: path.join(tmp, '.github'),
+    });
+    assert.deepEqual(errors.map(e => /'([^']+)'/.exec(e)[1]).sort(), [
+      'test:callee',
+      'test:wrapper',
+    ]);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('checkTestScriptCoverage: a reachable wrapper covers its callee; prefix names match exactly', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-cov-'));
+  const wfDir = path.join(tmp, '.github', 'workflows');
+  fs.mkdirSync(wfDir, {recursive: true});
+  fs.writeFileSync(
+    path.join(tmp, 'package.json'),
+    JSON.stringify({
+      scripts: {
+        'test:wrapper': 'pnpm test:callee',
+        'test:callee': 'node callee.mjs',
+        'test:callee:extra': 'node callee-extra.mjs',
+        'lint': 'eslint .',
+      },
+    })
+  );
+  // The workflow mentions only test:wrapper — and test:callee:extra's name
+  // contains test:callee as a prefix, which must NOT cover it.
+  fs.writeFileSync(path.join(wfDir, 'e2e.yml'), 'run: pnpm test:wrapper\n');
+  try {
+    const errors = checkTestScriptCoverage({
+      pkg: path.join(tmp, 'package.json'),
+      workflowDir: path.join(tmp, '.github'),
+    });
+    assert.deepEqual(
+      errors.map(e => /'([^']+)'/.exec(e)[1]),
+      ['test:callee:extra']
+    );
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('checkTestScriptCoverage: a commented-out workflow mention does not count', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-cov-'));
+  const wfDir = path.join(tmp, '.github', 'workflows');
+  fs.mkdirSync(wfDir, {recursive: true});
+  fs.writeFileSync(
+    path.join(tmp, 'package.json'),
+    JSON.stringify({scripts: {'test:ghost': 'node ghost.mjs'}})
+  );
+  fs.writeFileSync(path.join(wfDir, 'e2e.yml'), '# run: pnpm test:ghost\nrun: pnpm lint\n');
+  try {
+    const errors = checkTestScriptCoverage({
+      pkg: path.join(tmp, 'package.json'),
+      workflowDir: path.join(tmp, '.github'),
+    });
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /test:ghost/);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});

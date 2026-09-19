@@ -436,11 +436,15 @@ const CONTRACTS = [
  * it, so the legacy-chrome lifecycle it exercises was "tested" only on the
  * author's machine.
  *
- * The reachability walk covers: .github/workflows + .github/actions (any
- * `test:<name>` mention), package.json `lint`/`format` chains (a script
- * invoking another script counts), and explicit allowlist entries. Unit tests
- * importing the underlying .mjs directly (e.g. manifest-lifecycle's helpers) do
- * NOT count — the point is that the end-to-end script runs.
+ * The reachability closure starts from .github/workflows + .github/actions
+ * texts and the package.json `lint`/`format` pipelines; every script a root (or
+ * an already-reachable script) invokes joins the surfaces, and a script
+ * invoking another script counts only once IT is reachable — an orphaned
+ * wrapper cannot launder its callee. Names match exactly (`test:foo` is not
+ * covered by `test:foo:bar`), YAML `#` comments are stripped, and explicit
+ * allowlist entries pass. Unit tests importing the underlying .mjs directly
+ * (e.g. manifest-lifecycle's helpers) do NOT count — the point is that the
+ * end-to-end script runs.
  */
 export const MANUAL_TEST_SCRIPTS = new Map([
   // test:e2e / :installer / :updater wrap the same scripts CI runs directly
@@ -454,8 +458,9 @@ export const MANUAL_TEST_SCRIPTS = new Map([
 ]);
 
 /**
- * Collect every test:* script name from package.json and return the ones no
- * automation surface references.
+ * Collect every test:* script name from package.json and return the ones not
+ * reachable from automation (see the contract comment above for the closure
+ * rules).
  *
  * @param {{
  *   pkg?: string;
@@ -471,18 +476,17 @@ export function checkTestScriptCoverage(opts = {}) {
   const wfDir = opts.workflowDir ?? path.join(REPO_ROOT, '.github');
   const errors = [];
 
-  let scripts;
+  let pkg;
   try {
-    scripts = Object.keys(JSON.parse(read(pkgPath, 'utf8')).scripts ?? {}).filter(s =>
-      s.startsWith('test:')
-    );
+    pkg = JSON.parse(read(pkgPath, 'utf8'));
   } catch {
     return ['package.json unreadable — cannot verify test script coverage'];
   }
+  const testScripts = Object.keys(pkg.scripts ?? {}).filter(s => s.startsWith('test:'));
 
-  // Automation surfaces: every workflow/action file's text plus the lint and
-  // format pipelines from package.json (a script chain counts as a reference).
-  const surfaces = [];
+  // Automation roots: every workflow/action file's text plus the lint and
+  // format pipelines — the entry points CI actually executes.
+  const roots = [];
   const stack = [wfDir];
   while (stack.length > 0) {
     const dir = stack.pop();
@@ -495,20 +499,48 @@ export function checkTestScriptCoverage(opts = {}) {
     for (const e of entries) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) stack.push(p);
-      else surfaces.push(read(p, 'utf8'));
+      else roots.push(read(p, 'utf8'));
     }
   }
-  const pkg = JSON.parse(read(pkgPath, 'utf8'));
-  surfaces.push(pkg.scripts?.lint ?? '', pkg.scripts?.format ?? '');
-  // Scripts invoked by other scripts count (e.g. test:hash inside build:ci).
-  for (const v of Object.values(pkg.scripts ?? {})) surfaces.push(v);
+  roots.push(pkg.scripts?.lint ?? '', pkg.scripts?.format ?? '');
 
-  for (const script of scripts) {
+  // Reachability closure (CodeRabbit, #250): a script's command text joins
+  // the surfaces only once the script itself is reachable from the roots, so
+  // an unreferenced wrapper cannot launder the script it invokes. Names match
+  // exactly — `test:foo` is not covered by a mention of `test:foo:bar` — and
+  // YAML `#` comments are stripped so a commented-out invocation never counts.
+  const allScripts = pkg.scripts ?? {};
+  const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Script names come from our own package.json (never external input) — the
+  // non-literal RegExp is exact-matching against an escaped literal.
+  const patterns = new Map(
+    Object.keys(allScripts).map(n => [
+      n,
+      // eslint-disable-next-line security/detect-non-literal-regexp -- names are our own package.json keys, escaped then exact-matched
+      new RegExp(`(?<![\\w:-])${escapeRe(n)}(?![\\w:-])`),
+    ])
+  );
+  const stripYamlComments = t => t.replace(/(^|\s)#[^\n]*/g, '$1');
+  const texts = roots.map(stripYamlComments);
+  const reachable = new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [name, pattern] of patterns) {
+      if (reachable.has(name)) continue;
+      if (texts.some(t => pattern.test(t))) {
+        reachable.add(name);
+        texts.push(stripYamlComments(String(allScripts[name])));
+        grew = true;
+      }
+    }
+  }
+
+  for (const script of testScripts) {
     if (MANUAL_TEST_SCRIPTS.has(script)) continue;
-    const referenced = surfaces.some(t => t.includes(script));
-    if (!referenced) {
+    if (!reachable.has(script)) {
       errors.push(
-        `test script '${script}' is not referenced by any workflow, action, script chain, or allowlist — wire it into CI (like test:e2e:legacy now is) or add it to MANUAL_TEST_SCRIPTS with a reason`
+        `test script '${script}' is not reachable from any workflow, action, the lint/format pipelines, or a reachable script chain (and is not allowlisted) — wire it into CI (like test:e2e:legacy now is) or add it to MANUAL_TEST_SCRIPTS with a reason`
       );
     }
   }
