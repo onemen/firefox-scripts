@@ -1438,11 +1438,19 @@ async function run() {
   // Per-leg budgets (legWatchdog.mjs): name the wedged layer in the log — the
   // global timer above stays the backstop that sweeps orphans on a hard
   // wedge, but it cannot say which leg hung. LEG_WATCHDOG_MIN overrides the
-  // per-leg default (6 min) for slow machines, same shape as E2E_WATCHDOG_MIN.
+  // per-leg default (6 min) for slow machines, same shape as E2E_WATCHDOG_MIN;
+  // it only raises a leg's ceiling — every leg is still clamped to the time
+  // actually left under the global deadline, so the leg timer can never let
+  // the global backstop fire first.
   const parsedLegMin = Number.parseInt(process.env.LEG_WATCHDOG_MIN ?? '', 10);
   const LEG_MIN = Number.isFinite(parsedLegMin) ? Math.max(1, parsedLegMin) : undefined;
+  const runStartedAt = Date.now();
   const legOpts = {timeoutMin: LEG_MIN};
-  const leg = (name, fn) => withLegWatchdog(name, fn, legOpts);
+  const leg = (name, fn) =>
+    withLegWatchdog(name, fn, {
+      ...legOpts,
+      remainingMs: WATCHDOG_MS - (Date.now() - runStartedAt),
+    });
   const watchdog = setTimeout(() => {
     console.error(
       `\n[watchdog] run exceeded ${WATCHDOG_MIN} min — killing stray installer children and failing`

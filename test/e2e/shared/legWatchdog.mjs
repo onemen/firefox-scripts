@@ -26,6 +26,13 @@ import {killStrayProcesses} from './processHygiene.mjs';
 export const DEFAULT_LEG_WATCHDOG_MIN = 6;
 
 /**
+ * Cleanup margin reserved against the global run watchdog: the global timer
+ * must stay the backstop, so a leg budget derived from the remaining global
+ * deadline leaves this much room for the final sweep + log to win the race.
+ */
+export const SWEEP_MARGIN_MS = 60_000;
+
+/**
  * Run one E2E leg under its own watchdog.
  *
  * @template T
@@ -40,13 +47,29 @@ export const DEFAULT_LEG_WATCHDOG_MIN = 6;
  * }} [opts]
  *   timeoutMin accepts the raw env value (string) or a number; timeoutMs
  *   overrides the minute math entirely (unit-test seam — never set in
- *   production callers); log/run/platform mirror killStrayProcesses' test seams
- *   and are forwarded to the sweep.
- * @returns {Promise<T>} the leg body's result
+ *   production callers); remainingMs is the production input: the ms still
+ *   available under the global run watchdog, which caps (clamps, with a log
+ *   line) the leg budget so a leg timer can never let the global backstop fire
+ *   first — LEG_WATCHDOG_MIN raises the ceiling, not the deadline. marginMs
+ *   (default SWEEP_MARGIN_MS) is the cleanup room reserved from remainingMs;
+ *   log/run/platform mirror killStrayProcesses' test seams and are forwarded to
+ *   the sweep.
+ * @returns {Promise<T>} the leg body's result (falsy results preserved)
+ * @throws {Error} leg-named watchdog error once the budget expires — a leg
+ *   rejection that lands after expiry is superseded by it
  */
 export async function withLegWatchdog(name, fn, opts = {}) {
   const log = opts.log ?? console.log;
-  const ms = opts.timeoutMs ?? resolveMs(opts.timeoutMin);
+  let ms = opts.timeoutMs ?? resolveMs(opts.timeoutMin);
+  if (opts.remainingMs != null) {
+    const available = Math.max(1_000, opts.remainingMs - (opts.marginMs ?? SWEEP_MARGIN_MS));
+    if (available < ms) {
+      log(
+        `[leg-watchdog] leg '${name}' budget clamped to ${Math.round(available / 1000)}s — global watchdog deadline`
+      );
+      ms = available;
+    }
+  }
 
   let timer;
   let expired = false;
@@ -65,13 +88,24 @@ export async function withLegWatchdog(name, fn, opts = {}) {
   });
 
   try {
-    const winner = await Promise.race([fn(), expiry]);
-    // The leg resolving null exactly as the timer fires is indistinguishable
-    // from expiry — and a leg that needed its full budget is a wedge anyway.
-    if (expired && winner === null) {
+    // Race on outcome objects (not raw values) so expiry's null sentinel can
+    // never collide with a legitimate falsy leg result, and decide on the
+    // synchronous `expired` flag rather than which promise settled: the
+    // expiry promise only resolves after the sweep finishes, so a leg that
+    // was merely slow — not hung — can resolve *during* the sweep window.
+    // A leg that needed its full budget is a wedge: always fail it.
+    const outcome = await Promise.race([
+      fn().then(
+        value => ({kind: 'leg', value}),
+        error => ({kind: 'leg-error', error})
+      ),
+      expiry.then(() => ({kind: 'expired'})),
+    ]);
+    if (expired || outcome.kind === 'expired') {
       throw new Error(`leg '${name}' exceeded ${Math.round(ms / 60_000)} min watchdog`);
     }
-    return winner;
+    if (outcome.kind === 'leg-error') throw outcome.error;
+    return outcome.value;
   } finally {
     clearTimeout(timer);
   }
