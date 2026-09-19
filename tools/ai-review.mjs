@@ -89,6 +89,10 @@ export function parseArgs(argv) {
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    // pnpm's `--` separator arrives here when run via `pnpm review:local --
+    // --flag` — the other repo tools ignore it (parseReleaseArgs, parseArgs in
+    // release.mjs); do the same so the documented pnpm spelling works.
+    if (arg === '--') continue;
     const value = () => argv[++i];
     switch (arg) {
       case '--provider':

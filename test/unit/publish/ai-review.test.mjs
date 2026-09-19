@@ -38,6 +38,12 @@ test('parseArgs applies defaults and overrides', () => {
   assert.equal(args.maxFiles, 30);
   assert.equal(args.maxDiffChars, 60000);
   assert.equal(args.dryRun, false);
+  // pnpm's `--` separator is ignored, so the documented pnpm spelling works;
+  // an unknown flag after it still fails loud.
+  assert.deepEqual(parseArgs(['--', '--summary-only']).summaryOnly, true);
+  assert.throws(() => parseArgs(['--', '--nope']), /Unknown flag: --nope/);
+  // A bare flag still fails loud.
+  assert.throws(() => parseArgs(['--nope']), /Unknown flag: --nope/);
 });
 
 test('parseArgs defaults providers to empty and base to main for local runs', () => {

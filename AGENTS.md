@@ -108,6 +108,7 @@ detail lives there so this file stays a checklist, not a manual. All skills are 
 | Skill               | Class       | Load when the task involves                                            |
 | ------------------- | ----------- | ---------------------------------------------------------------------- |
 | `ai-review`         | authored    | Reviewing a PR — the ADR 0020 local review step                        |
+| `batch-loop`        | authored    | Working a batch of tasks — one PR per task, never idle-wait            |
 | `change-workflow`   | authored    | Making code changes — subsystem, docs, validation order                |
 | `generated-files`   | authored    | Regenerating or reasoning about the untracked build files              |
 | `publishing`        | authored    | Releasing — `upload` / `upload:local`, prod/dev modes                  |
@@ -222,6 +223,8 @@ Before finishing:
 - if a code change invalidates any statement in AGENTS.md, skills, or docs/, update those documents
   in the same step. Do not leave stale instructions;
 - failed/unavailable validation is reported;
+- **Never edit files in the main worktree.** All task changes — however small, docs included —
+  happen in a task worktree; the shared checkout stays clean.
 - the task worktree is removed and the directory verified gone (see the `change-workflow` skill).
 
 ## Roadmap tracking

@@ -19,6 +19,7 @@ dist
 # BEGIN managed: third-party skills (generated — run pnpm format:fix)
 **/.agents/skills/*
 !**/.agents/skills/ai-review
+!**/.agents/skills/batch-loop
 !**/.agents/skills/change-workflow
 !**/.agents/skills/generated-files
 !**/.agents/skills/publishing

@@ -370,6 +370,11 @@ export function collectProvenance({
 
 /** Default process runner for collectProvenance: never throws, returns stdout. */
 function defaultRunner(cmd, args) {
+  // Guard against command injection: only ever spawn one of the pinned,
+  // hard-coded toolchain binaries — never an arbitrary/user-influenced string.
+  if (!PINNED_TOOLS.includes(cmd)) {
+    return '';
+  }
   const res = spawnSync(cmd, args, {encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe']});
   return res.stdout || '';
 }

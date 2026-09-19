@@ -12,7 +12,9 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-skills.mjs')).href;
-const {checkSkillsDir, findVendoredTests} = await import(scriptUrl);
+const {checkSkillsDir, findVendoredTests, agentsSkillsTable, checkAgentsTableDrift} = await import(
+  scriptUrl
+);
 
 function makeSkillsDir(skills) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-'));
@@ -229,6 +231,107 @@ test('stray file in the skills root is flagged', () => {
     const errors = checkSkillsDir(dir);
     assert.equal(errors.length, 1);
     assert.match(errors[0].message, /stray file/);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+// ── AGENTS.md Skills-table drift ─────────────────────────────────────────────
+
+function agentsMdWith(rows) {
+  const body = rows
+    .map(([name, cls]) => `| \`${name}\` | ${cls} | Load when ${name}. |`)
+    .join('\n');
+  return `# Repository Guidelines
+
+## Skills
+
+| Skill | Class | Load when |
+| ----- | ----- | --------- |
+${body}
+
+## Commands
+
+Run tests.
+`;
+}
+
+test('agentsSkillsTable: rows with class, non-row lines and other sections ignored', () => {
+  const md = agentsMdWith([
+    ['alpha', 'authored'],
+    ['beta', 'third-party'],
+  ]);
+  assert.deepEqual(agentsSkillsTable(md), [
+    {name: 'alpha', skillClass: 'authored'},
+    {name: 'beta', skillClass: 'third-party'},
+  ]);
+  // No Skills section at all → no rows.
+  assert.deepEqual(agentsSkillsTable('# Guide\n\nNo table here.\n'), []);
+});
+
+test('agentsSkillsTable: CRLF input normalizes', () => {
+  const md = agentsMdWith([['alpha', 'authored']]).replaceAll('\n', '\r\n');
+  assert.deepEqual(agentsSkillsTable(md), [{name: 'alpha', skillClass: 'authored'}]);
+});
+
+test('checkAgentsTableDrift: table in sync passes', () => {
+  const dir = makeSkillsDir({
+    alpha: authored('alpha'),
+    beta: thirdParty('beta'),
+  });
+  try {
+    assert.deepEqual(
+      checkAgentsTableDrift(
+        dir,
+        agentsMdWith([
+          ['alpha', 'authored'],
+          ['beta', 'third-party'],
+        ])
+      ),
+      []
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('checkAgentsTableDrift: skill on disk without a row is flagged', () => {
+  const dir = makeSkillsDir({alpha: authored('alpha')});
+  try {
+    const errors = checkAgentsTableDrift(dir, agentsMdWith([]));
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].message, /`alpha` exists on disk but has no Skills-table row/);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('checkAgentsTableDrift: stale row without a directory is flagged', () => {
+  const dir = makeSkillsDir({alpha: authored('alpha')});
+  try {
+    const errors = checkAgentsTableDrift(
+      dir,
+      agentsMdWith([
+        ['alpha', 'authored'],
+        ['ghost', 'authored'],
+      ])
+    );
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].message, /`ghost` has no directory/);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('checkAgentsTableDrift: wrong class is flagged', () => {
+  const dir = makeSkillsDir({alpha: authored('alpha')});
+  try {
+    const errors = checkAgentsTableDrift(dir, agentsMdWith([['alpha', 'third-party']]));
+    assert.equal(errors.length, 1);
+    assert.match(
+      errors[0].message,
+      /`alpha` is authored .* but the Skills table says "third-party"/
+    );
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
   }

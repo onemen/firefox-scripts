@@ -199,6 +199,75 @@ export function checkSkillsDir(skillsDir) {
 }
 
 /**
+ * Rows of the AGENTS.md Skills table — the `## Skills` section's rows whose
+ * first cell is a backticked skill name. Used by the drift check below to keep
+ * the table honest against the on-disk inventory.
+ *
+ * @param {string} agentsMd AGENTS.md content (CRLF tolerated)
+ * @returns {{name: string; skillClass: string | null}[]} table rows in order
+ */
+export function agentsSkillsTable(agentsMd) {
+  const section = agentsMd
+    .replace(/\r\n/g, '\n')
+    .split(/^## /m)
+    .find(part => part.startsWith('Skills'));
+  if (!section) return [];
+  const rows = [];
+  for (const line of section.split('\n')) {
+    const match = /^\|\s*`([a-z0-9-]+)`\s*\|\s*([^|]*)\|/.exec(line);
+    if (match) rows.push({name: match[1], skillClass: match[2].trim() || null});
+  }
+  return rows;
+}
+
+/**
+ * Cross-check the AGENTS.md Skills table against the on-disk skill inventory:
+ * every skill directory needs a table row, every row needs a directory, and the
+ * row's class must match the frontmatter classification (`metadata.github-repo`
+ * present = third-party, per the skills watchdog).
+ *
+ * @param {string} skillsDir absolute path to `.agents/skills/`
+ * @param {string} agentsMd AGENTS.md content
+ * @returns {{file: string; message: string}[]} problems, empty when in sync
+ */
+export function checkAgentsTableDrift(skillsDir, agentsMd) {
+  const errors = [];
+  const rows = new Map(agentsSkillsTable(agentsMd).map(row => [row.name, row.skillClass]));
+  const onDisk = fs
+    .readdirSync(skillsDir, {withFileTypes: true})
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+  for (const name of onDisk) {
+    if (!rows.has(name)) {
+      errors.push({
+        file: 'AGENTS.md',
+        message: `skill \`${name}\` exists on disk but has no Skills-table row`,
+      });
+      continue;
+    }
+    const text = fs.readFileSync(path.join(skillsDir, name, 'SKILL.md'), 'utf8');
+    const {metadata} = parseSkillFrontmatter(text);
+    const actual = metadata['github-repo'] ? 'third-party' : 'authored';
+    if (rows.get(name) !== actual) {
+      errors.push({
+        file: 'AGENTS.md',
+        message: `skill \`${name}\` is ${actual} (frontmatter) but the Skills table says "${rows.get(name)}"`,
+      });
+    }
+  }
+  for (const name of rows.keys()) {
+    if (!onDisk.includes(name)) {
+      errors.push({
+        file: 'AGENTS.md',
+        message: `Skills-table row \`${name}\` has no directory under ${SKILLS_DIR} (stale row)`,
+      });
+    }
+  }
+  return errors;
+}
+
+/**
  * Find vendored test files (any `*.test.mjs` under each skill directory).
  *
  * @param {string} skillsDir absolute path to `.agents/skills/`
@@ -240,6 +309,15 @@ async function main() {
   const skillsDir = path.join(repoRoot, SKILLS_DIR);
 
   const errors = checkSkillsDir(skillsDir);
+  const agentsMdPath = path.join(repoRoot, 'AGENTS.md');
+  if (fs.existsSync(agentsMdPath) && fs.existsSync(skillsDir)) {
+    errors.push(...checkAgentsTableDrift(skillsDir, fs.readFileSync(agentsMdPath, 'utf8')));
+  } else {
+    errors.push({
+      file: 'AGENTS.md',
+      message: 'AGENTS.md or .agents/skills/ is missing — the Skills table cannot be cross-checked',
+    });
+  }
   for (const {file, message} of errors) console.error(`✗ ${file}: ${message}`);
 
   if (skipTests) {
