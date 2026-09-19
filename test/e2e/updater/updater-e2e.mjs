@@ -150,7 +150,7 @@ function parseArgs() {
       opts.scenarios = args[++i].split(',').map(s => s.trim());
     else if (args[i] === '--help') {
       console.log(
-        '        Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,2,3] [--repeat 2]'
+        'Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,4,5] [--repeat 2]'
       );
       process.exit(0);
     }
@@ -791,12 +791,19 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
         if (!page) await new Promise(r => setTimeout(r, 500));
       }
       const viaPref = greShownToday(seeded.profileDir);
-      check(
-        counter,
-        Boolean(page) || viaPref || sawMirrorLine,
-        `tab opens (${attemptLabel})`,
-        !page && !viaPref && !sawMirrorLine ? 'scheduler never reached addTrustedTab' : ''
-      );
+      // Only the FINAL attempt may record the tab-open verdict: a FAIL
+      // here is permanent in the counter (fail-fast would skip every
+      // remaining scenario even if attempt 2 succeeded), so an earlier
+      // attempt stays silent and the retry gets its chance.
+      const tabOpened = Boolean(page) || viaPref || sawMirrorLine;
+      if (tabOpened || attempted >= 2) {
+        check(
+          counter,
+          tabOpened,
+          `tab opens (${attemptLabel})`,
+          tabOpened ? '' : 'scheduler never reached addTrustedTab'
+        );
+      }
 
       if (!page) {
         // Tab existence failed (or was only mirror-verified). Mirror/pref
@@ -821,6 +828,15 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
           browser = null;
           continue;
         }
+        // Final attempt, no page handle: the tab-open proof (mirror/pref) is
+        // recorded above, but the card assertions can never run — record the
+        // gap explicitly instead of letting the scenario pass vacuously.
+        check(
+          counter,
+          false,
+          `page handle available for card assertions (${label})`,
+          'BiDi never surfaced the updater tab — the stale variants were not asserted'
+        );
         break;
       }
 
