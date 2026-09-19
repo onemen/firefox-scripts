@@ -470,22 +470,25 @@ plain second installer defers to the one already serving the default port withou
 The optional `--ui` flag launches a real Firefox instance and verifies the web UI renders browser
 cards with correct status badges, but this is slower and requires a display.
 
-### Updater E2E (5 scenarios)
+### Updater E2E (6 scenarios)
 
 Each scenario: fresh temp profile → seed `chrome/utils` from the snapshot → optionally delete files
 or modify prefs to force a specific state → launch Firefox via puppeteer-core + WebDriver BiDi →
 wait for the updater tab to auto-open → assert the card renders the expected status, all 8 buttons
 are present, checkbox wiring works, and no page/console errors appeared.
 
-| Scenario | Seed                                   | Expected                                  |
-| -------- | -------------------------------------- | ----------------------------------------- |
-| 1        | Delete `RDFDataSource.sys.mjs`         | utils Update Available, config Up To Date |
-| 2        | Append comment to `config.js` + delete | config Update Available, utils Up To Date |
-| 3        | Delete + modify both                   | Both Update Available                     |
-| 4        | Unmodified utils + fx-folder           | Tab does NOT open (nothing to surface)    |
-| 5        | Set skip-pref to utils remote hash     | Tab does NOT open (skip suppresses)       |
+| Scenario | Seed                                                                                                                                                 | Expected                                                |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 1        | One session (#197): marker on `RDFDataSource.sys.mjs` + GreD probe; per-variant disk toggling + tab reload — utils stale → config stale → both stale | All three stale combinations, full card assertions each |
+| 4        | Unmodified utils + fx-folder                                                                                                                         | Tab does NOT open (nothing to surface)                  |
+| 5        | Set skip-pref to utils remote hash                                                                                                                   | Tab does NOT open (skip suppresses)                     |
 
-Skip individual scenarios during iteration with `--scenario 1,2,3`.
+Scenario 1's merged session is wrapped in a retry-once guard with a fresh profile: a
+browser-internal startup race (observed on waterfox, run 35460461221) would otherwise fail all three
+variants at once. The retry logs its own `[retry]` lines; a second failure fails the leg.
+Card-assertion failures are deterministic and never retried. Skip individual scenarios during
+iteration with `--scenario 1,4,5` (scenario 1 always runs all three variants — they share the
+session).
 
 ### Configuration
 
