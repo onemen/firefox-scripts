@@ -363,8 +363,14 @@ int installer_has_uploaded_zip(int is_utils) {
     return (g_uploaded_config_zip && g_uploaded_config_len > 0);
 }
 
+// Upper bound on an accepted upload, mirroring the HTTP layer's
+// MAX_REQUEST_BODY cap. Enforced here too so these setters stay safe
+// against memory-exhaustion DoS even if ever called from a path that
+// does not already bound the input (CWE-770).
+#define MAX_UPLOADED_ZIP_LEN (4 * 1024 * 1024)
+
 int installer_set_uploaded_zip(int is_utils, const char *data, size_t len) {
-    if (!data || len == 0) return -1;
+    if (!data || len == 0 || len > MAX_UPLOADED_ZIP_LEN) return -1;
     char *copy = (char *)malloc(len);
     if (!copy) return -1;
     memcpy(copy, data, len);
