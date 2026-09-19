@@ -430,6 +430,11 @@ pnpm test:e2e:installer
 
 # Updater only (opens Firefox — see config below)
 pnpm test:e2e:updater
+
+# Legacy chrome lifecycle (runs in CI: the `core lifecycle E2E` job on every
+# core/updater PR — all 3 OSes, portable Firefox). Local run needs a Firefox
+# with a writable GreD (PORTABLE_BROWSER_DIR or a portable copy).
+pnpm test:e2e:legacy
 ```
 
 The orchestrator (`run.mjs`) passes `--snapshot <dir>` to child scripts automatically; individual
