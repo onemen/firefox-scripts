@@ -888,19 +888,11 @@ jobs:
       - name: Build the ESR leg matrix
         id: mtx
         shell: bash
+        # tools/ci/esrMatrix.mjs prints the matrix JSON on stdout (fallback
+        # included). No inline node here: a multi-line -e string is split per
+        # line in bash and each line becomes a shell command (exit 127).
         run: |
-          if [ -f .watchdog/baseline.json ]; then
-            MATRIX=$(node --input-type=module -e 
-              "import fs from 'node:fs';
-               const b = JSON.parse(fs.readFileSync('.watchdog/baseline.json', 'utf8'));
-               const {buildEsrMatrix} = await import('./tools/ci/watchdog-report.mjs');
-               console.log(buildEsrMatrix(b.esr));")
-          else
-            echo 'no baseline cache — falling back to the generic serving-ESR leg'
-            MATRIX=$(node --input-type=module -e 
-              "const {buildEsrMatrix} = await import('./tools/ci/watchdog-report.mjs');
-               console.log(buildEsrMatrix(null));")
-          fi
+          MATRIX=$(node tools/ci/esrMatrix.mjs .watchdog/baseline.json)
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "ESR legs: $MATRIX"
 
