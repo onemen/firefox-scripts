@@ -239,8 +239,14 @@ test('downloads.mjs: generated ESR recipes are portable Windows-only', async () 
   assert.equal(entry.install.mac, undefined);
   assert.equal(entry.install.linux, undefined);
   assert.equal(downloads.esrDownloadsEntry('firefox'), undefined);
+  // The generic cold-cache fallback key shares the recipe (it must be
+  // installable when the baseline cache missed — the 2026-09-19 CI failure).
+  assert.equal(downloads.esrDownloadsEntry('firefox-esr').install.win.portable, true);
+  // A malformed major is still rejected.
+  assert.equal(downloads.esrDownloadsEntry('firefox-esr-abc'), undefined);
   // downloadsEntry folds the dynamic keys into the static table.
   assert.equal(downloads.downloadsEntry('firefox-esr-153').install.win.portable, true);
+  assert.equal(downloads.downloadsEntry('firefox-esr').install.win.portable, true);
   assert.equal(
     downloads.downloadsEntry('firefox').install.win.url.includes('firefox-latest'),
     true

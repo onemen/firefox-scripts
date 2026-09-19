@@ -208,7 +208,12 @@ export function platformKey(platform = process.platform) {
  * version-embedded releases index — the resolver's `firefox-esr-<major>` chain
  * (product-details serving keys → releases-index scrape) handles both.
  */
-const ESR_BROWSER_REGEXP = /^firefox-esr-(\d+)$/;
+// The generic `firefox-esr` key (cold-cache matrix fallback) and the
+// concrete `firefox-esr-<major>` keys share the same generated recipe.
+// Anchored + bounded alternation over a repo-internal browser key — no
+// backtracking risk (eslint-security false positive).
+// eslint-disable-next-line security/detect-unsafe-regex
+const ESR_BROWSER_REGEXP = /^firefox-esr(?:-(\d+))?$/;
 
 /**
  * A generated ESR recipe: the official Mozilla NSIS installer installed
