@@ -86,7 +86,6 @@ jobs:
     # docs/ci-inventory.md → Job timeouts).
     timeout-minutes: 5
     outputs:
-      installer: ${{ steps.filter.outputs.installer }}
       # Path filters are meaningful only where a commit diff exists (PR, push,
       # merge queue). On workflow_dispatch dorny/paths-filter diffs the head
       # commit against its parent — an arbitrary diff that made installer/
