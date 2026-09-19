@@ -486,9 +486,11 @@ are present, checkbox wiring works, and no page/console errors appeared.
 Scenario 1's merged session is wrapped in a retry-once guard with a fresh profile: a
 browser-internal startup race (observed on waterfox, run 35460461221) would otherwise fail all three
 variants at once. The retry logs its own `[retry]` lines; a second failure fails the leg.
-Card-assertion failures are deterministic and never retried. Skip individual scenarios during
-iteration with `--scenario 1,4,5` (scenario 1 always runs all three variants — they share the
-session).
+Card-assertion failures are deterministic and never retried. Full card assertions additionally
+require WebDriver BiDi to attach to the trusted chrome:// tab; on runners where it cannot (observed
+on Windows CI), the leg verifies the tab-open via the probe mirror / persisted pref and says so in
+the check label — the historical contract for these legs. Skip individual scenarios during iteration
+with `--scenario 1,4,5` (scenario 1 always runs all three variants — they share the session).
 
 ### Configuration
 
