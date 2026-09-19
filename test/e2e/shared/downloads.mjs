@@ -197,6 +197,63 @@ export function platformKey(platform = process.platform) {
   return 'linux';
 }
 
+// ── Firefox ESR (dynamic majors: firefox-esr-<major>) ───────────────────────
+
+/**
+ * ESR browser keys are dynamic (`firefox-esr-140`, `firefox-esr-153` — the two
+ * majors the watchdog baseline currently tracks), so their recipes are
+ * GENERATED here instead of living in the static DOWNLOADS table. The Mozilla
+ * product redirect (`?product=firefox-esr-latest`) always serves the SERVING
+ * ESR only, so a retired major (140 after 2026-09-29) must come from the
+ * version-embedded releases index — the resolver's `firefox-esr-<major>` chain
+ * (product-details serving keys → releases-index scrape) handles both.
+ */
+// The generic `firefox-esr` key (cold-cache matrix fallback) and the
+// concrete `firefox-esr-<major>` keys share the same generated recipe.
+// Anchored + bounded alternation over a repo-internal browser key — no
+// backtracking risk (eslint-security false positive).
+// eslint-disable-next-line security/detect-unsafe-regex
+const ESR_BROWSER_REGEXP = /^firefox-esr(?:-(\d+))?$/;
+
+/**
+ * A generated ESR recipe: the official Mozilla NSIS installer installed
+ * PORTABLY on Windows (fork-portable mechanism — `/D=` into
+ * PORTABLE_BROWSER_DIR), so it never collides with the registered stable
+ * install and needs no BROWSERS registry entry (the resolved binary is exported
+ * as FIREFOX_BINARY directly). Windows-only: the ESR legs are advisory and
+ * Windows is the platform the installer/updater actually admin-copies on.
+ *
+ * @param {string} browser
+ * @returns {{
+ *   install: {
+ *     win: {
+ *       resolver: boolean;
+ *       args: string[];
+ *       portable: boolean;
+ *       portableExe: string;
+ *     };
+ *   };
+ * }}
+ */
+export function esrDownloadsEntry(browser) {
+  if (!ESR_BROWSER_REGEXP.test(browser)) return undefined;
+  return {
+    install: {
+      win: {
+        resolver: true,
+        args: ['/S'],
+        portable: true, // /D= → PORTABLE_BROWSER_DIR/firefox.exe
+        portableExe: 'firefox.exe',
+      },
+    },
+  };
+}
+
+/** DOWNLOADS lookup with the dynamic ESR keys folded in. */
+export function downloadsEntry(browser) {
+  return DOWNLOADS[browser] ?? esrDownloadsEntry(browser);
+}
+
 /**
  * Resolve a browser's binary after an installer run, mirroring the
  * candidate-dir search of discoverFirefoxBinary (real install dirs, never PATH
@@ -240,12 +297,12 @@ export async function resolveDownloadUrl(browser, platform = process.platform) {
     : platform === 'mac' ? 'darwin'
     : platform
   );
-  const recipe = DOWNLOADS[browser]?.install?.[key];
+  const recipe = downloadsEntry(browser)?.install?.[key];
   if (!recipe) {
     throw new Error(
       `${browser} has no automated install for ${key}` +
-        (DOWNLOADS[browser]?.page ?
-          ` — manual install only (official page: ${DOWNLOADS[browser].page})`
+        (downloadsEntry(browser)?.page ?
+          ` — manual install only (official page: ${downloadsEntry(browser).page})`
         : '')
     );
   }
@@ -959,9 +1016,11 @@ function requireBinary(browser) {
  */
 export async function installBrowser(browser, platform = process.platform) {
   const key = platformKey(platform);
-  const def = DOWNLOADS[browser];
+  const def = downloadsEntry(browser);
   if (!def) {
-    throw new Error(`Unknown browser '${browser}' (known: ${Object.keys(DOWNLOADS).join(', ')})`);
+    throw new Error(
+      `Unknown browser '${browser}' (known: ${Object.keys(DOWNLOADS).join(', ')}, firefox-esr-<major>)`
+    );
   }
   const recipe = def.install?.[key];
   if (!recipe) {

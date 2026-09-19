@@ -17,7 +17,136 @@
 // re-exports this module's names for its existing importers.
 
 /** Browsers the E2E map installs or tracks — each must resolve its version. */
-export const BROWSERS = ['firefox', 'firefox-dev', 'librewolf', 'floorp', 'zen', 'waterfox'];
+export const BROWSERS = [
+  'firefox',
+  'firefox-dev',
+  'nightly',
+  'librewolf',
+  'floorp',
+  'zen',
+  'waterfox',
+];
+
+/**
+ * Informational ledger rows: tracked in the meta issue (version + last check)
+ * but never drift-blocking, never dispatched, never validated. Nightly changes
+ * DAILY, so a normal ledger row would put permanent drift between weekly
+ * watchdog runs and churn the version history — its real coverage stays the
+ * required 3-OS `updater` E2E legs on every core/updater PR (ADR 0021
+ * tiering).
+ */
+export const INFORMATIONAL_BROWSERS = ['nightly'];
+
+/**
+ * The dynamic ESR window: browser keys are `firefox-esr-<major>` (e.g.
+ * `firefox-esr-140`), one ledger row + one advisory E2E leg per watched major.
+ * The window is the two newest ESR majors, maintained by updateEsrState() from
+ * Mozilla's product-details keys (`FIREFOX_ESR`, `FIREFOX_ESR_NEXT`) — never
+ * hardcoded. Unlike the static BROWSERS these rows never reach the publish
+ * drift gate (collectDrift iterates the static list), so an ESR release can
+ * never block a prod publish; drift only dispatches the advisory leg.
+ */
+export const ESR_BROWSER_PREFIX = 'firefox-esr-';
+
+export function esrBrowserKey(major) {
+  return `firefox-esr-${major}`;
+}
+
+/** '140.16.0esr' → '140'; null when the string is not an ESR version. */
+export function esrMajorOf(version) {
+  // Two or three components: Mozilla has shipped both shapes across ESR
+  // chains (140.16.0esr today; a x.yesr shape must still rotate the window).
+  // Anchored + bounded alternation over a version string — no backtracking risk.
+  // eslint-disable-next-line security/detect-unsafe-regex
+  const m = /^(\d+)(?:\.\d+){1,2}esr$/.exec(String(version ?? ''));
+  return m ? m[1] : null;
+}
+
+/**
+ * Rotate the watched ESR window (pure).
+ *
+ * The window is ALWAYS the two newest known ESR majors: the watched set is
+ * {previous majors} ∪ {FIREFOX_ESR's major} ∪ {FIREFOX_ESR_NEXT's major}, and
+ * the top two by major number win. Consequences (all intended, see the ESR
+ * watchdog design):
+ *
+ * - The serving key flipping which major it carries (e.g. FIREFOX_ESR moving 140
+ *   → 153 on the overlap's end) changes NOTHING: 153 is already watched.
+ * - When FIREFOX_ESR_NEXT brings a NEW major (e.g. 164 in ~Dec 2026), the window
+ *   slides [140,153] → [153,164] and the dropped major leaves tracking.
+ * - Cold start (no state): the two live keys seed the window; with NEXT absent
+ *   the window degrades to the serving major alone (single leg) until state
+ *   exists.
+ *
+ * Versions are refreshed from the live keys for the majors they serve; a
+ * retired major keeps its last recorded version (and stays update-watchable
+ * through the archive releases index — see browserResolver.mjs).
+ *
+ * @param {{majors: string[]; versions: Record<string, string>} | null} state
+ *   the `esr` block from the watchdog baseline (null on first run)
+ * @param {string | null} esrVersion live FIREFOX_ESR (null = lookup failed)
+ * @param {string | null} nextVersion live FIREFOX_ESR_NEXT (null/empty =
+ *   absent)
+ * @returns {{
+ *   state: {majors: string[]; versions: Record<string, string>};
+ *   droppedMajors: string[];
+ * }}
+ *   dropped majors must be cleaned from the ledger (baseline entries + history)
+ *   by the caller
+ */
+export function updateEsrState(state, esrVersion, nextVersion) {
+  const known = new Set((state?.majors ?? []).map(Number));
+  const live = [];
+  for (const [version, key] of [
+    [esrVersion, 'esr'],
+    [nextVersion, 'next'],
+  ]) {
+    const major = esrMajorOf(version);
+    if (!major) continue;
+    known.add(Number(major));
+    live.push([key, major, String(version)]);
+  }
+  const majors = [...known]
+    .sort((a, b) => a - b)
+    .slice(-2)
+    .map(String);
+  const droppedMajors = (state?.majors ?? []).filter(m => !majors.includes(m));
+  const versions = {...(state?.versions ?? {})};
+  for (const m of droppedMajors) delete versions[m];
+  // Refresh only majors that are still watched — a live key can serve a major
+  // this same rotation just dropped (ESR=140 while NEXT announces 164):
+  // re-recording it would keep the dropped line alive in the cache.
+  for (const [, major, version] of live) {
+    if (majors.includes(major)) versions[major] = version;
+  }
+  return {state: {majors, versions}, droppedMajors};
+}
+
+/**
+ * Ledger row keys for the watched ESR majors, lowest major first — the meta
+ * issue table, the history seed and the CI matrix are all built from these.
+ *
+ * @param {{majors: string[]} | null | undefined} esrState
+ * @returns {string[]}
+ */
+export function esrLedgerNames(esrState) {
+  const majors = Array.isArray(esrState?.majors) ? esrState.majors : [];
+  return majors.map(esrBrowserKey);
+}
+
+/**
+ * The dynamic matrix JSON for the `esr-portable` E2E job: one leg per watched
+ * ESR major. Empty state (cold cache) → the generic serving-ESR key
+ * (`firefox-esr`), which resolves its version at run time from Mozilla's keys —
+ * degradation, never a hardcoded version.
+ *
+ * @param {{majors: string[]} | null | undefined} esrState
+ * @returns {string} e.g. '["firefox-esr-140", "firefox-esr-153"]'
+ */
+export function buildEsrMatrix(esrState) {
+  const names = esrLedgerNames(esrState);
+  return JSON.stringify(names.length > 0 ? names : ['firefox-esr']);
+}
 
 /**
  * Browsers whose current version must be covered by a successful E2E run before
@@ -80,12 +209,25 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  *   (`browser` absent = full matrix)
  */
 export function planDispatches(findings) {
-  const newVersions = findings.filter(f => f.kind === 'new-version');
+  // Informational rows (nightly) never dispatch — their coverage is the PR
+  // legs, and a weekly-churning channel would spam the dispatch API.
+  const newVersions = findings.filter(
+    f => f.kind === 'new-version' && !INFORMATIONAL_BROWSERS.includes(f.browser)
+  );
   const forks = [
     ...new Set(newVersions.map(f => f.browser).filter(b => FORK_BROWSERS.includes(b))),
   ];
   const hardGates = newVersions.some(f => VALIDATED_BROWSERS.includes(f.browser));
+  // Any watched ESR major drifting (point release on the serving line, or the
+  // archive-index catch on a retired line) → ONE dispatch that runs the whole
+  // esr-portable matrix — both current ESR legs — via the `browser=firefox-esr`
+  // escape input. One dispatch, never two: a second would land in the same
+  // non-cancelled escape concurrency group and kill the first.
+  const esr = newVersions.some(
+    f => typeof f.browser === 'string' && f.browser.startsWith(ESR_BROWSER_PREFIX)
+  );
   const plans = forks.map(browser => ({browser, ref: 'main'}));
+  if (esr) plans.push({browser: 'firefox-esr', ref: 'main'});
   if (hardGates) plans.push({ref: 'main'});
   return plans;
 }
@@ -122,6 +264,10 @@ export function compareBaseline(prev, curr) {
 export function collectDrift(baseline, versions, {ignoreLookupFailureFor = []} = {}) {
   const drift = [];
   for (const browser of BROWSERS) {
+    // Informational rows (nightly) are never publish-gate inputs — a lookup
+    // failure or version bump on them must not block a prod publish. The
+    // dynamic ESR rows are dispatch-only and never appear in the static list.
+    if (INFORMATIONAL_BROWSERS.includes(browser)) continue;
     const prev = baseline[browser];
     const curr = versions[browser];
     if (curr === undefined || curr === null || curr === '') {
@@ -291,8 +437,8 @@ export function escapeTableCell(value) {
  * is exactly what the version-aware CI installer cache still serves (the
  * fallback column). `validated` is the E2E record (see validatedCell).
  */
-export function buildStatusTable({results, baseline, validated}) {
-  const rows = BROWSERS.map(browser => {
+export function buildStatusTable({results, baseline, validated, browsers = BROWSERS}) {
+  const rows = browsers.map(browser => {
     const res = results[browser] || {status: 'ok'};
     const entry = baseline[browser] || {};
     const failed =
@@ -300,7 +446,10 @@ export function buildStatusTable({results, baseline, validated}) {
       res.status === 'endpoint-failed' ||
       res.status === 'download-failed';
     const version = entry.version || '—';
-    const sizeSha = `${formatSize(entry.size)} · ${shortSha(entry.sha256)}`;
+    // Informational rows (nightly) and rows that never fully downloaded carry
+    // no size/hash — render a clean dash instead of '— · —'.
+    const sizeSha =
+      entry.size || entry.sha256 ? `${formatSize(entry.size)} · ${shortSha(entry.sha256)}` : '—';
     const lastCheck = formatCheck(entry.checkedAt, entry.checkedUrl);
     // The CI cache always holds the last verified version, green run or not —
     // show it unconditionally (the staleness suffix matters only on failure,
@@ -365,13 +514,16 @@ export function updateHistory(history, entry, {perBrowser = HISTORY_PER_BROWSER}
  * across no-op runs.
  */
 export function seedHistoryFromBaseline(baseline) {
-  const changes = BROWSERS.filter(b => baseline[b]?.version).map(b => ({
-    browser: b,
-    version: baseline[b].version,
-    size: baseline[b].size,
-    sha256: baseline[b].sha256,
-    downloadMs: baseline[b].downloadMs,
-  }));
+  const tracked = [...BROWSERS, ...esrLedgerNames(baseline.esr)];
+  const changes = tracked
+    .filter(b => baseline[b]?.version)
+    .map(b => ({
+      browser: b,
+      version: baseline[b].version,
+      size: baseline[b].size,
+      sha256: baseline[b].sha256,
+      downloadMs: baseline[b].downloadMs,
+    }));
   return changes.length ? [{kind: 'baseline', changes}] : [];
 }
 

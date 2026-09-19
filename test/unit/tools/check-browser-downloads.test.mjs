@@ -249,10 +249,11 @@ function assertTableIntegrity(table, label = 'table') {
   return expected;
 }
 
-test('buildStatusTable: six rows, short links, fallback on failed browsers', () => {
+test('buildStatusTable: seven rows (incl. the informational nightly), fallback on failed browsers', () => {
   const results = {
     'firefox': {status: 'ok'},
     'firefox-dev': {status: 'new-version'},
+    'nightly': {status: 'ok'},
     'librewolf': {status: 'lookup-failed'},
     'floorp': {status: 'ok'},
     'zen': {status: 'ok'},
@@ -277,7 +278,7 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
   const table = buildStatusTable({results, baseline});
   assertTableIntegrity(table, 'status table');
   const lines = table.split('\n');
-  assert.equal(lines.length, 8); // header + separator + 6 browsers
+  assert.equal(lines.length, 9); // header + separator + 7 browsers (incl. informational nightly)
   assert.match(
     table,
     /^\| Browser \| Last verified \| Size · SHA-256 \| Last check \| Status \| Fallback \(CI cache\) \| Download time \| E2E validated \|/
@@ -310,6 +311,7 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
     },
   });
   assertTableIntegrity(tableDl, 'download-failed table');
+  assert.equal(tableDl.split('\n').length, 9); // 7 browsers + header + delimiter
   const zen = tableDl.split('\n').find(l => l.startsWith('| zen '));
   assert.match(zen, /\| ⚠️ download failed \| cached: 1\.21\.15b · Aug 25 \| — \|/);
   const dev = lines.find(l => l.startsWith('| firefox-dev '));
@@ -317,8 +319,9 @@ test('buildStatusTable: six rows, short links, fallback on failed browsers', () 
   const waterfox = lines.find(l => l.startsWith('| waterfox '));
   // waterfox is in VALIDATED_BROWSERS since ADR 0025, so its E2E-validated
   // cell tracks the record (⏳ none until a successful run covers it) — it no
-  // longer renders the fork em dash.
-  assert.match(waterfox, /\| — \| — · — \| — \| ✅ up to date \| — \| — \| ⏳ none \|/);
+  // longer renders the fork em dash. An entry that never fully downloaded
+  // renders a single clean dash in the size cell (not '— · —').
+  assert.match(waterfox, /\| — \| — \| — \| ✅ up to date \| — \| — \| ⏳ none \|/);
 });
 
 test('buildStatusTable: fallback shows cached version on green runs, download time when known', () => {
@@ -386,7 +389,7 @@ test('buildStatusTable: cell-count integrity under extreme cell values', () => {
   });
   const cols = assertTableIntegrity(table, 'kitchen-sink table');
   assert.equal(cols, 8);
-  assert.equal(table.split('\n').length, 8); // header + delimiter + 6 browsers
+  assert.equal(table.split('\n').length, 9); // header + delimiter + 7 browsers (incl. nightly)
 });
 
 test('buildStatusTable: hostile pipe in a vendor-served value cannot split a cell', () => {
@@ -429,7 +432,7 @@ test('buildStatusTable: hostile pipe in a vendor-served value cannot split a cel
     baseline: {firefox: {version: `1.0\n| injected | row |`}},
   });
   assertTableIntegrity(injected, 'newline-injection table');
-  assert.equal(injected.split('\n').length, 8); // no extra rows appeared
+  assert.equal(injected.split('\n').length, 9); // no extra rows appeared (7 browsers + header + delimiter)
   const ffRow = injected.split('\n').find(l => l.startsWith('| firefox '));
   assert.match(ffRow, /1\.0 \\\| injected \\\| row \\\|/); // kept, pipes escaped, one line
 });
