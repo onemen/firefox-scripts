@@ -39,8 +39,7 @@
     "review:batch": "node tools/ci/batch-review.mjs",
     "ci:download": "node tools/ci/ciDownload.mjs",
     "review:local": "node tools/ai-review.mjs",
-    "test:skills": "node tools/check-skills.mjs --skip-tests",
-    "lint:ncpy": "node tools/check-strncpy.mjs"
+    "test:skills": "node tools/check-skills.mjs --skip-tests"
   },
   "keywords": [],
   "author": "ONEMEN <tabmix.onemen@gmail.com> (https://github.com/onemen)",
