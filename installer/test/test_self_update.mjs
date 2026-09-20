@@ -27,8 +27,7 @@ import {fileURLToPath} from 'url';
 // publishes, and the spawned installer gets its own argv.
 process.argv.push('--mode=prod');
 
-const {computeFileSetHash, collectDirEntries} = await import('../../tools/publish/hashUtils.mjs');
-const {loadSharedPatterns} = await import('../../tools/publish/publishCommon.mjs');
+const {requireFreshSnapshot} = await import('./snapshotProvenance.mjs');
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -105,26 +104,6 @@ function managedBlock(date, downloads) {
   return JSON.stringify({installerDate: date, download: downloads});
 }
 
-/**
- * Recompute the installer's SOURCE-tree hash exactly the way the publish flow
- * does (upload.mjs buildBinaries): installer/src minus helper/ and the two
- * generated headers, installer/web, config/installer.conf.
- */
-function computeInstallerSourceHash(repoRoot) {
-  const installerSrc = path.join(repoRoot, 'installer', 'src');
-  const installerWeb = path.join(repoRoot, 'installer', 'web');
-  const srcPatterns = loadSharedPatterns(installerSrc, ['helper/**']);
-  const webPatterns = loadSharedPatterns(installerWeb, []);
-  return computeFileSetHash([
-    ...collectDirEntries(installerSrc, srcPatterns, 'installer', installerSrc, [
-      '_config.h',
-      'resources.h',
-    ]),
-    ...collectDirEntries(installerWeb, webPatterns, 'web'),
-    {rel: 'config/installer.conf', absPath: path.join(repoRoot, 'config', 'installer.conf')},
-  ]).hash;
-}
-
 function main() {
   const snapshotDir = findSnapshot();
   if (!snapshotDir) {
@@ -137,37 +116,8 @@ function main() {
     process.exit(1);
   }
 
-  // ── staleness guard (2026-09-15 audit, finding T1) ────────────────────────
-  // The suite runs whatever binary sits in the newest snapshot dir. A snapshot
-  // built from older sources turns every failure below into a false report
-  // about `main` — and a stale binary that happens to agree proves nothing.
-  // hashes.json records the source-tree hash the binary was built from;
-  // recompute it from the current sources and refuse to continue on drift.
-  const manifestPath = path.join(snapshotDir, 'hashes.json');
-  let stored;
-  try {
-    stored = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  } catch {
-    console.error(`Unreadable hashes.json in ${snapshotDir} — regenerate the snapshot.`);
-    process.exit(1);
-  }
-  const storedHash = stored.installer?.hash;
-  const sourceHash = computeInstallerSourceHash(REPO_ROOT);
-  if (storedHash !== sourceHash) {
-    console.error(
-      `STALE SNAPSHOT: ${snapshotDir}\n` +
-        `  its installer was built from sources with hash ${storedHash ?? '(none recorded)'},\n` +
-        `  but the current sources hash to           ${sourceHash}.\n` +
-        `  (snapshot installer date: ${stored.installer?.date ?? 'unknown'})\n` +
-        `Refusing to run the self-update suite against binary provenance this\n` +
-        `suite cannot trust — failures would misreport as regressions on main.\n` +
-        `Regenerate: pnpm upload:local -- --mode=prod   (or --mode=dev for a local snapshot).`
-    );
-    process.exit(1);
-  }
-  console.log(
-    `Snapshot provenance verified: installer built from current sources (${sourceHash.slice(0, 12)}, date ${stored.installer?.date ?? '?'})`
-  );
+  // ── staleness guard (2026-09-15 audit, finding T1) — shared helper ────────
+  requireFreshSnapshot({snapshotDir});
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-self-update-'));
   // The installer matches the asset named after ITS OWN binary: dev snapshots

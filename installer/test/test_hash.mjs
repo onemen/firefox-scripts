@@ -42,6 +42,7 @@ const [{generateModule, readConfig}, {compareCaseInsensitive, computeFileSetHash
     import('../../tools/publish/generateUpdaterConfig.mjs'),
     import('../../tools/publish/hashUtils.mjs'),
   ]);
+const {requireFreshSnapshot} = await import('./snapshotProvenance.mjs');
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -146,6 +147,11 @@ function main() {
   const snapshotDir = requireSnapshot();
   const MANIFEST_PATH = path.join(snapshotDir, 'hashes.json');
   const INSTALLER = getInstallerPath(snapshotDir);
+
+  // Staleness guard (2026-09-18 audit, finding T1): refuse to compare the C
+  // hash of a binary built from older sources — parity against a stale
+  // snapshot proves nothing about main. Shared with test_self_update.mjs.
+  requireFreshSnapshot({snapshotDir});
 
   // The utils `files` list includes the generated updater-config.sys.mjs, which
   // upload.mjs deletes at the end of its run. Regenerate it (prod, matching

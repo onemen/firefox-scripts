@@ -15,8 +15,90 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const hygieneUrl = pathToFileURL(
   path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'processHygiene.mjs')
 ).href;
-const {closeBrowser, isE2eProcess, killStrayProcesses, removeProfileCompatibilityIni} =
-  await import(hygieneUrl);
+const {
+  closeBrowser,
+  INSTALLER_ARGV0_ERE,
+  INSTALLER_ARGV0_PS,
+  isE2eProcess,
+  killStrayProcesses,
+  removeProfileCompatibilityIni,
+} = await import(hygieneUrl);
+
+// ── Engine-backed pattern validation (T5) ───────────────────────────────────
+// The sweep's three regex dialects must all express the same matcher. The JS
+// form is covered by isE2eProcess above; the PowerShell and pkill forms are
+// validated here against their real engines when available (powershell.exe on
+// Windows hosts, grep -E as the POSIX-ERE stand-in for pkill), and skipped
+// elsewhere — a silent dialect drift must fail the gate on the host where the
+// dialect runs, not vanish.
+
+const ARGV0_POSITIVE = [
+  'C:\\repo\\dist\\.build\\installer\\installer_win.exe --smoke-test',
+  './dist/.build/installer/installer_linux --env-file x.json',
+  'installer_win-dev.exe --env-file /tmp/fxs-e2e-1/env.json',
+  '"C:\\repo with space\\dist\\installer_win.exe" --smoke-test',
+  '/repo/dist/.build/installer/installer_linux_aarch64',
+];
+const ARGV0_NEGATIVE = [
+  'bash -c "ls dist/installer_win.exe"',
+  'ls dist/installer_win.exe',
+  'grep installer_win /tmp/manifest.json',
+  'node tools/check-bin.mjs installer_win.exe',
+  'C:\\Windows\\system32\\cmd.exe /c dir dist\\installer_win.exe',
+];
+
+/** Full pkill-style alternation: fxs- markers anywhere OR installer argv[0]. */
+function pkillPattern() {
+  return `fxs-(e2e|installer-ui)|${INSTALLER_ARGV0_ERE}`;
+}
+
+if (process.platform === 'win32') {
+  test('INSTALLER_ARGV0_PS: real PowerShell -match agrees with isE2eProcess', async () => {
+    const {spawnSync} = await import('node:child_process');
+    const cases = [
+      ...ARGV0_POSITIVE.map(cmd => ({cmd, want: 'MATCH'})),
+      ...ARGV0_NEGATIVE.map(cmd => ({cmd, want: 'NOMATCH'})),
+    ];
+    const ps =
+      `$pat = '${INSTALLER_ARGV0_PS}'; ` +
+      cases
+        .map(
+          c => `if ('${c.cmd.replaceAll("'", "''")}' -match $pat) { 'MATCH' } else { 'NOMATCH' }`
+        )
+        .join('; ');
+    const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    assert.equal(res.status, 0, `powershell failed: ${res.stderr}`);
+    const out = res.stdout.trim().split(/\r?\n/);
+    assert.equal(out.length, cases.length, 'one verdict per case');
+    cases.forEach((c, i) => {
+      assert.equal(out[i], c.want, `PowerShell verdict for ${JSON.stringify(c.cmd)}`);
+    });
+  });
+}
+
+test('INSTALLER_ARGV0_ERE: real grep -E (POSIX ERE) agrees with isE2eProcess', async () => {
+  const {execFileSync} = await import('node:child_process');
+  const pattern = pkillPattern();
+  /** Run grep -E with the case on stdin; returns true when it matches. */
+  function grepMatch(cmd) {
+    try {
+      execFileSync('grep', ['-E', '-e', pattern, '-'], {input: `${cmd}\n`, encoding: 'utf8'});
+      return true;
+    } catch (e) {
+      if (e.status !== 1) throw e; // 1 = no match — the informative exit
+      return false;
+    }
+  }
+  for (const cmd of ARGV0_POSITIVE) {
+    assert.ok(grepMatch(cmd), `grep -E must match argv[0] case: ${JSON.stringify(cmd)}`);
+  }
+  for (const cmd of ARGV0_NEGATIVE) {
+    assert.equal(grepMatch(cmd), false, `grep -E must NOT match: ${JSON.stringify(cmd)}`);
+  }
+});
 
 // ── isE2eProcess: the argv matcher the sweep kills on ────────────────────────
 
@@ -26,10 +108,28 @@ test('isE2eProcess: matches harness temp-dir prefixes in argv', () => {
   assert.ok(isE2eProcess('installer.exe --env-file /tmp/fxs-installer-ui-env-1/env.json'));
 });
 
-test('isE2eProcess: matches the harness-built installer binary names', () => {
+test('isE2eProcess: matches the harness-built installer binary as argv[0]', () => {
   assert.ok(isE2eProcess('C:\\repo\\dist\\.build\\installer\\installer_win.exe --smoke-test'));
   assert.ok(isE2eProcess('./dist/.build/installer/installer_linux --env-file x.json'));
   assert.ok(isE2eProcess('/repo/dist/.build/installer/installer_mac'));
+  assert.ok(isE2eProcess('installer_win-dev.exe --env-file /tmp/fxs-e2e-1/env.json'));
+  assert.ok(isE2eProcess('./dist/.build/installer/installer_linux_aarch64-dev --env-file x.json'));
+  // Quoted argv[0] (Windows command lines quote paths with spaces).
+  assert.ok(isE2eProcess('"C:\\repo\\dist\\.build\\installer\\installer_win.exe" --smoke-test'));
+});
+
+test('isE2eProcess: does NOT match commands that merely contain the name (T5)', () => {
+  // The 2026-09-18 audit's T5: the old bare-substring form killed a calling
+  // shell whose command line referenced the installer as an ARGUMENT. The
+  // binary must now be argv[0] to match.
+  assert.equal(isE2eProcess('bash -c "ls dist/installer_win.exe"'), false);
+  assert.equal(isE2eProcess('ls dist/installer_win.exe'), false);
+  assert.equal(isE2eProcess('grep installer_win /tmp/manifest.json'), false);
+  assert.equal(isE2eProcess('node tools/check-bin.mjs installer_win.exe'), false);
+  assert.equal(
+    isE2eProcess('C:\\Windows\\system32\\cmd.exe /c dir dist\\installer_win.exe'),
+    false
+  );
 });
 
 test('isE2eProcess: rejects unrelated command lines', () => {
@@ -38,9 +138,10 @@ test('isE2eProcess: rejects unrelated command lines', () => {
   assert.equal(isE2eProcess(''), false);
   assert.equal(isE2eProcess(null), false);
   assert.equal(isE2eProcess(undefined), false);
-  // "installer_win" must be a path segment, not any substring — but the
-  // matcher intentionally stays coarse: an executable NAMED installer_win in
-  // another context is the accepted false-positive risk (logged, best-effort).
+  // An executable NAMED installer_win in another context is the accepted
+  // false-positive risk (logged, best-effort): argv[0] is the installer even
+  // if a user built a same-named binary elsewhere. What T5 removed is the
+  // match when the name is only an ARGUMENT of some other command.
   assert.ok(isE2eProcess('/opt/installer_win.exe'));
 });
 
@@ -146,7 +247,11 @@ test('killStrayProcesses: win32 branch counts the PowerShell PID lines', async (
   assert.equal(killed, 2);
   assert.equal(seen.length, 1);
   assert.equal(seen[0].cmd, 'powershell.exe');
-  assert.match(seen[0].args.at(-1), /fxs-\(e2e\|installer-ui\)\|installer_\(win\|linux\|mac\)/);
+  // Two -match clauses: the fxs- markers anywhere, plus the argv[0]-anchored
+  // installer branch (same matcher as isE2eProcess).
+  assert.match(seen[0].args.at(-1), /fxs-\(e2e\|installer-ui\)/);
+  assert.match(seen[0].args.at(-1), /\^\(\?:/);
+  assert.match(seen[0].args.at(-1), /installer_\(win\|linux\|mac\)/);
 });
 
 test('killStrayProcesses: win32 branch with nothing matched', async () => {
