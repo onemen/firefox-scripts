@@ -4,7 +4,7 @@
 # The pnpm entry covers the npm dependency surface (tools/, test/, config/):
 # weekly, grouped so a batch of minor/patch bumps lands as one reviewable PR,
 # capped at 5 open PRs. pnpm audit --audit-level=high additionally runs in the
-# ci.yml checks job on every PR (audit gate, ADR 0017). Runtime npm deps stay
+# ci.yml checks job on every PR (audit gate, ADR 0033). Runtime npm deps stay
 # at zero — these updates can only ever touch build/test tooling.
 version: 2
 updates:

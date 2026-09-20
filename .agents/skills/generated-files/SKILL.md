@@ -25,7 +25,9 @@ Four files are **gitignored and regenerated on demand** — never hand-edit them
 Generated files are produced **when they are needed**, not on every edit:
 
 1. **Installer build** — the Makefile regenerates `_config.h` (`config` target) and `resources.h`
-   (`resources` target) on every build; even `make analyze` (part of `pnpm lint`) depends on them.
+   (`resources` target) on every build; even `make analyze` (part of `pnpm lint`) depends on them —
+   which is why running the lint **regenerates two gitignored headers as a side effect**: a check
+   that mutates the (untracked) tree is expected, not a dirty-worktree problem.
 2. **Publish** — `createZip.mjs` regenerates `updater-config.sys.mjs` and `updater.css` while
    building the package zips.
 3. **Manual** — anything else (inspection, a missing file, a stale value):

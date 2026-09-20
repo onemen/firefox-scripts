@@ -30,7 +30,7 @@ Relevant code: `installer/src/main.c` (restart helpers, `handle_api_restart`,
 - The UI tab is opened in the first detected profile explicitly
   (`open_url_in_profile(browsers[0].binary, browsers[0].profile, url)`), so the tab lives in a known
   profile and the restart flow always targets it.
-- Each run gets a random 16-hex session token embedded in the URL:
+- Each run gets a random 32-hex session token embedded in the URL:
   `http://localhost:8777/?t=<token>`. `/api/claim`, `/api/ping`, `/api/shutdown`, and `/api/restart`
   are token-aware: a tab carrying an old token is a _stale restored tab_ — it shows a "closed"
   placeholder and cannot shut down or restart the current installer.

@@ -27,6 +27,16 @@ ephemeral ports plus Origin checks) is adopted.
 **Entropy note (2026-09-15):** the token is a true 128-bit value — 16 CSPRNG bytes, both nibbles
 taken (`hex[raw[i] >> 4]`, `hex[raw[i] & 0xF]`). Earlier builds consumed only the low nibble
 (`raw[i] % 16`), yielding 64 bits from the same 16 random bytes; the smoke-security and E2E
-harnesses pin the 32-hex length.**Availability note (2026-09-15):** the single-threaded serve loop's
-availability envelope — per-connection read deadlines, 408 semantics, and the smoke-test override —
-is its own decision: see [ADR 0028](./0028-installer-serve-loop-availability.md).
+harnesses pin the 32-hex length.
+
+**Availability note (2026-09-15):** the single-threaded serve loop's availability envelope —
+per-connection read deadlines, 408 semantics, and the smoke-test override — is its own decision: see
+[ADR 0028](./0028-installer-serve-loop-availability.md).
+
+**Token comparison (2026-09-20):** token checks are `strcmp`-based, not constant-time. The server
+listens only on `127.0.0.1`, requests are serialized by the single-threaded serve loop under
+per-connection deadlines, and the practical timing channel is closed at the client: a page's
+`performance.now()` is clamped to ≥100 µs while `strcmp`'s early-exit signal is sub-microsecond, so
+recovering even one token nibble prefix-by-prefix would need millions of measured requests inside
+one short-lived installer run. A constant-time compare buys nothing under this threat model.
+Revisit-if the server ever listens beyond the loopback interface.

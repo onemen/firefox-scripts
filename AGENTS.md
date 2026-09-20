@@ -102,7 +102,8 @@ detail lives there so this file stays a checklist, not a manual. All skills are 
   by the weekly watchdog as a tracking issue; updates land as reviewed PRs. `pnpm lint` gates on
   frontmatter validity and runs the vendored skills' own tests; `pnpm test:skills` performs static
   frontmatter validation only. Vendor text stays pristine (ADR 0022: "gates that validate apply to
-  everything").
+  everything"). Vendored skills are host-dependent: their commands assume this repo's toolchain
+  (pnpm, the C toolchain, `gh`) and may not translate to other projects.
 - **Authored here**: fully covered by the lint/format gates; updates are normal PRs.
 
 | Skill               | Class       | Load when the task involves                                            |

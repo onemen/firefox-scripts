@@ -102,6 +102,10 @@ Open these before proposing a new primitive, surface, or storage home.
   flagged binary cannot freeze script delivery (amends [0024])
 - [0031](./0031-gh-pages-orphan-artifact-branch.md) — gh-pages is an orphan, artifact-only publish
   branch: publish commits only, never seeded from main (amends [0003])
+- [0032](./0032-pinned-build-toolchain.md) — The Windows build toolchain is pinned, byte-for-byte:
+  `msys2-toolchain.json` + provenance assertion; upgrades are manifest edits, never `pacman -Syu`
+- [0033](./0033-dependency-update-policy.md) — Dependency-update policy: dev-tooling-only npm tree,
+  weekly grouped minor/patch, audit gate; majors never automated
 
 ## Historical
 

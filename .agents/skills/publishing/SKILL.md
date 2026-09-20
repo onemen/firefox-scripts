@@ -84,7 +84,8 @@ pnpm dev-clean                      # delete dev-build-<id> branch + release whe
 ```
 
 Production release (from `main`, gates green: `pnpm lint`, `pnpm format`, `pnpm test`,
-`pnpm test:hash`, then `upload:local -- --mode=prod`):
+`pnpm test:hash` (needs a built snapshot — auto-generates one, hard-fails on stale), then
+`upload:local -- --mode=prod`):
 
 ```bash
 pnpm upload -- --mode=prod
