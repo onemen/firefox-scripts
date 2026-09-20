@@ -1,4 +1,31 @@
 CC ?= gcc
+
+# Windows: pin the recipe shell before ANY $(shell) runs (BUILD_EPOCH below is
+# the first).  The Windows make (MSYS2 ucrt64) is a native build that probes
+# PATH for sh.exe and silently falls back to cmd.exe when none is found — and
+# every probe prints "The system cannot find the path specified." to stderr:
+# `pnpm lint` through .npmrc's Git-bash script-shell shows three of them for
+# `make -C installer analyze` alone, because a terminal whose PATH carries
+# msys64\ucrt64\bin (for make/gcc) usually lacks usr\bin (for sh.exe).  The
+# commands still ran (exit 0) — pure noise today, broken 2>/dev/null probes
+# tomorrow — so pin a POSIX shell when one can be found at a known absolute
+# location.  Order matters for the WSL trap: bare `bash.exe` on PATH resolves
+# to C:\Windows\System32\bash.exe (the WSL launcher) before Git's, and a
+# space-containing path (Git bash) risks native make's quoting — so prefer
+# MSYS2's own sh, co-located with make (no spaces), then CI's extracted
+# location (the pinned-msys2 action exports MSYS2_LOCATION and warns to never
+# assume C:\msys64).  No match → leave make's default discovery untouched
+# (today's behavior; CI's PATH already finds sh and was always clean).
+ifeq ($(OS),Windows_NT)
+  PINNED_SH := $(wildcard C:/msys64/usr/bin/sh.exe)
+  ifeq ($(PINNED_SH),)
+    PINNED_SH := $(wildcard $(MSYS2_LOCATION)/usr/bin/sh.exe)
+  endif
+  ifneq ($(PINNED_SH),)
+    SHELL := $(PINNED_SH)
+  endif
+endif
+
 # Overridable windres (binutils).  Native Windows builds default to `windres`
 # (MSYS2 UCRT64); cross-compiles (`make dist_win CC=x86_64-w64-mingw32-gcc`)
 # pass WINDRES=x86_64-w64-mingw32-windres so the PE resource is still linked.
