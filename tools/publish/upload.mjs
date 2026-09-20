@@ -760,7 +760,11 @@ async function publishToGitHub({
     message: pagesCommitMessage({
       mode: PUBLISH_MODE,
       include: INCLUDE,
-      platforms: PLATFORMS,
+      // Only the platforms whose binaries this run actually pushed: zips,
+      // updater-ui and hashes.json are platform-independent, so a packages-only
+      // run (or one whose binaries came back unchanged) names no platform in
+      // the commit message (CodeRabbit batch review on #262).
+      platforms: [...new Set([...builtInstallers, ...builtHelpers])],
       devBranch: DEV_BRANCH,
       date: new Date().toISOString().slice(0, 10),
     }),

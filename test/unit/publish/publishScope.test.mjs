@@ -183,14 +183,17 @@ test('pagesCommitMessage: full prod — the historical shape', () => {
 });
 
 test('pagesCommitMessage: partial scope and the pushed platform join the subject', () => {
+  // call-site reality: the platform list comes from the binaries actually
+  // pushed (builtInstallers/builtHelpers), so a packages-only run — which
+  // ships only platform-independent zips + manifest — names no platform.
   assert.equal(
     pagesCommitMessage({
       mode: 'prod',
       include: parseInclude(['--include=packages']),
-      platforms: ['win'],
+      platforms: [],
       date: '2026-09-20',
     }),
-    'chore: publish prod packages (win, 2026-09-20)'
+    'chore: publish prod packages (2026-09-20)'
   );
   assert.equal(
     pagesCommitMessage({
