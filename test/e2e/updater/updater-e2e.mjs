@@ -105,10 +105,15 @@ try {
         let line;
         try {
           const se = aMessage.QueryInterface(Ci.nsIScriptError);
-          const errFlag = Ci.nsIScriptError.errorFlag || 1;
+          // Classify info → warn, everything else = error (review thread on
+          // #271): the flag constants moved between Firefox versions, so
+          // testing errorFlag first with a numeric fallback could
+          // misclassify. Defaulting to error means the console net can only
+          // over-report, never under-report.
+          const infoFlag = Ci.nsIScriptError.infoFlag || 8;
           const warnFlag = Ci.nsIScriptError.warningFlag || 2;
           const level =
-            se.flags & errFlag ? 'error' : se.flags & warnFlag ? 'warn' : 'info';
+            se.flags & infoFlag ? 'info' : se.flags & warnFlag ? 'warn' : 'error';
           const src = se.sourceName ? ' [' + se.sourceName + ':' + (se.lineNumber || 0) + ']' : '';
           line = level + src + ' ' + se.errorMessage;
         } catch {
