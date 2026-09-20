@@ -175,7 +175,12 @@ CONFIG_GENERATOR ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../tools/publis
 # with the current MODE even when the content is unchanged.  Keep commentary
 # ABOVE the recipe — never inside it, or cmd.exe will try to run it.
 $(SRC_DIR)/_config.h: ../config/installer.conf FORCE
-	@node $(CONFIG_GENERATOR) $(if $(MODE),--mode=$(MODE),) $(if $(LOCAL),--local,) --touch
+# $(subst) normalizes upload.mjs's command-line override to forward slashes:
+# it passes a Windows backslash path, and under the pinned POSIX shell the
+# backslashes are escape characters — node would receive a mangled relative
+# path (CI publish-gate breakage, PR #263). Forward slashes are safe for node
+# under every shell this Makefile can run under (sh, bash, cmd).
+	@node $(subst \,/,$(CONFIG_GENERATOR)) $(if $(MODE),--mode=$(MODE),) $(if $(LOCAL),--local,) --touch
 
 # Generate embedded resources from web/ files
 resources: $(SRC_DIR)/resources.h
