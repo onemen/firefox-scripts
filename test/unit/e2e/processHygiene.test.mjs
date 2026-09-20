@@ -79,8 +79,14 @@ if (process.platform === 'win32') {
   });
 }
 
-test('INSTALLER_ARGV0_ERE: real grep -E (POSIX ERE) agrees with isE2eProcess', async () => {
-  const {execFileSync} = await import('node:child_process');
+test('INSTALLER_ARGV0_ERE: real grep -E (POSIX ERE) agrees with isE2eProcess', async t => {
+  const {spawnSync, execFileSync} = await import('node:child_process');
+  // Windows does not ship grep (the pkill branch of the sweep is dead code
+  // there); skip rather than fail with ENOENT on hosts without one. Hosts with
+  // a POSIX layer (Git Bash, WSL) still run the real check.
+  const probe = spawnSync('grep', ['--version'], {encoding: 'utf8', timeout: 10_000});
+  if (probe.error)
+    return t.skip(`grep not available on this host (${probe.error.code ?? 'ENOENT'})`);
   const pattern = pkillPattern();
   /** Run grep -E with the case on stdin; returns true when it matches. */
   function grepMatch(cmd) {
