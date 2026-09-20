@@ -10,9 +10,25 @@
 #include <mach-o/dyld.h>
 #include <errno.h>
 
+static int has_path_traversal(const char *path) {
+    size_t len = strlen(path);
+    for (size_t i = 0; i < len; i++) {
+        if (path[i] == '.' && path[i + 1] == '.' &&
+            (i == 0 || path[i - 1] == '/') &&
+            (path[i + 2] == '/' || path[i + 2] == '\0'))
+            return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 3 || (argc % 2) == 0)
         return EXIT_BAD_ARGS;
+
+    for (int i = 1; i < argc; i++) {
+        if (has_path_traversal(argv[i]))
+            return EXIT_BAD_ARGS;
+    }
 
     int needs_elevation = 0;
     for (int i = 2; i < argc; i += 2) {
