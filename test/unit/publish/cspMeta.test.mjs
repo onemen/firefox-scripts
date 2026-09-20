@@ -124,6 +124,20 @@ test('both pages stay free of inline handlers and inline scripts the CSP would b
       !/\son(load|click|change|input|submit|error)\s*=\s*["']?/i.test(html),
       `${label}: no inline event handlers`
     );
+    // style-src has no 'unsafe-inline': an inline style="..." attribute is
+    // blocked at runtime (style-src-attr falls back to style-src). The
+    // progress-bar fill carried one since the initial native-installer commit;
+    // #228's CSP made Firefox log a style-src-attr violation for it. The
+    // stylesheet default (.card-progress-bar-fill { width: 0% }, style.css)
+    // covers the initial state, and the JS drives width via el.style.width
+    // (CSSOM — allowed by CSP).
+    // Scoped to the updater tab: the installer page still has two (index.html
+    // network-error banner "display: none", 30-render.js progress fill) — both
+    // embedded in installer_win.exe, so they wait for the post-release CSP
+    // cleanup (see docs/review.local.2026-09-18.md §9.10).
+    if (label === 'updater tab') {
+      assert.ok(!/\sstyle="[^"]*"/.test(html), `${label}: no inline style attributes`);
+    }
   }
 });
 
