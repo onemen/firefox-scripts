@@ -643,11 +643,16 @@ and point the test at the result; the pure-Node `pnpm test` suite never needs a 
   gh-injected frontmatter metadata is the baseline (no cache, stateless in every mode), and each
   skill's recorded tree SHA is compared against its upstream via the GitHub API — both at the
   recorded ref (`content-drift`, what `gh skill update` applies) and on the default branch
-  (`ref-behind`: a static tag left behind; fixed by a forced reinstall). Opens ONE rolling tracking
-  issue (`label:skills-watchdog`) with the exact update command per skill, closed automatically when
-  a later run finds everything current. Updates land as human-reviewed PRs — never pushed: upstream
-  skill text is a prompt-injection surface. PR mode (`--pr`) is stateless, always green, and
-  surfaces findings as annotations. Local run: `node tools/skills-watchdog.mjs --dry-run`.
+  (`ref-behind`: a static tag left behind; fixed by a forced reinstall). A newer-release scan
+  (`newer-tag`) covers the blind spot both checks share — upstream publishing a newer tag while the
+  pinned content is intact (a CLI-only release): the newest in-series tag (namespace-aware, so
+  `bin-v*` never competes with `v*`) becomes actionable once it is at least 7 days old, and stays an
+  informational log line before that — the weekly cadence is the cooldown. Opens ONE rolling
+  tracking issue (`label:skills-watchdog`) with the exact update command per skill, closed
+  automatically when a later run finds everything current. Updates land as human-reviewed PRs —
+  never pushed: upstream skill text is a prompt-injection surface. PR mode (`--pr`) is stateless,
+  always green, and surfaces findings as annotations. Local run:
+  `node tools/skills-watchdog.mjs --dry-run`.
 
 - **Skills checker** (`tools/check-skills.mjs`, wired into `pnpm lint`; static-only alias
   `pnpm test:skills`) — gates on SKILL.md frontmatter validity (name/description presence, name =

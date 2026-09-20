@@ -29,6 +29,19 @@
  *       its exact update command; when a later run finds no drift, the open
  *       issue is closed. Updates are never pushed: they land as human-reviewed
  *       PRs.
+ * - Newer-release scan (same run, static tag refs only): the content checks above
+ *   are blind to "upstream published a newer tag" when neither the pin nor the
+ *   folder content moved (e.g. a CLI-only release). `collectNewerTags` lists
+ *   the source repo's tags, finds the newest one in the pinned series
+ *   (namespace-aware: `bin-v*` never competes with `v*`), and classifies:
+ *
+ *   - `newer-tag` — the newest in-series tag is at least NEWER_TAG_COOLDOWN_DAYS
+ *       old → actionable row in the tracking issue (forced reinstall
+ *       re-resolves latest).
+ *   - below the cooldown → an informational log line only; the next weekly run ages
+ *       it into action (the weekly cadence IS the cooldown). Rolling refs
+ *       (`refs/heads/*`) skip the scan — their content checks already cover
+ *       them.
  * - PR (`--pr`): stateless and always green — findings surface as `::warning::`
  *   annotations so the check can be required without blocking. No issues, no
  *   writes.
@@ -58,6 +71,13 @@ export const REPO_ROOT = path.resolve(__dirname, '..');
 export const SKILLS_DIR = '.agents/skills';
 export const WATCHDOG_LABEL = 'skills-watchdog';
 export const ISSUE_TITLE = '[skills-watchdog] third-party skill drift';
+
+/**
+ * A newer upstream tag younger than this is informational only — fast-moving
+ * projects (lavish-axi ships several tags a week) must not churn the tracking
+ * issue. The next weekly run ages the tag past the window.
+ */
+export const NEWER_TAG_COOLDOWN_DAYS = 7;
 
 /**
  * Parse the gh-injected metadata block from a SKILL.md frontmatter. Targeted
@@ -167,6 +187,150 @@ export async function folderTreeAt(fetchJson, repo, commitSha, skillPath) {
 }
 
 /**
+ * Split a tag name into its series prefix and dotted version. The prefix is
+ * everything up to and including the last `v` before the leading digit, so
+ * namespaced tags stay in their own lane: `bin-v1.1.6` → prefix `bin-v`,
+ * `lavish-axi-v0.1.64` → prefix `lavish-axi-v`, `v1.2.3` → prefix `v`. A tag
+ * without a `v` before its version (e.g. `release-1.2`) returns null — the
+ * newer-tag scan simply skips it.
+ *
+ * @param {string} tagName tag name without the `refs/tags/` prefix
+ * @returns {{prefix: string; version: string; tagName: string} | null}
+ */
+export function parseTagSeries(tagName) {
+  const m = tagName.match(/^(.*v)(\d[\d.]*)$/);
+  if (!m) return null;
+  return {prefix: m[1], version: m[2], tagName};
+}
+
+/**
+ * Numeric dotted-version compare; missing components are 0 (`1.2` > `1.1.9`).
+ * Pre-release suffixes are out of scope — the series regex only accepts digits
+ * and dots.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {-1 | 0 | 1}
+ */
+export function compareSemver(a, b) {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i += 1) {
+    const na = pa[i] ?? 0;
+    const nb = pb[i] ?? 0;
+    if (na !== nb) return na > nb ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * The newest tag in a series, or null when the list has none. Never crosses
+ * namespaces: `v2.7.0` is invisible to a `bin-v` pin.
+ *
+ * @param {string[]} tagNames
+ * @param {string} prefix series prefix from parseTagSeries
+ */
+export function newestTagInSeries(tagNames, prefix) {
+  let best = null;
+  for (const name of tagNames) {
+    const series = parseTagSeries(name);
+    if (!series || series.prefix !== prefix) continue;
+    if (!best || compareSemver(series.version, parseTagSeries(best).version) > 0) best = name;
+  }
+  return best;
+}
+
+/**
+ * Publication date of a tag, or null. For annotated tags that is the tagger
+ * date — the moment the tag was actually published; the commit's committer date
+ * would let a tag cut today from an old commit bypass the cooldown instantly
+ * (CodeRabbit triage, PR #260). Lightweight tags have no tag object, so the
+ * commit's committer date is the only available proxy there.
+ *
+ * @param {(pathname: string) => Promise<any>} fetchJson
+ * @param {string} repo `owner/name`
+ * @param {string} tagName
+ */
+export async function tagCommitDate(fetchJson, repo, tagName) {
+  const ref = await fetchJson(`/repos/${repo}/git/ref/tags/${tagName}`);
+  let sha = ref.object.sha;
+  if (ref.object.type === 'tag') {
+    const tagObj = await fetchJson(`/repos/${repo}/git/tags/${sha}`);
+    if (tagObj.tagger?.date) return tagObj.tagger.date;
+    sha = tagObj.object.sha;
+  }
+  const commit = await fetchJson(`/repos/${repo}/commits/${sha}`);
+  return commit.commit?.committer?.date ?? null;
+}
+
+/** Whole days between an ISO date and now; null when unparseable. */
+export function ageInDays(dateIso, now) {
+  const ms = Date.parse(dateIso);
+  if (Number.isNaN(ms)) return null;
+  return Math.floor((now.getTime() - ms) / 86_400_000);
+}
+
+/**
+ * Newer-release scan, independent of collectDrift: a skill can be
+ * content-current at its pin AND have a newer upstream release (the pin is
+ * intact, the folder unchanged on HEAD — the lavish-axi v0.1.64→v0.1.74 case).
+ * Static tag refs only; rolling refs rely on the content checks. Findings are
+ * actionable (tag age ≥ cooldownDays, or age unknown — report honestly rather
+ * than stay silent); `infos` are in-cooldown tags, logged but never issued.
+ *
+ * @param {Awaited<ReturnType<typeof loadInventory>>} inventory
+ * @param {(pathname: string) => Promise<any>} fetchJson
+ * @param {{now?: Date; cooldownDays?: number}} [opts]
+ * @returns {Promise<{findings: object[]; infos: object[]}>}
+ */
+export async function collectNewerTags(
+  inventory,
+  fetchJson,
+  {now = new Date(), cooldownDays = NEWER_TAG_COOLDOWN_DAYS} = {}
+) {
+  const findings = [];
+  const infos = [];
+  for (const item of inventory) {
+    if (!item.ref.startsWith('refs/tags/')) continue;
+    const series = parseTagSeries(item.ref.replace(/^refs\/tags\//, ''));
+    if (!series) continue;
+    try {
+      // GitHub tags are not guaranteed ordered, so follow pagination until the
+      // repo is exhausted — a one-page read silently misses namespaces parked
+      // on later pages when another series owns page 1 (CodeRabbit triage,
+      // PR #260). Capped at 10 pages = 1000 tags; no skill source comes near.
+      const tagNames = [];
+      for (let page = 1; page <= 10; page += 1) {
+        const batch = await fetchJson(`/repos/${item.repo}/tags?per_page=100&page=${page}`);
+        for (const t of batch) tagNames.push(t.name);
+        if (batch.length < 100) break;
+      }
+      const newest = newestTagInSeries(tagNames, series.prefix);
+      // Name inequality is not newness: `v1.2.0` is semver-equal to a `v1.2`
+      // pin, and a truncated list could surface an older tag. Require a strict
+      // version increase (CodeRabbit triage, PR #260).
+      const newestSeries = newest ? parseTagSeries(newest) : null;
+      if (!newestSeries || compareSemver(newestSeries.version, series.version) <= 0) continue;
+      const dateIso = await tagCommitDate(fetchJson, item.repo, newest);
+      const ageDays = dateIso === null ? null : ageInDays(dateIso, now);
+      if (ageDays !== null && ageDays < cooldownDays) {
+        infos.push({...item, toTag: newest, ageDays});
+        continue;
+      }
+      findings.push({...item, kind: 'newer-tag', fromTag: series.tagName, toTag: newest, ageDays});
+    } catch (err) {
+      findings.push({
+        ...item,
+        kind: 'check-failed',
+        reason: `newer-tag scan: ${err?.message || String(err)}`,
+      });
+    }
+  }
+  return {findings, infos};
+}
+
+/**
  * Resolve a recorded ref (e.g. `refs/tags/v1`) to a commit SHA via the ref API,
  * peeling annotated tag objects. Throws {status: 404} when the ref is gone.
  *
@@ -265,7 +429,7 @@ export async function collectDrift(inventory, fetchJson) {
  * @param {{kind: string; skill: string; repo: string}} f
  */
 export function updateCommand(f) {
-  if (f.kind === 'ref-behind') {
+  if (f.kind === 'ref-behind' || f.kind === 'newer-tag') {
     return `gh skill install ${f.repo} ${f.skill} --dir .agents/skills --force`;
   }
   return `gh skill update ${f.skill} --all`;
@@ -295,6 +459,18 @@ export function issueBody(findings, runUrl = 'local') {
         `### ${f.skill} — upstream moved (default branch ${f.aheadBy} commit(s) ahead)\n\n` +
         `- source: ${f.repo} @ \`${f.ref}\` — skill folder changed on the default branch\n` +
         `- installed tree: \`${(f.localTreeSha || '').slice(0, 12)}\` → default branch: \`${(f.upstreamTreeSha || '').slice(0, 12)}\`\n\n` +
+        `\`\`\`\n${updateCommand(f)}\n\`\`\`\n`
+      );
+    }
+    if (f.kind === 'newer-tag') {
+      const age =
+        f.ageDays === null ?
+          'age unknown'
+        : `${f.ageDays} day(s) old — past the ${NEWER_TAG_COOLDOWN_DAYS}-day cooldown`;
+      return (
+        `### ${f.skill} — newer upstream release \`${f.toTag}\`\n\n` +
+        `- source: ${f.repo} — pinned \`${f.ref}\`\n` +
+        `- the pinned skill content is unchanged; upstream published \`${f.toTag}\` (${age})\n\n` +
         `\`\`\`\n${updateCommand(f)}\n\`\`\`\n`
       );
     }
@@ -407,23 +583,40 @@ export async function main() {
   if (!inventory.length) return;
 
   const findings = await collectDrift(inventory, pathname => ghApi(token, pathname));
+  const {findings: tagFindings, infos} = await collectNewerTags(inventory, pathname =>
+    ghApi(token, pathname)
+  );
+  // One section per skill: a content finding already re-resolves latest on
+  // update, so a newer-tag row for the same skill would be noise.
+  const drifted = new Set(findings.map(f => f.skill));
+  const tagRows = tagFindings.filter(f => !drifted.has(f.skill));
+  const infoRows = infos.filter(
+    i => !drifted.has(i.skill) && !tagFindings.some(f => f.skill === i.skill)
+  );
+  const allFindings = [...findings, ...tagRows];
 
-  for (const f of findings) {
+  for (const f of allFindings) {
     const detail =
       f.kind === 'check-failed' || f.kind === 'ref-missing' ? ` — ${f.reason}`
+      : f.kind === 'newer-tag' ? ` → ${f.toTag}${f.ageDays === null ? '' : ` (${f.ageDays}d old)`}`
       : f.behindBy ? ` (behind by ${f.behindBy})`
       : '';
     const line = `  ⚠ ${f.skill}: ${f.kind}${detail}`;
     if (prMode) console.log(`::warning title=skills-watchdog::${line.trim()}`);
     else console.log(line);
   }
-  if (!findings.length) console.log('  all third-party skills match their recorded upstream');
+  for (const i of infoRows) {
+    const line = `  ℹ ${i.skill}: newer tag ${i.toTag} (${i.ageDays}d old) — within the ${NEWER_TAG_COOLDOWN_DAYS}-day cooldown, skipped`;
+    if (prMode) console.log(`::notice title=skills-watchdog::${line.trim()}`);
+    else console.log(line);
+  }
+  if (!allFindings.length) console.log('  all third-party skills match their recorded upstream');
 
   if (prMode) return; // stateless — annotations only, never issues
   if (dryRun) {
-    if (findings.length) {
+    if (allFindings.length) {
       console.log(`  dry-run — would ${repo ? 'update' : 'open'} the tracking issue:\n`);
-      console.log(issueBody(findings, runUrl));
+      console.log(issueBody(allFindings, runUrl));
     }
     return;
   }
@@ -432,7 +625,7 @@ export async function main() {
     console.log('  GITHUB_REPOSITORY not set — skipping issue update (local run).');
     return;
   }
-  await upsertTrackingIssue(token, repo, findings, runUrl);
+  await upsertTrackingIssue(token, repo, allFindings, runUrl);
 }
 
 /* Executed directly → run; imported → tests use the exported helpers. */
