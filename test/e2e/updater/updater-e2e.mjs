@@ -22,7 +22,13 @@
  * utils, tab after replacing it (issue #53) Scenario 8 (manual-install-no-ui):
  * a hand-installed utils.zip ships NO ui folder (the tab UI lives in the
  * separate updater-ui.zip); after a fresh check the scheduler self-installs the
- * ui (ensureUpdaterUi) and the tab is visible (issue #102)
+ * ui (ensureUpdaterUi) and the tab is visible (issue #102) Scenario 9
+ * (helper-checksum-win, Windows-only): ACL-write-denies GreD so the config
+ * install falls through to the elevated-copy helper, and asserts the downloaded
+ * helper's checksum verification PASSES before the (headless-doomed) elevation
+ * step — the PR #271 mojibake regression net. Requires a user-owned GreD (CI's
+ * portable installs; skips on admin-owned dirs like Program Files, which cannot
+ * be denied without elevation)
  *
  * Each scenario: fresh temp profile → seed utils + fx-folder → modify files to
  * force desired state → launch Firefox → wait for tab (or assert none) → run
@@ -34,6 +40,7 @@
  * Usage: node test/e2e/updater/updater-e2e.mjs --firefox <path> --snapshot<dir>
  */
 
+import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -92,12 +99,23 @@ try {
   cs.registerListener({
     observe(aMessage, aTopic, aData) {
       try {
-        const line =
-          new Date().toISOString() +
-          ' ' +
-          (aMessage.QueryInterface(Ci.nsIScriptError)?.errorMessage || aData || '') +
-          '\\n';
-        fos.write(line, line.length);
+        // Severity + source so the harness can assert on updater errors
+        // (assertNoUpdaterConsoleErrors): plain messages keep the legacy
+        // format, script errors gain [level] and source:line.
+        let line;
+        try {
+          const se = aMessage.QueryInterface(Ci.nsIScriptError);
+          const errFlag = Ci.nsIScriptError.errorFlag || 1;
+          const warnFlag = Ci.nsIScriptError.warningFlag || 2;
+          const level =
+            se.flags & errFlag ? 'error' : se.flags & warnFlag ? 'warn' : 'info';
+          const src = se.sourceName ? ' [' + se.sourceName + ':' + (se.lineNumber || 0) + ']' : '';
+          line = level + src + ' ' + se.errorMessage;
+        } catch {
+          line = aData || aMessage.message || '';
+        }
+        const out = new Date().toISOString() + ' ' + line + '\\n';
+        fos.write(out, out.length);
       } catch (e) {}
     },
   });
@@ -172,7 +190,10 @@ function installFxFolder(snapshotDir, greDir) {
       const src = path.join(base, ...rel.split('/'));
       const dst = path.join(greDir, ...rel.split('/'));
       if (!fs.existsSync(src)) {
-        return {ok: false, error: `${rel} missing from ${path.basename(fxZip)}`};
+        return {
+          ok: false,
+          error: `${rel} missing from ${path.basename(fxZip)}`,
+        };
       }
       try {
         fs.mkdirSync(path.dirname(dst), {recursive: true});
@@ -424,6 +445,69 @@ function mirrorHasMarker(profileDir, marker) {
 /** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
 function mirrorSaysTabOpened(profileDir) {
   return mirrorHasMarker(profileDir, 'TAB_OPENED');
+}
+
+/**
+ * Severity + source of every console error the mirror recorded (1a's probe
+ * format). Returns {line, level, source} per hit.
+ *
+ * @param {string} profileDir
+ * @param {string[]} allowPatterns regex source strings; a line whose source
+ *   matches one is not an updater failure (other components legitimately
+ *   error)
+ * @returns {{line: string; level: string; source: string}[]}
+ */
+function collectConsoleErrors(profileDir, allowPatterns = []) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8');
+  } catch {
+    return []; // no mirror = nothing to assert on (scenario never opened a console)
+  }
+  const allows = allowPatterns.map(
+    p =>
+      // security/detect-non-literal-regexp: the patterns are test-source
+      // constants (allowlists passed by this file), never user input.
+      // eslint-disable-next-line security/detect-non-literal-regexp
+      new RegExp(p)
+  );
+  const hits = [];
+  for (const line of text.split('\n')) {
+    if (!line.includes(' error ')) continue;
+    const rest = line.slice(line.indexOf(' error ') + 7);
+    // The probe appends " [source:line] msg" for script errors; the updater
+    // scripts surface as chrome://firefox-scripts/... sources.
+    const srcMatch = / \[(chrome:\/\/[^\]:]+[^\]]*?):\d+\]/.exec(rest);
+    const source = srcMatch ? srcMatch[1] : '';
+    if (!source.includes('chrome://firefox-scripts')) continue;
+    // Allowlist matches the FULL line (source AND message): scenario 9's
+    // expected headless-elevation failure IS a chrome://firefox-scripts
+    // logError and must be exemptable without masking any other error.
+    if (allows.some(re => re.test(line))) continue;
+    hits.push({line: line.trim(), level: 'error', source});
+  }
+  return hits;
+}
+
+/**
+ * Assert the console mirror recorded zero errors sourced from the updater
+ * scripts (chrome://firefox-scripts/.../updater/* — the engine module and the
+ * tab's updater.js/updater-ui.js). The 2026-09-20 manual session caught TWO
+ * shipped bugs as console errors (helper checksum mojibake, CSP-blocked inline
+ * style) that green CI never saw — every updater scenario now closes the net.
+ *
+ * Allow patterns: other components legitimately error (e.g. blocked processes
+ * under the harness); only chrome://firefox-scripts sources are ours.
+ */
+function assertNoUpdaterConsoleErrors(counter, profileDir, label, allowPatterns = []) {
+  const hits = collectConsoleErrors(profileDir, allowPatterns);
+  check(
+    counter,
+    hits.length === 0,
+    `console mirror: zero updater errors (${label})`,
+    hits.length ? hits.map(h => `${h.source}: ${h.line}`).join('\n    ') : undefined
+  );
+  if (hits.length) dumpConsoleLog(profileDir);
 }
 
 /**
@@ -876,6 +960,10 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
       }
 
       if (!variantFailure) {
+        // The variants re-rendered the real card through the engine's init():
+        // close the net — no console errors from the updater scripts during
+        // the whole stale-variants session.
+        assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
         phases.total = Date.now() - t0;
         logScenarioTime(attemptLabel, t0, phases);
         return createdProfiles;
@@ -1378,6 +1466,12 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     );
   }
 
+  // The install session ran the full in-tab flow (downloads, verification,
+  // copies, re-hash): the net — no console errors from the updater scripts.
+  // (Wrapped install failures DO log via logError, but those fail the earlier
+  // completion assertions first; this catches the silent-console regressions.)
+  assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label);
+
   return seeded.profileDir;
 }
 
@@ -1407,7 +1501,10 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
       .filter(l => !l.includes('firefox-scripts'));
     fs.writeFileSync(chromeManifest, lines.join('\n'));
   }
-  fs.rmSync(path.join(seeded.chromeUtils, 'updater'), {recursive: true, force: true});
+  fs.rmSync(path.join(seeded.chromeUtils, 'updater'), {
+    recursive: true,
+    force: true,
+  });
 
   const greDir = findGreDir(firefoxBin);
   const greSeed = installFxFolder(snapshotDir, greDir);
@@ -1691,6 +1788,263 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
   return seeded.profileDir;
 }
 
+/**
+ * Scenario 9 — Windows helper-checksum path (PR #271 regression net).
+ *
+ * The 2026-09-20 manual session caught the elevated-copy helper's checksum
+ * verification failing on EVERY download (mojibake hex from finish(false)) —
+ * invisible to CI because every leg installs into a user-writable dir where the
+ * direct copy succeeds and the helper never runs.
+ *
+ * This scenario forces the helper path without a real UAC prompt (none exists
+ * on a headless runner):
+ *
+ * 1. Seed a STAND-IN helper into the snapshot dir: `helper_win-dev.exe` bytes
+ *    (arbitrary — cmd.exe copy) + a `helper_win-dev.exe.sha256` sidecar
+ *    computed over those bytes. The tab's HELPER_BASE_URL resolves here, so
+ *    ensureHelper downloads exactly these.
+ * 2. ACL-DENY the browser's GreD (icacls) so the direct IOUtils copy fails and
+ *    installConfig falls through to the helper.
+ * 3. Click Update and assert the flow gets PAST verification: the console mirror
+ *    must show NO 'failed checksum verification' error (the old bug's
+ *    signature), and the failure mode must be the elevation path (exit 2 cancel
+ *    / progress error), never verification.
+ * 4. Remove the ACL and verify GreD content is UNCHANGED (a verified helper that
+ *    could not elevate must not have copied anything).
+ *
+ * The stand-in bytes are never executed (UAC cannot succeed headless), so this
+ * stays a checksum-verification test — the real elevated copy is the installer
+ * E2E's RS-10 territory. Windows-only; other platforms skip.
+ */
+async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
+  console.log(`\n## Scenario: ${label}`);
+  if (process.platform !== 'win32') {
+    console.log('  SKIP: Windows-only (icacls + helper_win).');
+    check(counter, true, `${label} skipped (non-Windows)`);
+    return null;
+  }
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error('Firefox not found');
+
+  // ── Real GreD, write-denied; scratch snapshot ──
+  // The updater resolves GreD from the RUNNING binary, so the target must be
+  // the real install dir — its WRITE is ACL-denied to force the helper path.
+  // A deny ACE needs this user to own the tree: CI's browser legs install
+  // user-owned portable copies (fine); an admin-owned dir like Program Files
+  // cannot be denied without elevation, so the scenario skips gracefully.
+  // Everything the updater READS (packages, helper stand-in, sidecar) is
+  // seeded into a scratch COPY of the snapshot and the updater is repointed
+  // at it via override prefs — the real snapshot dir is never mutated.
+  const scratch = tempDir('fxs-helper');
+  const scratchSnap = path.join(scratch, 'snap');
+  const greDir = findGreDir(firefoxBin);
+  try {
+    fs.cpSync(snapshotDir, scratchSnap, {recursive: true});
+
+    // ── Seed the stand-in helper + sidecar into the scratch snapshot ──
+    // Arbitrary non-executable bytes; >0x80 spread exercises the fixed
+    // per-byte conversion (the mojibake bug only corrupted bytes >= 0x80).
+    // 'MZ' DOS header magic + a >0x80-heavy body; both name variants so
+    // dev-snapshot ('-dev') and prod-snapshot (plain) channels both find one.
+    const standIn = Buffer.concat([
+      Buffer.from([0x4d, 0x5a, 0x90, 0x00]),
+      Buffer.from(Array.from({length: 4096}, (_, i) => (i * 37 + 128) & 0xff)),
+    ]);
+    for (const helperName of ['helper_win.exe', 'helper_win-dev.exe']) {
+      const helperPath = path.join(scratchSnap, helperName);
+      fs.writeFileSync(helperPath, standIn);
+      fs.writeFileSync(
+        helperPath + '.sha256',
+        `${createHash('sha256').update(standIn).digest('hex')}  ${helperName}\n`
+      );
+    }
+
+    const seeded = seedProfile(scratchSnap, {forceConfigStale: true});
+    // Repoint the updater at the scratch snapshot (it baked the original
+    // snapshot's dist path — helper stand-in + sidecar live there now).
+    Object.assign(seeded.prefs, localConfigOverrides(seeded.chromeUtils, scratchSnap));
+    // fx-folder into the real GreD (utils go into the profile via seedProfile;
+    // the config package's direct copy will target GreD and hit the deny).
+    const fxSeed = installFxFolder(scratchSnap, greDir);
+    check(counter, fxSeed.ok, `fx-folder seeded into scratch GreD (${label})`, fxSeed.error);
+    if (!fxSeed.ok) return seeded.profileDir;
+    // The config probe: makes the fx-folder package read STALE (so the tab
+    // offers the config install and the scheduler opens it) AND mirrors every
+    // console message to e2e-console.log (the net assertNoUpdaterConsoleErrors
+    // reads). MUST land before the ACL deny — it is itself a write.
+    check(counter, appendConfigProbe(greDir), `config probe appended (${label})`);
+
+    // ── ACL-deny the seeded config FILES ──
+    // The deny targets the seeded config.js / config-prefs.js themselves:
+    // Firefox only READS them (spawns fine), while the updater's direct copy
+    // must WRITE them (noOverwrite: false) — which the deny blocks, forcing
+    // the helper path. A directory deny cannot do this: it does not stop
+    // overwriting an existing file's data, and any inheritance flag that
+    // covers firefox.exe breaks the launch. Admin-owned GreD (Program Files)
+    // cannot be denied without elevation → skip gracefully.
+    const icacls = args => execFileSync('icacls', args, {encoding: 'utf8'});
+    const denyAce = `${process.env.USERNAME}:(W)`;
+    const seededFiles = ['config.js', 'defaults/pref/config-prefs.js'].map(rel =>
+      path.join(greDir, ...rel.split('/'))
+    );
+    const configBefore = fs.readFileSync(seededFiles[0]);
+
+    let browser;
+    let page = null;
+    let aclDenied = false;
+    try {
+      // ── Launch FIRST, deny SECOND ──
+      // A write-deny on config.js present at launch suppresses the scheduler
+      // entirely (observed 2026-09-20: no tab, no console mirror — autoconfig
+      // bail-out). Denying AFTER the tab is up keeps the launch clean; the
+      // scheduler's staleness scan has already read the files by then, and
+      // the deny only needs to stop the direct COPY that follows the click.
+      browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+        headless: opts.headless,
+        extraPrefsFirefox: seeded.prefs,
+      });
+      attachProcessLogging(browser, label);
+      // Like the other tab scenarios: BiDi cannot always enumerate trusted
+      // chrome:// tabs, so the probe's TAB_OPENED mirror line is the fallback
+      // proof the scheduler ran and the updater decided to show itself.
+      const tabMirror = await waitForCondition(
+        browser,
+        () => mirrorSaysTabOpened(seeded.profileDir),
+        20_000,
+        'TAB_OPENED mirror marker'
+      ).catch(() => false);
+      page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
+      check(counter, Boolean(page) || tabMirror === true, `tab opens (${label})`);
+      if (!page && !tabMirror) {
+        await dumpPages(browser);
+        dumpConsoleLog(seeded.profileDir);
+        return seeded.profileDir;
+      }
+
+      // ── NOW deny writes to the seeded config files ──
+      // (tab up; scheduler's read done — see the comment above)
+      for (const f of seededFiles) {
+        try {
+          icacls([f, '/deny', denyAce]);
+          aclDenied = true;
+        } catch {
+          // Admin-owned file (e.g. Program Files): cannot deny without UAC.
+          console.log(`  SKIP: ${f} is not ACL-controllable here.`);
+        }
+      }
+      if (!aclDenied) {
+        check(counter, true, `${label} skipped (GreD not ACL-controllable)`);
+        return seeded.profileDir;
+      }
+      // Empirical guard: the deny must actually block THIS user's writes,
+      // else the direct copy succeeds and the scenario asserts nothing.
+      let denyWorks = true;
+      try {
+        fs.appendFileSync(seededFiles[0], '\n/* probe */\n');
+        denyWorks = false; // write succeeded — deny is ineffective
+      } catch {
+        denyWorks = true;
+      }
+      check(counter, denyWorks, `GreD write blocked by ACL (${label})`);
+      if (page) {
+        // (flow continues below)
+      } else if (tabMirror) {
+        // Tab existed (mirror proves it) but BiDi lost it — trusted-tab
+        // enumeration flake, not a product failure. Still deny + assert via
+        // the mirror, without a page to click: install cannot be driven, so
+        // only verify the tab's own check produced no updater errors.
+        console.log('  [diag] BiDi never surfaced the trusted tab; mirror-only path.');
+        assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
+          'Elevation was cancelled',
+          'Admin copy helper failed',
+        ]);
+        return seeded.profileDir;
+      }
+
+      // Tick config only and install.
+      const clicked = await page.evaluate(() => {
+        const btn = document.getElementById('btn-install');
+        const cb = document.getElementById('chk-config');
+        if (!btn || !cb) return false;
+        if (!cb.checked) cb.click();
+        btn.click();
+        return true;
+      });
+      check(counter, clicked, `config install clicked (${label})`);
+
+      // Completion: the flow must END (progress hidden or error shown).
+      // Pass = verification ran on the stand-in bytes and the flow proceeded
+      // to the elevation step (which fails/cancels headless).
+      const finished = await waitForCondition(
+        page,
+        () => {
+          const progress = document.getElementById('card-progress');
+          const err = document.getElementById('card-progress-error');
+          return Boolean(progress?.hidden || err?.style.display !== 'none');
+        },
+        60_000,
+        'config install flow finished (elevation expected to fail headless)'
+      );
+      check(counter, finished, `config install flow finished (${label})`);
+
+      // THE assertion: no 'failed checksum verification' console error — the
+      // mojibake bug's exact signature. Asserted directly (not via the
+      // allowlist net) so a regression cannot hide behind an allowlist entry.
+      let mirrorText;
+      try {
+        mirrorText = fs.readFileSync(path.join(seeded.profileDir, 'e2e-console.log'), 'utf-8');
+      } catch {
+        mirrorText = '';
+      }
+      check(
+        counter,
+        !mirrorText.includes('failed checksum verification'),
+        `helper checksum verification passed (${label})`,
+        mirrorText.includes('failed checksum verification') ?
+          'the tab refused the stand-in helper — checksum conversion regressed'
+        : undefined
+      );
+      // And no other updater errors either (the generic net). On a headless
+      // runner the flow legitimately dies at elevation — either "Elevation
+      // was cancelled" (real helper + declined UAC) or "Admin copy helper
+      // failed (exit code N)" (spawn/copy failure, e.g. this scenario's
+      // stand-in bytes) — both via logError('install config'). Expected.
+      assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
+        'Elevation was cancelled',
+        'Admin copy helper failed',
+      ]);
+    } finally {
+      try {
+        await closeBrowser(browser);
+      } catch {
+        /* ignore */
+      }
+      if (aclDenied) {
+        for (const f of seededFiles) {
+          try {
+            icacls([f, '/remove:d', process.env.USERNAME]);
+          } catch (err) {
+            check(counter, false, `GreD ACL restored (${label})`, err.message);
+          }
+        }
+      }
+    }
+
+    // GreD untouched: a verified helper that could not elevate must not copy.
+    // configBefore was captured pre-deny, so the read here is unblocked.
+    const configAfter = fs.readFileSync(seededFiles[0]);
+    check(
+      counter,
+      configAfter.equals(configBefore),
+      `GreD config unchanged (no copy without elevation, ${label})`
+    );
+
+    return seeded.profileDir;
+  } finally {
+    rmDir(scratch);
+  }
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -1795,6 +2149,14 @@ async function run() {
         run: async () => {
           profiles.push(
             await runManualInstallNoUiScenario(counter, opts, snapshotDir, 'manual-install-no-ui')
+          );
+        },
+      },
+      {
+        id: '9',
+        run: async () => {
+          profiles.push(
+            await runHelperChecksumScenario(counter, opts, snapshotDir, 'helper-checksum-win')
           );
         },
       },
