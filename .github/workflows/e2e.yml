@@ -79,7 +79,7 @@ jobs:
   # check never goes missing. See docs/DEVELOPING.md → Continuous integration.
   changes:
     name: detect changed paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Job-level timeouts (belt-and-suspenders, all jobs here): GitHub's
     # default is 360 min — a wedged job would hang until then. The values
     # are multiples of the slowest observed green run per group (see
@@ -168,7 +168,7 @@ jobs:
     if:
       needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
       github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: $/.github/actions/setup-repo
@@ -206,7 +206,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
 
     steps:
       - uses: $/.github/actions/setup-repo
@@ -262,7 +262,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-24.04]
 
     steps:
       - uses: $/.github/actions/setup-repo
@@ -297,13 +297,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {browser: firefox, os: ubuntu-latest}
+          - {browser: firefox, os: ubuntu-24.04}
           - {browser: firefox, os: macos-latest}
           - {browser: firefox, os: windows-latest}
-          - {browser: firefox-dev, os: ubuntu-latest}
+          - {browser: firefox-dev, os: ubuntu-24.04}
           - {browser: firefox-dev, os: macos-latest}
           - {browser: firefox-dev, os: windows-latest}
-          - {browser: nightly, os: ubuntu-latest}
+          - {browser: nightly, os: ubuntu-24.04}
           - {browser: nightly, os: macos-latest}
           - {browser: nightly, os: windows-latest}
     env:
@@ -315,7 +315,7 @@ jobs:
       # Linux needs xvfb for the BiDi run; the browser itself always comes
       # from downloads.mjs's official recipe (apt's Snap wrapper breaks BiDi).
       - name: Install Linux test prerequisites
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         uses: ./.github/actions/linux-test-prereqs
 
       - name: Install ${{ matrix.browser }}
@@ -337,7 +337,7 @@ jobs:
       # profile-seed step is needed. It reads FIREFOX_BINARY (set by the install
       # step above) and auto-discovers the snapshot dir.
       - name: Run updater E2E (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
 
       - name: Run updater E2E (macOS)
@@ -398,7 +398,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
@@ -510,7 +510,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
@@ -565,10 +565,10 @@ jobs:
   # downloads, and the snap refresh cycle is outside our control. Skipped
   # quietly when snapd is unavailable.
   snap-firefox:
-    name: 'snap Firefox E2E · ubuntu-latest'
+    name: 'snap Firefox E2E · ubuntu-24.04'
     needs: [changes, snapshot]
     if: needs.changes.outputs.updater == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
@@ -894,7 +894,7 @@ jobs:
       github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' ||
       needs.changes.outputs.core == 'true') || github.event_name == 'workflow_dispatch' &&
       inputs.browser == 'firefox-esr'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.mtx.outputs.matrix }}
@@ -1058,7 +1058,7 @@ jobs:
   # `pnpm check:gates` enforces this needs list.
   e2e-gate:
     name: E2E gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: always()
     needs:
@@ -1166,7 +1166,7 @@ jobs:
       always() && needs.e2e-gate.result == 'success' && needs.updater.result == 'success' &&
       github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' &&
       inputs.browser != '' && inputs.browser != 'all')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Only this job touches issues (meta-issue comment). Job-level permissions
     # REPLACE the workflow-level block, so contents: read (checkout, scripts)
@@ -1223,7 +1223,7 @@ jobs:
     if: >-
       always() && github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser
       != 'all' &&      needs.e2e-gate.result != 'skipped'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write # delete the release asset + release + tag

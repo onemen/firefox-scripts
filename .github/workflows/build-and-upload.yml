@@ -90,7 +90,7 @@ jobs:
   pre-publish:
     name: check prod publish gates
     if: inputs.publish && inputs.mode == 'prod'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -143,7 +143,7 @@ jobs:
     name: capture pre-run hash manifest
     needs: pre-publish
     if: always() && (needs.pre-publish.result == 'success' || needs.pre-publish.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Fetch current hashes.json from gh-pages
@@ -178,7 +178,7 @@ jobs:
             os: windows-latest
             msys2: true
           - platform: linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
             cross: true
           - platform: mac
             os: macos-latest
@@ -349,7 +349,7 @@ jobs:
     if: always() && inputs.publish && needs.build.result == 'success'
     environment:
       name: ${{ inputs.mode == 'prod' && 'release' || 'dev' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write # release assets + gh-pages pushes

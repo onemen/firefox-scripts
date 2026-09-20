@@ -50,7 +50,7 @@ jobs:
   check:
     name: check browser download URLs
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The full-download path is progress-aware (issue #143): a slow vendor
     # download runs to its 20 min transfer budget (plus retries) instead of
     # being killed early. The job timeout must fit that budget, not the other
@@ -120,7 +120,7 @@ jobs:
   pr-check:
     name: browser download URLs (PR)
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Same progress-aware vendor fetches as the scheduled `check` (30 min);
     # fewer URLs on a PR diff, so half the budget still gives ~5x headroom.
     timeout-minutes: 15

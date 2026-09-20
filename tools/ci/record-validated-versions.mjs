@@ -53,7 +53,7 @@ import {
  * download recipe is the Windows NSIS installer, ADR 0025), so its expected set
  * is that single OS.
  */
-export const UPDATER_LEG_OSES = ['ubuntu-latest', 'macos-latest', 'windows-latest'];
+export const UPDATER_LEG_OSES = ['ubuntu-24.04', 'macos-latest', 'windows-latest'];
 export const BROWSER_LEG_OSES = {
   'firefox': UPDATER_LEG_OSES,
   'firefox-dev': UPDATER_LEG_OSES,

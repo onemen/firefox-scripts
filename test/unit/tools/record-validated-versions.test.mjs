@@ -101,11 +101,11 @@ test('collectLegVersions: malformed artifact content throws', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'legs-malformed-'));
   try {
     fullLegSet(tmp);
-    fs.writeFileSync(path.join(tmp, 'e2e-version-firefox-ubuntu-latest.json'), 'not json');
+    fs.writeFileSync(path.join(tmp, 'e2e-version-firefox-ubuntu-24.04.json'), 'not json');
     assert.throws(() => collectLegVersions(tmp), /unreadable version artifact/);
     fs.writeFileSync(
-      path.join(tmp, 'e2e-version-firefox-ubuntu-latest.json'),
-      JSON.stringify({os: 'ubuntu-latest'}) // missing browser + version
+      path.join(tmp, 'e2e-version-firefox-ubuntu-24.04.json'),
+      JSON.stringify({os: 'ubuntu-24.04'}) // missing browser + version
     );
     assert.throws(() => collectLegVersions(tmp), /malformed version artifact/);
   } finally {

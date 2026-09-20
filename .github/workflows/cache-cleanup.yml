@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   prune:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Weekly prune of a non-critical janitorial task: 15 min is ~10x the
     # observed run time; the workflow shares no concurrency group, but an
     # untimed actions:write job is still an unbounded failure surface.
