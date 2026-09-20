@@ -150,6 +150,7 @@ import {
   devBranchStrandWarning,
   includeBanner,
   noBinaryScope,
+  pagesCommitMessage,
   parseInclude,
   scopeFor,
 } from './publishScope.mjs';
@@ -756,7 +757,13 @@ async function publishToGitHub({
   }
 
   await uploadFilesToPages(octokit, pagesFiles, {
-    message: `chore: publish ${PUBLISH_MODE} artifacts (${new Date().toISOString().slice(0, 10)})`,
+    message: pagesCommitMessage({
+      mode: PUBLISH_MODE,
+      include: INCLUDE,
+      platforms: PLATFORMS,
+      devBranch: DEV_BRANCH,
+      date: new Date().toISOString().slice(0, 10),
+    }),
   });
 
   // Announced (--tag) dev release assets (manual download/testing) — after

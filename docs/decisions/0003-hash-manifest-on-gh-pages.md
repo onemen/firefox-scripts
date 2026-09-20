@@ -2,6 +2,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-06
+- **Amended:** [0031](./0031-gh-pages-orphan-artifact-branch.md) — the branch's history shape is now
+  defined: a true orphan holding publish commits and artifacts only, never seeded from the default
+  branch
 
 ## Context
 

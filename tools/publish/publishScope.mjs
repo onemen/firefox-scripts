@@ -102,6 +102,54 @@ export function noBinaryScope(scope) {
 }
 
 /**
+ * Human label of the run's scope for the Pages commit message: a full publish
+ * is "artifacts" (the historical wording), a partial one names exactly the
+ * roles it ships ("packages", "installer+helper"), so the branch history shows
+ * what each commit published (issue #261). Role order is normalized to the
+ * INCLUDE_ROLES order so the same set always yields the same label.
+ *
+ * @param {Set<string>} include roles to publish
+ * @returns {string} 'artifacts' or the role names joined with '+'
+ */
+export function scopeLabel(include = new Set()) {
+  if (include.size === INCLUDE_ROLES.length) return 'artifacts';
+  const ordered = [...include].sort((a, b) => INCLUDE_ROLES.indexOf(a) - INCLUDE_ROLES.indexOf(b));
+  return ordered.join('+');
+}
+
+/**
+ * The Pages commit message for a run, assembled from mode + role scope + the
+ * platforms actually pushed — the branch history reads as a publish log (issue
+ * #261). The disposable dev branch's id is part of the message so it survives
+ * the branch's later deletion.
+ *
+ * ```text
+ * chore: publish prod artifacts (2026-09-20)                        # full
+ * chore: publish prod packages (2026-09-20)                          # --include=packages
+ * chore: publish prod installer+helper (win, 2026-09-20)             # CI per-OS job
+ * chore: publish dev artifacts (dev-build-main-abc1, 2026-09-20)     # dev
+ * ```
+ *
+ * @param {{
+ *   mode: string;
+ *   include: Set<string>;
+ *   platforms?: string[];
+ *   devBranch?: string;
+ *   date: string;
+ * }} run
+ *   publish-run facts
+ * @returns {string} the commit subject line
+ */
+export function pagesCommitMessage({mode, include, platforms = [], devBranch = '', date}) {
+  const parts = [];
+  if (mode === 'dev' && devBranch) parts.push(devBranch);
+  const plat = [...new Set(platforms)].filter(Boolean);
+  if (plat.length > 0) parts.push(plat.join('+'));
+  parts.push(date);
+  return `chore: publish ${mode} ${scopeLabel(include)} (${parts.join(', ')})`;
+}
+
+/**
  * The loud multi-line banner printed for any partial publish, so a held-back
  * run is never mistaken for a full one in a CI log.
  *
