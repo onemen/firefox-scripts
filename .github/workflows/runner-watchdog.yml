@@ -1,52 +1,56 @@
-# Skills watchdog — catch drift in third-party agent skills (ADR 0022).
+# Runner watchdog — surface hosted-runner deprecations & image migrations.
 #
-# The five third-party skills in .agents/skills/ are gh-installed and pristine;
-# each carries gh-injected frontmatter metadata (github-repo/-ref/-tree-sha)
-# which IS the baseline — no Actions cache, stateless in every mode. This
-# workflow compares each skill's recorded state against its upstream via the
-# GitHub API and opens ONE rolling tracking issue when anything drifted, with
-# the exact update command per skill. Updates are never pushed: they land as
-# human-reviewed PRs (upstream skill text is a prompt-injection surface).
+# GitHub announces runner-image changes in two places nobody watches by
+# default: NOTICE annotations on workflow runs (e.g. "The ubuntu-latest label
+# will migrate to Ubuntu 26 …", actions/runner-images#14748) and
+# `Announcement` issues in the runner-images repo. This workflow scans both
+# and maintains ONE rolling tracking issue, deduped by title and auto-closed
+# when a later run is all-clear — the skills-watchdog pattern (see
+# tools/runner-watchdog.mjs).
 #
-# Two modes (see tools/skills-watchdog.mjs):
+# Runner *labels* are not covered by Dependabot (the github-actions ecosystem
+# tracks the pinned action SHAs, not `runs-on:` values) — this watchdog is
+# their monitor. The runner labels are pinned to ubuntu-24.04 in every
+# workflow (the shipping Linux binaries depend on the image's apt
+# toolchain), with an advisory ubuntu-26.04 canary leg in ci.yml validating
+# the next image before the pins move.
+#
+# Two modes (see tools/runner-watchdog.mjs):
 # - Weekly (schedule/dispatch): rolling tracking issue, deduped by title
-#   ([skills-watchdog] third-party skill drift); closed automatically when a
+#   ([runner-watchdog] CI runner deprecations); closed automatically when a
 #   later run finds everything current.
 # - PR (pull_request touching the watchdog itself): stateless and always
 #   green — findings surface as ::warning:: annotations, so the check can be
 #   required without ever blocking.
 #
-# Advisory by design (like the URL watchdog's fork legs): check failures are
-# findings, not CI failures.
+# Advisory by design: scan failures are findings, not CI failures.
 
-name: Skills watchdog
+name: Runner watchdog
 
 on:
   pull_request:
     paths:
-      - 'tools/skills-watchdog.mjs'
-      - 'test/unit/tools/skills-watchdog.test.mjs'
-      - '.github/workflows/skills-watchdog.yml'
+      - 'tools/runner-watchdog.mjs'
+      - 'test/unit/tools/runner-watchdog.test.mjs'
+      - '.github/workflows/runner-watchdog.yml'
   merge_group:
   schedule:
-    - cron: '0 14 * * 1' # Monday 14:00 UTC — staggered off the URL watchdog (06:00)
+    - cron: '0 20 * * 1' # Monday 20:00 UTC — staggered off URL (06:00) and skills (14:00) watchdogs
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: skills-watchdog
+  group: runner-watchdog
   cancel-in-progress: false
 
 jobs:
   # ── Weekly: rolling tracking issue ─────────────────────────────────────────
   check:
-    name: check third-party skill drift
+    name: check CI runner annotations
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
-    # Frontmatter fetch + one upstream git probe: minutes-scale work; 15 min
-    # leaves ~10x headroom (ci-inventory.md timeout policy).
     timeout-minutes: 15
     permissions:
       contents: read
@@ -60,22 +64,21 @@ jobs:
         with:
           node-version: 24
 
-      - name: Check third-party skill drift
-        run: node tools/skills-watchdog.mjs
+      - name: Check CI runner annotations
+        run: node tools/runner-watchdog.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           RUN_URL:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-  # ── PR: stateless drift check at review time ───────────────────────────────
+  # ── PR: stateless check at review time ─────────────────────────────────────
   # Runs only when the watchdog itself changed. Always green: findings become
   # ::warning:: annotations.
   pr-check:
-    name: third-party skill drift (PR)
+    name: CI runner annotations (PR)
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
-    # PR review-time leg of the same watchdog: local frontmatter parse only.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -86,8 +89,8 @@ jobs:
         with:
           node-version: 24
 
-      - name: Check third-party skill drift
-        run: node tools/skills-watchdog.mjs --pr
+      - name: Check CI runner annotations (stateless)
+        run: node tools/runner-watchdog.mjs --pr
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

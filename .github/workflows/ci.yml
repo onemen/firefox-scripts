@@ -29,7 +29,7 @@ jobs:
   # required checks never go missing. See docs/DEVELOPING.md → CI.
   changes:
     name: detect changed paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Job-level timeouts (belt-and-suspenders, all jobs here): GitHub's
     # default is 360 min — a wedged job would hang until then. The values
     # are multiples of the slowest observed green run per group (see
@@ -67,7 +67,7 @@ jobs:
   # + the gcc -fanalyzer C analysis.  Runs on every PR and on main pushes.
   checks:
     name: lint + format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: $/.github/actions/setup-repo
@@ -98,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     # Publish gate with the full native build: slowest observed 129 s
     # (windows-latest, MSYS2 gcc); a cold MSYS2 toolchain install adds ~3 min.
@@ -164,6 +164,44 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # ── Image-migration canary ───────────────────────────────────────────────
+  # The SAME linux publish-gate build against the NEXT hosted-runner image
+  # (actions/runner-images#14748: ubuntu-latest flips 24.04 → 26.04 starting
+  # 2026-10-19). The shipping build job above stays pinned to ubuntu-24.04 so
+  # the apt-installed cross toolchain (gcc-aarch64-linux-gnu) — and with it
+  # the shipped Linux/aarch64 binary bytes — cannot drift mid-rollout; this
+  # leg exercises 26.04 early and is classified `advisory` in the ci-gate, so
+  # a red canary is visible without ever blocking a PR. Revisit after the
+  # migration completes (2026-11-19): when the canary has been green for a
+  # while, move the ubuntu-24.04 pins forward in a dedicated PR.
+  build-canary:
+    name: publish gate canary — ubuntu-26.04
+    needs: changes
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Skip publish gate canary — no publish-relevant changes
+        if: needs.changes.outputs.publish != 'true'
+        run: echo "::notice::no publish-relevant changes — canary skipped"
+      - uses: $/.github/actions/setup-repo
+        if: needs.changes.outputs.publish == 'true'
+
+      - name: Harden apt sources
+        if: needs.changes.outputs.publish == 'true'
+        uses: ./.github/actions/harden-apt
+
+      - name: Install aarch64 cross toolchain (Linux)
+        if: needs.changes.outputs.publish == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-gcc --version | head -1
+
+      - name: Build all packages and binaries
+        if: needs.changes.outputs.publish == 'true'
+        shell: bash
+        run: pnpm upload:local --mode=dev
+
   # ── CI gate ──────────────────────────────────────────────────────────────
   # Single branch-protection check — only registers as success when all
   # upstream jobs pass. The verify logic (incl. the always-report guard on
@@ -172,10 +210,10 @@ jobs:
   # `pnpm check:gates` enforces this needs list.
   ci-gate:
     name: CI gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: always()
-    needs: [changes, checks, build]
+    needs: [changes, checks, build, build-canary]
     steps:
       # Local action — a fresh runner needs the repo checked out first.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -190,6 +228,8 @@ jobs:
           results: |-
             checks:${{ needs.checks.result }}
             build:${{ needs.build.result }}
+            build-canary:${{ needs.build-canary.result }}
           always-verify: checks
           required: build
           always-report: build
+          advisory: build-canary
