@@ -242,7 +242,11 @@ export function newestTagInSeries(tagNames, prefix) {
 }
 
 /**
- * Committer date of a tag's commit (peeling annotated tag objects), or null.
+ * Publication date of a tag, or null. For annotated tags that is the tagger
+ * date — the moment the tag was actually published; the commit's committer date
+ * would let a tag cut today from an old commit bypass the cooldown instantly
+ * (CodeRabbit triage, PR #260). Lightweight tags have no tag object, so the
+ * commit's committer date is the only available proxy there.
  *
  * @param {(pathname: string) => Promise<any>} fetchJson
  * @param {string} repo `owner/name`
@@ -252,7 +256,9 @@ export async function tagCommitDate(fetchJson, repo, tagName) {
   const ref = await fetchJson(`/repos/${repo}/git/ref/tags/${tagName}`);
   let sha = ref.object.sha;
   if (ref.object.type === 'tag') {
-    sha = (await fetchJson(`/repos/${repo}/git/tags/${sha}`)).object.sha;
+    const tagObj = await fetchJson(`/repos/${repo}/git/tags/${sha}`);
+    if (tagObj.tagger?.date) return tagObj.tagger.date;
+    sha = tagObj.object.sha;
   }
   const commit = await fetchJson(`/repos/${repo}/commits/${sha}`);
   return commit.commit?.committer?.date ?? null;
@@ -290,12 +296,22 @@ export async function collectNewerTags(
     const series = parseTagSeries(item.ref.replace(/^refs\/tags\//, ''));
     if (!series) continue;
     try {
-      const tags = await fetchJson(`/repos/${item.repo}/tags?per_page=100`);
-      const newest = newestTagInSeries(
-        tags.map(t => t.name),
-        series.prefix
-      );
-      if (!newest || newest === series.tagName) continue;
+      // GitHub tags are not guaranteed ordered, so follow pagination until the
+      // repo is exhausted — a one-page read silently misses namespaces parked
+      // on later pages when another series owns page 1 (CodeRabbit triage,
+      // PR #260). Capped at 10 pages = 1000 tags; no skill source comes near.
+      const tagNames = [];
+      for (let page = 1; page <= 10; page += 1) {
+        const batch = await fetchJson(`/repos/${item.repo}/tags?per_page=100&page=${page}`);
+        for (const t of batch) tagNames.push(t.name);
+        if (batch.length < 100) break;
+      }
+      const newest = newestTagInSeries(tagNames, series.prefix);
+      // Name inequality is not newness: `v1.2.0` is semver-equal to a `v1.2`
+      // pin, and a truncated list could surface an older tag. Require a strict
+      // version increase (CodeRabbit triage, PR #260).
+      const newestSeries = newest ? parseTagSeries(newest) : null;
+      if (!newestSeries || compareSemver(newestSeries.version, series.version) <= 0) continue;
       const dateIso = await tagCommitDate(fetchJson, item.repo, newest);
       const ageDays = dateIso === null ? null : ageInDays(dateIso, now);
       if (ageDays !== null && ageDays < cooldownDays) {

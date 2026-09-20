@@ -316,20 +316,37 @@ test('newestTagInSeries: never crosses namespaces', () => {
   assert.equal(newestTagInSeries(tags, 'lavish-axi-v'), null);
 });
 
-/** Fake API for the newer-tag scan: tags list + tag→commit→date chain. */
-function tagApi({tags = [], commitDates = {}, failTags = false, failCommit = false}) {
+/**
+ * Fake API for the newer-tag scan: paginated tags list + tag→commit→date chain.
+ * `annotated` maps a tag name to a tagger date (annotated tag object); tags
+ * without an entry resolve as lightweight.
+ */
+function tagApi({
+  tags = [],
+  commitDates = {},
+  annotated = {},
+  failTags = false,
+  failCommit = false,
+}) {
   const fetchJson = async pathname => {
     if (pathname.startsWith('/repos/o/r/tags?')) {
       if (failTags) throw statusErr(500, 'tags boom');
-      return tags.map(name => ({name}));
+      const page = Number(new URLSearchParams(pathname.split('?')[1]).get('page') || 1);
+      return tags.slice((page - 1) * 100, page * 100).map(name => ({name}));
     }
     if (pathname.startsWith('/repos/o/r/git/ref/tags/')) {
       const name = decodeURIComponent(pathname.split('/').pop());
-      return {object: {type: 'commit', sha: `c-${name}`}};
+      const isAnnotated = name in annotated;
+      return {
+        object: {
+          type: isAnnotated ? 'tag' : 'commit',
+          sha: isAnnotated ? `t-${name}` : `c-${name}`,
+        },
+      };
     }
     if (pathname.startsWith('/repos/o/r/git/tags/')) {
-      const name = pathname.split('/').pop();
-      return {object: {sha: `c-${name}`}};
+      const name = pathname.split('/').pop().replace(/^t-/, '');
+      return {object: {sha: `c-${name}`}, tagger: {date: annotated[name]}};
     }
     if (pathname.startsWith('/repos/o/r/commits/')) {
       const sha = pathname.split('/').pop();
@@ -392,6 +409,68 @@ test('collectNewerTags: rolling refs and unparseable series are skipped', async 
   assert.deepEqual(noV.findings, []);
 });
 
+test('collectNewerTags: paginates the tags list past page 1', async () => {
+  // 150 filler tags from another namespace own page 1 entirely; the pinned
+  // series only appears on page 2.
+  const filler = Array.from({length: 150}, (_, i) => `other-v${String(i).padStart(3, '0')}`);
+  const api = tagApi({
+    tags: [...filler, 'bin-v1.1.7', 'bin-v1.1.6'],
+    commitDates: {'c-bin-v1.1.7': '2026-08-25T00:00:00Z'}, // 25 days before NOW
+  });
+  const {findings} = await collectNewerTags([ITEM], api, {now: NOW});
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].toTag, 'bin-v1.1.7');
+  assert.equal(findings[0].ageDays, 25);
+});
+
+test('collectNewerTags: equal and lower versions are never reported', async () => {
+  const equal = await collectNewerTags(
+    [{...ITEM, ref: 'refs/tags/v1.2'}],
+    tagApi({tags: ['v1.2.0', 'v1.2'], commitDates: {'c-v1.2.0': '2026-08-01T00:00:00Z'}}),
+    {now: NOW}
+  );
+  assert.deepEqual(equal.findings, []);
+
+  const lower = await collectNewerTags(
+    [ITEM],
+    tagApi({
+      tags: ['bin-v1.1.5', 'bin-v1.1.6'],
+      commitDates: {'c-bin-v1.1.5': '2026-08-01T00:00:00Z'},
+    }),
+    {now: NOW}
+  );
+  assert.deepEqual(lower.findings, []);
+});
+
+test('collectNewerTags: annotated tagger date drives the cooldown, not the commit date', async () => {
+  // Tag published today pointing at an old commit: the publication date keeps
+  // it in cooldown even though the commit is 30 days old.
+  const freshTag = await collectNewerTags(
+    [ITEM],
+    tagApi({
+      tags: ['bin-v1.1.7', 'bin-v1.1.6'],
+      annotated: {'bin-v1.1.7': '2026-09-18T00:00:00Z'},
+      commitDates: {'c-bin-v1.1.7': '2026-08-20T00:00:00Z'},
+    }),
+    {now: NOW}
+  );
+  assert.deepEqual(freshTag.findings, []);
+  assert.equal(freshTag.infos[0].ageDays, 1);
+
+  // Inverse: an old annotated tag on a fresh commit is actionable.
+  const oldTag = await collectNewerTags(
+    [ITEM],
+    tagApi({
+      tags: ['bin-v1.1.7', 'bin-v1.1.6'],
+      annotated: {'bin-v1.1.7': '2026-08-15T00:00:00Z'},
+      commitDates: {'c-bin-v1.1.7': '2026-09-18T00:00:00Z'},
+    }),
+    {now: NOW}
+  );
+  assert.equal(oldTag.findings.length, 1);
+  assert.equal(oldTag.findings[0].ageDays, 35);
+});
+
 test('collectNewerTags: unknown tag age is reported honestly, not silenced', async () => {
   const api = tagApi({tags: ['bin-v1.1.7', 'bin-v1.1.6'], commitDates: {}});
   const {findings} = await collectNewerTags([ITEM], api, {now: NOW});
@@ -406,9 +485,22 @@ test('collectNewerTags: API failure → check-failed with the scan attribution',
   assert.match(failed.findings[0].reason, /^newer-tag scan: /);
 });
 
-test('tagCommitDate + ageInDays: peel annotated tags, null on garbage dates', async () => {
-  const api = async pathname => {
+test('tagCommitDate + ageInDays: annotated tagger date first, commit date as fallback', async () => {
+  // Annotated WITH tagger date → the publication date, no commit fetch.
+  const annotated = async pathname => {
     if (pathname === '/repos/o/r/git/ref/tags/annotated') {
+      return {object: {type: 'tag', sha: 'tag-obj'}};
+    }
+    if (pathname === '/repos/o/r/git/tags/tag-obj') {
+      return {object: {sha: 'real-commit'}, tagger: {date: '2026-09-14T00:00:00Z'}};
+    }
+    throw new Error(`unexpected path: ${pathname}`);
+  };
+  assert.equal(await tagCommitDate(annotated, 'o/r', 'annotated'), '2026-09-14T00:00:00Z');
+
+  // Annotated WITHOUT tagger date → peels to the commit's committer date.
+  const noTagger = async pathname => {
+    if (pathname === '/repos/o/r/git/ref/tags/no-tagger') {
       return {object: {type: 'tag', sha: 'tag-obj'}};
     }
     if (pathname === '/repos/o/r/git/tags/tag-obj') return {object: {sha: 'real-commit'}};
@@ -417,7 +509,20 @@ test('tagCommitDate + ageInDays: peel annotated tags, null on garbage dates', as
     }
     throw new Error(`unexpected path: ${pathname}`);
   };
-  assert.equal(await tagCommitDate(api, 'o/r', 'annotated'), '2026-09-12T00:00:00Z');
+  assert.equal(await tagCommitDate(noTagger, 'o/r', 'no-tagger'), '2026-09-12T00:00:00Z');
+
+  // Lightweight → straight to the commit's committer date.
+  const lightweight = async pathname => {
+    if (pathname === '/repos/o/r/git/ref/tags/light') {
+      return {object: {type: 'commit', sha: 'real-commit'}};
+    }
+    if (pathname === '/repos/o/r/commits/real-commit') {
+      return {commit: {committer: {date: '2026-09-12T00:00:00Z'}}};
+    }
+    throw new Error(`unexpected path: ${pathname}`);
+  };
+  assert.equal(await tagCommitDate(lightweight, 'o/r', 'light'), '2026-09-12T00:00:00Z');
+
   assert.equal(ageInDays('2026-09-12T00:00:00Z', NOW), 7);
   assert.equal(ageInDays('not a date', NOW), null);
   assert.equal(NEWER_TAG_COOLDOWN_DAYS, 7);
