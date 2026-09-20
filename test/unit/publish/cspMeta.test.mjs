@@ -141,6 +141,28 @@ test('both pages stay free of inline handlers and inline scripts the CSP would b
   }
 });
 
+test('updater.js helper checksum uses the portable nsICryptoHash hex conversion', () => {
+  const src = readFileSync(join(ROOT, 'tools/publish/remote-ui/updater.js'), 'utf8');
+
+  // finish(false) returns a binary string; spreading it and calling
+  // toString(16) emits non-ASCII bytes verbatim (mojibake hex), so the helper
+  // checksum failed whenever a byte >= 0x80 appeared (PR #271 manual test).
+  // The portable conversion (matching computeZipFilesHash in
+  // scriptsUpdater.sys.mjs) is finish(true) -> atob -> charCodeAt per byte.
+  assert.ok(
+    src.includes('hasher.finish(true)'),
+    'fileSha256Hex must use finish(true) (base64) — finish(false) + spread is the broken conversion'
+  );
+  assert.ok(
+    src.includes('atob(base64)') && src.includes('charCodeAt(i)'),
+    'fileSha256Hex must convert per-byte via charCodeAt, not spread the binary string'
+  );
+  assert.ok(
+    !src.includes('hasher.finish(false)'),
+    'finish(false) must not reappear in updater.js — it cannot produce hex'
+  );
+});
+
 test('no script-src allows unsafe-inline or unsafe-eval on either page', () => {
   for (const [label, html] of [
     ['installer page', INSTALLER_HTML],
