@@ -124,7 +124,43 @@ test('both pages stay free of inline handlers and inline scripts the CSP would b
       !/\son(load|click|change|input|submit|error)\s*=\s*["']?/i.test(html),
       `${label}: no inline event handlers`
     );
+    // style-src has no 'unsafe-inline': an inline style="..." attribute is
+    // blocked at runtime (style-src-attr falls back to style-src). The
+    // progress-bar fill carried one since the initial native-installer commit;
+    // #228's CSP made Firefox log a style-src-attr violation for it. The
+    // stylesheet default (.card-progress-bar-fill { width: 0% }, style.css)
+    // covers the initial state, and the JS drives width via el.style.width
+    // (CSSOM — allowed by CSP).
+    // Scoped to the updater tab: the installer page still has two (index.html
+    // network-error banner "display: none", 30-render.js progress fill) — both
+    // embedded in installer_win.exe, so they wait for the post-release CSP
+    // cleanup (see docs/review.local.2026-09-18.md §9.10).
+    if (label === 'updater tab') {
+      assert.ok(!/\sstyle="[^"]*"/.test(html), `${label}: no inline style attributes`);
+    }
   }
+});
+
+test('updater.js helper checksum uses the portable nsICryptoHash hex conversion', () => {
+  const src = readFileSync(join(ROOT, 'tools/publish/remote-ui/updater.js'), 'utf8');
+
+  // finish(false) returns a binary string; spreading it and calling
+  // toString(16) emits non-ASCII bytes verbatim (mojibake hex), so the helper
+  // checksum failed whenever a byte >= 0x80 appeared (PR #271 manual test).
+  // The portable conversion (matching computeZipFilesHash in
+  // scriptsUpdater.sys.mjs) is finish(true) -> atob -> charCodeAt per byte.
+  assert.ok(
+    src.includes('hasher.finish(true)'),
+    'fileSha256Hex must use finish(true) (base64) — finish(false) + spread is the broken conversion'
+  );
+  assert.ok(
+    src.includes('atob(base64)') && src.includes('charCodeAt(i)'),
+    'fileSha256Hex must convert per-byte via charCodeAt, not spread the binary string'
+  );
+  assert.ok(
+    !src.includes('hasher.finish(false)'),
+    'finish(false) must not reappear in updater.js — it cannot produce hex'
+  );
 });
 
 test('no script-src allows unsafe-inline or unsafe-eval on either page', () => {

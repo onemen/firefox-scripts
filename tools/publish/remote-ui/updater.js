@@ -444,8 +444,21 @@ async function fileSha256Hex(path) {
   const hasher = Cc['@mozilla.org/security/hash;1'].createInstance(Ci.nsICryptoHash);
   hasher.init(Ci.nsICryptoHash.SHA256);
   hasher.update(data, data.length);
-  const binary = hasher.finish(false);
-  return [...binary].map(b => b.toString(16).padStart(2, '0')).join('');
+  // finish(true) → base64 → per-byte charCodeAt: the ONLY portable hex
+  // conversion. finish(false) returns a binary *string* whose bytes > 0x7F
+  // Firefox stores as UTF-16 units — spreading it into chars and calling
+  // toString(16) emits non-hex characters verbatim, so every checksum failed
+  // whenever a byte ≥ 0x80 appeared (the mojibake 'got 0fØ•0ØÆ…' in #271's
+  // manual test). Same conversion as computeZipFilesHash in
+  // scriptsUpdater.sys.mjs (the utils/fx-folder hash path, which always
+  // worked).
+  const base64 = hasher.finish(true);
+  const binary = atob(base64);
+  let hex = '';
+  for (let i = 0; i < binary.length; i++) {
+    hex += binary.charCodeAt(i).toString(16).padStart(2, '0');
+  }
+  return hex;
 }
 
 /**
