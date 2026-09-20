@@ -142,9 +142,11 @@ test('buildIssueBody: ours/external split, checkboxes, ledger, escaped pipes', (
   assert.match(body, /#14748/);
   assert.match(body, /### Ours — actionable in this repo/);
   assert.match(body, /### External \(GitHub-managed/);
-  // The e2e.yml finding is OURS (checkbox in the Ours section); the managed
-  // pages finding is EXTERNAL.
-  assert.match(body, /- \[ \] a \\\| b/);
+  // Section membership: the e2e.yml finding must render under Ours (the row
+  // text alone is section-agnostic — this pins the paths-based classifier).
+  const oursSection = body.split('### External')[0];
+  assert.match(oursSection, /- \[ \] a \\\| b/);
+  assert.match(body, /- \[ \] The ubuntu-latest label will migrate/);
   assert.match(body, /first seen 2026-09-20/);
   assert.match(body, /advisory `ubuntu-26\.04` canary/);
   assert.match(body, /not covered by Dependabot/);
@@ -237,6 +239,50 @@ test('buildIssueBody: announcement tick survives a rewrite', () => {
   });
   assert.match(second, /- \[x\] \[#14748\]/);
   assert.match(second, /<summary>Handled \(ticked by a maintainer/);
+});
+
+test('buildIssueBody: unticking a rendered box clears the handled state', () => {
+  const repoRoot = process.cwd();
+  const first = buildIssueBody({
+    findings: [
+      {
+        message: MIGRATION_NOTICE,
+        level: 'notice',
+        workflows: ['CI'],
+        paths: ['.github/workflows/ci.yml'],
+        jobs: 1,
+      },
+    ],
+    announcements: [],
+    runUrl: 'r1',
+    generatedAt: '2026-09-13T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+  });
+  const ticked = first.replace('- [ ]', '- [x]');
+  // The maintainer changes their mind: [x] back to [ ]. The ledger must not
+  // silently re-tick on the next rewrite.
+  const unticked = ticked.replace('- [x]', '- [ ]');
+  const second = buildIssueBody({
+    findings: [
+      {
+        message: MIGRATION_NOTICE,
+        level: 'notice',
+        workflows: ['CI'],
+        paths: ['.github/workflows/ci.yml'],
+        jobs: 1,
+      },
+    ],
+    announcements: [],
+    runUrl: 'r2',
+    generatedAt: '2026-09-20T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+    previousBody: unticked,
+  });
+  assert.match(second, /- \[ \] The ubuntu-latest label/);
+  assert.doesNotMatch(second, /- \[x\]/);
+  assert.doesNotMatch(second, /<summary>Handled/);
 });
 
 test('buildIssueBody: stale tick auto-clears when a finding stops firing', () => {

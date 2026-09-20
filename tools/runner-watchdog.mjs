@@ -225,7 +225,12 @@ export function parseLedger(previousBody) {
   // with [#N](url) and key as `ann-N`; finding rows key on the sha256 of
   // their message text.
   for (const line of body.split('\n')) {
-    if (!line.startsWith('- [x] ')) continue;
+    // Both checkbox states are authoritative: a tick records handled, an
+    // UNTICK clears it — otherwise a maintainer's untick would be silently
+    // re-ticked on the next rewrite.
+    const ticked = line.startsWith('- [x] ');
+    const unticked = line.startsWith('- [ ] ');
+    if (!ticked && !unticked) continue;
     const rest = line.slice('- [x] '.length);
     const annMatch = /^\[#(\d+)\]\(/.exec(rest);
     let id;
@@ -235,6 +240,10 @@ export function parseLedger(previousBody) {
       const sep = rest.indexOf(' — _first seen ');
       const text = (sep === -1 ? rest : rest.slice(0, sep)).replaceAll('\\|', '|');
       id = findingId(text);
+    }
+    if (unticked) {
+      delete handled[id];
+      continue;
     }
     const seenMatch = /_first seen (\d{4}-\d{2}-\d{2})/.exec(rest);
     const at = seenMatch?.[1] ?? handled[id]?.at ?? '';
@@ -289,7 +298,9 @@ export function buildIssueBody({
   });
 
   // ours vs external — the actionable/noise split the maintainer asked for.
-  const ours = findingRows.filter(f => isOursFinding(f.workflows, repoRoot));
+  // Classification keys on run PATHS (a dependabot run of our ci.yml reports
+  // the PR title as its name — the path is the only reliable signal).
+  const ours = findingRows.filter(f => isOursFinding(f.paths, repoRoot));
   const external = findingRows.filter(f => !ours.includes(f));
   const oursAnnouncements = announcementRows.filter(a => !a.handled);
   const handledEverything = [
@@ -509,12 +520,14 @@ async function main({mode}) {
   // fetch it BEFORE rebuilding so human state survives the rewrite.
   const existing = await findOpenTrackingIssue(fetchJson, repo);
   let previousBody = null;
+  let bodyFetchFailed = false;
   if (existing) {
     try {
       const full = await fetchJson(`/repos/${repo}/issues/${existing.number}`);
       previousBody = full.body ?? null;
     } catch (error) {
       warnLog(`runner-watchdog: fetching the tracking issue body failed: ${error.message}`);
+      bodyFetchFailed = true;
     }
   }
 
@@ -558,6 +571,14 @@ async function main({mode}) {
     // Leave any open tracking issue untouched so a live warning is not hidden,
     // and log the failure for the run log (already warned per-lookup).
     log('runner-watchdog: scan incomplete with no findings — keeping any open tracking issue open');
+    return;
+  }
+  if (existing && bodyFetchFailed) {
+    // Overwriting the body without the previous one would erase every tick
+    // and first-seen date — leave the issue unchanged this run instead.
+    log(
+      'runner-watchdog: tracking issue body unreadable — leaving it unchanged this run (triage state preserved)'
+    );
     return;
   }
 
