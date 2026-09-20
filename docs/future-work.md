@@ -101,8 +101,9 @@ manually.
 The matrix above should run against real published `latest` zips on Windows / Ubuntu / macOS ×
 (Firefox stable, Firefox ESR, Waterfox) × (protected dir, portable dir). Windows elevation cannot be
 automated on hosted runners (the UAC prompt is an OS-level UI) — it needs a self-hosted runner, a
-VM, or a non-elevated user running against an admin-owned install dir. The automation tool
-(Puppeteer / Playwright / Firefox CDP) is deliberately not decided here.
+VM, or a non-elevated user running against an admin-owned install dir. The runner-side tool is
+puppeteer-core (ADR [0015](./decisions/0015-e2e-puppeteer-bidi.md)); what stays deliberately open
+here is the elevation trigger — the self-hosted-runner / VM / human-in-the-loop choice above.
 
 - **Helper binary trust — shipped (#174):** `upload.mjs` publishes a `helper_<platform>.sha256`
   sidecar next to each helper (`hashUtils.mjs::helperSha256Sidecar`), and the updater fetches and
