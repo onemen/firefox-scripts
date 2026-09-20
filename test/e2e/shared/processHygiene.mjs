@@ -9,8 +9,10 @@
 //   waitForServer would then talk to the DEAD run's server) and BiDi-driven
 //   browser instances holding temp profiles. Sweeps processes whose command
 //   line references the harness's temp-dir prefixes (`fxs-e2e`,
-//   `fxs-installer-ui`) or the harness-built installer binaries
-//   (`installer_win|linux|mac` under dist/.build).
+//   `fxs-installer-ui`) or whose EXECUTABLE (argv[0]) is one of the
+//   harness-built installer binaries under dist/.build / dist/ — a command
+//   that merely contains the installer name is left alone (2026-09-18 audit,
+//   finding T5; see isE2eProcess below).
 //
 // - removeProfileCompatibilityIni(profileDir): deletes compatibility.ini after
 //   profile seeding so Firefox cannot reuse stale GRE-compatibility state from
@@ -25,18 +27,56 @@ import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// The installer branch of the matcher, in the three syntaxes it is used in:
+// - JS_SOURCE: JS regex literal (dotall not needed; (?:…) fine)
+// - PS_PATTERN: single-quoted PowerShell literal for -match (.NET regex)
+// - PKILL_PATTERN: POSIX ERE for `pkill -f` (no (?:…), [[:space:]] not \s)
+// All three express the same matcher: `fxs-e2e`/`fxs-installer-ui` anywhere,
+// or installer_<os>[-dev][.exe] in the argv[0] position (optionally quoted
+// path prefix), so `ls dist/installer_win.exe` / `grep installer_win …` no
+// longer match (2026-09-18 audit, finding T5: the bare-substring form killed a
+// calling shell whose command line referenced the installer by name).
+
+/** JS regex-literal form (isE2eProcess). */
+const INSTALLER_ARGV0_SOURCE =
+  '^(?:"[^"]*[\\\\/]|[^\\s"]*[\\\\/])?installer_(?:win|linux|mac)(?:_aarch64)?(?:-dev)?(?:\\.exe)?(?:$|[\\s"])';
+
+/**
+ * Single-quoted PowerShell literal form (Windows -match; no ' inside). Exported
+ * for the unit tests that validate it against a real PowerShell.
+ */
+export const INSTALLER_ARGV0_PS =
+  '^(?:"[^"]*[\\\\/]|[^\\s"]*[\\\\/])?installer_(win|linux|mac)(_aarch64)?(-dev)?(\\.exe)?($|[\\s"])';
+
+/**
+ * POSIX ERE form (pkill -f; [[:space:]] is the portable \s; plain groups —
+ * POSIX ERE has no non-capturing (?:…)). Exported for the unit tests that
+ * validate it against a real grep -E.
+ */
+export const INSTALLER_ARGV0_ERE =
+  '^("[^"]*[\\\\/]|[^[:space:]"]*[\\\\/])?installer_(win|linux|mac)(_aarch64)?(-dev)?(\\.exe)?($|[[:space:]"])';
+
 /**
  * Does a process command line belong to the E2E harness? Matches the
  * `fxs-e2e`/`fxs-installer-ui` marker prefixes the harness puts in argv and the
- * `installer_<os>` names of the harness-built installer binaries. Exported for
- * unit tests.
+ * harness-built installer binaries in the argv[0] position — the command line
+ * STARTS with (an optionally quoted) path to `installer_<os>` — because the
+ * harness always spawns the binary as the executable. A shell command that
+ * merely CONTAINS the literal (`ls dist/installer_win.exe`, `grep installer_win
+ * …`) does not match: the bare-substring form killed a calling shell whose
+ * command line referenced the installer by name (2026-09-18 audit, finding T5).
+ * Exported for unit tests.
+ *
+ * The installer branch accepts an unquoted space-free path, a quoted path
+ * (spaces allowed), or a bare binary name; dev-suffixed, `.exe`-suffixed and
+ * aarch64-named variants all match.
  *
  * @param {string | null | undefined} cmdline full command line of a process
  * @returns {boolean}
  */
 export function isE2eProcess(cmdline) {
   if (!cmdline) return false;
-  return /fxs-(e2e|installer-ui)|installer_(win|linux|mac)/.test(cmdline);
+  return /fxs-(e2e|installer-ui)/.test(cmdline) || new RegExp(INSTALLER_ARGV0_SOURCE).test(cmdline);
 }
 
 /**
@@ -64,11 +104,13 @@ export async function killStrayProcesses({
   // Windows: list candidate processes with their command lines, kill each by
   // PID. One PowerShell round-trip; -NoProfile keeps it fast and side-effect
   // free. Stop-Process on an already-exited PID throws per-process, hence the
-  // per-item -ErrorAction SilentlyContinue.
+  // per-item -ErrorAction SilentlyContinue. The pattern lives in a
+  // single-quoted PS literal: backslashes pass through, and it contains no
+  // single quote, so nothing needs doubling.
   if (platform === 'win32') {
     const ps =
-      'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match ' +
-      "'fxs-(e2e|installer-ui)|installer_(win|linux|mac)' } | ForEach-Object { " +
+      'Get-CimInstance Win32_Process | Where-Object { ($_.CommandLine -match ' +
+      `'fxs-(e2e|installer-ui)') -or ($_.CommandLine -match '${INSTALLER_ARGV0_PS}') } | ForEach-Object { ` +
       'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; ' +
       '"$($_.ProcessId):$($_.Name)" }';
     const res = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
@@ -77,11 +119,11 @@ export async function killStrayProcesses({
     });
     return report(res, log);
   }
-  // POSIX: pkill -f matches the same argv patterns. pkill exits 1 when no
-  // process matched — the normal steady state, not an error — and it prints
-  // nothing either way, so "how many" is only known on Windows. macOS and the
-  // Ubuntu runner images both ship pkill.
-  const res = run('pkill', ['-f', 'fxs-(e2e|installer-ui)|installer_(win|linux|mac)'], {
+  // POSIX: pkill -f matches the same patterns (ERE form above). pkill exits 1
+  // when no process matched — the normal steady state, not an error — and it
+  // prints nothing either way, so "how many" is only known on Windows. macOS
+  // and the Ubuntu runner images both ship pkill.
+  const res = run('pkill', ['-f', `fxs-(e2e|installer-ui)|${INSTALLER_ARGV0_ERE}`], {
     encoding: 'utf8',
     timeout: 30_000,
   });
