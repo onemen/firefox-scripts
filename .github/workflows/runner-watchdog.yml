@@ -54,6 +54,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read # workflow-run + job listing for the annotation scan
+      checks: read # check-run annotations (the scan's data source)
       issues: write # rolling tracking issue (the only write this workflow does)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,6 +82,10 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

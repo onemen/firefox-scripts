@@ -31,7 +31,8 @@
 
 const API_ROOT = 'https://api.github.com';
 const IMAGES_REPO = 'actions/runner-images';
-const IMAGES_SEARCH_URL = `${API_ROOT}/search/issues?q=${encodeURIComponent(
+// Relative paths only — makeFetchJson prepends API_ROOT.
+const IMAGES_SEARCH_URL = `/search/issues?q=${encodeURIComponent(
   `repo:${IMAGES_REPO} is:issue is:open label:Announcement`
 )}&sort=updated&order=desc&per_page=10`;
 const ISSUE_TITLE = '[runner-watchdog] CI runner deprecations';
@@ -237,6 +238,9 @@ export async function scanRunAnnotations(
   }
 
   const raw = [];
+  // Any lookup failure makes the scan INCOMPLETE — the caller must not treat an
+  // incomplete scan as all-clear (a failed lookup can hide the active warning).
+  let incomplete = false;
   for (const run of newestPerWorkflow.values()) {
     const workflow = run.name ?? run.path;
     let jobs;
@@ -244,6 +248,7 @@ export async function scanRunAnnotations(
       jobs = await fetchJson(`/repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
     } catch (error) {
       warnLog(`runner-watchdog: jobs listing failed for ${workflow}: ${error.message}`);
+      incomplete = true;
       continue;
     }
     for (const job of jobs.jobs ?? []) {
@@ -262,10 +267,11 @@ export async function scanRunAnnotations(
         }
       } catch (error) {
         warnLog(`runner-watchdog: annotations failed for job ${job.name}: ${error.message}`);
+        incomplete = true;
       }
     }
   }
-  return {findings: collectFindings(raw), scannedWorkflows: newestPerWorkflow.size};
+  return {findings: collectFindings(raw), scannedWorkflows: newestPerWorkflow.size, incomplete};
 }
 
 /** Search the open Announcement issues of actions/runner-images. */
@@ -277,7 +283,7 @@ export async function scanRunnerImageAnnouncements(fetchJson, {sinceIso}) {
 /** Find the open rolling tracking issue, if any. */
 async function findOpenTrackingIssue(fetchJson, repo) {
   const query = encodeURIComponent(`repo:${repo} is:issue is:open in:title "${ISSUE_TITLE}"`);
-  const result = await fetchJson(`${API_ROOT}/search/issues?q=${query}&per_page=1`);
+  const result = await fetchJson(`/search/issues?q=${query}&per_page=1`);
   return result.items?.[0] ?? null;
 }
 
@@ -290,19 +296,27 @@ async function main({mode}) {
   const fetchJson = makeFetchJson({token});
   const generatedAt = new Date().toISOString();
 
-  const {findings, scannedWorkflows} = await scanRunAnnotations(fetchJson, {repo});
+  const {
+    findings,
+    scannedWorkflows,
+    incomplete: scanIncomplete,
+  } = await scanRunAnnotations(fetchJson, {repo});
   let announcements = [];
+  let announcementsIncomplete = false;
   try {
     announcements = await scanRunnerImageAnnouncements(fetchJson, {
       sinceIso: new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString(),
     });
   } catch (error) {
     warnLog(`runner-watchdog: announcement search failed: ${error.message}`);
+    announcementsIncomplete = true;
   }
+  const incomplete = scanIncomplete || announcementsIncomplete;
 
   log(
     `runner-watchdog: ${scannedWorkflows} workflow(s) scanned, ` +
-      `${findings.length} finding(s), ${announcements.length} announcement(s)`
+      `${findings.length} finding(s), ${announcements.length} announcement(s)` +
+      (incomplete ? ' (INCOMPLETE — a lookup failed; issue state unchanged)' : '')
   );
 
   if (mode === 'pr') {
@@ -310,6 +324,7 @@ async function main({mode}) {
     for (const f of findings) emitWarning(`${f.message} (seen in ${f.workflows.join(', ')})`);
     for (const a of announcements)
       emitWarning(`actions/runner-images announcement: ${a.title} (${a.url})`);
+    if (incomplete) emitWarning('runner-watchdog: scan incomplete — a lookup failed');
     return;
   }
 
@@ -329,7 +344,7 @@ async function main({mode}) {
 
   const existing = await findOpenTrackingIssue(fetchJson, repo);
   const hasContent = findings.length > 0 || announcements.length > 0;
-  if (!hasContent) {
+  if (!hasContent && !incomplete) {
     if (existing) {
       await fetchJson(`/repos/${repo}/issues/${existing.number}`, {
         method: 'PATCH',
@@ -345,6 +360,13 @@ async function main({mode}) {
     } else {
       log('runner-watchdog: no findings, no open tracking issue — nothing to do');
     }
+    return;
+  }
+  if (!hasContent && incomplete) {
+    // The scan could not see everything — an empty result is NOT an all-clear.
+    // Leave any open tracking issue untouched so a live warning is not hidden,
+    // and log the failure for the run log (already warned per-lookup).
+    log('runner-watchdog: scan incomplete with no findings — keeping any open tracking issue open');
     return;
   }
 

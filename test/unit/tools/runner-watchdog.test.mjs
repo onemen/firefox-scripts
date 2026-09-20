@@ -181,7 +181,7 @@ test('scanRunAnnotations: newest run per workflow; per-job API failures tolerate
     ],
   ];
   const fetchJson = fakeFetch(routes);
-  const {findings, scannedWorkflows} = await scanRunAnnotations(fetchJson, {
+  const {findings, scannedWorkflows, incomplete} = await scanRunAnnotations(fetchJson, {
     repo: 'onemen/firefox-scripts',
     now: new Date('2026-09-20T00:00:00Z'),
   });
@@ -189,9 +189,43 @@ test('scanRunAnnotations: newest run per workflow; per-job API failures tolerate
   // The older E2E run is skipped; the CI workflow is still counted even though
   // its jobs listing failed.
   assert.equal(scannedWorkflows, 2);
-  assert.ok(fetchJson.calls.some(p => p.includes('/actions/runs/2/jobs') === false));
+  // Proves the older run was never fetched (no vacuous-some() pass).
+  assert.equal(
+    fetchJson.calls.some(p => p.includes('/actions/runs/2/jobs')),
+    false
+  );
   assert.equal(findings.length, 1);
   assert.equal(findings[0].message, MIGRATION_NOTICE);
   assert.deepEqual(findings[0].workflows, ['E2E']);
   assert.equal(findings[0].jobs, 1);
+  // A failed jobs listing / annotations call means the scan is INCOMPLETE —
+  // callers must not treat the empty-ish result as an all-clear.
+  assert.equal(incomplete, true);
+});
+
+test('scanRunAnnotations: all lookups succeed → incomplete is false', async () => {
+  const routes = [
+    [
+      /\/actions\/runs\?/,
+      () => ({
+        workflow_runs: [
+          {
+            id: 1,
+            name: 'E2E',
+            path: '.github/workflows/e2e.yml',
+            created_at: '2026-09-19T10:00:00Z',
+          },
+        ],
+      }),
+    ],
+    [/\/actions\/runs\/1\/jobs/, () => ({jobs: [{id: 11, name: 'leg a'}]})],
+    [/\/check-runs\/11\/annotations/, () => []],
+  ];
+  const fetchJson = fakeFetch(routes);
+  const {findings, incomplete} = await scanRunAnnotations(fetchJson, {
+    repo: 'onemen/firefox-scripts',
+    now: new Date('2026-09-20T00:00:00Z'),
+  });
+  assert.deepEqual(findings, []);
+  assert.equal(incomplete, false);
 });
