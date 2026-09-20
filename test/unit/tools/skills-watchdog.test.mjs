@@ -13,15 +13,22 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'skills-watchdog.mjs')).href;
 const {
+  ageInDays,
   collectDrift,
+  collectNewerTags,
+  compareSemver,
   folderTreeAt,
   ISSUE_TITLE,
   issueBody,
   loadInventory,
+  NEWER_TAG_COOLDOWN_DAYS,
+  newestTagInSeries,
   parseSkillFrontmatter,
+  parseTagSeries,
   refToCommit,
   shortRef,
   SKILLS_DIR,
+  tagCommitDate,
   updateCommand,
 } = await import(scriptUrl);
 
@@ -276,6 +283,168 @@ test('issueBody: carries the update command per skill and the injection warning'
 
 test('issueBody: empty findings render without sections', () => {
   assert.doesNotThrow(() => issueBody([]));
+});
+
+// ── newer-tag scan ────────────────────────────────────────────────────────
+
+test('parseTagSeries: namespaced prefixes stay in their own lane', () => {
+  assert.deepEqual(parseTagSeries('bin-v1.1.6'), {
+    prefix: 'bin-v',
+    version: '1.1.6',
+    tagName: 'bin-v1.1.6',
+  });
+  assert.deepEqual(parseTagSeries('lavish-axi-v0.1.64'), {
+    prefix: 'lavish-axi-v',
+    version: '0.1.64',
+    tagName: 'lavish-axi-v0.1.64',
+  });
+  assert.deepEqual(parseTagSeries('v1.2.3'), {prefix: 'v', version: '1.2.3', tagName: 'v1.2.3'});
+  assert.equal(parseTagSeries('release-1.2'), null);
+});
+
+test('compareSemver: dotted numeric ordering, missing components are 0', () => {
+  assert.equal(compareSemver('0.1.74', '0.1.64'), 1);
+  assert.equal(compareSemver('1.2.3', '1.2.3'), 0);
+  assert.equal(compareSemver('1.2', '1.1.9'), 1);
+  assert.equal(compareSemver('2.7.0', '1.1.6'), 1);
+});
+
+test('newestTagInSeries: never crosses namespaces', () => {
+  const tags = ['v2.7.0', 'v2.6.0', 'bin-v1.1.7', 'bin-v1.1.6', 'bin-v1.1.5'];
+  assert.equal(newestTagInSeries(tags, 'bin-v'), 'bin-v1.1.7');
+  assert.equal(newestTagInSeries(tags, 'v'), 'v2.7.0');
+  assert.equal(newestTagInSeries(tags, 'lavish-axi-v'), null);
+});
+
+/** Fake API for the newer-tag scan: tags list + tag→commit→date chain. */
+function tagApi({tags = [], commitDates = {}, failTags = false, failCommit = false}) {
+  const fetchJson = async pathname => {
+    if (pathname.startsWith('/repos/o/r/tags?')) {
+      if (failTags) throw statusErr(500, 'tags boom');
+      return tags.map(name => ({name}));
+    }
+    if (pathname.startsWith('/repos/o/r/git/ref/tags/')) {
+      const name = decodeURIComponent(pathname.split('/').pop());
+      return {object: {type: 'commit', sha: `c-${name}`}};
+    }
+    if (pathname.startsWith('/repos/o/r/git/tags/')) {
+      const name = pathname.split('/').pop();
+      return {object: {sha: `c-${name}`}};
+    }
+    if (pathname.startsWith('/repos/o/r/commits/')) {
+      const sha = pathname.split('/').pop();
+      if (failCommit) throw statusErr(500, 'commit boom');
+      return {commit: {committer: {date: commitDates[sha]}}};
+    }
+    throw new Error(`unexpected path: ${pathname}`);
+  };
+  return fetchJson;
+}
+
+const NOW = new Date('2026-09-19T00:00:00Z');
+
+test('collectNewerTags: tag past the cooldown → actionable newer-tag finding', async () => {
+  const api = tagApi({
+    tags: ['bin-v1.1.7', 'bin-v1.1.6', 'v2.7.0'],
+    commitDates: {'c-bin-v1.1.7': '2026-09-07T00:00:00Z'}, // 12 days before NOW
+  });
+  const {findings, infos} = await collectNewerTags([ITEM], api, {now: NOW});
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, 'newer-tag');
+  assert.equal(findings[0].fromTag, 'bin-v1.1.6');
+  assert.equal(findings[0].toTag, 'bin-v1.1.7');
+  assert.equal(findings[0].ageDays, 12);
+  assert.deepEqual(infos, []);
+});
+
+test('collectNewerTags: tag inside the cooldown → info only, never a finding', async () => {
+  const api = tagApi({
+    tags: ['bin-v1.1.7', 'bin-v1.1.6'],
+    commitDates: {'c-bin-v1.1.7': '2026-09-17T00:00:00Z'}, // 2 days before NOW
+  });
+  const {findings, infos} = await collectNewerTags([ITEM], api, {now: NOW});
+  assert.deepEqual(findings, []);
+  assert.equal(infos.length, 1);
+  assert.equal(infos[0].toTag, 'bin-v1.1.7');
+  assert.equal(infos[0].ageDays, 2);
+});
+
+test('collectNewerTags: no newer tag in the series → silent', async () => {
+  const api = tagApi({tags: ['bin-v1.1.6', 'v2.7.0', 'v2.6.0']});
+  const {findings, infos} = await collectNewerTags([ITEM], api, {now: NOW});
+  assert.deepEqual(findings, []);
+  assert.deepEqual(infos, []);
+});
+
+test('collectNewerTags: rolling refs and unparseable series are skipped', async () => {
+  const rolling = await collectNewerTags(
+    [{...ITEM, ref: 'refs/heads/main'}],
+    tagApi({tags: ['v9.9.9']}),
+    {now: NOW}
+  );
+  assert.deepEqual(rolling.findings, []);
+
+  const noV = await collectNewerTags(
+    [{...ITEM, ref: 'refs/tags/release-1.2'}],
+    tagApi({tags: ['release-2.0']}),
+    {now: NOW}
+  );
+  assert.deepEqual(noV.findings, []);
+});
+
+test('collectNewerTags: unknown tag age is reported honestly, not silenced', async () => {
+  const api = tagApi({tags: ['bin-v1.1.7', 'bin-v1.1.6'], commitDates: {}});
+  const {findings} = await collectNewerTags([ITEM], api, {now: NOW});
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, 'newer-tag');
+  assert.equal(findings[0].ageDays, null);
+});
+
+test('collectNewerTags: API failure → check-failed with the scan attribution', async () => {
+  const failed = await collectNewerTags([ITEM], tagApi({failTags: true}), {now: NOW});
+  assert.equal(failed.findings[0].kind, 'check-failed');
+  assert.match(failed.findings[0].reason, /^newer-tag scan: /);
+});
+
+test('tagCommitDate + ageInDays: peel annotated tags, null on garbage dates', async () => {
+  const api = async pathname => {
+    if (pathname === '/repos/o/r/git/ref/tags/annotated') {
+      return {object: {type: 'tag', sha: 'tag-obj'}};
+    }
+    if (pathname === '/repos/o/r/git/tags/tag-obj') return {object: {sha: 'real-commit'}};
+    if (pathname === '/repos/o/r/commits/real-commit') {
+      return {commit: {committer: {date: '2026-09-12T00:00:00Z'}}};
+    }
+    throw new Error(`unexpected path: ${pathname}`);
+  };
+  assert.equal(await tagCommitDate(api, 'o/r', 'annotated'), '2026-09-12T00:00:00Z');
+  assert.equal(ageInDays('2026-09-12T00:00:00Z', NOW), 7);
+  assert.equal(ageInDays('not a date', NOW), null);
+  assert.equal(NEWER_TAG_COOLDOWN_DAYS, 7);
+});
+
+test('updateCommand: newer-tag re-resolves latest via forced reinstall', () => {
+  assert.equal(
+    updateCommand({kind: 'newer-tag', skill: 'cavecrew', repo: 'o/r'}),
+    'gh skill install o/r cavecrew --dir .agents/skills --force'
+  );
+});
+
+test('issueBody: newer-tag section carries the tag, the cooldown phrasing and the command', () => {
+  const body = issueBody([
+    {
+      kind: 'newer-tag',
+      skill: 'cavecrew',
+      repo: 'o/r',
+      ref: 'refs/tags/bin-v1.1.6',
+      fromTag: 'bin-v1.1.6',
+      toTag: 'bin-v1.1.7',
+      ageDays: 12,
+    },
+  ]);
+  assert.match(body, /### cavecrew — newer upstream release `bin-v1.1.7`/);
+  assert.match(body, /12 day\(s\) old — past the 7-day cooldown/);
+  assert.match(body, /gh skill install o\/r cavecrew --dir \.agents\/skills --force/);
 });
 
 test('ISSUE_TITLE: stable dedup key', () => {
