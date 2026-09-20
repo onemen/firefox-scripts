@@ -100,6 +100,8 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0030](./0030-partial-publishes.md) — Partial publishes: `--include=<roles>` publishes exactly the
   named roles (a role left out is not built/scanned/uploaded; its manifest entry frozen) so a
   flagged binary cannot freeze script delivery (amends [0024])
+- [0031](./0031-gh-pages-orphan-artifact-branch.md) — gh-pages is an orphan, artifact-only publish
+  branch: publish commits only, never seeded from main (amends [0003])
 
 ## Historical
 

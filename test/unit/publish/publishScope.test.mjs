@@ -12,8 +12,10 @@ const {
   INCLUDE_ROLES,
   devBranchStrandWarning,
   noBinaryScope,
+  pagesCommitMessage,
   parseInclude,
   scopeFor,
+  scopeLabel,
   includeBanner,
 } = await import('../../../tools/publish/publishScope.mjs');
 
@@ -156,4 +158,73 @@ test('devBranchStrandWarning: unknown branch state downgrades to the generic not
   assert.match(text, /NOTE/);
   assert.match(text, /CREATES the dev-build branch/);
   assert.doesNotMatch(text, /WARNING/);
+});
+
+test('scopeLabel: a full publish stays "artifacts" (the historical wording)', () => {
+  assert.equal(scopeLabel(parseInclude(['--include=all'])), 'artifacts');
+});
+
+test('scopeLabel: a partial publish names exactly its roles, in role order', () => {
+  assert.equal(scopeLabel(parseInclude(['--include=packages'])), 'packages');
+  assert.equal(scopeLabel(parseInclude(['--include=installer,helper'])), 'installer+helper');
+  // role order is normalized: helper,installer ships as installer+helper
+  assert.equal(scopeLabel(parseInclude(['--include=helper,installer'])), 'installer+helper');
+});
+
+test('pagesCommitMessage: full prod — the historical shape', () => {
+  assert.equal(
+    pagesCommitMessage({
+      mode: 'prod',
+      include: parseInclude(['--include=all']),
+      date: '2026-09-20',
+    }),
+    'chore: publish prod artifacts (2026-09-20)'
+  );
+});
+
+test('pagesCommitMessage: partial scope and the pushed platform join the subject', () => {
+  // call-site reality: the platform list comes from the binaries actually
+  // pushed (builtInstallers/builtHelpers), so a packages-only run — which
+  // ships only platform-independent zips + manifest — names no platform.
+  assert.equal(
+    pagesCommitMessage({
+      mode: 'prod',
+      include: parseInclude(['--include=packages']),
+      platforms: [],
+      date: '2026-09-20',
+    }),
+    'chore: publish prod packages (2026-09-20)'
+  );
+  assert.equal(
+    pagesCommitMessage({
+      mode: 'prod',
+      include: parseInclude(['--include=installer,helper']),
+      platforms: ['linux'],
+      date: '2026-09-20',
+    }),
+    'chore: publish prod installer+helper (linux, 2026-09-20)'
+  );
+});
+
+test('pagesCommitMessage: dev carries the disposable branch id, prod never does', () => {
+  assert.equal(
+    pagesCommitMessage({
+      mode: 'dev',
+      include: parseInclude(['--include=all']),
+      platforms: [],
+      devBranch: 'dev-build-main-abc1',
+      date: '2026-09-20',
+    }),
+    'chore: publish dev artifacts (dev-build-main-abc1, 2026-09-20)'
+  );
+  assert.equal(
+    pagesCommitMessage({
+      mode: 'prod',
+      include: parseInclude(['--include=all']),
+      platforms: [],
+      devBranch: 'gh-pages',
+      date: '2026-09-20',
+    }),
+    'chore: publish prod artifacts (2026-09-20)'
+  );
 });

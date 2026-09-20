@@ -150,6 +150,7 @@ import {
   devBranchStrandWarning,
   includeBanner,
   noBinaryScope,
+  pagesCommitMessage,
   parseInclude,
   scopeFor,
 } from './publishScope.mjs';
@@ -756,7 +757,17 @@ async function publishToGitHub({
   }
 
   await uploadFilesToPages(octokit, pagesFiles, {
-    message: `chore: publish ${PUBLISH_MODE} artifacts (${new Date().toISOString().slice(0, 10)})`,
+    message: pagesCommitMessage({
+      mode: PUBLISH_MODE,
+      include: INCLUDE,
+      // Only the platforms whose binaries this run actually pushed: zips,
+      // updater-ui and hashes.json are platform-independent, so a packages-only
+      // run (or one whose binaries came back unchanged) names no platform in
+      // the commit message (CodeRabbit batch review on #262).
+      platforms: [...new Set([...builtInstallers, ...builtHelpers])],
+      devBranch: DEV_BRANCH,
+      date: new Date().toISOString().slice(0, 10),
+    }),
   });
 
   // Announced (--tag) dev release assets (manual download/testing) — after

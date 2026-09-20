@@ -9,9 +9,11 @@
 // can fetch these files cross-origin — unlike release-asset CDNs, which do
 // not send CORS headers.
 //
-// The branch is created (orphaned from the repo's default branch) on first
-// run if it does not exist.  Uploads go through the git-data API so existing
-// files are replaced atomically and unchanged files are skipped.
+// A missing branch is created as a TRUE ORPHAN on first run: a single root
+// commit holding exactly the pushed files — never seeded from the default
+// branch (the 2026-08-22 seed-from-main accident dragged the whole source tree
+// and history onto the branch; ADR 0031).  Uploads go through the git-data API
+// so existing files are replaced atomically and unchanged files are skipped.
 
 import crypto from 'crypto';
 import {REPO_OWNER, ZIP_PAGES_REPO, ZIP_PAGES_BRANCH} from './paths.js';
@@ -91,36 +93,29 @@ export async function pagesIndex(octokit) {
 }
 
 /**
- * Ensure the Pages branch ref exists, creating it from the default branch if
- * needed.
+ * Resolve the Pages branch head, or `null` when the branch does not exist yet.
+ * The caller turns `null` into an orphan root commit built from the pushed
+ * files — the branch is NEVER seeded from the default branch (issue #261, ADR
+ * 0031).
  */
-async function ensureBranch(octokit) {
+async function pagesBranchHead(octokit) {
   const repo = {owner: REPO_OWNER, repo: ZIP_PAGES_REPO};
   try {
     const {data: ref} = await octokit.git.getRef({...repo, ref: `heads/${ZIP_PAGES_BRANCH}`});
     return ref.object.sha;
   } catch (error) {
     if (error.status !== 404) {
-      throw new Error(`Failed to read gh-pages ref: ${error.message}`, {cause: error});
+      throw new Error(`Failed to read ${ZIP_PAGES_BRANCH} ref: ${error.message}`, {cause: error});
     }
   }
 
-  // Branch does not exist yet — start it from the default branch tip.
   console.log(
-    yellow(`Branch '${ZIP_PAGES_BRANCH}' not found — creating from the default branch...`)
+    yellow(
+      `Branch '${ZIP_PAGES_BRANCH}' not found — the first push creates it as an ` +
+        'orphan artifact-only branch (ADR 0031)'
+    )
   );
-  const {data: repoInfo} = await octokit.repos.get(repo);
-  const {data: defaultRef} = await octokit.git.getRef({
-    ...repo,
-    ref: `heads/${repoInfo.default_branch}`,
-  });
-  const {data: created} = await octokit.git.createRef({
-    ...repo,
-    ref: `refs/heads/${ZIP_PAGES_BRANCH}`,
-    sha: defaultRef.object.sha,
-  });
-  console.log(green(`✓ Created '${ZIP_PAGES_BRANCH}' at ${created.object.sha.slice(0, 7)}`));
-  return created.object.sha;
+  return null;
 }
 
 /**
@@ -174,16 +169,23 @@ export async function uploadFilesToPages(
       `Publishing to ${REPO_OWNER}/${ZIP_PAGES_REPO}@${ZIP_PAGES_BRANCH} (${entries.length} file${entries.length === 1 ? '' : 's'}):`
     )
   );
-  const headSha = await ensureBranch(octokit);
+  const headSha = await pagesBranchHead(octokit);
 
-  const {data: tree} = await octokit.git.getTree({
-    ...repo,
-    tree_sha: headSha,
-    recursive: 1,
-  });
-  const existingEntries = new Map(
-    tree.tree.filter(e => e.type === 'blob').map(e => [e.path, e.sha])
-  );
+  // A missing branch compares against an empty tree: every pushed file is
+  // new, nothing can be "unchanged".
+  let baseTreeSha = null;
+  const existingEntries = new Map();
+  if (headSha) {
+    const {data: tree} = await octokit.git.getTree({
+      ...repo,
+      tree_sha: headSha,
+      recursive: 1,
+    });
+    baseTreeSha = tree.sha;
+    for (const e of tree.tree.filter(e => e.type === 'blob')) {
+      existingEntries.set(e.path, e.sha);
+    }
+  }
 
   const updatedEntries = [];
   const uploaded = [];
@@ -208,23 +210,35 @@ export async function uploadFilesToPages(
     return uploaded;
   }
 
-  const {data: newTree} = await octokit.git.createTree({
-    ...repo,
-    base_tree: tree.sha,
-    tree: updatedEntries,
-  });
+  // A missing branch becomes a TRUE ORPHAN: the tree holds only the pushed
+  // files (no base_tree) and the commit has no parents.  `.nojekyll` is always
+  // in `entries`, so a fresh branch always has at least one entry and the
+  // early return above is unreachable for it.
+  const {data: newTree} = await octokit.git.createTree(
+    headSha ?
+      {...repo, base_tree: baseTreeSha, tree: updatedEntries}
+    : {...repo, tree: updatedEntries}
+  );
   const {data: commit} = await octokit.git.createCommit({
     ...repo,
     message,
     tree: newTree.sha,
-    parents: [headSha],
+    parents: headSha ? [headSha] : [],
   });
-  await octokit.git.updateRef({
-    ...repo,
-    ref: `heads/${ZIP_PAGES_BRANCH}`,
-    sha: commit.sha,
-    force: true,
-  });
+  if (headSha) {
+    await octokit.git.updateRef({
+      ...repo,
+      ref: `heads/${ZIP_PAGES_BRANCH}`,
+      sha: commit.sha,
+      force: true,
+    });
+  } else {
+    await octokit.git.createRef({
+      ...repo,
+      ref: `refs/heads/${ZIP_PAGES_BRANCH}`,
+      sha: commit.sha,
+    });
+  }
   console.log(
     green(
       `✓ ${REPO_OWNER}/${ZIP_PAGES_REPO}@${ZIP_PAGES_BRANCH} updated: ${commit.sha.slice(0, 7)}`
