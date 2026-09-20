@@ -17,6 +17,10 @@ import {fileURLToPath} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
+// publishCommon/paths.mjs (in the import chain below) demands a --mode at
+// import time — the same arrangement as the zip/publish unit tests and the two
+// binary-in-the-loop suites themselves. `node --test` runs each file in its
+// own process, so the push stays scoped to this file.
 process.argv.push('--mode=prod');
 const {computeInstallerSourceHash, requireFreshSnapshot} = await import(
   new URL('../../../installer/test/snapshotProvenance.mjs', import.meta.url).href
