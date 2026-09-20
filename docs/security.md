@@ -14,7 +14,7 @@ tampered archive. The local-server security model is recorded as ADR
 
 Mitigations in place:
 
-- **Session token.** Every state-changing API route requires `?t=<16-hex>` matching the per-run
+- **Session token.** Every state-changing API route requires `?t=<32-hex>` matching the per-run
   token embedded in the installer tab's URL. The token is generated from a CSPRNG (`BCryptGenRandom`
   on Windows, `getentropy` on POSIX); startup **fails closed** if secure randomness is unavailable.
 - **No CORS.** Responses carry no `Access-Control-Allow-Origin` header, so cross-origin pages cannot
@@ -28,10 +28,14 @@ Mitigations in place:
 
 Run through every item; each maps to code that already exists.
 
-1. **API auth** — every state-changing route requires the session token: `/api/install`,
-   `/api/upload`, `/api/manifest`, `/api/self-update`, `/api/waterfox`, `/api/hg-tags`,
-   `/api/close-browser`, `/api/open-folder`, `/api/rescan`, `/api/restart`, `/api/shutdown` (checked
-   via `request_has_valid_token()` in `installer/src/main.c`).
+1. **API auth** — every state-changing route requires the session token. The authoritative route
+   classification lives in `test/e2e/installer/apiRoutes.mjs` (gated: `status`, `install`,
+   `self-update`, `manifest`, `upload`, `waterfox`, `hg-tags`, `close-browser`, `open-folder`,
+   `rescan`, `restart`; plus `shutdown`, which is gated but answers `200 ignored` to a stale token;
+   open: `ping`, `build-info`, `browsers`, `package-urls`; token-reflecting: `claim`).
+   `test/unit/e2e/apiRouteContract.test.mjs` diffs that list against the routes actually registered
+   and gated in `installer/src/*.c` on every `pnpm test`, and the CI smoke test probes a running
+   installer against the same sets — so this list cannot drift from code without failing CI.
 2. **No CORS headers** — grep for `Access-Control-Allow-Origin` across `installer/src/`; only
    comments may mention it.
 3. **Token entropy** — `generate_session_token()` must come from the OS CSPRNG and fail closed

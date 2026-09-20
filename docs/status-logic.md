@@ -6,9 +6,11 @@ up to date, or missing.
 Two phases feed the same hash-based status:
 
 1. **Publish** — builds the zip packages and hash manifest, uploads them to GitHub.
-2. **Install / Update** — the Windows installer downloads those artifacts, compares them against the
-   local files in the browser's profile/binary folder, and reports **Up To Date** / **Update
-   Available** / **Not Installed**.
+2. **Install / Update** — the browser tab (opened by the installer or the updater) fetches those
+   artifacts — the C installer itself has zero network I/O (ADR
+   [0005](./decisions/0005-installer-zero-network.md)) — compares them against the local files in
+   the browser's profile/binary folder, and reports **Up To Date** / **Update Available** / **Not
+   Installed**.
 
 ---
 

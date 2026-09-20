@@ -96,7 +96,7 @@ manually.
 | Linux snap                    | `/etc/firefox`                     | Verified by the snap E2E leg (#55): the CI job installs the snap build, reports `findGreDir()` (`/etc/firefox`) vs the actual snap layout in the step summary, and hard-fails when they diverge. Elevation into the snap GreD stays manual (§2). |
 | macOS                         | `Firefox.app/Contents/Resources`   | `osascript` prompt once.                                                                                                                                                                                                                         |
 
-### 2.2 Automated (planned, tool undecided)
+### 2.2 Automated (planned; runner-side tool = puppeteer-core per ADR 0015, Windows UAC stays manual)
 
 The matrix above should run against real published `latest` zips on Windows / Ubuntu / macOS ×
 (Firefox stable, Firefox ESR, Waterfox) × (protected dir, portable dir). Windows elevation cannot be

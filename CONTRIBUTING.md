@@ -44,12 +44,16 @@ regenerated on demand: the installer Makefile produces the C headers on every bu
 Before opening a PR, run the local checks:
 
 ```bash
-pnpm lint          # eslint
-pnpm format        # prettier check
-pnpm test          # unit tests
-pnpm test:hash     # C vs JS hash parity (see installer/test/test_hash.mjs)
-pnpm upload:local --mode=dev   # build snapshot
-pnpm test:e2e      # installer HTTP + updater scenarios
+pnpm lint          # the full gate: eslint, check-strncpy, tsc, C format check,
+                   # gcc -fanalyzer, markdownlint, check-skills (7 stages; needs the
+                   # C toolchain — see docs/DEVELOPING.md → Prerequisites)
+pnpm format        # prettier + C format check (read-only)
+pnpm test          # unit tests (pure Node, no build needed)
+pnpm test:hash     # C vs JS hash parity (see installer/test/README.md) — needs a
+                   # built snapshot; auto-generates a prod one via upload:local when
+                   # none exists, and hard-fails on a stale snapshot
+pnpm upload:local -- --mode=dev   # build a dev snapshot (note the `--` before flags)
+pnpm test:e2e      # installer HTTP + updater scenarios (needs that snapshot)
 ```
 
 Uploads are gated to `main` and require a GitHub token (see

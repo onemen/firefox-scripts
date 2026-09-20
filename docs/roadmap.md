@@ -23,9 +23,9 @@ Order matters: installer / updater / tests / CI first, core-file PRs last.
 
 Phase 4 (installer + updater E2E matrix) is complete on `main`: the browser-matrix legs (#35–#37,
 #53, #54), the portable-Firefox legs (#56), and the snap Firefox leg (#55, merged via PR #142) all
-run in CI. Remaining test-infrastructure gaps — profile/process hygiene (#130), browser download
-pinning (#131), publish zip-verification tests (#133) — are tracked by issues and listed in
-`docs/future-work.md` §6.
+run in CI. The test-infrastructure gaps that tracked them (profile/process hygiene #130, browser
+download pinning #131, publish zip-verification #133) are resolved — see the resolved list in
+`docs/future-work.md` §6; its one remaining open item is the msys2 setup caching trade-off (#33).
 
 ## Post v1.0 (umbrella #38, milestone "Post v1.0")
 
