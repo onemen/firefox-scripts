@@ -11,6 +11,9 @@ const {
   collectFindings,
   filterAnnouncementIssues,
   buildIssueBody,
+  findingId,
+  isOursFinding,
+  parseLedger,
   scanRunAnnotations,
 } = await import('../../../tools/runner-watchdog.mjs');
 
@@ -85,9 +88,43 @@ test('filterAnnouncementIssues: keeps only issues updated in the window', () => 
   assert.equal(kept[0].url, 'https://github.com/actions/runner-images/issues/14748');
 });
 
-test('buildIssueBody: renders the findings table with escaped pipes and guidance', () => {
+test('isOursFinding: run.path is the classifier; ambiguity → external', () => {
+  const repoRoot = process.cwd(); // real repo: .github/workflows exists
+  assert.equal(isOursFinding(['.github/workflows/ci.yml'], repoRoot), true);
+  assert.equal(
+    isOursFinding(['.github/workflows/runner-watchdog.yml', '.github/workflows/ci.yml'], repoRoot),
+    true
+  );
+  // GitHub-managed runs: no path (pages build and deployment) or foreign path.
+  assert.equal(isOursFinding([], repoRoot), false);
+  assert.equal(isOursFinding([''], repoRoot), false);
+  assert.equal(isOursFinding(['.github/workflows/foreign.yml'], repoRoot), false);
+  // Dependabot runs OUR ci.yml on its branch — the name lies, the path truth:
+  // path-based classification calls it ours (actionable advice: wait/deny).
+  assert.equal(isOursFinding(['.github/workflows/ci.yml'], repoRoot), true);
+  // No workflows dir available → fail-safe to external, never auto-ours.
+  assert.equal(isOursFinding(['.github/workflows/ci.yml'], 'Z:/nonexistent-root'), false);
+});
+
+test('buildIssueBody: ours/external split, checkboxes, ledger, escaped pipes', () => {
+  const repoRoot = process.cwd(); // the real repo: .github/workflows exists
   const body = buildIssueBody({
-    findings: [{message: 'a | b', level: 'notice', workflows: ['E2E'], jobs: 2}],
+    findings: [
+      {
+        message: 'a | b',
+        level: 'notice',
+        workflows: ['E2E'],
+        paths: ['.github/workflows/e2e.yml'],
+        jobs: 2,
+      },
+      {
+        message: MIGRATION_NOTICE,
+        level: 'notice',
+        workflows: ['pages build and deployment'],
+        paths: [],
+        jobs: 1,
+      },
+    ],
     announcements: [
       {
         number: 14748,
@@ -99,12 +136,187 @@ test('buildIssueBody: renders the findings table with escaped pipes and guidance
     runUrl: 'https://github.com/onemen/firefox-scripts/actions/runs/1',
     generatedAt: '2026-09-20T00:00:00Z',
     lookbackDays: 8,
+    repoRoot,
   });
   assert.match(body, /a \\\| b/);
   assert.match(body, /#14748/);
-  assert.match(body, /ubuntu-24\.04/);
+  assert.match(body, /### Ours — actionable in this repo/);
+  assert.match(body, /### External \(GitHub-managed/);
+  // Section membership: the e2e.yml finding must render under Ours (the row
+  // text alone is section-agnostic — this pins the paths-based classifier).
+  const oursSection = body.split('### External')[0];
+  assert.match(oursSection, /- \[ \] a \\\| b/);
+  assert.match(body, /- \[ \] The ubuntu-latest label will migrate/);
+  assert.match(body, /first seen 2026-09-20/);
   assert.match(body, /advisory `ubuntu-26\.04` canary/);
   assert.match(body, /not covered by Dependabot/);
+  // Machine-readable ledger present and parseable.
+  const ledger = parseLedger(body);
+  assert.equal(Object.keys(ledger.firstSeen).length, 3);
+  assert.deepEqual(ledger.handled, {});
+});
+
+test('buildIssueBody: ledger round-trip preserves ticks and first-seen dates', () => {
+  const repoRoot = process.cwd();
+  const first = buildIssueBody({
+    findings: [
+      {
+        message: MIGRATION_NOTICE,
+        level: 'notice',
+        workflows: ['CI'],
+        paths: ['.github/workflows/ci.yml'],
+        jobs: 1,
+      },
+    ],
+    announcements: [],
+    runUrl: 'r1',
+    generatedAt: '2026-09-13T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+  });
+  // Human ticks the box (the same edit a maintainer makes on GitHub).
+  const ticked = first.replace('- [ ]', '- [x]');
+  const second = buildIssueBody({
+    findings: [
+      {
+        message: MIGRATION_NOTICE,
+        level: 'notice',
+        workflows: ['CI'],
+        paths: ['.github/workflows/ci.yml'],
+        jobs: 1,
+      },
+    ],
+    announcements: [],
+    runUrl: 'r2',
+    generatedAt: '2026-09-20T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+    previousBody: ticked,
+  });
+  assert.match(second, /- \[x\]/);
+  assert.match(second, /first seen 2026-09-13/); // persisted, not today
+  assert.match(second, /last seen 2026-09-20/);
+  const ledger = parseLedger(second);
+  const id = findingId(MIGRATION_NOTICE);
+  assert.ok(ledger.handled[id]);
+  // Handled items move to the collapsed provenance section.
+  assert.match(second, /<summary>Handled \(ticked by a maintainer/);
+});
+
+test('buildIssueBody: announcement tick survives a rewrite', () => {
+  const repoRoot = process.cwd();
+  const first = buildIssueBody({
+    findings: [],
+    announcements: [
+      {
+        number: 14748,
+        title: '[Ubuntu] ubuntu-latest → 26.04',
+        url: 'https://x/14748',
+        updated_at: '2026-09-17',
+      },
+    ],
+    runUrl: 'r1',
+    generatedAt: '2026-09-13T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+  });
+  const ticked = first.replace('- [ ]', '- [x]');
+  const second = buildIssueBody({
+    findings: [],
+    announcements: [
+      {
+        number: 14748,
+        title: '[Ubuntu] ubuntu-latest → 26.04',
+        url: 'https://x/14748',
+        updated_at: '2026-09-19',
+      },
+    ],
+    runUrl: 'r2',
+    generatedAt: '2026-09-20T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+    previousBody: ticked,
+  });
+  assert.match(second, /- \[x\] \[#14748\]/);
+  assert.match(second, /<summary>Handled \(ticked by a maintainer/);
+});
+
+test('buildIssueBody: unticking a rendered box clears the handled state', () => {
+  const repoRoot = process.cwd();
+  const first = buildIssueBody({
+    findings: [
+      {
+        message: MIGRATION_NOTICE,
+        level: 'notice',
+        workflows: ['CI'],
+        paths: ['.github/workflows/ci.yml'],
+        jobs: 1,
+      },
+    ],
+    announcements: [],
+    runUrl: 'r1',
+    generatedAt: '2026-09-13T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+  });
+  const ticked = first.replace('- [ ]', '- [x]');
+  // The maintainer changes their mind: [x] back to [ ]. The ledger must not
+  // silently re-tick on the next rewrite.
+  const unticked = ticked.replace('- [x]', '- [ ]');
+  const second = buildIssueBody({
+    findings: [
+      {
+        message: MIGRATION_NOTICE,
+        level: 'notice',
+        workflows: ['CI'],
+        paths: ['.github/workflows/ci.yml'],
+        jobs: 1,
+      },
+    ],
+    announcements: [],
+    runUrl: 'r2',
+    generatedAt: '2026-09-20T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+    previousBody: unticked,
+  });
+  assert.match(second, /- \[ \] The ubuntu-latest label/);
+  assert.doesNotMatch(second, /- \[x\]/);
+  assert.doesNotMatch(second, /<summary>Handled/);
+});
+
+test('buildIssueBody: stale tick auto-clears when a finding stops firing', () => {
+  const repoRoot = process.cwd();
+  const withFinding = buildIssueBody({
+    findings: [
+      {
+        message: MIGRATION_NOTICE,
+        level: 'notice',
+        workflows: ['CI'],
+        paths: ['.github/workflows/ci.yml'],
+        jobs: 1,
+      },
+    ],
+    announcements: [],
+    runUrl: 'r1',
+    generatedAt: '2026-09-13T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+  });
+  const ticked = withFinding.replace('- [ ]', '- [x]');
+  const afterClear = buildIssueBody({
+    findings: [],
+    announcements: [],
+    runUrl: 'r2',
+    generatedAt: '2026-09-27T00:00:00Z',
+    lookbackDays: 8,
+    repoRoot,
+    previousBody: ticked,
+  });
+  // The finding is gone from the live sections; the stale tick must not
+  // resurrect it. (The handled ledger entry remains harmlessly in the blob.)
+  assert.doesNotMatch(afterClear, /- \[x\]/);
+  assert.match(afterClear, /No open findings from our own workflows/);
 });
 
 test('buildIssueBody: all-clear wording when nothing was found', () => {
@@ -115,8 +327,9 @@ test('buildIssueBody: all-clear wording when nothing was found', () => {
     generatedAt: 'g',
     lookbackDays: 8,
   });
-  assert.match(body, /No migration\/deprecation annotations found/);
-  assert.match(body, /No new actions\/runner-images Announcement issues/);
+  assert.match(body, /No open findings from our own workflows/);
+  assert.match(body, /No open findings from GitHub-managed workflows/);
+  assert.match(body, /No new announcements in the window/);
 });
 
 /** Route-table fetch stub: path regex → response builder (may throw). */
