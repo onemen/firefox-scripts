@@ -106,7 +106,7 @@ test('isOursFinding: run.path is the classifier; ambiguity → external', () => 
   assert.equal(isOursFinding(['.github/workflows/ci.yml'], 'Z:/nonexistent-root'), false);
 });
 
-test('buildIssueBody: ours/external split, checkboxes, ledger, escaped pipes', () => {
+test('buildIssueBody: status board — needs action / informational split, no false TODOs', () => {
   const repoRoot = process.cwd(); // the real repo: .github/workflows exists
   const body = buildIssueBody({
     findings: [
@@ -138,25 +138,33 @@ test('buildIssueBody: ours/external split, checkboxes, ledger, escaped pipes', (
     lookbackDays: 8,
     repoRoot,
   });
-  assert.match(body, /a \\\| b/);
-  assert.match(body, /#14748/);
-  assert.match(body, /### Ours — actionable in this repo/);
-  assert.match(body, /### External \(GitHub-managed/);
-  // Section membership: the e2e.yml finding must render under Ours (the row
-  // text alone is section-agnostic — this pins the paths-based classifier).
-  const oursSection = body.split('### External')[0];
+  // Counts strip first.
+  assert.match(body, /🔧 \*\*1\*\* needs action/);
+  assert.match(body, /👀 \*\*1\*\* informational/);
+  // Ours renders under Needs action WITH a checkbox; section membership is
+  // pinned (the row text alone is section-agnostic).
+  const oursSection = body.split('### 👀')[0];
+  assert.match(oursSection, /### 🔧 Needs action/);
   assert.match(oursSection, /- \[ \] a \\\| b/);
-  assert.match(body, /- \[ \] The ubuntu-latest label will migrate/);
-  assert.match(body, /first seen 2026-09-20/);
-  assert.match(body, /advisory `ubuntu-26\.04` canary/);
-  assert.match(body, /not covered by Dependabot/);
-  // Machine-readable ledger present and parseable.
+  // External renders as informational — 👀 and NO checkbox (an empty box must
+  // never read as a TODO on a row no commit here can fix).
+  const infoSection = body.split('### 👀 Informational')[1] ?? '';
+  assert.match(infoSection, /- 👀 The ubuntu-latest label will migrate/);
+  assert.doesNotMatch(infoSection, /- \[ \]/);
+  // Announcements live in a collapsed list without checkboxes.
+  assert.match(body, /<summary>📡 Upstream announcements/);
+  assert.match(body, /\[#14748\]/);
+  const annSection = body.split('<summary>📡')[1] ?? '';
+  assert.doesNotMatch(annSection, /- \[ \]/);
+  // House rules collapsed too.
+  assert.match(body, /House rules: hosted-runner labels are pinned/);
+  // Ledger present; dates recorded for both findings + the announcement.
   const ledger = parseLedger(body);
   assert.equal(Object.keys(ledger.firstSeen).length, 3);
   assert.deepEqual(ledger.handled, {});
 });
 
-test('buildIssueBody: ledger round-trip preserves ticks and first-seen dates', () => {
+test('buildIssueBody: ticking moves a finding to the checked Fixed section', () => {
   const repoRoot = process.cwd();
   const first = buildIssueBody({
     findings: [
@@ -193,55 +201,18 @@ test('buildIssueBody: ledger round-trip preserves ticks and first-seen dates', (
     repoRoot,
     previousBody: ticked,
   });
-  assert.match(second, /- \[x\]/);
-  assert.match(second, /first seen 2026-09-13/); // persisted, not today
-  assert.match(second, /last seen 2026-09-20/);
+  // Needs action is empty now; the finding renders CHECKED in Fixed.
+  const needsSection = second.split('### ✅')[0];
+  assert.match(needsSection, /_Nothing — all clear on our workflows\._/);
+  const fixedSection = (second.split('### ✅ Fixed / handled')[1] ?? '').split('### 👀')[0];
+  assert.match(fixedSection, /- \[x\] ✅ ~~The ubuntu-latest label will migrate/);
+  assert.match(fixedSection, /firing since 2026-09-13/); // persisted, not today
+  assert.match(fixedSection, /handled 2026-09-20/);
   const ledger = parseLedger(second);
-  const id = findingId(MIGRATION_NOTICE);
-  assert.ok(ledger.handled[id]);
-  // Handled items move to the collapsed provenance section.
-  assert.match(second, /<summary>Handled \(ticked by a maintainer/);
+  assert.ok(ledger.handled[findingId(MIGRATION_NOTICE)]);
 });
 
-test('buildIssueBody: announcement tick survives a rewrite', () => {
-  const repoRoot = process.cwd();
-  const first = buildIssueBody({
-    findings: [],
-    announcements: [
-      {
-        number: 14748,
-        title: '[Ubuntu] ubuntu-latest → 26.04',
-        url: 'https://x/14748',
-        updated_at: '2026-09-17',
-      },
-    ],
-    runUrl: 'r1',
-    generatedAt: '2026-09-13T00:00:00Z',
-    lookbackDays: 8,
-    repoRoot,
-  });
-  const ticked = first.replace('- [ ]', '- [x]');
-  const second = buildIssueBody({
-    findings: [],
-    announcements: [
-      {
-        number: 14748,
-        title: '[Ubuntu] ubuntu-latest → 26.04',
-        url: 'https://x/14748',
-        updated_at: '2026-09-19',
-      },
-    ],
-    runUrl: 'r2',
-    generatedAt: '2026-09-20T00:00:00Z',
-    lookbackDays: 8,
-    repoRoot,
-    previousBody: ticked,
-  });
-  assert.match(second, /- \[x\] \[#14748\]/);
-  assert.match(second, /<summary>Handled \(ticked by a maintainer/);
-});
-
-test('buildIssueBody: unticking a rendered box clears the handled state', () => {
+test('buildIssueBody: unticking a fixed row reopens it', () => {
   const repoRoot = process.cwd();
   const first = buildIssueBody({
     findings: [
@@ -280,12 +251,13 @@ test('buildIssueBody: unticking a rendered box clears the handled state', () => 
     repoRoot,
     previousBody: unticked,
   });
+  assert.match(second, /### 🔧 Needs action/);
   assert.match(second, /- \[ \] The ubuntu-latest label/);
   assert.doesNotMatch(second, /- \[x\]/);
-  assert.doesNotMatch(second, /<summary>Handled/);
+  assert.doesNotMatch(second, /### ✅ Fixed/);
 });
 
-test('buildIssueBody: stale tick auto-clears when a finding stops firing', () => {
+test('buildIssueBody: a stop-firing finding drops out of the board entirely', () => {
   const repoRoot = process.cwd();
   const withFinding = buildIssueBody({
     findings: [
@@ -313,13 +285,14 @@ test('buildIssueBody: stale tick auto-clears when a finding stops firing', () =>
     repoRoot,
     previousBody: ticked,
   });
-  // The finding is gone from the live sections; the stale tick must not
-  // resurrect it. (The handled ledger entry remains harmlessly in the blob.)
+  // No zombie rows: the stale tick must not resurrect the finding (and the
+  // issue can auto-close when the scan is all-clear).
   assert.doesNotMatch(afterClear, /- \[x\]/);
-  assert.match(afterClear, /No open findings from our own workflows/);
+  assert.match(afterClear, /🔧 nothing needs action/);
+  assert.match(afterClear, /_Nothing — all clear on our workflows\._/);
 });
 
-test('buildIssueBody: all-clear wording when nothing was found', () => {
+test('buildIssueBody: all-clear board when nothing was found', () => {
   const body = buildIssueBody({
     findings: [],
     announcements: [],
@@ -327,9 +300,9 @@ test('buildIssueBody: all-clear wording when nothing was found', () => {
     generatedAt: 'g',
     lookbackDays: 8,
   });
-  assert.match(body, /No open findings from our own workflows/);
-  assert.match(body, /No open findings from GitHub-managed workflows/);
-  assert.match(body, /No new announcements in the window/);
+  assert.match(body, /🔧 nothing needs action/);
+  assert.match(body, /_Nothing — all clear on our workflows\._/);
+  assert.match(body, /_No open announcements in the window\._/);
 });
 
 /** Route-table fetch stub: path regex → response builder (may throw). */
