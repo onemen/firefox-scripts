@@ -34,7 +34,9 @@ per-connection read deadlines, 408 semantics, and the smoke-test override — is
 [ADR 0028](./0028-installer-serve-loop-availability.md).
 
 **Token comparison (2026-09-20):** token checks are `strcmp`-based, not constant-time. The server
-listens only on `127.0.0.1`, a leak would reach a same-host page one request at a time through a
-single-threaded serve loop with per-connection deadlines, and the 128-bit token leaves nothing to
-brute force — a constant-time compare buys nothing under this threat model. Revisit-if the server
-ever listens beyond the loopback interface.
+listens only on `127.0.0.1`, requests are serialized by the single-threaded serve loop under
+per-connection deadlines, and the practical timing channel is closed at the client: a page's
+`performance.now()` is clamped to ≥100 µs while `strcmp`'s early-exit signal is sub-microsecond, so
+recovering even one token nibble prefix-by-prefix would need millions of measured requests inside
+one short-lived installer run. A constant-time compare buys nothing under this threat model.
+Revisit-if the server ever listens beyond the loopback interface.
