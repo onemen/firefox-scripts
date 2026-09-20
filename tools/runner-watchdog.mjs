@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+import {createHash} from 'node:crypto';
+import {readdirSync} from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+
 /**
  * tools/runner-watchdog.mjs — CI runner/annotations watchdog.
  *
@@ -14,7 +19,11 @@
  *   migration/deprecation phrasing, and lists the open `Announcement` issues of
  *   actions/runner-images. Findings maintain ONE rolling tracking issue
  *   (`[runner-watchdog] CI runner deprecations`, deduped by title, auto-closed
- *   when a later run is all-clear) — the skills-watchdog pattern.
+ *   when a later run is all-clear) — the skills-watchdog pattern. The issue
+ *   body is a self-maintaining triage view: findings are split "ours" vs
+ *   "external (GitHub-managed)", carry first-seen dates, and humans mark
+ *   findings handled by ticking a checkbox — that state survives every body
+ *   rewrite in an HTML-comment JSON ledger at the end of the body.
  * - PR (`--pr`): stateless and always green — the same scan runs read-only and
  *   findings surface as `::warning::` annotations, so the check can be required
  *   without ever blocking.
@@ -39,6 +48,8 @@ const ISSUE_TITLE = '[runner-watchdog] CI runner deprecations';
 const ISSUE_LABEL = 'runner-watchdog';
 const LOOKBACK_DAYS = 8;
 const RUNS_PER_PAGE = 100;
+/** The machine-readable state blob at the end of every tracking-issue body. */
+const LEDGER_COMMENT_RE = /<!--\s*runner-watchdog:ledger\s+([\s\S]*?)-->/;
 
 /** True when running as the CLI entry point (vs imported by the unit tests). */
 const isMain = process.argv[1] && process.argv[1].endsWith('runner-watchdog.mjs');
@@ -92,11 +103,13 @@ export function collectFindings(raw) {
     if (existing) {
       existing.jobs += 1;
       if (!existing.workflows.includes(item.workflow)) existing.workflows.push(item.workflow);
+      if (item.path && !existing.paths.includes(item.path)) existing.paths.push(item.path);
     } else {
       byMessage.set(key, {
         message: key,
         level: item.level,
         workflows: [item.workflow],
+        paths: item.path ? [item.path] : [],
         jobs: 1,
       });
     }
@@ -136,7 +149,106 @@ export function filterAnnouncementIssues(issues, sinceIso) {
 }
 
 /**
- * The rolling tracking issue body. Pure string building — unit-tested.
+ * Stable id for a finding/announcement: sha256 of its text. The ledger keys on
+ * this so a finding survives body rewrites (and formatting jitter in the "seen
+ * in" column) without a human re-triaging it.
+ *
+ * @param {string} message
+ * @returns {string}
+ */
+export function findingId(message) {
+  return createHash('sha256').update(message.trim()).digest('hex').slice(0, 12);
+}
+
+/**
+ * Classify a finding: does it come from a workflow file THIS REPO controls, or
+ * from a GitHub-managed run ("pages build and deployment", Dependabot's own
+ * checks) that no commit here can change?
+ *
+ * The reliable signal is the run's `path` (`.github/workflows/<file>`): a
+ * dependabot-branch run of OUR ci.yml reports the PR title as its name but
+ * still carries our path, while managed workflows have no repo file at all.
+ * Ambiguity (no paths, no tree) classifies as EXTERNAL — informational, never
+ * silently dismissed as ours.
+ *
+ * @param {string[]} runPaths run.path values, e.g. ['.github/workflows/ci.yml']
+ * @param {string} repoRoot
+ * @returns {boolean} true when at least one path is a repo-controlled workflow
+ */
+export function isOursFinding(runPaths, repoRoot) {
+  if (runPaths.length === 0) return false;
+  let names = [];
+  try {
+    names = new Set(readdirSync(path.join(repoRoot, '.github', 'workflows')));
+  } catch {
+    return false; // no tree available (partial checkout) — informational only
+  }
+  return runPaths.some(p => names.has(p.replace(/^\.github\/workflows\//, '')));
+}
+
+/**
+ * Read the previous triage state from a tracking-issue body. Two sources,
+ * merged with the rendered checkboxes winning:
+ *
+ * 1. the ledger comment blob (first-seen dates + handled entries with dates);
+ * 2. the RENDERED `- [x]` checkboxes — a maintainer ticks the visible box, but the
+ *    blob in that same body still says unticked, so the tick must be harvested
+ *    from the row itself (the row's finding id is recomputed from its message
+ *    text).
+ *
+ * Unknown/corrupt ledger → fresh state (nothing lost that a new scan would not
+ * re-derive).
+ *
+ * @param {string | null | undefined} previousBody
+ * @returns {{
+ *   handled: Record<string, {note?: string; at: string}>;
+ *   firstSeen: Record<string, string>;
+ * }}
+ */
+export function parseLedger(previousBody) {
+  const body = previousBody ?? '';
+  const handled = {};
+  const firstSeen = {};
+  const m = LEDGER_COMMENT_RE.exec(body);
+  if (m) {
+    try {
+      const parsed = JSON.parse(m[1].trim());
+      Object.assign(firstSeen, parsed.firstSeen ?? {});
+      Object.assign(handled, parsed.handled ?? {});
+    } catch {
+      // corrupt blob — the checkbox harvest below still works
+    }
+  }
+  // Harvest ticks from the rendered rows (checkboxes are the human's edit).
+  // Line-prefix check + string slicing keeps this free of the nested-optional
+  // regex shape the security lint (rightly) flags. Announcement rows start
+  // with [#N](url) and key as `ann-N`; finding rows key on the sha256 of
+  // their message text.
+  for (const line of body.split('\n')) {
+    if (!line.startsWith('- [x] ')) continue;
+    const rest = line.slice('- [x] '.length);
+    const annMatch = /^\[#(\d+)\]\(/.exec(rest);
+    let id;
+    if (annMatch) {
+      id = `ann-${annMatch[1]}`;
+    } else {
+      const sep = rest.indexOf(' — _first seen ');
+      const text = (sep === -1 ? rest : rest.slice(0, sep)).replaceAll('\\|', '|');
+      id = findingId(text);
+    }
+    const seenMatch = /_first seen (\d{4}-\d{2}-\d{2})/.exec(rest);
+    const at = seenMatch?.[1] ?? handled[id]?.at ?? '';
+    handled[id] = {at, note: handled[id]?.note};
+  }
+  return {handled, firstSeen};
+}
+
+/**
+ * The rolling tracking issue body: a self-maintaining triage view. Pure string
+ * building — unit-tested. Findings split "ours" (actionable in this repo) vs
+ * "external" (GitHub-managed workflows; informational), each with a checkbox a
+ * human can tick to mark it handled. Ticks, notes and first-seen dates persist
+ * across rewrites in the HTML-comment ledger at the end of the body.
  *
  * @param {{
  *   findings: ReturnType<typeof collectFindings>;
@@ -149,10 +261,48 @@ export function filterAnnouncementIssues(issues, sinceIso) {
  *   runUrl: string;
  *   generatedAt: string;
  *   lookbackDays: number;
+ *   repoRoot?: string;
+ *   previousBody?: string | null;
  * }} parts
  * @returns {string}
  */
-export function buildIssueBody({findings, announcements, runUrl, generatedAt, lookbackDays}) {
+export function buildIssueBody({
+  findings,
+  announcements,
+  runUrl,
+  generatedAt,
+  lookbackDays,
+  repoRoot = process.cwd(),
+  previousBody = null,
+}) {
+  const {handled, firstSeen: prevSeen} = parseLedger(previousBody);
+  const today = generatedAt.slice(0, 10);
+
+  // Rows with id + tick state; first-seen merges previous ledger with today.
+  const findingRows = findings.map(f => {
+    const id = findingId(f.message);
+    return {...f, id, handled: Boolean(handled[id]), firstSeen: prevSeen[id] ?? today};
+  });
+  const announcementRows = announcements.map(a => {
+    const key = `ann-${a.number}`;
+    return {...a, id: key, handled: Boolean(handled[key]), firstSeen: prevSeen[key] ?? today};
+  });
+
+  // ours vs external — the actionable/noise split the maintainer asked for.
+  const ours = findingRows.filter(f => isOursFinding(f.workflows, repoRoot));
+  const external = findingRows.filter(f => !ours.includes(f));
+  const oursAnnouncements = announcementRows.filter(a => !a.handled);
+  const handledEverything = [
+    ...findingRows.filter(f => f.handled),
+    ...announcementRows.filter(a => a.handled),
+  ];
+
+  const esc = s => s.replaceAll('|', '\\|');
+  const row = f =>
+    `- [${f.handled ? 'x' : ' '}] ${esc(f.message)} — _first seen ${f.firstSeen}, last seen ${today}_`;
+  const annRow = a =>
+    `- [${a.handled ? 'x' : ' '}] [#${a.number}](${a.url}) ${esc(a.title)} — _first seen ${a.firstSeen}, updated ${a.updated_at}_`;
+
   const lines = [
     '<!-- runner-watchdog:status -->',
     '## 🏃 Runner watchdog — CI deprecations & image migrations',
@@ -160,27 +310,39 @@ export function buildIssueBody({findings, announcements, runUrl, generatedAt, lo
     `_Scanned the newest run of every workflow from the last ${lookbackDays} days ` +
       `(check-run annotations) and the open \`Announcement\` issues of ` +
       `[actions/runner-images](https://github.com/${IMAGES_REPO}/issues?q=label%3AAnnouncement). ` +
-      `Generated ${generatedAt} from [this run](${runUrl})._`,
+      `Generated ${generatedAt} from [this run](${runUrl}). ` +
+      `Ticks below are yours to set: mark an item \`[x]\` when triaged/handled — ` +
+      `the watchdog preserves your ticks on every rewrite (and unticks anything that stops firing). ` +
+      `**Ours** = a workflow file in this repo (actionable). **External** = GitHub-managed ` +
+      `(pages build and deployment, Dependabot) — no commit here can change it; it clears when GitHub clears it._`,
     '',
   ];
-  if (findings.length === 0) {
-    lines.push('**No migration/deprecation annotations found in the scanned runs.**');
-  } else {
-    lines.push('### Run annotations', '', '| Level | Message | Seen in |', '| --- | --- | --- |');
-    for (const f of findings) {
-      lines.push(
-        `| ${f.level} | ${f.message.replaceAll('|', '\\|')} | ${f.workflows.join(', ')} (${f.jobs} job${f.jobs === 1 ? '' : 's'}) |`
-      );
+
+  lines.push('### Ours — actionable in this repo', '');
+  if (ours.length === 0) lines.push('_No open findings from our own workflows._');
+  else for (const f of ours) lines.push(row(f));
+
+  lines.push('', '### External (GitHub-managed — informational)', '');
+  if (external.length === 0) lines.push('_No open findings from GitHub-managed workflows._');
+  else for (const f of external) lines.push(row(f));
+
+  lines.push('', '### actions/runner-images announcements (open, updated in the window)', '');
+  if (oursAnnouncements.length === 0) lines.push('_No new announcements in the window._');
+  else for (const a of oursAnnouncements) lines.push(annRow(a));
+
+  if (handledEverything.length > 0) {
+    lines.push(
+      '',
+      '<details>',
+      '<summary>Handled (ticked by a maintainer; kept for provenance)</summary>',
+      ''
+    );
+    for (const item of handledEverything) {
+      lines.push(item.number === undefined ? row(item) : annRow(item));
     }
+    lines.push('', '</details>');
   }
-  if (announcements.length > 0) {
-    lines.push('', '### actions/runner-images announcements (open, updated in the window)', '');
-    for (const a of announcements) {
-      lines.push(`- [#${a.number}](${a.url}) ${a.title} _(updated ${a.updated_at})_`);
-    }
-  } else {
-    lines.push('', '_No new actions/runner-images Announcement issues in the window._');
-  }
+
   lines.push(
     '',
     '### House rules',
@@ -188,8 +350,22 @@ export function buildIssueBody({findings, announcements, runUrl, generatedAt, lo
     '- Hosted-runner labels are **pinned** where artifacts are shipped (`ubuntu-24.04`), with an',
     '  advisory `ubuntu-26.04` canary leg in ci.yml validating the next image.',
     '- Move pins forward only via a dedicated reviewed PR after the canary has been green.',
-    '- Runner *labels* are not covered by Dependabot — this watchdog is their monitor.'
+    '- Runner *labels* are not covered by Dependabot — this watchdog is their monitor.',
+    ''
   );
+
+  const ledger = {
+    firstSeen: Object.fromEntries(
+      findingRows.concat(announcementRows).map(f => [f.id, f.firstSeen])
+    ),
+    handled: Object.fromEntries(
+      findingRows
+        .concat(announcementRows)
+        .filter(f => f.handled)
+        .map(f => [f.id, {at: handled[f.id]?.at ?? today, note: handled[f.id]?.note}])
+    ),
+  };
+  lines.push(`<!-- runner-watchdog:ledger ${JSON.stringify(ledger)} -->`);
   return lines.join('\n');
 }
 
@@ -261,6 +437,7 @@ export async function scanRunAnnotations(
               message: annotation.message ?? '',
               level: annotation.annotation_level ?? 'notice',
               workflow,
+              path: run.path ?? '',
               job: job.name,
             });
           }
@@ -328,12 +505,27 @@ async function main({mode}) {
     return;
   }
 
+  // The previous body carries the triage ledger (ticks + first-seen dates) —
+  // fetch it BEFORE rebuilding so human state survives the rewrite.
+  const existing = await findOpenTrackingIssue(fetchJson, repo);
+  let previousBody = null;
+  if (existing) {
+    try {
+      const full = await fetchJson(`/repos/${repo}/issues/${existing.number}`);
+      previousBody = full.body ?? null;
+    } catch (error) {
+      warnLog(`runner-watchdog: fetching the tracking issue body failed: ${error.message}`);
+    }
+  }
+
   const body = buildIssueBody({
     findings,
     announcements,
     runUrl,
     generatedAt,
     lookbackDays: LOOKBACK_DAYS,
+    repoRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+    previousBody,
   });
 
   if (process.argv.includes('--dry-run')) {
@@ -342,7 +534,6 @@ async function main({mode}) {
     return;
   }
 
-  const existing = await findOpenTrackingIssue(fetchJson, repo);
   const hasContent = findings.length > 0 || announcements.length > 0;
   if (!hasContent && !incomplete) {
     if (existing) {
