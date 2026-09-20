@@ -190,11 +190,13 @@ export function isOursFinding(runPaths, repoRoot) {
  * Read the previous triage state from a tracking-issue body. Two sources,
  * merged with the rendered checkboxes winning:
  *
- * 1. the ledger comment blob (first-seen dates + handled entries with dates);
- * 2. the RENDERED `- [x]` checkboxes — a maintainer ticks the visible box, but the
- *    blob in that same body still says unticked, so the tick must be harvested
- *    from the row itself (the row's finding id is recomputed from its message
- *    text).
+ * 1. the ledger comment blob (first/last-seen dates + handled entries);
+ * 2. the RENDERED checkboxes on needs-action rows — a maintainer ticks the visible
+ *    box, but the blob in that same body still says unticked, so the tick must
+ *    be harvested from the row itself (the row's finding id is recomputed from
+ *    its message text). Only needs-action rows carry checkboxes — informational
+ *    and fixed rows deliberately have none, so an empty box can never read as a
+ *    TODO.
  *
  * Unknown/corrupt ledger → fresh state (nothing lost that a new scan would not
  * re-derive).
@@ -221,9 +223,8 @@ export function parseLedger(previousBody) {
   }
   // Harvest ticks from the rendered rows (checkboxes are the human's edit).
   // Line-prefix check + string slicing keeps this free of the nested-optional
-  // regex shape the security lint (rightly) flags. Announcement rows start
-  // with [#N](url) and key as `ann-N`; finding rows key on the sha256 of
-  // their message text.
+  // regex shape the security lint (rightly) flags. Needs-action finding rows
+  // key on the sha256 of their message text.
   for (const line of body.split('\n')) {
     // Both checkbox states are authoritative: a tick records handled, an
     // UNTICK clears it — otherwise a maintainer's untick would be silently
@@ -237,7 +238,10 @@ export function parseLedger(previousBody) {
     if (annMatch) {
       id = `ann-${annMatch[1]}`;
     } else {
-      const sep = rest.indexOf(' — _first seen ');
+      // The message is everything before the metadata em-dash separator
+      // (" — _firing since …" today; the older " — _first seen …" format on
+      // pre-redesign issues must keep harvesting too).
+      const sep = rest.indexOf(' — _');
       const text = (sep === -1 ? rest : rest.slice(0, sep)).replaceAll('\\|', '|');
       id = findingId(text);
     }
@@ -245,19 +249,26 @@ export function parseLedger(previousBody) {
       delete handled[id];
       continue;
     }
-    const seenMatch = /_first seen (\d{4}-\d{2}-\d{2})/.exec(rest);
-    const at = seenMatch?.[1] ?? handled[id]?.at ?? '';
-    handled[id] = {at, note: handled[id]?.note};
+    handled[id] = {at: handled[id]?.at ?? '', note: handled[id]?.note};
   }
   return {handled, firstSeen};
 }
 
 /**
- * The rolling tracking issue body: a self-maintaining triage view. Pure string
- * building — unit-tested. Findings split "ours" (actionable in this repo) vs
- * "external" (GitHub-managed workflows; informational), each with a checkbox a
- * human can tick to mark it handled. Ticks, notes and first-seen dates persist
- * across rewrites in the HTML-comment ledger at the end of the body.
+ * The rolling tracking issue body: a STATUS BOARD. Pure string building —
+ * unit-tested. Design (approved via the #265 mock):
+ *
+ * - A reader must be able to answer "what's fixed, what needs doing" in one
+ *   glance: counts strip first, then three status sections.
+ * - 🔧 Needs action = ours AND not handled: the ONLY rows with checkboxes.
+ * - ✅ Fixed / handled = handled AND still firing this scan: renders the
+ *   provenance (handled date from the ledger) instead of a checkbox. Rows that
+ *   stop firing drop out entirely, so the issue can still auto-close.
+ * - 👀 Informational = external (GitHub-managed): NO checkbox on purpose — an
+ *   empty box would read as a TODO although no commit here can change it.
+ * - Announcements and house rules collapse into <details>; the machine ledger
+ *   stays an HTML comment at the end (ticks + first/last-seen dates persist
+ *   across rewrites).
  *
  * @param {{
  *   findings: ReturnType<typeof collectFindings>;
@@ -287,82 +298,83 @@ export function buildIssueBody({
   const {handled, firstSeen: prevSeen} = parseLedger(previousBody);
   const today = generatedAt.slice(0, 10);
 
-  // Rows with id + tick state; first-seen merges previous ledger with today.
+  // Rows with id + handled state; first-seen merges the previous ledger with
+  // today. (A "last seen" column would always read as this scan — a row only
+  // exists when it fired — so the strip's scan date carries that meaning.)
   const findingRows = findings.map(f => {
     const id = findingId(f.message);
-    return {...f, id, handled: Boolean(handled[id]), firstSeen: prevSeen[id] ?? today};
+    return {
+      ...f,
+      id,
+      handled: Boolean(handled[id]),
+      handledAt: handled[id]?.at ?? '',
+      firstSeen: prevSeen[id] ?? today,
+    };
   });
   const announcementRows = announcements.map(a => {
     const key = `ann-${a.number}`;
     return {...a, id: key, handled: Boolean(handled[key]), firstSeen: prevSeen[key] ?? today};
   });
 
-  // ours vs external — the actionable/noise split the maintainer asked for.
-  // Classification keys on run PATHS (a dependabot run of our ci.yml reports
-  // the PR title as its name — the path is the only reliable signal).
+  // ours vs external — the actionable/noise split. Classification keys on run
+  // PATHS (a dependabot run of our ci.yml reports the PR title as its name —
+  // the path is the only reliable signal).
   const ours = findingRows.filter(f => isOursFinding(f.paths, repoRoot));
   const external = findingRows.filter(f => !ours.includes(f));
-  const oursAnnouncements = announcementRows.filter(a => !a.handled);
-  const handledEverything = [
-    ...findingRows.filter(f => f.handled),
-    ...announcementRows.filter(a => a.handled),
-  ];
+  const needsAction = ours.filter(f => !f.handled);
+  const fixed = findingRows.filter(f => f.handled);
 
   const esc = s => s.replaceAll('|', '\\|');
-  const row = f =>
-    `- [${f.handled ? 'x' : ' '}] ${esc(f.message)} — _first seen ${f.firstSeen}, last seen ${today}_`;
-  const annRow = a =>
-    `- [${a.handled ? 'x' : ' '}] [#${a.number}](${a.url}) ${esc(a.title)} — _first seen ${a.firstSeen}, updated ${a.updated_at}_`;
+  const seen = f =>
+    `_firing since ${f.firstSeen}${f.handled ? ` · handled ${f.handledAt || today}` : ''}_`;
+  const taskRow = f => `- [ ] ${esc(f.message)} — ${seen(f)}`;
+  // Ticked box = done (the universal GitHub reading), and unticking reopens
+  // the finding (the checkbox states stay authoritative in parseLedger).
+  const fixedRow = f => `- [x] ✅ ~~${esc(f.message)}~~ — ${seen(f)}`;
+  const infoRow = f => `- 👀 ${esc(f.message)} — ${seen(f)}`;
+  const annLine = a => `- [#${a.number}](${a.url}) ${esc(a.title)} — _updated ${a.updated_at}_`;
 
   const lines = [
     '<!-- runner-watchdog:status -->',
     '## 🏃 Runner watchdog — CI deprecations & image migrations',
     '',
-    `_Scanned the newest run of every workflow from the last ${lookbackDays} days ` +
-      `(check-run annotations) and the open \`Announcement\` issues of ` +
-      `[actions/runner-images](https://github.com/${IMAGES_REPO}/issues?q=label%3AAnnouncement). ` +
-      `Generated ${generatedAt} from [this run](${runUrl}). ` +
-      `Ticks below are yours to set: mark an item \`[x]\` when triaged/handled — ` +
-      `the watchdog preserves your ticks on every rewrite (and unticks anything that stops firing). ` +
-      `**Ours** = a workflow file in this repo (actionable). **External** = GitHub-managed ` +
-      `(pages build and deployment, Dependabot) — no commit here can change it; it clears when GitHub clears it._`,
+    `| ${needsAction.length ? `🔧 **${needsAction.length}** needs action` : '🔧 nothing needs action'} | ${fixed.length ? `✅ **${fixed.length}** fixed` : '—'} | 👀 **${external.length}** informational | _${lookbackDays}-day scan of ${today}, [this run](${runUrl})_ |`,
+    '| --- | --- | --- | --- |',
+    '',
+    `_Checkbox states are the whole story: **unticked = needs doing** (ours), **ticked = done**, **👀 = informational** (GitHub-managed — no checkbox on purpose, nothing in a commit here can change it; it clears on its own). Ticks survive rewrites; a stop-firing item drops out entirely._`,
     '',
   ];
 
-  lines.push('### Ours — actionable in this repo', '');
-  if (ours.length === 0) lines.push('_No open findings from our own workflows._');
-  else for (const f of ours) lines.push(row(f));
+  lines.push('### 🔧 Needs action', '');
+  if (needsAction.length === 0) lines.push('_Nothing — all clear on our workflows._');
+  else for (const f of needsAction) lines.push(taskRow(f));
 
-  lines.push('', '### External (GitHub-managed — informational)', '');
-  if (external.length === 0) lines.push('_No open findings from GitHub-managed workflows._');
-  else for (const f of external) lines.push(row(f));
+  if (fixed.length > 0) {
+    lines.push('', '### ✅ Fixed / handled', '');
+    for (const f of fixed) lines.push(fixedRow(f));
+  }
 
-  lines.push('', '### actions/runner-images announcements (open, updated in the window)', '');
-  if (oursAnnouncements.length === 0) lines.push('_No new announcements in the window._');
-  else for (const a of oursAnnouncements) lines.push(annRow(a));
-
-  if (handledEverything.length > 0) {
-    lines.push(
-      '',
-      '<details>',
-      '<summary>Handled (ticked by a maintainer; kept for provenance)</summary>',
-      ''
-    );
-    for (const item of handledEverything) {
-      lines.push(item.number === undefined ? row(item) : annRow(item));
-    }
-    lines.push('', '</details>');
+  if (external.length > 0) {
+    lines.push('', '### 👀 Informational — no action possible here', '');
+    for (const f of external) lines.push(infoRow(f));
   }
 
   lines.push(
     '',
-    '### House rules',
-    '',
-    '- Hosted-runner labels are **pinned** where artifacts are shipped (`ubuntu-24.04`), with an',
-    '  advisory `ubuntu-26.04` canary leg in ci.yml validating the next image.',
-    '- Move pins forward only via a dedicated reviewed PR after the canary has been green.',
-    '- Runner *labels* are not covered by Dependabot — this watchdog is their monitor.',
+    `<details>`,
+    `<summary>📡 Upstream announcements — actions/runner-images (${announcementRows.length} in window)</summary>`,
     ''
+  );
+  if (announcementRows.length === 0) lines.push('_No open announcements in the window._');
+  else for (const a of announcementRows) lines.push(annLine(a));
+  lines.push(
+    '',
+    'House rules: hosted-runner labels are pinned where artifacts are shipped',
+    '(`ubuntu-24.04`) with an advisory `ubuntu-26.04` canary leg in ci.yml; move pins',
+    'forward only via a dedicated reviewed PR after the canary has been green; runner',
+    '*labels* are not covered by Dependabot — this watchdog is their monitor.',
+    '',
+    '</details>'
   );
 
   const ledger = {
@@ -371,9 +383,8 @@ export function buildIssueBody({
     ),
     handled: Object.fromEntries(
       findingRows
-        .concat(announcementRows)
         .filter(f => f.handled)
-        .map(f => [f.id, {at: handled[f.id]?.at ?? today, note: handled[f.id]?.note}])
+        .map(f => [f.id, {at: handled[f.id]?.at || today, note: handled[f.id]?.note}])
     ),
   };
   lines.push(`<!-- runner-watchdog:ledger ${JSON.stringify(ledger)} -->`);
