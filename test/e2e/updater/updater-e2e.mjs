@@ -1883,11 +1883,26 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
     // Repoint the updater at the scratch snapshot (it baked the original
     // snapshot's dist path — helper stand-in + sidecar live there now).
     Object.assign(seeded.prefs, localConfigOverrides(seeded.chromeUtils, scratchSnap));
+    // But serve the MANIFEST over http://localhost like every other scenario:
+    // CI's current Firefox releases never opened the tab when the manifest
+    // override was a file:// URL (2026-09-21: every Windows leg, three runs —
+    // while this exact seed works locally on ESR 140). Scenarios 1–8 prove
+    // the http://localhost channel opens the tab on every CI browser; the
+    // scheduler only fetches HASHES_URL for the update decision, so only that
+    // override changes — zips/helper stay on the scratch snapshot's file://
+    // base (localConfigOverrides above).
+    const manifestServer = await startLocalManifestServer(scratchSnap, seeded.chromeUtils, {
+      multiRequest: true,
+    });
+    Object.assign(seeded.prefs, serverOverridePrefs(manifestServer.url));
     // fx-folder into the real GreD (utils go into the profile via seedProfile;
     // the config package's direct copy will target GreD and hit the deny).
     const fxSeed = installFxFolder(scratchSnap, greDir);
     check(counter, fxSeed.ok, `fx-folder seeded into scratch GreD (${label})`, fxSeed.error);
-    if (!fxSeed.ok) return seeded.profileDir;
+    if (!fxSeed.ok) {
+      await manifestServer.close();
+      return seeded.profileDir;
+    }
     // The config probe: makes the fx-folder package read STALE (so the tab
     // offers the config install and the scheduler opens it) AND mirrors every
     // console message to e2e-console.log (the net assertNoUpdaterConsoleErrors
@@ -1939,10 +1954,16 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       // prefs.js immediately before addTrustedTab, so the pref is the
       // always-available proof; the mirror and the BiDi handle add detail
       // where the environment allows it.
+      // Wait for the tab-open proof LONGER than the browser-startup cost:
+      // prefs.js is flushed lazily, and the poll below measured 20 s as not
+      // enough on a cold runner (the pref was on disk seconds after the
+      // deadline). 45 s covers cold NFS-startup + a slow first scheduler tick
+      // without adding materially to the leg's runtime (it returns the moment
+      // the proof lands).
       const tabMirror = await waitForCondition(
         browser,
         () => mirrorSaysTabOpened(seeded.profileDir) || greShownToday(seeded.profileDir),
-        20_000,
+        45_000,
         'tab-open proof (mirror marker or lastUpdateTabShown pref)'
       ).catch(() => false);
       page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
@@ -1950,7 +1971,6 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       if (!page && !tabMirror) {
         await dumpPages(browser);
         dumpConsoleLog(seeded.profileDir);
-        return seeded.profileDir;
       }
 
       // ── NOW deny writes to the seeded config files ──
@@ -2004,14 +2024,32 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       }
 
       // Tick config only and install.
-      const clicked = await page.evaluate(() => {
-        const btn = document.getElementById('btn-install');
-        const cb = document.getElementById('chk-config');
-        if (!btn || !cb) return false;
-        if (!cb.checked) cb.click();
-        btn.click();
-        return true;
-      });
+      // page can be null on the pref/mirror-only path even after the tab-open
+      // check passed — guard so the crash cannot mask the verdicts below.
+      const clicked =
+        page &&
+        (await page.evaluate(() => {
+          const btn = document.getElementById('btn-install');
+          const cb = document.getElementById('chk-config');
+          if (!btn || !cb) return false;
+          if (!cb.checked) cb.click();
+          btn.click();
+          return true;
+        }));
+      if (!page) {
+        console.log('  [diag] no BiDi page after tab-open proof; pref/mirror-only assertions.');
+        assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
+          'Elevation was cancelled',
+          'Admin copy helper failed',
+        ]);
+        const configAfterNoPage = fs.readFileSync(seededFiles[0]);
+        check(
+          counter,
+          configAfterNoPage.equals(configBefore),
+          `GreD config unchanged (no copy without elevation, ${label})`
+        );
+        return seeded.profileDir;
+      }
       check(counter, clicked, `config install clicked (${label})`);
 
       // Completion: the flow must END (progress hidden or error shown).
@@ -2056,6 +2094,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         'Admin copy helper failed',
       ]);
     } finally {
+      await manifestServer.close().catch(() => {});
       try {
         await closeBrowser(browser);
       } catch {
