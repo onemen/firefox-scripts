@@ -715,10 +715,10 @@ async function publishToGitHub({
 
   if (PUBLISH_MODE === 'dev') {
     for (const name of builtZips) pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
-    // Dev binaries are published with the -dev suffix — the dev updater
-    // requests installer_win-dev.exe / helper_win-dev.exe[-dev].sha256
-    // (updater.js getAssetSuffix()); helpers rode along unsuffixed since the
-    // ADR 0030 split, which made the dev helper path 404 sidecar + 403 exe.
+    // Dev binaries are published under the same plain names as prod (#282
+    // suffix drop) — the dev updater requests installer_win.exe /
+    // helper_win.exe[.sha256] (updater.js getAssetSuffix() now returns ''
+    // everywhere); the per-run dev-build-<id> branch is the namespace.
     for (const p of builtInstallers)
       pagesFiles[installerAssetName(p, ASSET_SUFFIX)] = fs.readFileSync(installerPath(p));
   } else {

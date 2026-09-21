@@ -82,9 +82,9 @@ export const REPO_NAME = cfg('REPO_NAME', 'firefox-scripts');
 export const ZIP_PAGES_REPO = cfg('ZIP_PAGES_REPO', 'firefox-scripts');
 export const ZIP_PAGES_BRANCH = cfgMode('ZIP_PAGES_BRANCH', 'gh-pages', DEV_BRANCH);
 
-// Dev artifact name suffix: '-dev' in dev mode, '' in prod.  Zips, installer
-// binaries and helper binaries are published as e.g. utils-dev.zip,
-// installer_win-dev.exe, helper_win-dev.exe.
+// Dev artifact name suffix: '' in every mode (#282 suffix drop — zips,
+// installer and helper binaries publish under their plain names on all
+// channels; the dev-build-<id> branch is the namespace).
 export {ASSET_SUFFIX, DEV_BUILD_ID, DEV_BRANCH};
 export {PUBLISH_MODE};
 

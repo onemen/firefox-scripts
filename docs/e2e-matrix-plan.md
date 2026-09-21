@@ -47,8 +47,8 @@ first-party Mozilla — see #35).
 
 ### Installer E2E
 
-1. **Binary starts** — `installer_win-dev.exe` / `installer_linux` / `installer_mac` launches and
-   the HTTP server binds to a port.
+1. **Binary starts** — `installer_win.exe` / `installer_linux` / `installer_mac` launches and the
+   HTTP server binds to a port.
 2. **Browser detection** — at least one browser card appears with correct name + version (from
    `application.ini`, not the path).
 3. **Install flow** — clicking Install downloads both packages, extracts them, and writes the

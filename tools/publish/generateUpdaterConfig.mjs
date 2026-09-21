@@ -67,10 +67,10 @@ function readConfig() {
  * branch: zips, hashes, helpers and installer binaries alike). That branch is
  * NOT a Pages site (GitHub serves one branch per repo), so every consumer goes
  * through jsDelivr's CORS-enabled proxy (`https://cdn.jsdelivr.net/gh/
- * <owner>/<repo>@<ref>`, ACAO: *). Files are published with the ASSET_SUFFIX
- * '-dev' (utils-dev.zip, updater-ui-dev.zip, installer_win-dev.exe,
- * helper_win-dev.exe); hashes.json keeps its plain name — it is consumed
- * exclusively through the URL below, never by hand.
+ * <owner>/<repo>@<ref>`, ACAO: *). Files are published with the ASSET_SUFFIX ''
+ * (#282 suffix drop — plain artifact names on every channel); hashes.json keeps
+ * its plain name — it is consumed exclusively through the URL below, never by
+ * hand.
  */
 export function applyDevOverrides(config) {
   const owner = config.REPO_OWNER;
@@ -79,7 +79,7 @@ export function applyDevOverrides(config) {
     throw new Error('installer.conf is missing REPO_OWNER / ZIP_DOWNLOAD_REPO for dev mode');
   }
   // Zips/hash serve fine from jsDelivr (cached, ACAO:*), but jsDelivr REFUSES
-  // executables — any helper_*-dev.exe URL returns 403 — so the helper base
+  // executables — any helper_*.exe URL returns 403 — so the helper base
   // points at raw.githubusercontent.com for the same ref (also ACAO:*), while
   // the zips keep the CDN.
   const delivrBase = `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${DEV_BRANCH}`;
@@ -108,8 +108,7 @@ export function applyDevOverrides(config) {
  * GitHub traffic. The installer tab is HTTP-served, so it must keep http://
  * URLs.
  *
- * ASSET_SUFFIX is left untouched: prod-local stays '' and dev-local stays
- * '-dev'.
+ * ASSET_SUFFIX is '' in every mode (#282 suffix drop).
  */
 export function applyInstallerLocalOverrides(config) {
   const base = `http://localhost:${config.DEFAULT_PORT || '8777'}`;
@@ -274,9 +273,9 @@ ${urlLine('UI_BASE_URL', uiBase)}
   // Where the standalone elevated-copy helper binary is published
 ${urlLine('HELPER_BASE_URL', helperBase)}
 
-  // Artifact name suffix appended to downloaded files: '' in prod
-  // (utils.zip, installer_win.exe), '-dev' in dev mode (utils-dev.zip,
-  // updater-ui-dev.zip, installer_win-dev.exe, helper_win-dev.exe).
+  // Artifact name suffix appended to downloaded files: '' on every channel
+  // (#282 suffix drop — plain names, the dev-build-<id> branch is the
+  // namespace; the ⚠ Test-build banner marks dev builds).
 ${urlLine('ASSET_SUFFIX', eff.ASSET_SUFFIX || '')}
 
   // Test/dev identity: the updater tab shows a "test build" banner when either

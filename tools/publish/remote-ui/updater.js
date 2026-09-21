@@ -60,18 +60,19 @@ const {CONFIG} = ChromeUtils.importESModule(
 // extensions.firefox-scripts.override.<KEY> prefs without touching hashed
 // files (the config ships inside utils.zip).
 
-// Asset-name suffix ('' prod / '-dev' dev): dev zips and helpers are
-// published as utils-dev.zip / helper_win-dev.exe etc. The suffix and the
-// base URL are resolved per call through the module so a dev install that
-// migrated to the stable channel (dead dev-build branch, ADR 0026) fetches
-// stable's unsuffixed assets instead of the vanished dev ones.
+// Asset-name suffix ('' everywhere since #282's suffix drop). The indirection
+// and the base URL are resolved per call through the module so a dev install
+// that migrated to the stable channel (dead dev-build branch, ADR 0026) — or
+// one whose generated config still carries '-dev' from before the drop —
+// fetches the asset names its channel actually serves.
 const FX_FOLDER_URL = () => `${getZipBaseUrl()}/fx-folder${getAssetSuffix()}.zip`;
 const UTILS_URL = () => `${getZipBaseUrl()}/utils${getAssetSuffix()}.zip`;
 
 // Standalone elevated-copy helper — source of the binary is config-driven too
 // (installer.conf HELPER_BASE_URL, generated into updater-config.sys.mjs).
 // Resolved per call (not captured at load): a dev install that migrated to the
-// stable channel (ADR 0026) downloads stable's unsuffixed helper binaries.
+// stable channel (ADR 0026) downloads stable's helper binaries — same plain
+// names since #282.
 const HELPER_FILENAMES = () => ({
   win: `helper_win${getAssetSuffix()}.exe`,
   macosx: `helper_mac${getAssetSuffix()}`,
@@ -245,8 +246,8 @@ function stateSnapshot() {
       utils: packageSnapshot('utils', scriptsInfo.utils),
     },
     // Manual-download targets (config + utils zips). The UI fills its
-    // "Download the latest scripts" link hrefs from these; a dev build's
-    // suffix makes them utils-dev.zip / fx-folder-dev.zip.
+    // "Download the latest scripts" link hrefs from these (plain names on
+    // every channel since #282).
     fxFolderUrl: FX_FOLDER_URL(),
     utilsUrl: UTILS_URL(),
     // The installer the manual panel recommends for Snap users, and the host

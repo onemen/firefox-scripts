@@ -236,10 +236,10 @@ version is effectively pinned (`msys2/setup-msys2` with `update: false` still in
 `mingw-w64-ucrt-x86_64-*` packages); binutils, the mingw-w64 crt and the headers package float.
 Measured on commit `e393191` — the CI build that VirusTotal flagged on 2026-09-15 (issue #157):
 
-| Build                       | gcc      | binutils      | `installer_win-dev.exe` | `helper_win-dev.exe` |
-| --------------------------- | -------- | ------------- | ----------------------- | -------------------- |
-| CI (`staged-win` artifact)  | 16.1.0-5 | 2.46-4        | 199,168 B               | 18,944 B             |
-| local (`pnpm upload:local`) | 16.1.0-5 | 2.47.20260726 | 203,264 B               | 19,456 B             |
+| Build                       | gcc      | binutils      | `installer_win.exe` | `helper_win.exe` |
+| --------------------------- | -------- | ------------- | ------------------- | ---------------- |
+| CI (`staged-win` artifact)  | 16.1.0-5 | 2.46-4        | 199,168 B           | 18,944 B         |
+| local (`pnpm upload:local`) | 16.1.0-5 | 2.47.20260726 | 203,264 B           | 19,456 B         |
 
 Reproducing the CI bytes locally needs CI's whole package set — which is what
 `config/msys2-toolchain.json` now installs on both sides (see the pinned-toolchain section below).
@@ -301,8 +301,8 @@ URLs where CI's appends `dev-build-main-<sha>`, and the binaries differ even wit
 toolchain. Export `FIREFOX_SCRIPTS_REF_NAME=<branch>` to reproduce CI's spelling.
 
 **Not retroactive.** The 2026-09-15 artifact predates the pin and stays unattributable. Rebuilding
-`e393191` from the pinned package set gives `installer_win-dev.exe` at 202,752 B — `.text` 2,752 B
-larger, and a `helper_win-dev.exe` that links one extra CRT import
+`e393191` from the pinned package set gives `installer_win.exe` at 202,752 B — `.text` 2,752 B
+larger, and a `helper_win.exe` that links one extra CRT import
 (`api-ms-win-crt-multibyte-l1-1-0.dll`) — the same sources, demonstrably a different compiler. Which
 compiler is now unknowable, precisely because that run recorded versions but never provenance; that
 is the gap the `--provenance` step closes. Do not treat VT/WDSI verdicts on those specific bytes as

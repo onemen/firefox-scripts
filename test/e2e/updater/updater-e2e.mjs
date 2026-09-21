@@ -184,7 +184,7 @@ function parseArgs() {
 // ── Profile helpers ────────────────────────────────────────────────────────
 
 function installFxFolder(snapshotDir, greDir) {
-  const fxZip = findZip(snapshotDir, ['fx-folder-dev.zip', 'fx-folder.zip']);
+  const fxZip = findZip(snapshotDir, ['fx-folder.zip', 'fx-folder-dev.zip']);
   if (!fxZip) return {ok: false, error: 'no fx-folder zip in snapshot'};
   const staging = tempDir('fxs-fx');
   try {
@@ -235,7 +235,7 @@ function seedProfile(
   removeProfileCompatibilityIni(profileDir);
 
   // Extract utils
-  const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);
+  const utilsZip = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
   if (utilsZip) {
     extractZip(utilsZip, chromeUtils);
   }
@@ -360,7 +360,7 @@ function computeInstalledHash(files, dir) {
 function logBakedConfig(snapshotDir) {
   const staging = tempDir('fxs-cfg');
   try {
-    const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);
+    const utilsZip = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
     if (!utilsZip) return;
     extractZip(utilsZip, staging);
     const cfgPath = path.join(staging, 'updater', 'updater-config.sys.mjs');
@@ -1561,7 +1561,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   await new Promise(r => setTimeout(r, 2_000));
 
   // ── Phase 2: manually replace utils.zip with the real one → updater appears ──
-  const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);
+  const utilsZip = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
   if (!utilsZip) {
     check(counter, false, `utils zip available (${label})`);
     return seeded.profileDir;
@@ -1664,7 +1664,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
  */
 function buildReleaseLayout(snapshotDir) {
   const releaseDir = tempDir('fxs-release');
-  for (const name of ['utils-dev.zip', 'utils.zip', 'fx-folder-dev.zip', 'fx-folder.zip']) {
+  for (const name of ['utils.zip', 'utils-dev.zip', 'fx-folder.zip', 'fx-folder-dev.zip']) {
     const src = path.join(snapshotDir, name);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(releaseDir, name));
   }
@@ -1804,10 +1804,10 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
  * This scenario forces the helper path without a real UAC prompt (none exists
  * on a headless runner):
  *
- * 1. Seed a STAND-IN helper into the snapshot dir: `helper_win-dev.exe` bytes
- *    (arbitrary — cmd.exe copy) + a `helper_win-dev.exe.sha256` sidecar
- *    computed over those bytes. The tab's HELPER_BASE_URL resolves here, so
- *    ensureHelper downloads exactly these.
+ * 1. Seed a STAND-IN helper into the snapshot dir: `helper_win.exe` bytes
+ *    (arbitrary — cmd.exe copy) + a `helper_win.exe.sha256` sidecar computed
+ *    over those bytes. The tab's HELPER_BASE_URL resolves here, so ensureHelper
+ *    downloads exactly these.
  * 2. ACL-DENY the browser's GreD (icacls) so the direct IOUtils copy fails and
  *    installConfig falls through to the helper.
  * 3. Click Update and assert the flow gets PAST verification: the console mirror
@@ -1849,8 +1849,8 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
     // ── Seed the stand-in helper + sidecar into the scratch snapshot ──
     // Arbitrary non-executable bytes; >0x80 spread exercises the fixed
     // per-byte conversion (the mojibake bug only corrupted bytes >= 0x80).
-    // 'MZ' DOS header magic + a >0x80-heavy body; both name variants so
-    // dev-snapshot ('-dev') and prod-snapshot (plain) channels both find one.
+    // 'MZ' DOS header magic + a >0x80-heavy body; the '-dev' variant is
+    // legacy tolerance for pre-#282 snapshots.
     const standIn = Buffer.concat([
       Buffer.from([0x4d, 0x5a, 0x90, 0x00]),
       Buffer.from(Array.from({length: 4096}, (_, i) => (i * 37 + 128) & 0xff)),

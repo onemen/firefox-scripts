@@ -273,7 +273,7 @@ function seedProfile(snapshotDir) {
   fs.mkdirSync(profileDir, {recursive: true});
 
   // utils → chrome/utils (shipped loader, no source patching)
-  const utilsZip = findZip(snapshotDir, ['utils-dev.zip', 'utils.zip']);
+  const utilsZip = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
   if (!utilsZip) throw new Error(`no utils zip in ${snapshotDir}`);
   const chromeUtils = path.join(profileDir, 'chrome', 'utils');
   extractZip(utilsZip, chromeUtils);

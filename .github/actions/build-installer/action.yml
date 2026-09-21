@@ -8,8 +8,9 @@
 # portable-firefox and snap-firefox jobs. One copy now; a build-recipe change
 # cannot desynchronize the legs.
 #
-# The dev-mode artifact carries the -dev suffix (ASSET_SUFFIX in the Makefile,
-# mirrored by tools/publish/paths.js).
+# Dev-mode artifacts keep their plain names (#282 suffix drop): the ⚠
+# Test-build banner distinguishes dev builds, and the Makefile ASSET_SUFFIX is
+# empty in every mode.
 #
 # LOCAL=1 (2026-09-21): a plain MODE=dev build bakes jsDelivr URLs for the
 # per-run dev-build-<id> branch — which only exists after a real `pnpm upload
@@ -46,16 +47,16 @@ runs:
         # one fat installer_mac — assert both slices are really present and
         # executable, not just that the file exists.
         if [ "${{ runner.os }}" = macOS ]; then
-          LIPO_ARCHS=$(lipo -archs dist/installer/installer_mac-dev)
+          LIPO_ARCHS=$(lipo -archs dist/installer/installer_mac)
           echo "installer_mac architectures: $LIPO_ARCHS"
           for arch in x86_64 arm64; do
             case " $LIPO_ARCHS " in
               *" $arch "*) ;;
-              *) echo "::error::installer_mac-dev is missing the $arch slice (universal build broken)"; exit 1 ;;
+              *) echo "::error::installer_mac is missing the $arch slice (universal build broken)"; exit 1 ;;
             esac
           done
-          lipo -thin x86_64 -output /tmp/installer_mac_x64 dist/installer/installer_mac-dev
-          lipo -thin arm64 -output /tmp/installer_mac_arm dist/installer/installer_mac-dev
+          lipo -thin x86_64 -output /tmp/installer_mac_x64 dist/installer/installer_mac
+          lipo -thin arm64 -output /tmp/installer_mac_arm dist/installer/installer_mac
           # Execute only the host-arch slice (on an x86_64 runner the arm64
           # slice cannot run); assert the other slice structurally with `lipo
           # -info`, which does not depend on the host arch.
@@ -79,7 +80,7 @@ runs:
       shell: bash
       run: |
         if compgen -G "dist/dev-*/hashes.json" > /dev/null; then
-          for f in dist/dev-*/*-dev.zip dist/dev-*/hashes.json; do
+          for f in dist/dev-*/*.zip dist/dev-*/hashes.json; do
             [ -f "$f" ] && cp "$f" dist/installer/ && echo "staged: dist/installer/$(basename "$f")"
           done
         else
@@ -91,11 +92,11 @@ runs:
       shell: bash
       run: |
         case "${{ runner.os }}" in
-          Linux) BIN="$PWD/installer/../dist/installer/installer_linux-dev" ;;
-          macOS) BIN="$PWD/installer/../dist/installer/installer_mac-dev" ;;
+          Linux) BIN="$PWD/installer/../dist/installer/installer_linux" ;;
+          macOS) BIN="$PWD/installer/../dist/installer/installer_mac" ;;
           # github.workspace expands to a native Windows path (D:\a\...);
           # $PWD would be MSYS-style (/d/a/...) which Node's fs cannot use.
-          Windows) BIN="${{ github.workspace }}\\dist\\installer\\installer_win-dev.exe" ;;
+          Windows) BIN="${{ github.workspace }}\\dist\\installer\\installer_win.exe" ;;
         esac
         echo "INSTALLER_BIN=$BIN" >> "$GITHUB_ENV"
         echo "path=$BIN" >> "$GITHUB_OUTPUT"

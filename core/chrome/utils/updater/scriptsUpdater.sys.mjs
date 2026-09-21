@@ -222,11 +222,10 @@ export function getChannelState() {
 }
 
 /**
- * Asset-name suffix for the active channel ('' stable / '-dev' dev). Resolved
- * at call time — a dev install that migrated to stable must fetch utils.zip,
- * not utils-dev.zip, even though its baked CONFIG.ASSET_SUFFIX is still '-dev'.
- * Local snapshots keep their build-mode suffix (the harness snapshot names
- * carry it; they never fall back).
+ * Asset-name suffix for the active channel ('' everywhere since #282's suffix
+ * drop). Kept as an indirection so a generated config that still carries '-dev'
+ * (an older dev install before it re-downloads) keeps fetching its namespaced
+ * assets, and so the channel contract has a single seam.
  */
 export function getAssetSuffix() {
   if (CONFIG.IS_LOCAL || activeChannel() === CHANNEL_DEV) {

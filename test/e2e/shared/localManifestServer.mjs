@@ -31,7 +31,8 @@ const OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
 
 /** Find the utils zip in a snapshot dir. */
 function findUtilsZip(snapshotDir) {
-  for (const name of ['utils-dev.zip', 'utils.zip']) {
+  // '-dev' second = legacy tolerance for pre-#282 snapshots.
+  for (const name of ['utils.zip', 'utils-dev.zip']) {
     const p = path.join(snapshotDir, name);
     if (fs.existsSync(p)) return p;
   }

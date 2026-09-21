@@ -86,10 +86,12 @@ function findInstaller(snapshotDir) {
   const dir = snapshotDir;
   const isWin = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
+  // Plain names first (#282 suffix drop); '-dev' variants are legacy
+  // tolerance for pre-#282 snapshots.
   const candidates =
-    isWin ? ['installer_win-dev.exe', 'installer_win.exe']
-    : isMac ? ['installer_mac-dev', 'installer_mac']
-    : ['installer_linux-dev', 'installer_linux'];
+    isWin ? ['installer_win.exe', 'installer_win-dev.exe']
+    : isMac ? ['installer_mac', 'installer_mac-dev']
+    : ['installer_linux', 'installer_linux-dev'];
 
   for (const name of candidates) {
     const bin = path.join(dir, name);
@@ -346,9 +348,7 @@ async function runHttpLayer(counter, sessionToken) {
       const releaseJson = JSON.stringify({
         tag_name: 'latest',
         body: '```json\n' + block(dayAfter) + '\n```',
-        assets: [
-          {name: 'helper_win-dev.exe', browser_download_url: 'https://example.invalid/decoy'},
-        ],
+        assets: [{name: 'helper_win.exe', browser_download_url: 'https://example.invalid/decoy'}],
       });
       const post = await httpPostRaw('/api/self-update', releaseJson, sessionToken);
       check(
