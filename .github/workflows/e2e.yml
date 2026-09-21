@@ -275,7 +275,7 @@ jobs:
       - name: Test elevated copy (sudo)
         run: |
           echo "hello" > /tmp/test_src.txt
-          sudo ./dist/installer/helper_linux-dev /tmp/test_src.txt /etc/fxs-e2e-test.txt
+          sudo ./dist/installer/helper_linux /tmp/test_src.txt /etc/fxs-e2e-test.txt
           diff /tmp/test_src.txt /etc/fxs-e2e-test.txt
           sudo rm /etc/fxs-e2e-test.txt
           rm /tmp/test_src.txt

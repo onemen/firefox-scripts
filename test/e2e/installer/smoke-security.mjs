@@ -13,7 +13,7 @@
  *
  * Usage (run from the repo root, after `pnpm upload:local --mode=dev`): node
  * test/e2e/installer/smoke-security.mjs
- * INSTALLER_BIN=/path/to/installer_win-dev.exe node
+ * INSTALLER_BIN=/path/to/installer_win.exe node
  * test/e2e/installer/smoke-security.mjs
  *
  * Exits non-zero on the first failed category so CI fails the build.
@@ -62,9 +62,9 @@ function check(ok, label, detail = '') {
 function findInstaller() {
   if (process.env.INSTALLER_BIN) return process.env.INSTALLER_BIN;
   const candidates =
-    process.platform === 'win32' ? ['installer_win-dev.exe', 'installer_win.exe']
-    : process.platform === 'darwin' ? ['installer_mac-dev', 'installer_mac']
-    : ['installer_linux-dev', 'installer_linux'];
+    process.platform === 'win32' ? ['installer_win.exe', 'installer_win-dev.exe']
+    : process.platform === 'darwin' ? ['installer_mac', 'installer_mac-dev']
+    : ['installer_linux', 'installer_linux-dev'];
   const searchDirs = [join(REPO_ROOT, 'dist', '.build', 'installer')];
   // dist/dev-<branch>-<hash>/ snapshots from `upload:local`.
   const distRoot = join(REPO_ROOT, 'dist');

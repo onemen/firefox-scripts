@@ -32,10 +32,12 @@ import path from 'node:path';
 // - PS_PATTERN: single-quoted PowerShell literal for -match (.NET regex)
 // - PKILL_PATTERN: POSIX ERE for `pkill -f` (no (?:…), [[:space:]] not \s)
 // All three express the same matcher: `fxs-e2e`/`fxs-installer-ui` anywhere,
-// or installer_<os>[-dev][.exe] in the argv[0] position (optionally quoted
-// path prefix), so `ls dist/installer_win.exe` / `grep installer_win …` no
+// or installer_<os>[.exe] in the argv[0] position (optionally quoted path
+// prefix), so `ls dist/installer_win.exe` / `grep installer_win …` no
 // longer match (2026-09-18 audit, finding T5: the bare-substring form killed a
-// calling shell whose command line referenced the installer by name).
+// calling shell whose command line referenced the installer by name).  The
+// optional `-dev` arm is legacy tolerance: #282 dropped the suffix, older
+// snapshots may still have it.
 
 /** JS regex-literal form (isE2eProcess). */
 const INSTALLER_ARGV0_SOURCE =

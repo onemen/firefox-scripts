@@ -135,17 +135,18 @@ $(SRC_DIR)/installer.res: $(SRC_DIR)/installer.rc $(SRC_DIR)/installer.manifest
 
 # Publish mode for the generated config: see tools/publish/publishMode.mjs.
 # Empty (default) = prod; MODE=dev rewrites _config.h / updater-config.sys.mjs
-# for the dev-build-<id> namespace (dev URLs + ASSET_SUFFIX '-dev').
+# for the dev-build-<id> namespace (dev URLs; plain artifact names, #282).
 # LOCAL=1 (upload:local) additionally bakes localhost URLs and enables the
 # installer's own-dir file server so the built exe runs fully offline.
 MODE ?=
 LOCAL ?=
 
 # Dev-mode artifact suffix: mirrors ASSET_SUFFIX in tools/publish/paths.js
-# ('-dev' in dev mode, empty in prod).  Naming the LOCAL binary exactly like
-# the REMOTE release asset means upload.mjs's upload step finds
-# whatever make produced — no rename step.
-ASSET_SUFFIX = $(if $(filter dev,$(MODE)),-dev,)
+# ('' everywhere since #282's suffix drop — dev artifacts keep their plain
+# names; the ⚠ Test-build banner distinguishes dev builds).  Naming the LOCAL
+# binary exactly like the REMOTE release asset means upload.mjs's upload step
+# finds whatever make produced — no rename step.
+ASSET_SUFFIX =
 
 # Generate shared config from config/installer.conf via the canonical JS
 # generator (tools/publish/syncGeneratedFiles.mjs).  The output (_config.h) is
