@@ -569,8 +569,10 @@
     });
   }
 
-  /** Hide a previous failure before a new download starts — a stale error
-   * must not outlive the retry that supersedes it. */
+  /**
+   * Hide a previous failure before a new download starts — a stale error must
+   * not outlive the retry that supersedes it.
+   */
   function clearDownloadError() {
     const el = qs('download-error');
     if (!el) return;
@@ -580,14 +582,15 @@
 
   /**
    * Surface a failed manual download next to the links (2026-09-21: failures
-   * were console-only, so a dead link looked like a no-op to the user).
-   * Cleared by the next click that starts a download.
+   * were console-only, so a dead link looked like a no-op to the user). Cleared
+   * by the next click that starts a download. The raw error is deliberately not
+   * rendered — the caller already logged it; the user gets actionable text (the
+   * `_err` name satisfies the concat-gate's no-unused-vars).
    */
-  function showDownloadError(filename, err) {
+  function showDownloadError(filename, _err) {
     const el = qs('download-error');
     if (!el) return;
-    el.textContent =
-      'Download failed: ' + filename + ' — check your connection and try again.';
+    el.textContent = 'Download failed: ' + filename + ' — check your connection and try again.';
     el.hidden = false;
   }
 

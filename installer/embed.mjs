@@ -28,6 +28,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WEB_DIR = path.join(__dirname, 'web');
 const OUTPUT_FILE = path.join(__dirname, 'src', 'resources.h');
+/* The built script.js, persisted as a gitignored artifact next to the embed
+ * sources. eslint + prettier gate THIS file (the exact bytes that ship) — the
+ * fragments under web/script/ are IIFE pieces and cannot be parsed
+ * individually, so they stay outside the gates (issue #225's concat-gate
+ * decision; see test/unit/installer/concatGate.test.mjs). Regenerated on
+ * every embed run — i.e. every build/publish — so the gate always sees the
+ * current concatenation. */
+const SCRIPT_ARTIFACT = path.join(__dirname, 'src', 'script.built.js');
 
 const FILES = {
   RES_FAVICON_SVG: 'favicon.svg',
@@ -181,15 +189,23 @@ function generateOutput() {
 }
 
 function main() {
+  const output = generateOutput();
+
   if (process.argv.includes('--stdout')) {
-    process.stdout.write(Buffer.from(generateOutput(), 'utf-8'));
+    process.stdout.write(Buffer.from(output, 'utf-8'));
+    // The artifact is still persisted in --stdout mode: the concat-gate test
+    // spawns embed.mjs this way and asserts on the lint/format state of the
+    // exact built bytes (resources.h itself stays stdout-only).
+    fs.writeFileSync(SCRIPT_ARTIFACT, buildScriptJs() + '\n', {encoding: 'utf-8'});
     return;
   }
 
-  const output = generateOutput();
-
   fs.mkdirSync(path.dirname(OUTPUT_FILE), {recursive: true});
   fs.writeFileSync(OUTPUT_FILE, output, {encoding: 'utf-8'});
+  // Persist the exact built concat for the lint/format gates (see
+  // SCRIPT_ARTIFACT above). Written after resources.h so a gate running
+  // mid-build sees either the previous or the new artifact — never a partial.
+  fs.writeFileSync(SCRIPT_ARTIFACT, buildScriptJs() + '\n', {encoding: 'utf-8'});
 
   const lines = output.split('\n');
   const arrSize = name => {
