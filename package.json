@@ -64,7 +64,7 @@
     "npm-run-all2": "9.0.3",
     "prettier": "3.9.6",
     "prettier-plugin-jsdoc": "1.8.1",
-    "puppeteer-core": "25.10.0",
+    "puppeteer-core": "25.11.0",
     "typescript": "7.0.2"
   }
 }
