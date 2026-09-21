@@ -1932,14 +1932,18 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       // reached before the 20 s deadline burned).
       const browserReady = await waitForFirstPage(browser, 20_000);
       check(counter, browserReady, `browser ready (${label})`);
-      // Like the other tab scenarios: BiDi cannot always enumerate trusted
-      // chrome:// tabs, so the probe's TAB_OPENED mirror line is the fallback
-      // proof the scheduler ran and the updater decided to show itself.
+      // Like the other tab scenarios: three channels prove the tab, because
+      // on CI (1) BiDi cannot enumerate trusted chrome:// tabs and (2) the
+      // console mirror never writes (both deterministic there — observed on
+      // every leg of 2026-09-21). The scheduler writes lastUpdateTabShown to
+      // prefs.js immediately before addTrustedTab, so the pref is the
+      // always-available proof; the mirror and the BiDi handle add detail
+      // where the environment allows it.
       const tabMirror = await waitForCondition(
         browser,
-        () => mirrorSaysTabOpened(seeded.profileDir),
+        () => mirrorSaysTabOpened(seeded.profileDir) || greShownToday(seeded.profileDir),
         20_000,
-        'TAB_OPENED mirror marker'
+        'tab-open proof (mirror marker or lastUpdateTabShown pref)'
       ).catch(() => false);
       page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
       check(counter, Boolean(page) || tabMirror === true, `tab opens (${label})`);
@@ -1977,15 +1981,25 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       if (page) {
         // (flow continues below)
       } else if (tabMirror) {
-        // Tab existed (mirror proves it) but BiDi lost it — trusted-tab
-        // enumeration flake, not a product failure. Still deny + assert via
-        // the mirror, without a page to click: install cannot be driven, so
-        // only verify the tab's own check produced no updater errors.
-        console.log('  [diag] BiDi never surfaced the trusted tab; mirror-only path.');
+        // Tab existed (pref/mirror proves it) but BiDi lost it — trusted-tab
+        // enumeration is deterministic on CI (2026-09-21: every leg, every
+        // scenario). No page to click, so the download→verify→gate→spawn flow
+        // cannot be driven here; what IS assertable: the deny held, nothing
+        // wrote GreD, and the tab's own session logged no updater errors.
+        console.log('  [diag] BiDi never surfaced the trusted tab; pref/mirror-only path.');
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
           'Elevation was cancelled',
           'Admin copy helper failed',
         ]);
+        // The no-copy assertion is skipped by the early return below (it sits
+        // after the finally), so run it here — reads are unaffected by the
+        // write-deny.
+        const configAfter = fs.readFileSync(seededFiles[0]);
+        check(
+          counter,
+          configAfter.equals(configBefore),
+          `GreD config unchanged (no copy without elevation, ${label})`
+        );
         return seeded.profileDir;
       }
 

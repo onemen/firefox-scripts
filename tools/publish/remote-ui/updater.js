@@ -553,14 +553,20 @@ async function copyWithHelper(pairs, tmpDir) {
   // against the 2-byte entry never fired, so EVERY real Windows helper was
   // rejected (2026-09-21 manual test: 'is not an executable'). ELF and Mach-O
   // magics are 4 bytes; the 2-byte entry is the only prefix case.
-  const isExecutable = [
-    '4d5a', // PE ("MZ")
-    '7f454c46', // ELF (linux, linux-aarch64)
-    'cffaedfe',
-    'cefaedfe', // Mach-O 64-bit (native, byte-swapped)
-    'cafebabe',
-    'cafebabf', // fat/universal wrappers 32/64
-  ].some(magic => hex.startsWith(magic));
+  // A read shorter than 4 bytes is a truncated/corrupt download — every real
+  // helper is tens of KB and every supported magic is fully contained in the
+  // first 4 bytes — so refuse it here with the clear message instead of an
+  // opaque Subprocess spawn failure later.
+  const isExecutable =
+    head.length === 4 &&
+    [
+      '4d5a', // PE ("MZ")
+      '7f454c46', // ELF (linux, linux-aarch64)
+      'cffaedfe',
+      'cefaedfe', // Mach-O 64-bit (native, byte-swapped)
+      'cafebabe',
+      'cafebabf', // fat/universal wrappers 32/64
+    ].some(magic => hex.startsWith(magic));
   if (!isExecutable) {
     throw new Error(
       'Downloaded helper (' + helperFilename() + ') is not an executable - refusing to spawn.'

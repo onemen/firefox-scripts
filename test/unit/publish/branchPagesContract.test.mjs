@@ -54,12 +54,16 @@ test('branchReadmes: the two dev generators render the branch they are given', a
 function buildGate() {
   const src = readFileSync(`${ROOT}tools/publish/remote-ui/updater.js`, 'utf8');
   const table = src.match(
-    /const isExecutable = \[([\s\S]*?)\]\.some\(magic => hex\.startsWith\(magic\)\);/
+    /const isExecutable =\n\s*head\.length === 4 &&\n\s*\[([\s\S]*?)\]\.some\(magic => hex\.startsWith\(magic\)\);/
   );
-  assert.ok(table, 'magic-gate expression not found (expected the prefix-match .some form)');
+  assert.ok(
+    table,
+    'magic-gate expression not found (expected the 4-byte-guarded prefix-match .some form)'
+  );
   const magics = table[1].match(/'([0-9a-f]+)'/g).map(s => s.replaceAll("'", ''));
-  // The runtime mapping, mirrored: read bytes → hex → prefix membership.
-  return hex => magics.some(magic => hex.startsWith(magic));
+  // The runtime mapping, mirrored: read bytes → hex → prefix membership, with
+  // the same truncation guard the shipped gate applies.
+  return hex => hex.length === 8 && magics.some(magic => hex.startsWith(magic));
 }
 
 test('updater.js: helper magic gate accepts every real platform executable', () => {
@@ -72,8 +76,6 @@ test('updater.js: helper magic gate accepts every real platform executable', () 
     'Mach-O 64 swapped': [0xce, 0xfa, 0xed, 0xfe],
     'fat wrapper 32': [0xca, 0xfe, 0xba, 0xbe],
     'fat wrapper 64': [0xca, 0xfe, 0xba, 0xbf],
-    // A truncated 2-byte read of a PE must still match its 2-byte magic.
-    'PE, 2-byte read': [0x4d, 0x5a],
   };
   for (const [name, bytes] of Object.entries(headers)) {
     const hex = [...Uint8Array.from(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -90,6 +92,10 @@ test('updater.js: helper magic gate rejects text payloads (HTML error page)', ()
     '<html…': [0x3c, 0x68, 0x74, 0x6d, 0x6c],
     'empty file (0 bytes)': [],
     'JSON error page': [0x7b, 0x22, 0x65, 0x72],
+    // A truncated 2-byte read (short/corrupt download) must be rejected even
+    // though it prefix-matches the PE magic — the gate demands the full 4
+    // bytes so truncation dies here with the clear message, not at spawn.
+    'truncated 2-byte PE': [0x4d, 0x5a],
   };
   for (const [name, bytes] of Object.entries(junk)) {
     const hex = [...Uint8Array.from(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
