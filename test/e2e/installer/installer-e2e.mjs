@@ -1217,6 +1217,15 @@ async function runUiLayer(counter, opts, snapshotDir) {
   // Profile hygiene (issue #130): never reuse stale GRE-compatibility state.
   removeProfileCompatibilityIni(testProfile);
 
+  // Tab-console mirror (2026-09-21): the ingest pipeline logs its failures to
+  // the page console ('[ingest] package zip fetch failed: …' from
+  // 10-ingest.js failZip) — without a mirror those lines never reach the CI
+  // log and a UI-12 failure is unattributable. BiDi surfaces page console
+  // entries as Puppeteer PageConsoleMessage events; mirror error/warn lines
+  // (plus anything mentioning ingest) into the test log and keep the tail for
+  // the UI-12 failure detail.
+  const consoleLines = [];
+
   // 2. Launch Firefox via puppeteer
   let browser;
   let page;
@@ -1261,6 +1270,29 @@ async function runUiLayer(counter, opts, snapshotDir) {
       uiCheck(false, 'UI-03', 'installer server became ready');
       return;
     }
+
+    // Mirror the page console (see consoleLines above) as soon as a page
+    // object exists — attached before the tab navigates so nothing is missed.
+    const mirrorConsole = async pg => {
+      if (!pg) return;
+      try {
+        pg.on('console', msg => {
+          try {
+            const text = msg.text();
+            const type = msg.type();
+            const line = `[${type}] ${text}`;
+            consoleLines.push(line);
+            if (type === 'error' || type === 'warning' || text.includes('[ingest]')) {
+              console.log(`  [tab-console] ${line}`);
+            }
+          } catch {
+            /* detached page — ignore */
+          }
+        });
+      } catch {
+        /* page already gone — ignore */
+      }
+    };
 
     // 5. The installer opens its tab in the detected browser — wait for it.
     const deadline = Date.now() + 30_000;
@@ -1308,6 +1340,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
         );
         try {
           page = await browser.newPage();
+          await mirrorConsole(page);
           await page.goto(uiUrl, {waitUntil: 'domcontentloaded'});
         } catch (err) {
           console.log(`  [diag] in-process UI open failed: ${err.message}`);
@@ -1324,6 +1357,9 @@ async function runUiLayer(counter, opts, snapshotDir) {
 
     if (page) {
       console.log(`  tab URL: ${page.url()}`);
+      // The relaunched-tab path found the page after it navigated — attach the
+      // mirror now (later messages still arrive: ingest runs for seconds).
+      await mirrorConsole(page);
 
       // Wait for cards to render
       const rendered = await waitForCondition(
@@ -1411,7 +1447,10 @@ async function runUiLayer(counter, opts, snapshotDir) {
         ingestState === 'complete' && !bannerVisible,
         'UI-12',
         'tab ingest completed: package zips fetched over the network and uploaded (CSP allows the remote hosts)',
-        `data-ingest=${ingestState}, network-error-banner visible=${bannerVisible}`
+        `data-ingest=${ingestState}, network-error-banner visible=${bannerVisible}` +
+          (consoleLines.length ?
+            `\n    tab console tail:\n    ${consoleLines.slice(-12).join('\n    ')}`
+          : '')
       );
 
       // Screenshot

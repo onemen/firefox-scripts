@@ -10,10 +10,21 @@
 #
 # The dev-mode artifact carries the -dev suffix (ASSET_SUFFIX in the Makefile,
 # mirrored by tools/publish/paths.js).
+#
+# LOCAL=1 (2026-09-21): a plain MODE=dev build bakes jsDelivr URLs for the
+# per-run dev-build-<id> branch — which only exists after a real `pnpm upload
+# --mode=dev`, never on a PR. The E2E tab's package-zip fetches would all fail
+# against that nonexistent branch (surfaced by UI-12 after #277: the portable
+# and snap legs had been silently skipping ingest on every previous run).
+# LOCAL=1 bakes localhost URLs + enables own-dir serving, the same binary
+# shape the installer job gets from upload:local, and the snapshot's four
+# published artifacts are copied next to the exe below so serve_local_file
+# finds them — hermetic, no network, same code paths under test.
 
-name: Build native installer (dev)
+name: Build native installer (dev, local-serving)
 description: >-
-  make dist_<os> MODE=dev, assert the macOS universal slices, export INSTALLER_BIN
+  make dist_<os> MODE=dev LOCAL=1, assert the macOS universal slices, stage the snapshot artifacts
+  next to the exe, export INSTALLER_BIN
 
 outputs:
   installer-bin:
@@ -27,9 +38,9 @@ runs:
       shell: bash
       run: |
         case "${{ runner.os }}" in
-          Linux) make -C installer dist_linux MODE=dev ;;
-          macOS) make -C installer dist_mac MODE=dev ;;
-          Windows) make -C installer dist_win MODE=dev ;;
+          Linux) make -C installer dist_linux MODE=dev LOCAL=1 ;;
+          macOS) make -C installer dist_mac MODE=dev LOCAL=1 ;;
+          Windows) make -C installer dist_win MODE=dev LOCAL=1 ;;
         esac
         # Universal-binary check (#132): dist_mac now builds x86_64 + arm64 in
         # one fat installer_mac — assert both slices are really present and
@@ -58,6 +69,22 @@ runs:
           fi
         fi
         chmod +x dist/installer/installer_* 2>/dev/null || true
+
+    # Stage the snapshot's published artifacts next to the freshly built exe:
+    # CFG_LOCAL serving resolves every /GET against the exe's own directory,
+    # so utils/fx-folder/updater-ui zips + hashes.json must sit beside it for
+    # the tab's ingest (UI-12) to complete. The dev-snapshot artifact unpacks
+    # to dist/dev-<branch>-<sha>/; copy from wherever it landed.
+    - name: Stage snapshot artifacts beside the exe
+      shell: bash
+      run: |
+        if compgen -G "dist/dev-*/hashes.json" > /dev/null; then
+          for f in dist/dev-*/*-dev.zip dist/dev-*/hashes.json; do
+            [ -f "$f" ] && cp "$f" dist/installer/ && echo "staged: dist/installer/$(basename "$f")"
+          done
+        else
+          echo "::warning::no dev snapshot found under dist/dev-* — the E2E ingest leg will fail"
+        fi
 
     - name: Export INSTALLER_BIN
       id: bin
