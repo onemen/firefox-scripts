@@ -1924,6 +1924,14 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         extraPrefsFirefox: seeded.prefs,
       });
       attachProcessLogging(browser, label);
+      // Wait for the main window FIRST, exactly like every other tab
+      // scenario: on a busy headed runner Firefox can take >10 s to paint its
+      // first window, and the mirror wait below is useless until the
+      // scheduler even ran (first CI run of this scenario failed exactly
+      // here — two about:blank pages, no mirror, 'browser ready' never
+      // reached before the 20 s deadline burned).
+      const browserReady = await waitForFirstPage(browser, 20_000);
+      check(counter, browserReady, `browser ready (${label})`);
       // Like the other tab scenarios: BiDi cannot always enumerate trusted
       // chrome:// tabs, so the probe's TAB_OPENED mirror line is the fallback
       // proof the scheduler ran and the updater decided to show itself.
