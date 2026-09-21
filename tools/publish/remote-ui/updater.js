@@ -537,6 +537,19 @@ async function unblockFile(targetPath) {
  */
 async function copyWithHelper(pairs, tmpDir) {
   const helperPath = await ensureHelper(tmpDir);
+  // Sanity-check the downloaded bytes before handing them to the OS: a
+  // non-executable payload (an HTML error page saved under the helper name,
+  // a truncated download) dies HERE with a clear message instead of surfacing
+  // as an opaque Subprocess spawn failure. Every supported platform's
+  // executable starts with a non-text magic ('MZ' for PE, 0x7F 'E' for
+  // Mach-O/ELF), so an HTML/text payload can never pass.
+  const head = new Uint8Array(await IOUtils.read(helperPath, {maxBytes: 2}));
+  const magic = String.fromCharCode(head[0], head[1]);
+  if (magic !== 'MZ' && magic !== '\x7fE') {
+    throw new Error(
+      'Downloaded helper (' + helperFilename() + ') is not an executable - refusing to spawn.'
+    );
+  }
   const arguments_ = [];
   for (const [src, dst] of pairs) {
     arguments_.push(src, dst);

@@ -78,13 +78,18 @@ export function applyDevOverrides(config) {
   if (!owner || !repo) {
     throw new Error('installer.conf is missing REPO_OWNER / ZIP_DOWNLOAD_REPO for dev mode');
   }
+  // Zips/hash serve fine from jsDelivr (cached, ACAO:*), but jsDelivr REFUSES
+  // executables — any helper_*-dev.exe URL returns 403 — so the helper base
+  // points at raw.githubusercontent.com for the same ref (also ACAO:*), while
+  // the zips keep the CDN.
   const delivrBase = `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${DEV_BRANCH}`;
+  const rawBase = `https://raw.githubusercontent.com/${owner}/${repo}/${DEV_BRANCH}`;
   return {
     RELEASE_NAME: 'dev-build',
     ZIP_BASE_URL: delivrBase,
     HASHES_URL: `${delivrBase}/hashes.json`,
     ZIP_PAGES_URL: delivrBase,
-    HELPER_BASE_URL: delivrBase,
+    HELPER_BASE_URL: rawBase,
     ASSET_SUFFIX: '-dev',
   };
 }

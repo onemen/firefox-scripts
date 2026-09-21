@@ -106,6 +106,7 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {branchExistsOnPages, pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
 import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
@@ -707,12 +708,19 @@ async function publishToGitHub({
   // Landing page: the repo's README, rendered by GitHub and served as
   // index.html (see pagesIndex). Content-addressed downstream: skipped when
   // unchanged.
-  pagesFiles['index.html'] = await pagesIndex(octokit);
+  // Landing page: prod renders the repo README (links the latest release);
+  // dev gets a dedicated warning page with RAW download links, generated
+  // after the payload below is complete (branchReadmes.mjs).
+  if (PUBLISH_MODE !== 'dev') pagesFiles['index.html'] = await pagesIndex(octokit);
 
   if (PUBLISH_MODE === 'dev') {
     for (const name of builtZips) pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
+    // Dev binaries are published with the -dev suffix — the dev updater
+    // requests installer_win-dev.exe / helper_win-dev.exe[-dev].sha256
+    // (updater.js getAssetSuffix()); helpers rode along unsuffixed since the
+    // ADR 0030 split, which made the dev helper path 404 sidecar + 403 exe.
     for (const p of builtInstallers)
-      pagesFiles[installerAssetName(p)] = fs.readFileSync(installerPath(p));
+      pagesFiles[installerAssetName(p, ASSET_SUFFIX)] = fs.readFileSync(installerPath(p));
   } else {
     // Prod: zips go to the release AND Pages (the installer fetches zips from
     // Pages); installers go to the release AND Pages (CORS-enabled branch
@@ -742,11 +750,11 @@ async function publishToGitHub({
   }
   for (const p of builtHelpers) {
     const helperBytes = fs.readFileSync(helperPath(p));
-    pagesFiles[helperAssetName(p)] = helperBytes;
+    pagesFiles[helperAssetName(p, ASSET_SUFFIX)] = helperBytes;
     // Checksum sidecar (issue #33): the updater tab verifies the freshly
     // downloaded helper against it before executing — the helper is the one
     // artifact that runs outside the browser sandbox.
-    pagesFiles[helperShaAssetName(p)] = helperSha256Sidecar(
+    pagesFiles[helperShaAssetName(p, ASSET_SUFFIX)] = helperSha256Sidecar(
       helperBytes,
       helperAssetName(p, ASSET_SUFFIX)
     );
@@ -754,6 +762,26 @@ async function publishToGitHub({
 
   if (manifestChanged) {
     pagesFiles[HASHES_FILE] = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+  }
+
+  // README.md renders on the branch listing page at github.com — the exact
+  // page a human browsing the branch lands on, and the one where "save link
+  // as" on a file entry saves a blob HTML page instead of the artifact.
+  // Both artifact branches get one: gh-pages points at the latest release,
+  // dev-build-<id> warns + links the raw files (branchReadmes.mjs).
+  if (PUBLISH_MODE === 'dev') {
+    pagesFiles['README.md'] = devBranchReadme({
+      branch: REF_NAME,
+      files: Object.keys(pagesFiles),
+      note: DEV_NOTE || undefined,
+    });
+    pagesFiles['index.html'] = devIndexHtml({
+      branch: REF_NAME,
+      files: Object.keys(pagesFiles),
+      note: DEV_NOTE || undefined,
+    });
+  } else {
+    pagesFiles['README.md'] = ghPagesReadme();
   }
 
   await uploadFilesToPages(octokit, pagesFiles, {
