@@ -423,10 +423,6 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
 }
 
 /**
- * Hash the binary source trees, rebuild changed binaries, return manifest
- * entries.
- */
-/**
  * One Binaries-section status line for a binary role: a held-back role says so
  * (and is never hashed — a skipped role's published manifest entry must stay
  * untouched), otherwise the usual rebuild/up-to-date + short hash.
@@ -439,6 +435,10 @@ function binaryStatusLine(role, inScope, changed, hash) {
   );
 }
 
+/**
+ * Hash the binary source trees, rebuild changed binaries, return manifest
+ * entries.
+ */
 async function buildBinaries(platforms, storedHashes, scope) {
   const installerPatterns = loadSharedPatterns(INSTALLER_SRC, ['helper/**']);
   const helperPatterns = loadSharedPatterns(HELPER_SRC, []);

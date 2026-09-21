@@ -86,16 +86,6 @@ export function classifySkills(root) {
 }
 
 /**
- * Compute the full desired `.prettierignore` content given the current file
- * text and the skill classification. Everything outside the managed block is
- * preserved byte-for-byte (modulo CRLF normalization).
- *
- * @param {string} current file content ('' for a fresh file)
- * @param {string[]} thirdParty
- * @param {string[]} authored
- * @returns {string}
- */
-/**
  * A line that gates the skills tree. Inside the managed block these are
  * generated; anywhere else they are stale hand-written leftovers. Comments and
  * blank lines never count — prose may mention the policy freely.

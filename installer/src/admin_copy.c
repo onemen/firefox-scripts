@@ -132,8 +132,20 @@ int admin_copy_files(const char *const srcs[], const char *const dsts[], int cou
         }
         int pos = snprintf(params, cap, "--admin-copy");
         for (int i = 0; i < count; i++) {
-            pos += snprintf(params + pos, cap - (size_t)pos,
-                            " \"%s\" \"%s\"", srcs[i], dsts[i]);
+            // Guard the remaining capacity before appending (audit 2026-09-18
+            // C5): cap over-allocates 8 bytes per pair, which is correct only
+            // while the " \"%s\" \"%s\"" shape below costs <= 8 + len_src +
+            // len_dst. If that shape ever grows, a bare cap - pos could
+            // underflow into an out-of-bounds write. Fail loudly instead.
+            int remaining = cap - (size_t)pos > INT_MAX ? INT_MAX : (int)(cap - (size_t)pos);
+            int written = snprintf(params + pos, (size_t)remaining,
+                                   " \"%s\" \"%s\"", srcs[i], dsts[i]);
+            if (written < 0 || written >= remaining) {
+                snprintf(error_msg, error_size, "Elevation command line overflow");
+                free(params);
+                return -4;
+            }
+            pos += written;
         }
 
         WCHAR exe_path[MAX_PATH_LEN];
