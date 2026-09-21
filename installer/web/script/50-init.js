@@ -111,8 +111,12 @@
       if (data && data.utilsUrl && data.fxFolderUrl) {
         linkFx.href = data.fxFolderUrl;
         linkUtils.href = data.utilsUrl;
-        wireDownloadLink(linkFx, 'fx-folder.zip');
-        wireDownloadLink(linkUtils, 'utils.zip');
+        // Save-name mirrors the URL's actual file name (dev builds publish
+        // fx-folder-dev.zip / utils-dev.zip — a hardcoded prod name would
+        // mislabel the download and confuse the hash check against the
+        // release assets).
+        wireDownloadLink(linkFx, data.fxFolderUrl.split('/').pop());
+        wireDownloadLink(linkUtils, data.utilsUrl.split('/').pop());
         // Annotate each link with its last-update date (smaller font).
         setDownloadDate('fx-download-date', data.fxFolderDate);
         setDownloadDate('utils-download-date', data.utilsDate);

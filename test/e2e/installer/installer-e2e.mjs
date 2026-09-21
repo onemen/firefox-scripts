@@ -1377,6 +1377,36 @@ async function runUiLayer(counter, opts, snapshotDir) {
         uiCheck(cards.badges.some(Boolean), 'UI-10', 'card status badges present');
       }
 
+      // Ingest pipeline (UI-12, added after the 2026-09-21 CSP regression):
+      // the tab's own JS must fetch the remote package URLs handed over by
+      // /api/package-urls and POST the bytes to the local server. UI-04/05
+      // only prove the page renders — they stayed green while
+      // connect-src 'self' silently blocked every remote fetch on CI builds.
+      // The ingest completes before the cards get real status badges, so a
+      // settled page without a blocked banner means the fetch set went through
+      // (or the snapshot is genuinely offline — surfaced as a UI-13 failure).
+      const ingest = await waitForCondition(
+        page,
+        () =>
+          document.getElementById('network-error-banner')?.style.display !== 'flex' &&
+          (document.querySelectorAll('.browser-card').length > 0 ||
+            Boolean(document.querySelector('.empty-state'))),
+        30_000,
+        'tab ingest to settle (no network-error banner)'
+      );
+      const blocked = await page.evaluate(() => {
+        const banner = document.getElementById('network-error-banner');
+        return banner && banner.style.display === 'flex';
+      });
+      uiCheck(
+        ingest && !blocked,
+        'UI-12',
+        'tab ingest completed without the network-error banner (CSP allows the remote package hosts)',
+        blocked ?
+          'network-error banner is visible — remote fetches are blocked'
+        : 'ingest did not settle in 30s'
+      );
+
       // Screenshot
       const shotDir = path.join(REPO_ROOT, 'dist');
       fs.mkdirSync(shotDir, {recursive: true});
