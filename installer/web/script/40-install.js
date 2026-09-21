@@ -560,12 +560,22 @@
     link.addEventListener('click', function (e) {
       e.preventDefault();
       if (link.getAttribute('href') && link.getAttribute('href') !== '#') {
+        clearDownloadError();
         downloadPackage(link.href, filename).catch(function (err) {
           console.error('[manual download] ' + filename + ' failed: ' + (err && err.message));
           showDownloadError(filename, err);
         });
       }
     });
+  }
+
+  /** Hide a previous failure before a new download starts — a stale error
+   * must not outlive the retry that supersedes it. */
+  function clearDownloadError() {
+    const el = qs('download-error');
+    if (!el) return;
+    el.textContent = '';
+    el.hidden = true;
   }
 
   /**

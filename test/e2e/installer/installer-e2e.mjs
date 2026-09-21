@@ -1382,29 +1382,32 @@ async function runUiLayer(counter, opts, snapshotDir) {
       // /api/package-urls and POST the bytes to the local server. UI-04/05
       // only prove the page renders — they stayed green while
       // connect-src 'self' silently blocked every remote fetch on CI builds.
-      // The ingest completes before the cards get real status badges, so a
-      // settled page without a blocked banner means the fetch set went through
-      // (or the snapshot is genuinely offline — surfaced as a UI-13 failure).
-      const ingest = await waitForCondition(
+      // The tab publishes an explicit data-ingest state on <body>
+      // (pending → complete | failed | blocked); UI-12 waits for a TERMINAL
+      // state and passes only on 'complete' — a page that merely rendered
+      // cards can never satisfy this (CodeRabbit review finding, batch
+      // 2026-09-21: the previous banner/card heuristic was already true at
+      // UI-05 and would have passed with CSP blocking every fetch).
+      const ingestState = await waitForCondition(
         page,
-        () =>
-          document.getElementById('network-error-banner')?.style.display !== 'flex' &&
-          (document.querySelectorAll('.browser-card').length > 0 ||
-            Boolean(document.querySelector('.empty-state'))),
+        () => {
+          const s = document.body.getAttribute('data-ingest');
+          return s === 'complete' || s === 'failed' || s === 'blocked' ? s : null;
+        },
         30_000,
-        'tab ingest to settle (no network-error banner)'
+        'tab ingest to reach a terminal state (data-ingest)'
       );
-      const blocked = await page.evaluate(() => {
+      const bannerVisible = await page.evaluate(() => {
         const banner = document.getElementById('network-error-banner');
-        return banner && banner.style.display === 'flex';
+        // showNetworkError() sets display 'block' (hidden = 'none'); the
+        // banner is not a flex container itself (see .network-error-banner).
+        return Boolean(banner) && banner.style.display !== 'none';
       });
       uiCheck(
-        ingest && !blocked,
+        ingestState === 'complete' && !bannerVisible,
         'UI-12',
-        'tab ingest completed without the network-error banner (CSP allows the remote package hosts)',
-        blocked ?
-          'network-error banner is visible — remote fetches are blocked'
-        : 'ingest did not settle in 30s'
+        'tab ingest completed: package zips fetched over the network and uploaded (CSP allows the remote hosts)',
+        `data-ingest=${ingestState}, network-error-banner visible=${bannerVisible}`
       );
 
       // Screenshot
