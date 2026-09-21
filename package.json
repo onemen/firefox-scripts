@@ -34,6 +34,7 @@
     "release:all": "node tools/publish/release.mjs --include=all",
     "release:packages": "node tools/publish/release.mjs --include=packages",
     "release:installer": "node tools/publish/release.mjs --include=installer",
+    "release:helper": "node tools/publish/release.mjs --include=helper",
     "upload:local": "node tools/publish/upload.mjs --local --include=all",
     "dev-clean": "node --env-file-if-exists=.env tools/publish/devClean.mjs",
     "review:batch": "node tools/ci/batch-review.mjs",

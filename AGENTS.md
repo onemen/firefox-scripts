@@ -149,6 +149,7 @@ pnpm upload:local -- --mode=prod         # full snapshot to dist/prod-<branch>-<
 pnpm release:all                         # prod publish: dispatches the CI cross-OS matrix (gh)
 pnpm release:packages                    # partial: zips + updater-ui only (--include=packages)
 pnpm release:installer                   # partial: installer + helper only (--include=installer)
+pnpm release:helper                      # partial: helper + sidecar only (--include=helper) — helper-byte rotation with zero package changes
 ```
 
 Every publish states its scope: `--include=packages|installer|helper|all` (required, validated —

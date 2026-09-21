@@ -900,6 +900,9 @@ pnpm release:packages    # the script zips + updater-ui only — a held-back ins
                          # keeps serving its last published bytes (the AV holdback)
 pnpm release:installer   # installer + helper only — a held-back packages role is rarely
                          # what you want in prod (see the dev-strand warning in ADR 0030)
+pnpm release:helper      # helper + sidecar only — helper-byte rotation (e.g. the post-v1.0
+                         # hardening) with zero package changes; the sidecar is fetched live by the
+                         # updater, so no utils/updater-ui release is needed
 pnpm release -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
 ```
 
