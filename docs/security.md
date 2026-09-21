@@ -23,6 +23,28 @@ Mitigations in place:
   extraction (updater) and before install (installer).
 - **Zip-slip guard.** `extractZipFlatten`/`copyFileList` reject entry names that could escape the
   destination directory (absolute paths, backslashes, drive letters, `.`/`..`).
+- **Elevated-copy helper.** When an update lands in an admin-protected install dir, the updater tab
+  downloads a standalone helper binary and runs it outside the browser sandbox (see "Helper threat
+  model" below).
+
+## Helper threat model (elevated copy)
+
+The helper (`installer/src/helper/helper_*.{c}`, shipped as `helper_win.exe` etc.) exists to copy
+config files into an admin-protected browser install dir when the plain, unprivileged copy fails. It
+self-elevates exactly once (`asInvoker` manifest + a single `runas` relaunch on Windows,
+`pkexec`/`sudo` on Linux, `osascript … with administrator privileges` on macOS); there is no
+persistent elevated service and no elevation bypass — the user always sees the OS prompt.
+
+Trust chain: the helper's **argv comes only from our own updater tab** (`updater.js`, running as
+privileged chrome script), so the caller is already inside the browser's trust boundary. Before the
+tab spawns the helper it verifies the downloaded bytes against the published `<helper>.sha256`
+sidecar (issue #33) and checks the executable magic (PE/ELF/Mach-O, #275) — a tampered or corrupted
+binary is refused before execution. Helper-side hardening (issue #274) treats the command line
+itself as only semi-trusted: argument-shape violations (`argc` parity), `..` path components, and
+command-line/probe-filename overflow attempts are rejected with `EXIT_BAD_ARGS` rather than
+executed. Defense here is defense in depth — none of these checks is what stands between a web page
+and the helper; that distance is made of the updater's own sandbox and the hash-verified download
+chain.
 
 ## Audit checklist (per release candidate)
 
