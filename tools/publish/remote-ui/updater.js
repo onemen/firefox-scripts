@@ -128,7 +128,7 @@ let onState = null;
 let onProgress = null;
 
 function logError(msg, err) {
-  console.debug(`Firefox Scripts updater: ${msg}`, err);
+  console.error(`Firefox Scripts updater: ${msg}`, err);
 }
 
 /**

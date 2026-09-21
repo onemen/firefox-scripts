@@ -156,7 +156,7 @@
       try {
         startGroupInstall(group);
       } catch (e) {
-        console.debug('[install] startGroupInstall threw', e);
+        console.error('[install] startGroupInstall threw', e);
         showDebug('Install click error: ' + (e && e.message));
       }
     };
@@ -187,7 +187,7 @@
           if (data && data.error) {
             // Restart failed server-side (e.g. could not launch): re-enable so
             // the user can retry without a new install.
-            console.debug('[install] Restart failed: ' + data.message);
+            console.error('[install] Restart failed: ' + data.message);
             btnRestart.innerHTML = RESTART_ICON + ' Restart';
             delete restartedGroups[group.binaryPath || ''];
             btnRestart.disabled = false;

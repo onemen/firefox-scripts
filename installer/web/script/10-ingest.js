@@ -127,7 +127,7 @@
         return r.json();
       })
       .catch(function (err) {
-        console.debug('fetchJSON', url, err);
+        console.error('fetchJSON', url, err);
         return null;
       });
   }
@@ -245,11 +245,11 @@
     let manifestFailed = false;
     function failZip(err) {
       zipsFailed = true;
-      console.debug('[ingest] package zip fetch failed: ' + (err && err.message));
+      console.error('[ingest] package zip fetch failed: ' + (err && err.message));
     }
     function failManifest(err) {
       manifestFailed = true;
-      console.debug('[ingest] hash manifest fetch failed: ' + (err && err.message));
+      console.error('[ingest] hash manifest fetch failed: ' + (err && err.message));
     }
 
     // Step 1: package zips.  The fetches are independent, so run them
@@ -273,7 +273,7 @@
           return postRaw('/api/upload?kind=ui', zip);
         })
         .catch(function (err) {
-          console.debug('[ingest] updater-ui zip fetch failed: ' + (err && err.message));
+          console.error('[ingest] updater-ui zip fetch failed: ' + (err && err.message));
         }),
     ]);
 
@@ -321,7 +321,7 @@
           return postRaw('/api/hg-tags', buf);
         })
         .catch(function (err) {
-          console.debug('[ingest] hg tags fetch failed: ' + (err && err.message));
+          console.error('[ingest] hg tags fetch failed: ' + (err && err.message));
         });
     });
 
@@ -332,7 +332,7 @@
             return postRaw('/api/waterfox', buf);
           })
           .catch(function (err) {
-            console.debug('[ingest] waterfox releases fetch failed: ' + (err && err.message));
+            console.error('[ingest] waterfox releases fetch failed: ' + (err && err.message));
           }),
         // NOTE: the self-update release JSON is NOT ingested here — it is
         // owned by ingestSelfUpdateSources() (releases-list first, latest

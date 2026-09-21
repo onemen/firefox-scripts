@@ -478,14 +478,14 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
   );
   const hits = [];
   for (const line of text.split('\n')) {
-    // The mirror line format is "<ISO> <level> [source:line] msg". logError
-    // now emits console.debug (2026-09-21, so the Browser Console hides the
-    // routine noise) — Firefox's mirror classifies console.debug as info
-    // severity, so cut after the LEVEL MARKER, not after a literal ' error ':
-    // an info/debug line has no ' error ' substring, and the old cut silently
-    // relied on the remainder still containing the source. Anything from
-    // chrome://firefox-scripts at any level is a hit; foreign sources only
-    // count at error level (unchanged legacy behavior).
+    // The mirror line format is "<ISO> <level> [source:line] msg". Tab-script
+    // informational traces are console.debug (2026-09-21) — Firefox's mirror
+    // classifies those as info severity, so cut after the LEVEL MARKER, not
+    // after a literal ' error ': a debug/info line has no ' error ' substring,
+    // and the old cut silently relied on the remainder still containing the
+    // source. Anything from chrome://firefox-scripts at any level is a hit;
+    // foreign sources only count at error level AND only with an actual
+    // source tag (matches the old net's push semantics).
     const levelMatch = / (error|debug|info|warn) \[/.exec(line);
     const rest = levelMatch ? line.slice(levelMatch.index + 1) : line;
     // The probe appends " [source:line] msg" for script errors; the updater

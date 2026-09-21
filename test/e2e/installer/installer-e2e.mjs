@@ -1282,9 +1282,10 @@ async function runUiLayer(counter, opts, snapshotDir) {
             const type = msg.type();
             const line = `[${type}] ${text}`;
             consoleLines.push(line);
-            // The tab scripts log at debug level now (2026-09-21): anything
-            // tagged or failure-shaped still surfaces — '[ingest]'/'[install]'
-            // carry the diagnostics the UI-12 tail prints on failure.
+            // Tab-script convention (2026-09-21): informational traces are
+            // console.debug — tagged '[ingest]'/'[install]' lines still
+            // surface so the UI-12 failure tail is attributable; errors come
+            // through as type 'error' and always print.
             if (
               text.includes('[ingest]') ||
               text.includes('[install]') ||

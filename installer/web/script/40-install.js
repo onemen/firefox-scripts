@@ -562,7 +562,7 @@
       if (link.getAttribute('href') && link.getAttribute('href') !== '#') {
         clearDownloadError();
         downloadPackage(link.href, filename).catch(function (err) {
-          console.debug('[manual download] ' + filename + ' failed: ' + (err && err.message));
+          console.error('[manual download] ' + filename + ' failed: ' + (err && err.message));
           showDownloadError(filename, err);
         });
       }
