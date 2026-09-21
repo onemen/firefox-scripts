@@ -157,13 +157,18 @@ static void send_response(int client_fd, int status_code, const char *content_ty
                      "\r\n",
                      content_type, body_len);
     } else {
+        // Use body_len in both branches: the header's Content-Length must
+        // match the bytes actually written below (send/write use body_len).
+        // The old strlen(body) here agreed with every current caller only by
+        // convention (audit 2026-09-18 C4) — a NUL-containing or explicitly
+        // length'd body would desynchronize header and payload.
         n = snprintf(header, sizeof(header),
                      "HTTP/1.0 %d Error\r\n"
                      "Content-Type: text/plain\r\n"
                      "Connection: close\r\n"
                      "Content-Length: %zu\r\n"
                      "\r\n",
-                     status_code, strlen(body) ? strlen(body) : 0);
+                     status_code, body ? body_len : 0);
     }
 
 #ifdef _WIN32

@@ -284,30 +284,6 @@ static int compute_file_sha256(const char *filepath, char *out_hash, size_t hash
 }
 
 /**
- * Compute the SHA256 hash over the package's canonical file list:
- * For each file (sorted by relative path):
- *   hash.update(relative_path + "\n")
- *   hash.update(file_contents)
- *
- * Files are resolved relative to base_dir. Uses a temp file to replicate
- * the continuous hash stream, then hashes that temp file.
- *
- * Missing files are treated as empty content: the relative path + "\n" is
- * still written, but no file bytes follow.  This keeps the hash well-defined
- * for partial installs.
- *
- * The file list must exactly match the published set: the publish hash
- * (hashUtils.mjs computeDirectoryHash) only hashes files that exist and emits
- * no entry for a listed-but-missing file, so an extra list entry would make
- * local and published hashes diverge.  Keeping the publish scripts and the
- * manifest's canonical `files` list in sync is what creates agreement.
- *
- * If out_files_found is non-NULL it receives the number of listed files
- * that actually exist on disk (drives Installed vs Not Installed).
- *
- * Returns 0 on success with 64-char hex digest in out_hash.
- */
-/**
  * Canonical hash-path ordering: case-insensitive byte-wise comparison —
  * ASCII-lowercase each byte (primary key), then compare as unsigned char;
  * case-insensitively equal but distinct paths (A.txt vs a.txt) tie-break on
@@ -339,6 +315,30 @@ static int cmp_path_ci(const char *a, const char *b) {
     return strcmp(ra, rb);
 }
 
+/**
+ * Compute the SHA256 hash over the package's canonical file list:
+ * For each file (sorted by relative path):
+ *   hash.update(relative_path + "\n")
+ *   hash.update(file_contents)
+ *
+ * Files are resolved relative to base_dir. Uses a temp file to replicate
+ * the continuous hash stream, then hashes that temp file.
+ *
+ * Missing files are treated as empty content: the relative path + "\n" is
+ * still written, but no file bytes follow.  This keeps the hash well-defined
+ * for partial installs.
+ *
+ * The file list must exactly match the published set: the publish hash
+ * (hashUtils.mjs computeDirectoryHash) only hashes files that exist and emits
+ * no entry for a listed-but-missing file, so an extra list entry would make
+ * local and published hashes diverge.  Keeping the publish scripts and the
+ * manifest's canonical `files` list in sync is what creates agreement.
+ *
+ * If out_files_found is non-NULL it receives the number of listed files
+ * that actually exist on disk (drives Installed vs Not Installed).
+ *
+ * Returns 0 on success with 64-char hex digest in out_hash.
+ */
 int compute_directory_sha256(const char *base_dir,
                              const char **rel_paths, int num_files,
                              int *out_files_found,
