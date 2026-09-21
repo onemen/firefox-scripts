@@ -41,7 +41,7 @@ test('branchReadmes: the two dev generators render the branch they are given', a
   // publishMode requires a mode; branchReadmes.test.mjs does the same.
   process.argv.push('--mode=dev');
   const {devBranchReadme, devIndexHtml} = await import('../../../tools/publish/branchReadmes.mjs');
-  const files = ['utils-dev.zip'];
+  const files = ['utils.zip'];
   assert.ok(devIndexHtml({branch: 'dev-build-x', files}).includes('dev-build-x'));
   assert.ok(devBranchReadme({branch: 'dev-build-x', files}).includes('dev-build-x'));
 });

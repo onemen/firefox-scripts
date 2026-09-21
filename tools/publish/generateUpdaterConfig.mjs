@@ -90,7 +90,11 @@ export function applyDevOverrides(config) {
     HASHES_URL: `${delivrBase}/hashes.json`,
     ZIP_PAGES_URL: delivrBase,
     HELPER_BASE_URL: rawBase,
-    ASSET_SUFFIX: '-dev',
+    // Plain names in dev too (#282 suffix drop): the ⚠ Test-build banner
+    // distinguishes dev builds, so the suffix's only remaining job — name
+    // collision with prod assets — cannot occur (dev artifacts live on the
+    // dev-build-<id> branch, prod on the latest release).
+    ASSET_SUFFIX: '',
   };
 }
 

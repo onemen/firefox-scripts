@@ -41,7 +41,9 @@ test('readConfig parses installer.conf into a flat key/value map', () => {
 test('applyDevOverrides rewrites URLs to the dev-build jsDelivr base', () => {
   const dev = applyDevOverrides(prodConfig);
   assert.equal(dev.RELEASE_NAME, 'dev-build');
-  assert.equal(dev.ASSET_SUFFIX, '-dev');
+  // Plain artifact names in dev too (#282 suffix drop) — the ⚠ Test-build
+  // banner distinguishes dev builds, so the name can stay identical to prod.
+  assert.equal(dev.ASSET_SUFFIX, '');
   assert.match(
     dev.ZIP_BASE_URL,
     /^https:\/\/cdn\.jsdelivr\.net\/gh\/onemen\/firefox-scripts@dev-build-/
@@ -86,7 +88,7 @@ test('generated module: prod mode — no dev/local flags, gh-pages machine URLs'
   assert.doesNotMatch(module, /LOCAL_DIST_PATH: '[^']+'/);
 });
 
-test('generated module: dev mode — jsDelivr URLs, IS_DEV true, -dev suffix', () => {
+test('generated module: dev mode — jsDelivr URLs, IS_DEV true, plain names', () => {
   const {module} = probe('--mode=dev');
   assert.match(module, /IS_DEV: true/);
   assert.match(module, /IS_LOCAL: false/);
@@ -94,7 +96,8 @@ test('generated module: dev mode — jsDelivr URLs, IS_DEV true, -dev suffix', (
   // dev-build branch name makes it long (local branches) or kept on one line
   // when it is short (CI's detached HEAD).  Match the URL itself, either way.
   assert.match(module, /https:\/\/cdn\.jsdelivr\.net\/gh\/onemen\/firefox-scripts@dev-build-/);
-  assert.match(module, /ASSET_SUFFIX: '-dev'/);
+  // #282 suffix drop: the generated module never carries a non-empty suffix.
+  assert.doesNotMatch(module, /ASSET_SUFFIX: '-dev'/);
 });
 
 test('generated module: STABLE_* fallback URLs only in dev mode (ADR 0026)', () => {
@@ -130,12 +133,12 @@ test('generated module: prod-local — IS_LOCAL true, file:// URLs, no suffix ch
   assert.doesNotMatch(module, /ASSET_SUFFIX: '-dev'/);
 });
 
-test('generated module: dev-local — dev suffix retained on top of file:// URLs', () => {
+test('generated module: dev-local — plain names on top of file:// URLs', () => {
   const {module} = probe('--mode=dev', '--local');
   assert.match(module, /IS_DEV: true/);
   assert.match(module, /IS_LOCAL: true/);
   assert.match(module, /file:\/\/\//);
-  assert.match(module, /ASSET_SUFFIX: '-dev'/);
+  assert.doesNotMatch(module, /ASSET_SUFFIX: '-dev'/);
 });
 
 test('generated module: UI_BASE_URL points at the manifest host in every mode', () => {

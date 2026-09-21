@@ -857,10 +857,10 @@ add them to `.env-example` with real values.
 
 See ADR [0009](./decisions/0009-unified-publish-modes.md) for the decision behind the modes.
 
-| Mode | Release tag      | Pages branch                                                  | Artifact names                           | Branch gate    |
-| ---- | ---------------- | ------------------------------------------------------------- | ---------------------------------------- | -------------- |
-| prod | `latest`         | `gh-pages` (live site)                                        | `utils.zip`, `installer_win.exe`         | must be `main` |
-| dev  | `dev-build-<id>` | `dev-build-<id>` (disposable; served via jsDelivr, not Pages) | `utils-dev.zip`, `installer_win-dev.exe` | any branch     |
+| Mode | Release tag      | Pages branch                                                  | Artifact names                                            | Branch gate    |
+| ---- | ---------------- | ------------------------------------------------------------- | --------------------------------------------------------- | -------------- |
+| prod | `latest`         | `gh-pages` (live site)                                        | `utils.zip`, `installer_win.exe`                          | must be `main` |
+| dev  | `dev-build-<id>` | `dev-build-<id>` (disposable; served via jsDelivr, not Pages) | same plain names; dev builds show the ⚠ Test-build banner | any branch     |
 
 `dev` publishes to a per-run branch (`dev-build-<id>`, where `<id>` defaults to
 `<current-branch>[-<note-slug>]-<short-sha>` or `DEV_BUILD_ID`), so a test build never touches the
@@ -1018,7 +1018,8 @@ The same run compiles the installer and helper binaries when their source (`inst
 `installer/src/helper/`) changes:
 
 - `installer_win.exe` / `installer_linux` / `installer_linux_aarch64` / `installer_mac` — uploaded
-  as assets of the release tagged by `RELEASE_NAME` (`installer_win-dev.exe` etc. in dev mode).
+  as assets of the release tagged by `RELEASE_NAME` (same plain names in dev mode — the ⚠ Test-build
+  banner distinguishes dev builds, #282).
 - `helper_win.exe` / `helper_linux` / `helper_mac` — pushed to the publish branch (the in-browser
   updater fetches them from there).
 - By default it builds only the current OS, or `--platform=win|linux|mac` for an explicit set (each

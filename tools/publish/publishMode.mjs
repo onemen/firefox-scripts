@@ -7,11 +7,10 @@
 //
 //   prod  → the `latest` release (RELEASE_NAME) + the gh-pages Pages branch.
 //          Only allowed when the current git branch is 'main' (enforced by
-//          publishCommon.enforceMainOnly).
-//   dev   → a per-run `dev-build-<id>` branch ONLY (no release — zips,
+//          publishCommon.enforceMainOnly).//          dev   → a per-run `dev-build-<id>` branch ONLY (no release — zips,
 //          hashes, helpers and installer binaries all travel via the branch,
-//          served through jsDelivr), namespaced artifacts (ASSET_SUFFIX
-//          '-dev').  Works from any branch; CI deletes the branch when tests
+//          served through jsDelivr) under their plain names (the ⚠ Test-build
+//          banner distinguishes dev builds, #282).  Works from any branch; CI deletes the branch when tests
 //          finish, developers delete it manually.  Never touches
 //          latest/gh-pages.
 //
@@ -59,8 +58,13 @@ export const MODE = typedModeArg();
  */
 export const LOCAL = process.argv.includes('--local');
 
-/** The dev asset suffix: '-dev' in dev mode, '' in prod/unknown mode. */
-export const ASSET_SUFFIX = MODE === 'dev' ? '-dev' : '';
+/**
+ * The dev asset suffix: '' everywhere (#282 suffix drop — dev artifacts keep
+ * their plain names; the ⚠ Test-build banner distinguishes dev builds). The
+ * constant and its consumers stay so the stable-channel fallback logic in
+ * scriptsUpdater.sys.mjs (getAssetSuffix) needs no change.
+ */
+export const ASSET_SUFFIX = '';
 
 /**
  * Build-identity override for `--ref=<branch|commit>` runs: upload.mjs checks

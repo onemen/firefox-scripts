@@ -25,14 +25,14 @@ const {devBranchReadme, devIndexHtml, ghPagesReadme} = await import(
 
 const FILES = [
   '.nojekyll',
-  'fx-folder-dev.zip',
+  'fx-folder.zip',
   'hashes.json',
-  'helper_win-dev.exe',
-  'helper_win-dev.exe.sha256',
+  'helper_win.exe',
+  'helper_win.exe.sha256',
   'index.html',
-  'installer_win-dev.exe',
-  'updater-ui-dev.zip',
-  'utils-dev.zip',
+  'installer_win.exe',
+  'updater-ui.zip',
+  'utils.zip',
 ];
 
 test('dev index: warns the artifacts are developer-test-only', () => {
