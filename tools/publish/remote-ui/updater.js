@@ -540,12 +540,22 @@ async function copyWithHelper(pairs, tmpDir) {
   // Sanity-check the downloaded bytes before handing them to the OS: a
   // non-executable payload (an HTML error page saved under the helper name,
   // a truncated download) dies HERE with a clear message instead of surfacing
-  // as an opaque Subprocess spawn failure. Every supported platform's
-  // executable starts with a non-text magic ('MZ' for PE, 0x7F 'E' for
-  // Mach-O/ELF), so an HTML/text payload can never pass.
-  const head = new Uint8Array(await IOUtils.read(helperPath, {maxBytes: 2}));
-  const magic = String.fromCharCode(head[0], head[1]);
-  if (magic !== 'MZ' && magic !== '\x7fE') {
+  // as an opaque Subprocess spawn failure. Accept every supported platform's
+  // executable magics (mirrors the publish-side table in
+  // tools/publish/platforms.mjs): PE "MZ"; ELF 0x7F 'E' 'L' 'F'; Mach-O
+  // MH_MAGIC_64/MH_CIGAM_64, 32-bit MH_MAGIC/MH_CIGAM, and the fat/universal
+  // wrappers. A text payload can never pass.
+  const head = new Uint8Array(await IOUtils.read(helperPath, {maxBytes: 4}));
+  const hex = [...head].map(b => b.toString(16).padStart(2, '0')).join('');
+  const isExecutable = [
+    '4d5a', // PE ("MZ")
+    '7f454c46', // ELF (linux, linux-aarch64)
+    'cffaedfe',
+    'cefaedfe', // Mach-O 64-bit (native, byte-swapped)
+    'cafebabe',
+    'cafebabf', // fat/universal wrappers 32/64
+  ].includes(hex);
+  if (!isExecutable) {
     throw new Error(
       'Downloaded helper (' + helperFilename() + ') is not an executable - refusing to spawn.'
     );

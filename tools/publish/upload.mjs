@@ -771,12 +771,12 @@ async function publishToGitHub({
   // dev-build-<id> warns + links the raw files (branchReadmes.mjs).
   if (PUBLISH_MODE === 'dev') {
     pagesFiles['README.md'] = devBranchReadme({
-      branch: REF_NAME,
+      branch: DEV_BRANCH,
       files: Object.keys(pagesFiles),
       note: DEV_NOTE || undefined,
     });
     pagesFiles['index.html'] = devIndexHtml({
-      branch: REF_NAME,
+      branch: DEV_BRANCH,
       files: Object.keys(pagesFiles),
       note: DEV_NOTE || undefined,
     });
