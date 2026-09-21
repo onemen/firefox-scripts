@@ -25,7 +25,7 @@
       el.textContent = String(msg);
       el.style.display = 'block';
     }
-    console.error('[install] ' + msg);
+    console.debug('[install] ' + msg);
   }
   window.onerror = function (msg, src, line, col) {
     showDebug('JS ERROR: ' + msg + ' (' + src + ':' + line + ':' + col + ')');

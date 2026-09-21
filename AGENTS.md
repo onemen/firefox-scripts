@@ -273,7 +273,9 @@ regeneration moments: the `generated-files` skill.
   `defineESModuleGetters` with full `chrome://` or `resource://` specifiers. Never bare paths.
 - **Window-context legacy JS:** plain `.js` with `'use strict';` loaded via
   `Services.scriptloader.loadSubScript`. No `innerHTML` in the updater tab (XML-parsed XHTML; toggle
-  via `hidden`).
+  via `hidden`). Tab scripts (updater.js, installer web fragments) log via `console.debug` only
+  (2026-09-21): keeps the user's Browser Console clean while the E2E mirrors still capture the
+  messages (the updater console net treats debug/info from `chrome://firefox-scripts` as hits).
 - **C:** clang-format LLVM base; UTF-8 paths with wide/UTF-16 conversion on Windows;
   `installer_log()` logging; vendored miniz read-only (`-DMINIZ_NO_DEFLATE_APIS`).
 - **JS formatting/lint** is enforced by prettier + eslint (configs in `config/`) — run

@@ -478,18 +478,34 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
   );
   const hits = [];
   for (const line of text.split('\n')) {
-    if (!line.includes(' error ')) continue;
-    const rest = line.slice(line.indexOf(' error ') + 7);
+    // The mirror line format is "<ISO> <level> [source:line] msg". logError
+    // now emits console.debug (2026-09-21, so the Browser Console hides the
+    // routine noise) — Firefox's mirror classifies console.debug as info
+    // severity, so cut after the LEVEL MARKER, not after a literal ' error ':
+    // an info/debug line has no ' error ' substring, and the old cut silently
+    // relied on the remainder still containing the source. Anything from
+    // chrome://firefox-scripts at any level is a hit; foreign sources only
+    // count at error level (unchanged legacy behavior).
+    const levelMatch = / (error|debug|info|warn) \[/.exec(line);
+    const rest = levelMatch ? line.slice(levelMatch.index + 1) : line;
     // The probe appends " [source:line] msg" for script errors; the updater
     // scripts surface as chrome://firefox-scripts/... sources.
     const srcMatch = / \[(chrome:\/\/[^\]:]+[^\]]*?):\d+\]/.exec(rest);
     const source = srcMatch ? srcMatch[1] : '';
-    if (!source.includes('chrome://firefox-scripts')) continue;
+    const level = levelMatch ? levelMatch[1] : '';
+    if (source.includes('chrome://firefox-scripts')) {
+      // Ours at any level (debug/info included) — a hit below.
+    } else {
+      // Foreign source: only error-level foreign lines stay in scope (legacy
+      // behavior), and even they are pushed with their (non-ours) source so
+      // the caller sees them; info/debug foreign noise is skipped.
+      if (level !== 'error') continue;
+    }
     // Allowlist matches the FULL line (source AND message): scenario 9's
     // expected headless-elevation failure IS a chrome://firefox-scripts
     // logError and must be exemptable without masking any other error.
     if (allows.some(re => re.test(line))) continue;
-    hits.push({line: line.trim(), level: 'error', source});
+    hits.push({line: line.trim(), level: level || 'error', source});
   }
   return hits;
 }
@@ -2084,7 +2100,12 @@ async function run() {
   console.log(`  firefox: ${firefoxBin}`);
   console.log(`  GreD:    ${findGreDir(firefoxBin)}`);
 
-  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8'];
+  // Scenario 9 (helper-checksum-win) IS in the default set: it self-skips on
+  // non-Windows, and on CI's Windows legs the seeded portable GreD is
+  // ACL-controllable. It was missing here from birth (#271 registered the
+  // step but never enabled it), so the helper path never ran on CI — the
+  // 2026-09-21 magic-gate bug shipped through a green matrix.
+  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8', '9'];
 
   const profiles = [];
 

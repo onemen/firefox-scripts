@@ -145,7 +145,7 @@
     btn.innerHTML = INSTALL_ICON + ' Install / Update';
     btn.title = 'Select from available updates';
     btn.onclick = function () {
-      console.log(
+      console.debug(
         '[install] Install button clicked, disabled=' + this.disabled,
         group && group.binaryPath
       );
@@ -156,7 +156,7 @@
       try {
         startGroupInstall(group);
       } catch (e) {
-        console.error('[install] startGroupInstall threw', e);
+        console.debug('[install] startGroupInstall threw', e);
         showDebug('Install click error: ' + (e && e.message));
       }
     };
@@ -179,7 +179,7 @@
       btnRestart.removeAttribute('title');
       btnRestart.innerHTML = RESTART_ICON + ' Restarting...';
       const firstIdx = group.browsers[0].index;
-      console.log(
+      console.debug(
         '[install] Restart clicked for ' + group.binaryPath + ' (browser=' + firstIdx + ')'
       );
       fetchJSON('/api/restart?browser=' + firstIdx + '&t=' + getSessionToken())
@@ -187,7 +187,7 @@
           if (data && data.error) {
             // Restart failed server-side (e.g. could not launch): re-enable so
             // the user can retry without a new install.
-            console.error('[install] Restart failed: ' + data.message);
+            console.debug('[install] Restart failed: ' + data.message);
             btnRestart.innerHTML = RESTART_ICON + ' Restart';
             delete restartedGroups[group.binaryPath || ''];
             btnRestart.disabled = false;

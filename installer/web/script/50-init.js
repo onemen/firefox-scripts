@@ -57,7 +57,7 @@
       const t = getSessionToken();
       fetchJSON('/api/open-folder?browser=' + idx + '&kind=' + kind + (t ? '&t=' + t : '')).then(
         function (data) {
-          if (!data || data.error) console.error('[open-folder] failed:', data && data.error);
+          if (!data || data.error) console.debug('[open-folder] failed:', data && data.error);
         }
       );
     });

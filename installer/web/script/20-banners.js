@@ -29,7 +29,7 @@
         return ok;
       })
       .catch(function (err) {
-        console.error('[ingest] self-update release fetch failed: ' + (err && err.message));
+        console.debug('[ingest] self-update release fetch failed: ' + (err && err.message));
         return false;
       });
   }
