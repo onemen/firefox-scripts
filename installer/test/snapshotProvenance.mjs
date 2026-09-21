@@ -22,13 +22,17 @@ const {computeFileSetHash, collectDirEntries} = await import(
 const {loadSharedPatterns} = await import(
   new URL('../../tools/publish/publishCommon.mjs', import.meta.url).href
 );
+const {INSTALLER_HASH_EXCLUDE} = await import(
+  new URL('../../tools/publish/generatedRegistry.mjs', import.meta.url).href
+);
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Recompute the installer's SOURCE-tree hash exactly the way the publish flow
- * does (upload.mjs buildBinaries): installer/src minus helper/ and the two
- * generated headers, installer/web, config/installer.conf.
+ * does (upload.mjs buildBinaries): installer/src minus helper/ and the
+ * generated build products (INSTALLER_HASH_EXCLUDE — the generated headers and
+ * the script.built.js gate artifact), installer/web, config/installer.conf.
  *
  * @param {string} repoRoot absolute path to the repository root
  * @returns {string} hex-encoded SHA-256 of the installer source set
@@ -39,10 +43,13 @@ export function computeInstallerSourceHash(repoRoot) {
   const srcPatterns = loadSharedPatterns(installerSrc, ['helper/**']);
   const webPatterns = loadSharedPatterns(installerWeb, []);
   return computeFileSetHash([
-    ...collectDirEntries(installerSrc, srcPatterns, 'installer', installerSrc, [
-      '_config.h',
-      'resources.h',
-    ]),
+    ...collectDirEntries(
+      installerSrc,
+      srcPatterns,
+      'installer',
+      installerSrc,
+      INSTALLER_HASH_EXCLUDE
+    ),
     ...collectDirEntries(installerWeb, webPatterns, 'web'),
     {rel: 'config/installer.conf', absPath: path.join(repoRoot, 'config', 'installer.conf')},
   ]).hash;

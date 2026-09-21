@@ -128,6 +128,21 @@ const GENERATORS = {
       maxBuffer: 16 * 1024 * 1024,
     });
   },
+  // #225 concat-gate: the lintable build of the installer web script. embed.mjs
+  // writes BOTH artifacts in one run (resources.h from its own main(); the
+  // script.built.js sidecar from the same generation pass), so one execFileSync
+  // covers the pair — the generator returns resources.h's bytes, the sidecar
+  // lands on disk as a side effect, and syncGeneratedFiles writes the header.
+  'installer/src/script.built.js': () => {
+    execFileSync('node', [path.join(ROOT, 'installer', 'embed.mjs'), '--stdout'], {
+      encoding: 'utf-8',
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    // String (not Buffer): regenerate() compares the returned bytes against
+    // its utf-8 read of the current file — a Buffer would never strict-equal
+    // the string and the file would report as changed on every call.
+    return fs.readFileSync(path.join(ROOT, 'installer', 'src', 'script.built.js'), 'utf-8');
+  },
 };
 const GENERATED = GENERATED_FILES.filter(f => f.rel in GENERATORS).map(f => ({
   rel: f.rel,

@@ -76,6 +76,14 @@ export const GENERATED_FILES = [
     generatedBy: 'installer/embed.mjs (from installer/web/*)',
     shipsIn: {},
   },
+  {
+    rel: 'installer/src/script.built.js',
+    generatedBy: 'installer/embed.mjs buildScriptJs() (from installer/web/script/*)',
+    // Built-script artifact persisted for the eslint/prettier gates (#225
+    // concat-gate). Build product — never hashed; the installer hash covers
+    // the fragments under installer/web/script/ instead.
+    shipsIn: {},
+  },
 ];
 
 /**
@@ -99,7 +107,7 @@ export const PACKAGE_SCAN_EXCLUDE = {
  * hashed instead). Single source for upload.mjs's collectDirEntries exclude
  * list.
  */
-export const INSTALLER_HASH_EXCLUDE = ['_config.h', 'resources.h'];
+export const INSTALLER_HASH_EXCLUDE = ['_config.h', 'resources.h', 'script.built.js'];
 
 /**
  * Obsolete files: excluded from zips and from the published hash / manifest

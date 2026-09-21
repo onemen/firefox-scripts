@@ -59,6 +59,9 @@ docs/local_plan/
 #     on-disk state deterministic between fresh clones and dev machines).
 installer/src/_config.h
 installer/src/resources.h
+# Built script.js concat — written by embed.mjs (every build/publish); the
+# eslint/prettier gates run against this artifact (issue #225 concat-gate).
+installer/src/script.built.js
 core/chrome/utils/updater/updater-config.sys.mjs
 
 # Remote updater stylesheet — generated on disk only for the ?demo=1 preview;

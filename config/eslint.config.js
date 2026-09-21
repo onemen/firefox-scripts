@@ -102,7 +102,8 @@ export default defineConfig([
       // installer/web/script/*.js are IIFE fragments concatenated by
       // installer/embed.mjs into the single served script.js — not parseable
       // standalone. The concat is syntax-checked inside embed.mjs on every
-      // build/publish (buildScriptJs).
+      // build/publish (buildScriptJs), and the BUILT artifact is gated below
+      // (script.built.js block) — issue #225 concat-gate.
       'installer/web/script/',
       // Third-party agent skills — upstream style, never linted (ADR 0022).
       // Derived above from SKILL.md frontmatter; a new third-party skill is
@@ -194,6 +195,20 @@ export default defineConfig([
     plugins: {sdl},
     rules: {
       'sdl/no-inner-html': 'error',
+    },
+  },
+
+  // Concat-gate (issue #225): the built installer script.js artifact is linted
+  // with the full repo config — the whole-program view makes the fragments'
+  // cross-file-global noise vanish while catching real defects in the exact
+  // bytes that ship. embed.mjs regenerates the artifact on every build/publish;
+  // the browser globals below cover the window-context runtime (the DOM is
+  // already typed by lib.dom in globals.browser).
+  {
+    name: 'installer-script-built',
+    files: ['installer/src/script.built.js'],
+    languageOptions: {
+      globals: {...globals.browser},
     },
   },
 ]);
