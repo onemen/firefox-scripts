@@ -1388,15 +1388,19 @@ async function runUiLayer(counter, opts, snapshotDir) {
       // cards can never satisfy this (CodeRabbit review finding, batch
       // 2026-09-21: the previous banner/card heuristic was already true at
       // UI-05 and would have passed with CSP blocking every fetch).
-      const ingestState = await waitForCondition(
+      // NOTE: waitForCondition collapses the condition's value to a boolean,
+      // so the state itself is re-read after the wait (waitForCondition only
+      // tells us a terminal state was reached).
+      await waitForCondition(
         page,
         () => {
           const s = document.body.getAttribute('data-ingest');
-          return s === 'complete' || s === 'failed' || s === 'blocked' ? s : null;
+          return s === 'complete' || s === 'failed' || s === 'blocked';
         },
         30_000,
         'tab ingest to reach a terminal state (data-ingest)'
       );
+      const ingestState = await page.evaluate(() => document.body.getAttribute('data-ingest'));
       const bannerVisible = await page.evaluate(() => {
         const banner = document.getElementById('network-error-banner');
         // showNetworkError() sets display 'block' (hidden = 'none'); the
