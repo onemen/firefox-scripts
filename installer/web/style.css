@@ -230,6 +230,16 @@ body {
   white-space: nowrap;
 }
 
+/* Inline failure message for the manual-download links (shown by script.js
+   when downloadPackage's fetch rejects; hidden again on a later click). */
+.download-error {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #b3261e;
+  margin-left: 12px;
+  white-space: nowrap;
+}
+
 /* ==========================================================================
    Test/Dev Build Banner
    Shown only on --local or --mode=dev builds.  The installer fetches

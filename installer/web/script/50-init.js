@@ -91,6 +91,18 @@
     let browsersData = null;
     let pkg = null;
 
+    /* Explicit ingest state machine on <body data-ingest="..."> so tests (and
+     * the console) can observe the remote-fetch pipeline itself instead of
+     * inferring it from rendered cards — UI-05 stayed green through the
+     * 2026-09-21 CSP regression precisely because cards render before the
+     * remote fetches. Lifecycle: pending → complete (zips ingested) | failed
+     * (zips unreachable — banner shown) | blocked (no URLs from the server;
+     * banner shown). */
+    function setIngestState(state) {
+      document.body.setAttribute('data-ingest', state);
+    }
+    setIngestState('pending');
+
     const browsersLoaded = fetchJSON('/api/browsers').then(function (data) {
       browsersData = data;
       // Paint immediately from the local snapshot (data may be []).  A null
@@ -111,8 +123,12 @@
       if (data && data.utilsUrl && data.fxFolderUrl) {
         linkFx.href = data.fxFolderUrl;
         linkUtils.href = data.utilsUrl;
-        wireDownloadLink(linkFx, 'fx-folder.zip');
-        wireDownloadLink(linkUtils, 'utils.zip');
+        // Save-name mirrors the URL's actual file name (dev builds publish
+        // fx-folder-dev.zip / utils-dev.zip — a hardcoded prod name would
+        // mislabel the download and confuse the hash check against the
+        // release assets).
+        wireDownloadLink(linkFx, data.fxFolderUrl.split('/').pop());
+        wireDownloadLink(linkUtils, data.utilsUrl.split('/').pop());
         // Annotate each link with its last-update date (smaller font).
         setDownloadDate('fx-download-date', data.fxFolderDate);
         setDownloadDate('utils-download-date', data.utilsDate);
@@ -141,6 +157,7 @@
 
         if (!pkg) {
           // Server gave no URLs — nothing can be fetched or installed.
+          setIngestState('blocked');
           showNetworkError();
           renderInstallBlocked();
           finish();
@@ -151,6 +168,17 @@
         // external payload and POST it to the local server, then re-sync the
         // status flags (hashes/versions) and the self-update banner.
         const ingest = ingestRemoteData(pkg, browsersData);
+
+        // Publish the settled ingest state for UI-12 (and console debugging):
+        // 'complete' only when the package zips actually landed on the
+        // server, 'failed' when any zip fetch was blocked/failed.
+        ingest.done
+          .then(function (result) {
+            setIngestState(result && result.zipsFailed ? 'failed' : 'complete');
+          })
+          .catch(function () {
+            setIngestState('failed');
+          });
 
         // Fast status path: the small hash manifest resolves long before the
         // package zips, so refresh the already-rendered "Checking..." cards
@@ -215,6 +243,7 @@
       .catch(function () {
         // Local server error while loading the package URLs — the packages
         // cannot be reached, so show the blocked notification.
+        setIngestState('blocked');
         showNetworkError();
         renderInstallBlocked();
         revealCards(container);
