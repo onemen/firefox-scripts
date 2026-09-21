@@ -8,6 +8,34 @@
 #define EXIT_ELEV_FAIL 2
 #define EXIT_COPY_FAIL 3
 
+/* Capacity (WCHARs) of the relaunch command line built below. The updater
+ * only ever passes a handful of absolute paths; a longer argv is rejected
+ * (EXIT_BAD_ARGS) instead of running lstrcatW off the end of the buffer. */
+#define MAX_PARAMS_W 4096
+
+/* Chars needed beyond the directory for the writability-probe filename in
+ * can_write_to(): '\\' + "__wtest_" (8) + 8 hex digits + ".tmp" (4) + NUL =
+ * 22. Keep in sync with the wsprintfW format string below. */
+#define PROBE_SUFFIX_W 22
+
+/* True if any path component of `path` is exactly ".." (the parent-directory
+ * alias). Components are separated by '\\' or '/'. Bounds: `path[i + 2]` is
+ * only read after proving `i + 2 < len` (when `i + 2 == len` the component
+ * ends the string); `path[i + 1]` only after proving `i + 1 < len` — this is
+ * the bounds-correct form of the #272 proposal, which read ahead before the
+ * bounds check. */
+static int has_dotdot_component(const WCHAR *path) {
+    size_t len = wcslen(path);
+    for (size_t i = 0; i < len; i++) {
+        if (path[i] != L'.') continue;
+        if (i + 1 >= len || path[i + 1] != L'.') continue;
+        int prev_ok = (i == 0) || path[i - 1] == L'\\' || path[i - 1] == L'/';
+        int next_ok = (i + 2 == len) || path[i + 2] == L'\\' || path[i + 2] == L'/';
+        if (prev_ok && next_ok) return 1;
+    }
+    return 0;
+}
+
 static int is_elevated(void) {
     HANDLE token;
     DWORD size;
@@ -47,7 +75,9 @@ static int can_write_to(const WCHAR *dst_path) {
     if (p == dst_path) return 0;
 
     size_t dlen = (size_t)(p - dst_path);
-    if (dlen >= MAX_PATH) return 0;
+    /* Leave headroom for the probe filename appended below (wsprintfW is
+     * unbounded — same bound re-checked at the use site). */
+    if (dlen > MAX_PATH - PROBE_SUFFIX_W) return 0;
     WCHAR dir[MAX_PATH];
     wcsncpy(dir, dst_path, dlen);
     dir[dlen] = 0;
@@ -56,6 +86,11 @@ static int can_write_to(const WCHAR *dst_path) {
         DWORD attrs = GetFileAttributesW(dir);
         if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
             WCHAR test[MAX_PATH];
+            /* wsprintfW has no destination bound (it is not snprintf): the
+             * caller must guarantee the format's expansion fits. dir is
+             * bounded to MAX_PATH - PROBE_SUFFIX_W above, so the fixed
+             * PROBE_SUFFIX_W tail cannot overflow. */
+            if (wcslen(dir) > MAX_PATH - PROBE_SUFFIX_W) return 0;
             wsprintfW(test, L"%s\\__wtest_%08lx.tmp", dir, GetCurrentProcessId());
             HANDLE h = CreateFileW(test, GENERIC_WRITE, 0, NULL,
                                    CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -138,6 +173,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
         return EXIT_BAD_ARGS;
     }
 
+    /* Every path argument must be a real path, not a traversal out of the
+     * install dir (issue #274, bounds-correct form of the #272 proposal).
+     * Applied to BOTH src and dst: the pairs come from our own updater tab,
+     * so this is hardening against a confused/delegated caller, not a
+     * privilege boundary — cheap to enforce on all of argv. */
+    for (int i = 1; i < argc; i++) {
+        if (has_dotdot_component(wargv[i])) {
+            LocalFree(wargv);
+            return EXIT_BAD_ARGS;
+        }
+    }
+
     LPWSTR exeW = wargv[0];
 
     int needs_elevation = 0;
@@ -149,7 +196,22 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     }
 
     if (!is_elevated() && needs_elevation) {
-        WCHAR paramsW[4096];
+        /* Compute the quoted relaunch command line's exact length first and
+         * fail with EXIT_BAD_ARGS on overflow: lstrcatW has no destination
+         * bound, so appending without a length check would run off paramsW
+         * (issue #274). argv[0] (this exe) is not quoted — ShellExecuteExW
+         * receives it via sei.lpFile. */
+        size_t params_len = 0;
+        for (int i = 1; i < argc; i++) {
+            /* "arg" plus the space separator (except before the first). */
+            params_len += wcslen(wargv[i]) + 2 + (i > 1 ? 1 : 0);
+        }
+        if (params_len >= MAX_PARAMS_W) {
+            LocalFree(wargv);
+            return EXIT_BAD_ARGS;
+        }
+
+        WCHAR paramsW[MAX_PARAMS_W];
         paramsW[0] = 0;
 
         for (int i = 1; i < argc; i++) {
