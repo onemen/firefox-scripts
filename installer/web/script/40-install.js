@@ -560,11 +560,35 @@
     link.addEventListener('click', function (e) {
       e.preventDefault();
       if (link.getAttribute('href') && link.getAttribute('href') !== '#') {
+        clearDownloadError();
         downloadPackage(link.href, filename).catch(function (err) {
           console.error('[manual download] ' + filename + ' failed: ' + (err && err.message));
+          showDownloadError(filename, err);
         });
       }
     });
+  }
+
+  /** Hide a previous failure before a new download starts — a stale error
+   * must not outlive the retry that supersedes it. */
+  function clearDownloadError() {
+    const el = qs('download-error');
+    if (!el) return;
+    el.textContent = '';
+    el.hidden = true;
+  }
+
+  /**
+   * Surface a failed manual download next to the links (2026-09-21: failures
+   * were console-only, so a dead link looked like a no-op to the user).
+   * Cleared by the next click that starts a download.
+   */
+  function showDownloadError(filename, err) {
+    const el = qs('download-error');
+    if (!el) return;
+    el.textContent =
+      'Download failed: ' + filename + ' — check your connection and try again.';
+    el.hidden = false;
   }
 
   // Enable the Restart button on every card whose group had a completed

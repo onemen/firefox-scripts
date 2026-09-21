@@ -1377,6 +1377,43 @@ async function runUiLayer(counter, opts, snapshotDir) {
         uiCheck(cards.badges.some(Boolean), 'UI-10', 'card status badges present');
       }
 
+      // Ingest pipeline (UI-12, added after the 2026-09-21 CSP regression):
+      // the tab's own JS must fetch the remote package URLs handed over by
+      // /api/package-urls and POST the bytes to the local server. UI-04/05
+      // only prove the page renders — they stayed green while
+      // connect-src 'self' silently blocked every remote fetch on CI builds.
+      // The tab publishes an explicit data-ingest state on <body>
+      // (pending → complete | failed | blocked); UI-12 waits for a TERMINAL
+      // state and passes only on 'complete' — a page that merely rendered
+      // cards can never satisfy this (CodeRabbit review finding, batch
+      // 2026-09-21: the previous banner/card heuristic was already true at
+      // UI-05 and would have passed with CSP blocking every fetch).
+      // NOTE: waitForCondition collapses the condition's value to a boolean,
+      // so the state itself is re-read after the wait (waitForCondition only
+      // tells us a terminal state was reached).
+      await waitForCondition(
+        page,
+        () => {
+          const s = document.body.getAttribute('data-ingest');
+          return s === 'complete' || s === 'failed' || s === 'blocked';
+        },
+        30_000,
+        'tab ingest to reach a terminal state (data-ingest)'
+      );
+      const ingestState = await page.evaluate(() => document.body.getAttribute('data-ingest'));
+      const bannerVisible = await page.evaluate(() => {
+        const banner = document.getElementById('network-error-banner');
+        // showNetworkError() sets display 'block' (hidden = 'none'); the
+        // banner is not a flex container itself (see .network-error-banner).
+        return Boolean(banner) && banner.style.display !== 'none';
+      });
+      uiCheck(
+        ingestState === 'complete' && !bannerVisible,
+        'UI-12',
+        'tab ingest completed: package zips fetched over the network and uploaded (CSP allows the remote hosts)',
+        `data-ingest=${ingestState}, network-error-banner visible=${bannerVisible}`
+      );
+
       // Screenshot
       const shotDir = path.join(REPO_ROOT, 'dist');
       fs.mkdirSync(shotDir, {recursive: true});

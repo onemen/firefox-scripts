@@ -3,9 +3,14 @@
 // declared a CSP, so both ran under the browser default).
 //
 // The policies are deliberately closed:
-// - installer page (installer/web/index.html): strictly same-origin — one
-//   external stylesheet, one external script, same-origin logos, fetches to
-//   /api/* (ADR 0010 token model).
+// - installer page (installer/web/index.html): same-origin for everything;
+//   connect-src ALSO allows the fixed remote hosts /api/package-urls hands
+//   the tab (ADR 0010: the C installer does zero network I/O — the tab
+//   fetches zips/manifest/releases from CORS-enabled hosts and POSTs the
+//   bytes to the local server). PR #228 set connect-src 'self' only, which
+//   silently broke every remote ingest on CI builds (caught 2026-09-21 in
+//   the dev-channel manual test); the contract test below now derives the
+//   host list from the config so the policy and the URLs can never drift.
 // - updater tab (tools/publish/remote-ui/updater.html): scripts/CSS/images
 //   come only from its own chrome://firefox-scripts package; package
 //   downloads (zips, helper, installer) go through the privileged Downloads
@@ -17,6 +22,7 @@
 
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
@@ -66,9 +72,9 @@ test('installer page: CSP is present and strictly same-origin', () => {
     "'self'",
     'logos are same-origin static assets under /logos/'
   );
-  assert.equal(
+  assert.match(
     directive(policy, 'connect-src'),
-    "'self'",
+    /(?:^| )'self'(?:$| )/,
     'API calls are same-origin /api/* (ADR 0010 session-token model)'
   );
   assert.equal(directive(policy, 'object-src'), "'none'", 'no plugin content');
@@ -161,6 +167,68 @@ test('updater.js helper checksum uses the portable nsICryptoHash hex conversion'
     !src.includes('hasher.finish(false)'),
     'finish(false) must not reappear in updater.js — it cannot produce hex'
   );
+});
+
+test('installer CSP connect-src covers every host /api/package-urls can emit (prod + dev)', () => {
+  // The contract behind the 2026-09-21 regression: PR #228 set
+  // connect-src 'self' only, which silently blocked every remote ingest on
+  // CI builds (the tab's JS fetches the URLs /api/package-urls hands over,
+  // ADR 0010 — the C installer itself does zero network I/O). This test
+  // derives the host set from the SAME config the C server is generated
+  // from, for both modes, and fails if the CSP allowlist lags behind.
+  // A new remote host means touching BOTH installer.conf consumers: the
+  // generated config (this derivation) and the CSP meta (installer/web/index.html).
+  const PROBE = join(ROOT, 'test/unit/publish/config-probe.mjs');
+  const run = (...args) => {
+    const stdout = execFileSync(process.execPath, [PROBE, ...args], {encoding: 'utf8'});
+    return JSON.parse(stdout).effective;
+  };
+
+  const policy = cspOf(INSTALLER_HTML, 'installer page');
+  const connectSrc = directive(policy, 'connect-src');
+  assert.match(connectSrc, /(?:^| )'self'(?:$| )/, '/api/* stays same-origin');
+  const allowedHosts = connectSrc
+    .split(/\s+/)
+    .filter(t => t.startsWith('https://'))
+    .map(t => t.replace('https://', ''));
+
+  // Hosts the tab is asked to fetch, per mode:
+  // - prod: ZIP/HASHES/PAGES base (gh-pages) + api.github.com (self-update,
+  //   Waterfox releases) + hg.mozilla.org (beta/devedition tags).
+  // - dev: jsDelivr (zips) + raw.githubusercontent.com (helper).
+  // Local snapshots are exempt by construction: localhost is same-origin.
+  const prod = run('--mode=prod');
+  const dev = run('--mode=dev');
+  const hostOf = url => new URL(url).host;
+  const required = new Set([
+    hostOf(prod.ZIP_BASE_URL),
+    hostOf(prod.HASHES_URL),
+    'api.github.com', // self-update releases + Waterfox releases
+    'hg.mozilla.org', // beta/devedition hg tags ingest
+    hostOf(dev.ZIP_BASE_URL),
+    hostOf(dev.HELPER_BASE_URL),
+  ]);
+
+  for (const host of required) {
+    assert.ok(
+      allowedHosts.includes(host),
+      `connect-src must allow https://${host} (emitted by /api/package-urls) — add it to the CSP meta in installer/web/index.html`
+    );
+  }
+  // And the allowlist stays minimal: no host outside the known set.
+  const known = new Set([
+    'onemen.github.io',
+    'api.github.com',
+    'cdn.jsdelivr.net',
+    'raw.githubusercontent.com',
+    'hg.mozilla.org',
+  ]);
+  for (const host of allowedHosts) {
+    assert.ok(
+      known.has(host),
+      `unexpected connect-src host ${host} — if a new remote host is genuinely needed, add it to this test's known set too`
+    );
+  }
 });
 
 test('no script-src allows unsafe-inline or unsafe-eval on either page', () => {

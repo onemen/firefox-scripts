@@ -3,12 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- CSP: strictly same-origin — /script.js, /style.css, /logos/*, /api/*
-         (session-token model, ADR 0010). No inline script/handlers.
+    <!-- CSP: same-origin for everything EXCEPT connect-src, which must also
+         allow the remote hosts /api/package-urls hands the tab (ADR 0010: the
+         C installer does zero network I/O — the tab fetches the zips/manifest
+         from these CORS-enabled hosts and POSTs the bytes to the local
+         server):
+         - onemen.github.io   gh-pages: zips + hashes.json (prod)
+         - api.github.com     self-update releases ingest + Waterfox releases
+         - cdn.jsdelivr.net   dev channel: zips (dev-build-* via jsDelivr)
+         - raw.githubusercontent.com  dev channel: helper binary (#275)
+         - hg.mozilla.org     Firefox beta/devedition hg tags ingest
+         PR #228 originally set connect-src 'self' only, which silently broke
+         every remote ingest on CI builds (caught 2026-09-21 in the dev-channel
+         manual test). test/unit/publish/cspMeta.test.mjs pins this list
+         against the hosts /api/package-urls can actually emit — add the host
+         there AND here when a new one appears.
          frame-ancestors is meta-ignored by spec; a header would need a C-server change (follow-up). -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' https://onemen.github.io https://api.github.com https://cdn.jsdelivr.net https://raw.githubusercontent.com https://hg.mozilla.org; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Firefox Scripts Installer &amp; Updater</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -200,6 +213,11 @@
           <a id="link-download-utils" class="download-link" href="#"
             >utils<span id="utils-download-date" class="download-link-date"></span
           ></a>
+          <!-- Inline download-failure message (2026-09-21: failed manual
+               downloads were console-only — a user clicking a dead link saw
+               nothing happen). Revealed by script.js on downloadPackage
+               rejection; cleared on the next successful click. -->
+          <span id="download-error" class="download-error" hidden="hidden"></span>
         </div>
       </div>
 
