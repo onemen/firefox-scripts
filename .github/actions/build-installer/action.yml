@@ -79,7 +79,7 @@ runs:
       shell: bash
       run: |
         if compgen -G "dist/dev-*/hashes.json" > /dev/null; then
-          for f in dist/dev-/*-dev.zip dist/dev-*/hashes.json; do
+          for f in dist/dev-*/*-dev.zip dist/dev-*/hashes.json; do
             [ -f "$f" ] && cp "$f" dist/installer/ && echo "staged: dist/installer/$(basename "$f")"
           done
         else
