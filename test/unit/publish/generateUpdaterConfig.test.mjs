@@ -47,6 +47,12 @@ test('applyDevOverrides rewrites URLs to the dev-build jsDelivr base', () => {
     /^https:\/\/cdn\.jsdelivr\.net\/gh\/onemen\/firefox-scripts@dev-build-/
   );
   assert.equal(dev.HASHES_URL, `${dev.ZIP_BASE_URL}/hashes.json`);
+  // The helper base must NOT be the jsDelivr CDN: jsDelivr refuses executables
+  // (403 on any .exe), which broke the dev helper path end to end (2026-09-21).
+  assert.match(
+    dev.HELPER_BASE_URL,
+    /^https:\/\/raw\.githubusercontent\.com\/onemen\/firefox-scripts\/dev-build-/
+  );
 });
 
 test('applyInstallerLocalOverrides points the C installer at localhost', () => {
