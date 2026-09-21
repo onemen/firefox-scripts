@@ -64,10 +64,14 @@ const SCRIPT_PARTS = [
 
 /**
  * Build the served script.js from the phase parts (fail fast on a missing part
- * — a silent skip would ship a UI missing a phase). Syntax-checks the exact
- * concatenation: the parts are IIFE fragments (00-head opens the IIFE, 50-init
- * closes it) and cannot be parsed individually, so this is the only parse gate
- * the sources get — eslint/prettier deliberately skip them.
+ * — a silent skip would ship a UI missing a phase). Each part's trailing blank
+ * line is trimmed before the join: prettier's only finding on the built concat
+ * was one empty line at every part seam (audit 2026-09-18 — the gate on the
+ * built artifact lands with #225), so trimming here keeps the embedded bytes
+ * prettier-clean by construction. Syntax-checks the exact concatenation: the
+ * parts are IIFE fragments (00-head opens the IIFE, 50-init closes it) and
+ * cannot be parsed individually, so this is the only parse gate the sources get
+ * — eslint/prettier deliberately skip them.
  */
 function buildScriptJs() {
   const parts = SCRIPT_PARTS.map(part => {
@@ -77,7 +81,9 @@ function buildScriptJs() {
         `installer/web/script/${part} is missing — the built script.js would lose a phase`
       );
     }
-    return fs.readFileSync(partPath, 'utf-8');
+    // Trim trailing whitespace per part (UTF-8 BOM included) so the seams stay
+    // clean no matter how an editor leaves the fragments.
+    return fs.readFileSync(partPath, 'utf-8').replace(/[\s\uFEFF\xA0]+$/u, '');
   });
   const built = parts.join('\n');
   new Script(built); // throws on a syntax error in the served asset
