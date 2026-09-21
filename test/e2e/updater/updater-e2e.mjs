@@ -489,23 +489,22 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
     const levelMatch = / (error|debug|info|warn) \[/.exec(line);
     const rest = levelMatch ? line.slice(levelMatch.index + 1) : line;
     // The probe appends " [source:line] msg" for script errors; the updater
-    // scripts surface as chrome://firefox-scripts/... sources.
+    // scripts surface as chrome://firefox-scripts/... sources. The hit rule:
+    // chrome://firefox-scripts at ANY level (logError is console.debug now);
+    // a foreign source is only a hit at error level AND only when a source
+    // tag actually matched (a level word alone, e.g. Telemetry's "ERROR\t",
+    // inside a foreign error line with a resource:// tag, is NOT a hit —
+    // matches the old net, which required the chrome:// tag to push).
     const srcMatch = / \[(chrome:\/\/[^\]:]+[^\]]*?):\d+\]/.exec(rest);
     const source = srcMatch ? srcMatch[1] : '';
     const level = levelMatch ? levelMatch[1] : '';
-    if (source.includes('chrome://firefox-scripts')) {
-      // Ours at any level (debug/info included) — a hit below.
-    } else {
-      // Foreign source: only error-level foreign lines stay in scope (legacy
-      // behavior), and even they are pushed with their (non-ours) source so
-      // the caller sees them; info/debug foreign noise is skipped.
-      if (level !== 'error') continue;
-    }
+    const ours = source.includes('chrome://firefox-scripts');
+    if (!ours && (level !== 'error' || !source)) continue;
     // Allowlist matches the FULL line (source AND message): scenario 9's
     // expected headless-elevation failure IS a chrome://firefox-scripts
     // logError and must be exemptable without masking any other error.
     if (allows.some(re => re.test(line))) continue;
-    hits.push({line: line.trim(), level: level || 'error', source});
+    hits.push({line: line.trim(), level: ours ? level : 'error', source});
   }
   return hits;
 }
