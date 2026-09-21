@@ -2042,12 +2042,27 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
           'Elevation was cancelled',
           'Admin copy helper failed',
         ]);
-        const configAfterNoPage = fs.readFileSync(seededFiles[0]);
-        check(
-          counter,
-          configAfterNoPage.equals(configBefore),
-          `GreD config unchanged (no copy without elevation, ${label})`
-        );
+        // The deny must come off BEFORE the config read (observed 2026-09-22:
+        // even a read can EPERM while the deny ACE is applied). The finally's
+        // removal is idempotent, so a plain second attempt after this is safe.
+        try {
+          icacls([seededFiles[0], '/remove:d', process.env.USERNAME]);
+        } catch {
+          /* restored again in the finally */
+        }
+        let configAfterNoPage = null;
+        try {
+          configAfterNoPage = fs.readFileSync(seededFiles[0]);
+        } catch (err) {
+          check(counter, false, `GreD config readable (${label})`, err.message);
+        }
+        if (configAfterNoPage) {
+          check(
+            counter,
+            configAfterNoPage.equals(configBefore),
+            `GreD config unchanged (no copy without elevation, ${label})`
+          );
+        }
         return seeded.profileDir;
       }
       check(counter, clicked, `config install clicked (${label})`);
@@ -2241,9 +2256,28 @@ async function run() {
       {
         id: '9',
         run: async () => {
-          profiles.push(
-            await runHelperChecksumScenario(counter, opts, snapshotDir, 'helper-checksum-win')
+          // Same startup-race retry as scenario 1: the tab-open proof waits on
+          // the scheduler's first tick + Firefox's lazy prefs.js flush; on a
+          // busy runner either can miss the window (observed locally 2026-09-22:
+          // green → red → red on identical code). A fresh profile + relaunch
+          // is the proven remedy.
+          const failedBefore = counter.failed;
+          let result = await runHelperChecksumScenario(
+            counter,
+            opts,
+            snapshotDir,
+            'helper-checksum-win'
           );
+          if (counter.failed > failedBefore) {
+            console.log('  [diag] attempt 1 failed — retrying scenario 9 with a fresh profile');
+            result = await runHelperChecksumScenario(
+              counter,
+              opts,
+              snapshotDir,
+              'helper-checksum-win'
+            );
+          }
+          profiles.push(result);
         },
       },
     ];
