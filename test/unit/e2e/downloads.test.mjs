@@ -25,6 +25,7 @@ const {
   downloadDir,
   downloadTo,
   isFileLockError,
+  isMozillaPortableInstall,
   nsisPortableArgs,
   parseFirefoxVersion,
   portableBinaryPath,
@@ -731,6 +732,36 @@ test('runNsisInstallerWithRetry: gives up after the last attempt (persistent EBU
 // The skip-if-cached check must target the launcher FILE. The Linux tarball's
 // top-level entry is a `firefox/` DIRECTORY — a path/basename collision that
 // existsSync-based checking cannot survive (ubuntu portable leg, 2026-09-13).
+
+test('isMozillaPortableInstall: official builds go portable only with a dir (all 3 OSes)', () => {
+  const dir = '/p/portable';
+  // No PORTABLE_BROWSER_DIR → the system recipe runs (registered install).
+  for (const browser of ['firefox', 'firefox-dev', 'nightly']) {
+    assert.equal(isMozillaPortableInstall(browser, 'win', ''), false, `${browser} win, no dir`);
+  }
+  // Official NSIS installers honour /D= — the same mechanism the fork recipe
+  // and installPortableFirefox already use.
+  for (const browser of ['firefox', 'firefox-dev', 'nightly']) {
+    assert.equal(isMozillaPortableInstall(browser, 'win', dir), true, `${browser} win`);
+    assert.equal(isMozillaPortableInstall(browser, 'linux', dir), true, `${browser} linux tarball`);
+    assert.equal(isMozillaPortableInstall(browser, 'mac', dir), true, `${browser} mac dmg`);
+  }
+});
+
+test('isMozillaPortableInstall: forks and snap keep their own paths', () => {
+  const dir = '/p/portable';
+  // Forks install portably through installForkPortable (their recipe already
+  // declares portable: true), so the Mozilla route must not claim them.
+  for (const browser of ['zen', 'floorp', 'waterfox']) {
+    assert.equal(isMozillaPortableInstall(browser, 'win', dir), false, `${browser} fork route`);
+  }
+  // LibreWolf has no portable recipe at all (see the fork-portable test).
+  assert.equal(isMozillaPortableInstall('librewolf', 'win', dir), false, 'librewolf');
+  // The snap recipe installs via snapd; a portable dir must not hijack it.
+  assert.equal(isMozillaPortableInstall('firefox-snap', 'linux', dir), false, 'snap');
+  // Unknown keys and platforms without a recipe stay on the system route.
+  assert.equal(isMozillaPortableInstall('nope', 'win', dir), false, 'unknown browser');
+});
 
 test('portableBinaryPath: launcher file per platform (not the top-level dir)', () => {
   assert.equal(portableBinaryPath('/p', 'linux'), path.join('/p', 'firefox', 'firefox'));

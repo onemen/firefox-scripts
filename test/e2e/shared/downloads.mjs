@@ -705,6 +705,37 @@ function runSilentInstaller(exe, args) {
   runInstallerWithRetry(`"${exe}" ${args.join(' ')}`);
 }
 
+/**
+ * True when a Mozilla official build (firefox, firefox-dev, nightly — and the
+ * ESR keys) should be installed into `PORTABLE_BROWSER_DIR` instead of the
+ * system location.
+ *
+ * The local updater E2E seeds `config.js` into the browser's install dir, so it
+ * needs a GreD this account can write: CI's runners are admins and can use an
+ * installed browser, a normal account cannot (`pnpm e2e:portable` installs a
+ * user-owned copy). Same official artifacts either way — NSIS `/D=` on Windows,
+ * the tarball on Linux, the DMG on macOS. `snap` and the forks' own `portable:
+ * true` recipe opt out (they have their own paths).
+ *
+ * Pure, so the decision table is unit-tested without network access.
+ *
+ * @param {string} browser downloads.mjs browser key
+ * @param {string} osKey `win` | `mac` | `linux`
+ * @param {string} [portableDir]
+ * @returns {boolean}
+ */
+export function isMozillaPortableInstall(
+  browser,
+  osKey,
+  portableDir = process.env.PORTABLE_BROWSER_DIR
+) {
+  if (!portableDir) return false;
+  const recipe = downloadsEntry(browser)?.install?.[osKey];
+  if (!recipe || recipe.portable || recipe.snap) return false;
+  if (osKey === 'win') return Boolean(recipe.url && recipe.args);
+  return Boolean(recipe.tarball || recipe.url);
+}
+
 /** The launcher file each portable install produces, per platform. */
 export function portableBinaryPath(dest, platform) {
   return (
@@ -1048,7 +1079,7 @@ export async function installBrowser(browser, platform = process.platform) {
     }
     return binary;
   }
-  if (browser === 'firefox' && process.env.PORTABLE_BROWSER_DIR) {
+  if (isMozillaPortableInstall(browser, key)) {
     const url = recipe.tarball || recipe.url;
     const binary = await installPortableFirefox(
       url,
