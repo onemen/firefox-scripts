@@ -110,6 +110,7 @@ import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs'
 import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
+import {ledgerEntry, ledgerStats, ledgerTable, mergeLedger} from '../ci/avLedger.mjs';
 import {
   bold,
   detail,
@@ -1248,6 +1249,50 @@ async function main() {
         error('Refusing to publish — VirusTotal flagged a built binary.');
         process.exitCode = 1;
         return;
+      }
+
+      // Ledger the verdicts: an AV verdict is evidence about one hash, and this
+      // build's hashes are brand new, so the record is what makes a WDSI/AV
+      // clearance reusable and auditable across rebuilds (tools/ci/avLedger.mjs,
+      // surfaced by the `av-watchdog` published-binary re-scan).  Written even
+      // when every verdict is clean — "0 of 72 engines, at this time" is the
+      // evidence; skipped verdicts are recorded as unknown, never as clean.
+      const at = new Date().toISOString();
+      const entries = results.map(r =>
+        ledgerEntry({
+          file: path.basename(r.file),
+          sha256: r.sha256,
+          size: r.size,
+          verdict: r.error ? 'unknown' : r.verdict,
+          stats: r.stats,
+          flags: r.flags,
+          threshold: r.threshold,
+          source: 'publish',
+          at,
+          reason: r.error,
+        })
+      );
+      if (entries.length > 0) {
+        const ledgerFile = path.join(DIST_ROOT, 'vt-ledger.json');
+        const prev =
+          fs.existsSync(ledgerFile) ? JSON.parse(fs.readFileSync(ledgerFile, 'utf-8')) : null;
+        const ledger = mergeLedger(prev, entries, {at});
+        fs.mkdirSync(DIST_ROOT, {recursive: true});
+        fs.writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2) + '\n');
+        const stats = ledgerStats(ledger);
+        info(
+          `  ledger: ${path.relative(REPO_ROOT, ledgerFile)} — ${stats.total} hash(es), ` +
+            `${stats.warn} warn / ${stats.fail} fail / ${stats.unknown} unknown`
+        );
+        // The run summary is where an operator actually looks after a publish
+        // (the warn band — 1-2 engines, below the fail threshold — is otherwise
+        // only in the step log).
+        if (process.env.GITHUB_STEP_SUMMARY) {
+          fs.appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            `## VirusTotal verdicts (${REF_NAME}@${REF_SHA.slice(0, 7)})\n\n${ledgerTable(ledger)}\n`
+          );
+        }
       }
     }
 
