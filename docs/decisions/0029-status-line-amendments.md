@@ -2,6 +2,11 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-16
+- **Amended:** 2026-09-22 — the same reciprocity rule now covers `Supersedes:` lines (a
+  `superseded by [Y]` status requires Y to declare the replacement), and a superseded record must be
+  listed under the index's `## Historical` heading, not the steering list. A scoped reversal is
+  therefore expressed from both ends: the still-valid clauses have a written home in the record that
+  replaces them.
 - **Amends:** [0019](./0019-release-versioning.md) (its 2026-09-12 / 2026-09-13 amendment sections),
   [0020](./0020-local-agent-ai-review.md) (its inline **Amended** prose),
   [0026](./0026-publish-channels-and-dead-channel-fallback.md) (its in-place partial supersede),

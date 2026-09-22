@@ -86,9 +86,11 @@ usually covers the need.
 - Template: `docs/decisions/0000-template.md` — copy to the next unused `NNNN` with a kebab-case
   slug; keep the record to roughly half a page (Context / Decision / Consequences).
 - One decision per record. Supersede, don't edit: mark the old record `superseded by NNNN` and list
-  it under the index's Historical section. An additive amendment keeps its record and is declared
-  with `Amends:` / `Amended:` status lines (ADR 0029) — the pair must be reciprocal, which
-  `pnpm check:decisions` enforces.
+  it under the index's Historical section, and declare the reversal from the other end with a
+  `Supersedes: [NNNN](...)` line on the replacing record (what it replaces, and what survives). An
+  additive amendment keeps its record and is declared with `Amends:` / `Amended:` status lines
+  (ADR 0029) — the pair must be reciprocal, which `pnpm check:decisions` enforces, along with the
+  supersede pair and the Historical placement.
 
 ## Skills
 
@@ -186,11 +188,12 @@ the core smoke tests — see issue #30.)
 
 Per [ADR 0020](./docs/decisions/0020-local-agent-ai-review.md), AI review is a local, agent-run
 step. When a PR is ready for review, the agent that created it runs `pnpm review:local`, assesses
-each finding right / wrong / useless, and posts each accepted finding as its own
-line-anchored,individually resolvable PR review thread (fallback: one `gh pr review <n> --comment`
-body; never `gh pr comment`), resolving each thread as its fix lands and every remaining thread
-before merging (main requires conversation resolution). Every agent-posted review begins with a
-one-line 🤖 provenance marker (e.g.
+each finding right / wrong / useless — quoting the disputed line, on the PR's own head, before
+rejecting one (an unquoted "wrong" is unverified, not disproved) — and posts each accepted finding
+as its own line-anchored,individually resolvable PR review thread (fallback: one
+`gh pr review <n> --comment` body; never `gh pr comment`), resolving each thread as its fix lands
+and every remaining thread before merging (main requires conversation resolution). Every
+agent-posted review begins with a one-line 🤖 provenance marker (e.g.
 `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`) — reviews go out
 under the user's own account, and the marker is what separates agent from human activity. The review
 is not gated on CI — it can help debug failing checks. Add no CI/repo AI secret. External review

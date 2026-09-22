@@ -288,6 +288,151 @@ test('superseded-by still validated alongside amendments', () => {
   }
 });
 
+// ── Supersede pairs: `Status: superseded by [Y]` ⇔ `Supersedes: [X]` ─────
+// A reversal must be expressed from both ends, and the superseded record must
+// leave the index's steering list. Otherwise a scoped reversal can ship with
+// its still-valid clauses lost and a dead decision still reading as current.
+
+function supersededRecord(number, slug, target) {
+  return record(number, slug).replace(
+    '- **Status:** accepted',
+    `- **Status:** superseded by [${target.num}](./${target.file})`
+  );
+}
+
+function indexWithSections({steering = [], historical = []}) {
+  const list = files => files.map(f => `- [${f}](./${f})`).join('\n');
+  return (
+    `# Decision records\n\n## Steering list\n\n${list(steering)}\n\n` +
+    `## Historical\n\n${list(historical)}\n`
+  );
+}
+
+test('supersede: reciprocal Supersedes line + Historical placement is accepted', () => {
+  const dir = makeDir({
+    'index.md': indexWithSections({
+      steering: ['0002-new.md'],
+      historical: ['0001-old.md'],
+    }),
+    '0001-old.md': supersededRecord('0001', 'old', {num: '0002', file: '0002-new.md'}),
+    '0002-new.md': record('0002', 'new', {
+      fields: '\n- **Supersedes:** [0001](./0001-old.md) (replaces the old rule)',
+    }),
+  });
+  try {
+    assert.deepEqual(errorsFor(checkDecisionsDir(dir)), []);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('supersede: a replacement with no Supersedes line fails, naming the file', () => {
+  const dir = makeDir({
+    'index.md': indexWithSections({
+      steering: ['0002-new.md'],
+      historical: ['0001-old.md'],
+    }),
+    '0001-old.md': supersededRecord('0001', 'old', {num: '0002', file: '0002-new.md'}),
+    '0002-new.md': record('0002', 'new'),
+  });
+  try {
+    const errors = errorsFor(checkDecisionsDir(dir));
+    assert.ok(
+      errors.some(
+        e => e.includes('0002-new.md') && e.includes('Supersedes: missing') && e.includes('0001')
+      ),
+      errors.join('\n')
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('supersede: a one-sided Supersedes link fails as not reciprocated', () => {
+  const dir = makeDir({
+    'index.md': indexWithSections({steering: ['0002-new.md']}),
+    '0001-old.md': record('0001', 'old'), // still accepted — the pair disagrees
+    '0002-new.md': record('0002', 'new', {
+      fields: '\n- **Supersedes:** [0001](./0001-old.md) (replaces the old rule)',
+    }),
+  });
+  try {
+    const errors = errorsFor(checkDecisionsDir(dir));
+    assert.ok(
+      errors.some(e => e.includes('0002-new.md') && e.includes('Supersedes 0001-old.md')),
+      errors.join('\n')
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('supersede: Supersedes targets are validated like amendment lines', () => {
+  const dir = makeDir({
+    'index.md': indexWithSections({steering: ['0002-new.md']}),
+    '0001-old.md': supersededRecord('0001', 'old', {num: '0002', file: '0002-new.md'}),
+    '0002-new.md': record('0002', 'new', {
+      fields:
+        '\n- **Supersedes:** [0099](./0099-ghost.md) (missing)\n' +
+        '- **Supersedes:** [0003](./0001-old.md) (number mismatch)\n' +
+        '- **Supersedes:** [0002](./0002-new.md) (self)\n' +
+        '- **Supersedes:** free prose with no link',
+    }),
+  });
+  try {
+    const errors = errorsFor(checkDecisionsDir(dir));
+    assert.ok(
+      errors.some(e => e.includes('target missing: ./0099-ghost.md')),
+      errors.join('\n')
+    );
+    assert.ok(
+      errors.some(e => e.includes('does not match the target filename')),
+      errors.join('\n')
+    );
+    assert.ok(
+      errors.some(e => e.includes('links to itself')),
+      errors.join('\n')
+    );
+    assert.ok(
+      errors.some(e => e.includes('declares no target')),
+      errors.join('\n')
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('supersede: a superseded record left in the steering list fails', () => {
+  const dir = makeDir({
+    'index.md': indexWithSections({steering: ['0001-old.md', '0002-new.md']}),
+    '0001-old.md': supersededRecord('0001', 'old', {num: '0002', file: '0002-new.md'}),
+    '0002-new.md': record('0002', 'new', {
+      fields: '\n- **Supersedes:** [0001](./0001-old.md) (replaces the old rule)',
+    }),
+  });
+  try {
+    const errors = errorsFor(checkDecisionsDir(dir));
+    assert.ok(
+      errors.some(e => e.includes('0001-old.md') && e.includes('not listed under "## Historical"')),
+      errors.join('\n')
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('supersede: an accepted record under Historical is allowed (no false positive)', () => {
+  const dir = makeDir({
+    'index.md': indexWithSections({historical: ['0001-kept.md']}),
+    '0001-kept.md': record('0001', 'kept'),
+  });
+  try {
+    assert.deepEqual(errorsFor(checkDecisionsDir(dir)), []);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('index.md must mention every record; broken relative links fail', () => {
   const dir = makeDir({
     'index.md': index(['0001-a.md']),
