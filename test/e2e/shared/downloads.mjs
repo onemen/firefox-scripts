@@ -1064,9 +1064,16 @@ async function installForkPortable(browser, recipe) {
   }
   let url;
   let sha256Url;
-  if (recipe.resolver) {
+  if (recipe.resolver || versionPinned()) {
     // Same fallback chain as the registered install (mirrors → ci-downloads →
     // cached previous installer), so a vendor outage degrades identically.
+    //
+    // The `versionPinned()` arm matters as much here as in the registered
+    // install: zen's and floorp's portable recipe otherwise carries the
+    // version-agnostic `/releases/latest/` URL, so a pinned portable leg would
+    // download the newest installer and label it the pinned version — the bug
+    // ADR 0023's strict-pin rule exists to prevent. Waterfox already proves the
+    // resolver path works with `/D=` extraction (resolver + portable today).
     const resolved = await resolveInstallerUrl(browser);
     url = resolved.url;
     sha256Url = resolved.sha256Url;
