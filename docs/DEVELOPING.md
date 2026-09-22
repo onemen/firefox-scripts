@@ -499,18 +499,28 @@ with `--scenario 1,4,5` (scenario 1 always runs all three variants — they shar
 ### Running the updater E2E locally (e.g. on Nightly, Windows)
 
 The scenarios write fx-folder's `config.js` into the browser's install dir, so the browser under
-test needs a **user-owned (portable) GreD** — the run refuses an admin-owned install (Program Files)
-up front instead of failing every scenario with EPERM. Point the harness at the browser under test
-with `FIREFOX_BINARY` (or `--firefox`); the snapshot is the newest `dist/` one (`--snapshot <dir>`
-picks explicitly, `--no-branch-check` accepts a snapshot from any branch — the direct script never
-branch-checks):
+test needs a **user-owned install dir**. CI's runners are admins and can write Program Files; a
+normal account cannot, and the scenarios then fail with `EPERM` — so install a portable copy first
+(the run warns when the GreD is not writable). `pnpm e2e:portable` downloads the browser's official
+build into `Documents/FireFox/portable/<browser>` (`~/.cache/firefox-scripts-e2e/<browser>` off
+Windows), reuses it on later runs, and prints the `FIREFOX_BINARY` line to export. Nothing is
+installed system-wide: on Windows the setup exe is **unpacked with 7z** (its `core` folder is the
+install dir) — the installer is never executed, so there is no Add/Remove Programs entry and no
+`Mozilla` registry keys; Linux uses the tarball and macOS the DMG, copied into the destination:
 
 ```bash
+pnpm e2e:portable nightly                    # or: firefox, firefox-dev, a fork
+#   → ✓ nightly ready: /c/Users/you/Documents/FireFox/portable/nightly/firefox.exe
+pnpm e2e:portable nightly --dir /c/tmp/portable-nightly   # explicit destination
+
+export FIREFOX_BINARY="/c/Users/you/Documents/FireFox/portable/nightly/firefox.exe"
 pnpm upload:local -- --mode=dev              # build the snapshot for this branch
-export FIREFOX_BINARY="/c/tmp/portable-fx/firefox.exe"   # a USER-OWNED (portable) copy
 pnpm test:e2e:updater -- --no-branch-check   # one updater leg on that browser
 pnpm test:e2e                                # installer + updater
 ```
+
+The snapshot is the newest `dist/` one (`--snapshot <dir>` picks explicitly, `--no-branch-check`
+accepts a snapshot from any branch — the direct script never branch-checks).
 
 `--keep-profile` keeps each scenario's profile for inspection, `--repeat 2` runs the whole selection
 twice (determinism check), `--scenario 1,4,5` narrows the run, and `--no-fail-fast` runs every
@@ -525,12 +535,12 @@ leg and self-skips elsewhere.
 
 It also needs a **user-owned install dir**, because the fixture has to write `config.js` into the
 browser's GreD. GitHub's Windows runners are admins and can write Program Files; a normal account
-cannot, so a local run against an installed browser is refused up front with a clear message — use a
-portable copy (`PORTABLE_BROWSER_DIR`, the same mechanism the portable legs use) or
-`--firefox <portable firefox.exe>`.
+cannot, so use a portable copy — `pnpm e2e:portable` installs one (see above).
 
 ```bash
-node test/e2e/updater/updater-e2e.mjs --firefox /path/to/portable/firefox.exe --scenario 9
+pnpm e2e:portable nightly
+node test/e2e/updater/updater-e2e.mjs --scenario 9 \
+  --firefox "$HOME/Documents/FireFox/portable/nightly/firefox.exe"
 ```
 
 What it can prove headless: the tab-open decision (proven by the probe mirror, or by the
