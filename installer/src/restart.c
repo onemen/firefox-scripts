@@ -40,18 +40,58 @@ static BOOL CALLBACK close_window_enum_proc(HWND hwnd, LPARAM lparam) {
 
 #ifdef _WIN32
 /**
+ * Creation time of `pid` in 100 ns FILETIME ticks, or 0 when it cannot be read
+ * (process already gone, or protected from us).
+ *
+ * Windows recycles process ids, so a pid read from a snapshot may name an
+ * unrelated process by the time we act on it.  A child is always created after
+ * its parent, so comparing creation times is what tells the two apart.
+ */
+static ULONGLONG process_creation_time(unsigned long pid) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+    if (!h) return 0;
+    FILETIME created, exited, kernel, user;
+    ULONGLONG ticks = 0;
+    if (GetProcessTimes(h, &created, &exited, &kernel, &user))
+        ticks = ((ULONGLONG)created.dwHighDateTime << 32) | created.dwLowDateTime;
+    CloseHandle(h);
+    return ticks;
+}
+
+/**
  * Terminate `pid` and its descendants, deepest first.
  *
  * `taskkill /T` used to do this; walking the process snapshot is equivalent
  * and avoids launching a command interpreter — the binary no longer spawns a
  * shell at all (see docs/DEVELOPING.md → AV false positives).  Children are
  * collected and killed before their parent so a dying parent cannot orphan
- * them mid-walk; Windows reuses process ids, so each level re-snapshots
- * immediately before use and the recursion depth is bounded.
+ * them mid-walk, and the recursion depth is bounded.
+ *
+ * `since` is the creation time of the oldest process this tree can contain
+ * (0 = unknown).  Ids are recycled, so a candidate created before `since`
+ * cannot be a descendant however the snapshot reads: it is left alone.  The
+ * kill re-reads the creation time from the handle it is about to terminate,
+ * which closes the window between the snapshot and the kill.
  */
-static void terminate_process_tree(unsigned long pid, int depth) {
+static void terminate_process_tree(unsigned long pid, ULONGLONG since, int depth) {
     if (depth > 8) return;
+    ULONGLONG started = process_creation_time(pid);
+    if (started == 0) {
+        // The caller owns `pid`, so depth 0 is terminated even when undatable; a
+        // child we cannot date is skipped — not killing an unverified process is
+        // the safe direction.
+        if (depth > 0) return;
+        log_msg("[restart] PID %lu cannot be dated — terminating it unverified\n",
+                (unsigned long)pid);
+    } else if (since != 0 && started < since) {
+        log_msg("[restart] PID %lu predates the process being closed — recycled id, leaving "
+                "it alone\n",
+                (unsigned long)pid);
+        return;
+    }
+    ULONGLONG floor = started ? started : since;
     DWORD kids[64];
+    ULONGLONG kids_since[64];
     int nkids = 0;
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot != INVALID_HANDLE_VALUE) {
@@ -59,17 +99,32 @@ static void terminate_process_tree(unsigned long pid, int depth) {
         pe.dwSize = sizeof(pe);
         if (Process32FirstW(snapshot, &pe)) {
             do {
-                if (pe.th32ProcessID != pe.th32ParentProcessID &&
-                    pe.th32ParentProcessID == (DWORD)pid && nkids < 64) {
-                    kids[nkids++] = pe.th32ProcessID;
-                }
+                if (pe.th32ProcessID == pe.th32ParentProcessID ||
+                    pe.th32ParentProcessID != (DWORD)pid || nkids >= 64)
+                    continue;
+                ULONGLONG kid = process_creation_time(pe.th32ProcessID);
+                if (kid == 0 || (floor != 0 && kid < floor)) continue;
+                kids[nkids] = pe.th32ProcessID;
+                kids_since[nkids] = kid;
+                nkids++;
             } while (Process32NextW(snapshot, &pe));
         }
         CloseHandle(snapshot);
     }
-    for (int i = 0; i < nkids; i++) terminate_process_tree(kids[i], depth + 1);
-    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, (DWORD)pid);
+    for (int i = 0; i < nkids; i++) terminate_process_tree(kids[i], kids_since[i], depth + 1);
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                           FALSE, (DWORD)pid);
     if (h) {
+        FILETIME created, exited, kernel, user;
+        ULONGLONG live = 0;
+        if (GetProcessTimes(h, &created, &exited, &kernel, &user))
+            live = ((ULONGLONG)created.dwHighDateTime << 32) | created.dwLowDateTime;
+        if (live != 0 && started != 0 && live != started) {
+            log_msg("[restart] PID %lu was recycled before the kill — not terminating it\n",
+                    (unsigned long)pid);
+            CloseHandle(h);
+            return;
+        }
         TerminateProcess(h, 1);
         WaitForSingleObject(h, 1000);
         CloseHandle(h);
@@ -80,9 +135,15 @@ static void terminate_process_tree(unsigned long pid, int depth) {
 // Wait up to wait_ms for the process to exit; force-kill the tree if it doesn't.
 #ifdef _WIN32
 static void wait_close_or_force(unsigned long pid, int wait_ms) {
+    // Creation time of the process being waited on: the floor for the tree below
+    // it, so a recycled id cannot be mistaken for part of this tree.
+    ULONGLONG started = 0;
     HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
                            FALSE, (DWORD)pid);
     if (h) {
+        FILETIME created, exited, kernel, user;
+        if (GetProcessTimes(h, &created, &exited, &kernel, &user))
+            started = ((ULONGLONG)created.dwHighDateTime << 32) | created.dwLowDateTime;
         if (WaitForSingleObject(h, (DWORD)wait_ms) == WAIT_OBJECT_0) {
             CloseHandle(h);
             return;  // exited cleanly
@@ -93,7 +154,7 @@ static void wait_close_or_force(unsigned long pid, int wait_ms) {
     }
     log_msg("[restart] PID %lu did not exit in %d ms — terminating its process tree\n",
             (unsigned long)pid, wait_ms);
-    terminate_process_tree(pid, 0);
+    terminate_process_tree(pid, started, 0);
     Sleep(300);
 }
 #endif
