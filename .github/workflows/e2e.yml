@@ -658,8 +658,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/snap-pkg
+          cd ~/snap-pkg
           # Already cached for this revision? Skip the store entirely.
-          if ls ~/snap-pkg/firefox_*.snap >/dev/null 2>&1; then
+          if ls firefox_*.snap >/dev/null 2>&1; then
             echo "cache hit: using cached .snap + assertion"
             echo "from-cache=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -670,9 +671,11 @@ jobs:
             exit 1
           fi
           # Two attempts, hard 8-min wall each: a hang must die before the
-          # 20-min job timeout so the diagnostic steps still run.
+          # 20-min job timeout so the diagnostic steps still run. cd + CWD
+          # output instead of `--directory` — that flag does not exist on the
+          # runner's snapd (first dispatch run: `unknown flag 'directory'`).
           for i in 1 2; do
-            if timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}" --channel=latest/stable --directory=~/snap-pkg; then
+            if timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}" --channel=latest/stable; then
               echo "from-cache=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -680,7 +683,7 @@ jobs:
             sleep 20
           done
           echo "::error::snap download failed after retry — trying cache fallback"
-          if ls ~/snap-pkg/firefox_*.snap >/dev/null 2>&1; then
+          if ls firefox_*.snap >/dev/null 2>&1; then
             echo "::warning::store down — proceeding with an OLDER cached revision"
             echo "from-cache=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -747,8 +750,13 @@ jobs:
             exit 1
           }
 
+      # Snapshot gate for the two E2E steps below: when the download step
+      # already failed (e.g. no cache and the store down), the E2E steps would
+      # only hit the misleading "No snapshot found" — skip them instead; the
+      # leg is failed anyway and the store-watch job files the issue.
       - name: Download dev snapshot
-        if: steps.snapd.outputs.available == 'true'
+        id: snapshot
+        if: steps.snapd.outputs.available == 'true' && !failure() && !cancelled()
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dev-snapshot
@@ -796,7 +804,7 @@ jobs:
       # assertions (cards, badges, screenshot) still run.  The relaunch caveat
       # is documented in docs/future-work.md §2.
       - name: Run installer E2E (snap Firefox)
-        if: steps.snapd.outputs.available == 'true'
+        if: steps.snapd.outputs.available == 'true' && steps.snapshot.conclusion == 'success'
         run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui --ui-fallback-open
 
       # Updater flow against the snap build: tab opens, config seeds into the
@@ -806,7 +814,7 @@ jobs:
       # Runs even when the installer step above failed: each half of the leg
       # reports independently, so one failure never hides the other's result.
       - name: Run updater E2E (snap Firefox)
-        if: always() && steps.snapd.outputs.available == 'true'
+        if: always() && steps.snapshot.conclusion == 'success'
         run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
 
       # Store-down signal for the follow-up job: the E2E workflow's token is
