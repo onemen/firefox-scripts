@@ -19,6 +19,20 @@ task, trivially deletable, out of the parent dir). A stale-husk sweep after thre
 however small — in a task worktree; never edit files in the shared checkout. It is the one place
 other threads and the user rely on to stay stable, and "small" edits collide with parallel work.
 
+**Guard it.** The way this rule breaks is a relative path that resolves a level up — a bare
+`docs/x.md` instead of `../worktrees/<slug>/docs/x.md` — and both checkouts usually sit on the same
+commit, so reading the file back proves nothing (the text looks right in either tree). Snapshot the
+shared checkout when the task starts and check it before finishing:
+
+```bash
+node tools/check-main-clean.mjs --record   # task start; --record covers deliberate WIP left there
+node tools/check-main-clean.mjs            # before finishing — exits 1 on anything it gained
+```
+
+With no baseline recorded it fails on ANY dirty path in the shared checkout, which is the intended
+default. Recovery is the usual one: check the diff really is yours, move it into the worktree, then
+`git -C <main> checkout -- <paths>`.
+
 **Removing a worktree (Windows gotcha):** `git worktree remove` — even `--force` — can silently
 leave the pnpm `node_modules` behind: the deep `.pnpm` paths exceed `MAX_PATH`, part of the
 filesystem deletion fails, and git deregisters the worktree anyway. `git worktree list` then looks
@@ -69,6 +83,12 @@ task worktrees.)
 
 - Make the **smallest appropriate change** — prefer a single-file edit over multi-file refactoring;
   no unrelated formatting, renaming, dependency bumps, or architectural changes.
+- **Format only through the project's tooling** — `pnpm format:fix` to apply, `pnpm format` to
+  check; the same for C (clang-format runs from the Makefile/`pnpm`, never by hand). A bare
+  `prettier --write <file>` on its own does **not** read `config/prettier.config.js` or
+  `config/.prettierignore`, so it reformats files the gates deliberately leave alone: on 2026-09-22
+  that turned a 90-line e2e change into a 777-line diff in which the real change is invisible to a
+  reviewer, and the reformat had to be reverted by hand.
 - Preserve upstream provenance in `core/`: avoid unrelated changes to upstream-derived files
   (outside `updater/`, from xiaoxiaoflood/firefox-scripts, MPL-2.0).
 - Conventions matter (see AGENTS.md → Conventions): `.sys.mjs` via `ChromeUtils.importESModule` with
