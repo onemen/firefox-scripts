@@ -183,8 +183,10 @@ export function mergeLedger(ledger, entries, {at}) {
       firstSeen: prev.firstSeen ?? entry.firstSeen,
       observations: (prev.observations ?? 1) + 1,
       lastVerdict: entry.verdict,
-      // Keep the engines that were ever reported, newest first — the union is
-      // what a WDSI submission lists.
+      // Keep every engine that was ever reported: the union is what a WDSI
+      // submission lists, and dropping a flag the moment one scan goes quiet
+      // would erase the evidence. Sorted only so the ledger is stable across
+      // runs — this is not a recency order.
       flags: [...new Set([...(entry.flags ?? []), ...(prev.flags ?? [])])].sort(),
     };
     if (prev.reason && !entry.reason) delete files[entry.sha256].reason;
