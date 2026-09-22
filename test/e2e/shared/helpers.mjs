@@ -204,6 +204,11 @@ export async function launchFirefox(
     userDataDir: profileDir,
     headless,
     protocol: 'webDriverBiDi',
+    // Default is 180 s per protocol command; session.new can hang that long
+    // when a Firefox start wedges (observed 2026-09-22, reuse-path
+    // measurement). Cap it so a wedged start surfaces as an error the
+    // scenario can retry instead of stalling the whole leg.
+    protocolTimeout: 45_000,
     // Puppeteer overwrites user.js with its own preferences before launch
     // (createProfile -> syncPreferences), so any prefs the caller needs must
     // be injected through this option — a caller-written user.js would be
