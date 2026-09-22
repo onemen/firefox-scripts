@@ -1,6 +1,7 @@
 # 0008: Generated files untracked, regenerated on demand
 
 - **Status:** accepted
+- **Supersedes:** [0004](./0004-commit-generated-files.md) (committed generated files)
 - **Date:** 2026-08-18
 - **Amended:** 2026-09-16 — the source-coverage mapping is no longer hand-maintained:
   `tools/publish/generatedRegistry.mjs` is the single registry (generated files, their shipping
