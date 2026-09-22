@@ -20,9 +20,12 @@
  *        downloads the installer once, hashes it and records {version, size,
  *        sha256} in the baseline (.watchdog/baseline.json, stored in the
  *        Actions cache). Same-version runs re-check only the 1 KB range, but
- *        flag a size change (binary replaced without a bump). Each run logs the
- *        baseline's cache-hit status and age, so a silently evicted cache is
- *        visible instead of masquerading as a first run.
+ *        flag a size change (binary replaced without a bump) — except the
+ *        rolling binaries (nightly: fresh binaries inside one N.0a1 window,
+ *        #276), where the replacement is re-verified with a full download
+ *        instead of flagged. Each run logs the baseline's cache-hit status and
+ *        age, so a silently evicted cache is visible instead of masquerading as
+ *        a first run.
  *   4. META ISSUE — one `[url-watchdog] status` issue is kept current after every
  *        run: a per-browser status table (last verified version, size +
  *        SHA-256, the run that last checked it, a status tag, the CI-cache
@@ -32,9 +35,9 @@
  *        durable SHA-256 ledger (search `label:url-watchdog` for it).
  *   5. ERROR ISSUES — rot and same-version size changes still open their own issue,
  *        deduped per browser (the exact issue title is matched against open
- *        issues carrying the `url-watchdog` label); the watchdog auto-closes
- *        any open failure issue for a browser once a later run checks it green
- *        again.
+ *        issues carrying the `url-watchdog` label; rolling binaries like
+ *        nightly are excluded, #276); the watchdog auto-closes any open failure
+ *        issue for a browser once a later run checks it green again.
  *   6. E2E DISPATCH — a new release triggers the browser E2E (issue #143): fork
  *        browsers get a single-browser dispatch (the ADR 0021 manual escape),
  *        the hard-gate browsers share one full dispatch whose record-validation
@@ -87,6 +90,7 @@ import {
   esrLedgerNames,
   formatAge,
   isFailureIssueTitle,
+  isRollingBinary,
   issueBody,
   issueTitle,
   planDispatches,
@@ -122,6 +126,7 @@ export {
   formatRunDate,
   formatSize,
   isFailureIssueTitle,
+  isRollingBinary,
   issueBody,
   issueTitle,
   planDispatches,
@@ -695,10 +700,15 @@ export async function main() {
     const prev = prMode ? undefined : baseline[browser];
     const change = compareBaseline(prev, {version});
 
-    // Endpoint check (1 KB ranged GET) for every browser.
+    // Endpoint check (1 KB ranged GET) for every browser. `url` is resolved
+    // ONCE here and reused by the full-download verifications below: a second
+    // resolution could transiently fail after the endpoint check succeeded,
+    // and an unhandled rejection would abort runCheck without recording
+    // download-failed or publishing the rot finding.
     let endpoint;
+    let url;
     try {
-      const url = await resolveDownloadUrl(browser, 'win32');
+      url = await resolveDownloadUrl(browser, 'win32');
       console.log(`  url ${url}`);
       endpoint = await checkEndpoint(url);
     } catch (err) {
@@ -726,10 +736,7 @@ export async function main() {
         `  ${change === 'first-run' ? 'first run' : `new version: ${prev.version} → ${version}`}` +
           ' — verifying full download + SHA-256'
       );
-      const verified = await verifyFullDownload(
-        await resolveDownloadUrl(browser, 'win32'),
-        browser
-      );
+      const verified = await verifyFullDownload(url, browser);
       if (!verified.ok) {
         console.log(`  ✗ ${verified.reason}`);
         // Mark the failure so the meta issue does not render this browser as
@@ -770,6 +777,36 @@ export async function main() {
     // instead of overwriting it with 0 and raising a false size-change.
     const total = endpoint.total || 0;
     const sizeChanged = Boolean(total && prev.size && prev.size !== total);
+
+    // Nightly rolls fresh binaries inside one N.0a1 version window — N only
+    // moves every ~2 weeks, so a same-version size change is by design, not a
+    // tamper signal (#276). Re-verify the replacement exactly like a version
+    // bump and record the fresh hash: the ledger stays honest, no issue opens,
+    // and the next run sees a matching size and goes 'ok'.
+    if (sizeChanged && isRollingBinary(browser)) {
+      console.log(
+        `  nightly replaced its binary within the same ${version} window — re-verifying full download + SHA-256`
+      );
+      const verified = await verifyFullDownload(url, browser);
+      if (!verified.ok) {
+        console.log(`  ✗ ${verified.reason}`);
+        results[browser] = {status: 'download-failed'};
+        findings.push({kind: 'rot', browser, reason: verified.reason, version});
+        return;
+      }
+      console.log(`  sha256 ${verified.sha256}`);
+      next[browser] = {
+        version,
+        size: verified.size,
+        sha256: verified.sha256,
+        downloadMs: verified.downloadMs,
+        checkedAt: new Date().toISOString(),
+        checkedUrl: runUrl,
+      };
+      results[browser] = {status: 'ok'};
+      return;
+    }
+
     next[browser] = {
       version,
       // Keep the last VERIFIED size when the served binary changed size: the

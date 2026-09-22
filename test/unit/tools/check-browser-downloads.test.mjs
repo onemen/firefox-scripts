@@ -25,6 +25,7 @@ const {
   formatRunDate,
   formatSize,
   isFailureIssueTitle,
+  isRollingBinary,
   issueBody,
   issueTitle,
   parseContentRange,
@@ -44,6 +45,24 @@ test('compareBaseline: first run, new version, unchanged', () => {
   assert.equal(compareBaseline(null, {version: '154.0.1'}), 'first-run');
   assert.equal(compareBaseline({version: '153.0'}, {version: '154.0.1'}), 'new-version');
   assert.equal(compareBaseline({version: '154.0.1'}, {version: '154.0.1'}), 'ok');
+});
+
+test('isRollingBinary: nightly replaces binaries within one N.0a1 window (#276)', () => {
+  assert.equal(isRollingBinary('nightly'), true);
+  assert.equal(isRollingBinary('firefox'), false);
+  assert.equal(isRollingBinary('firefox-dev'), false);
+  assert.equal(isRollingBinary('zen'), false);
+});
+
+test('issueTitle: a rolling binary never produces a size-change title', () => {
+  // The dedup key for the auto-opened issue derives from the finding kind; the
+  // watchdog must not even reach that path for nightly (the runCheck branch
+  // re-verifies instead), so the title for the rolling browser stays unused —
+  // pinned here as documentation of the contract.
+  assert.equal(
+    issueTitle('size-change', 'firefox'),
+    '[url-watchdog] firefox same version, binary size changed'
+  );
 });
 
 test('collectDrift: unchanged baseline yields no drift', () => {

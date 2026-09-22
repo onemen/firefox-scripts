@@ -701,9 +701,11 @@ stay SHA-pinned (`.github/dependabot.yml`).
   download endpoint with a 1 KB ranged GET. Each new release is downloaded once, SHA-256'd and
   folded into the `[url-watchdog] status` meta issue (per-browser status table + version history —
   the dashboard and the SHA-256 ledger in one place). Opens issues on rot (404, HTML error page,
-  changed API shape) and same-version binary size changes. Each run logs the baseline's cache-hit
-  status and age, so a silently evicted Actions cache is visible instead of masquerading as a first
-  run. The PR mode (`--pr`) is stateless, always green, and surfaces findings as annotations. Run
+  changed API shape) and same-version binary size changes — except nightly, whose vendor replaces
+  the binary within one N.0a1 window by design (#276): there the watchdog re-verifies the
+  replacement with a full download + SHA-256 instead. Each run logs the baseline's cache-hit status
+  and age, so a silently evicted Actions cache is visible instead of masquerading as a first run.
+  The PR mode (`--pr`) is stateless, always green, and surfaces findings as annotations. Run
   manually via `workflow_dispatch`, or locally with
   `node tools/check-browser-downloads.mjs --dry-run`. Its pure reporting layer — the domain
   constants, drift classification, the E2E dispatch planner, and all GitHub-visible rendering
