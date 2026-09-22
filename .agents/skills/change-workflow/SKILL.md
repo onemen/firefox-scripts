@@ -69,6 +69,12 @@ task worktrees.)
 
 - Make the **smallest appropriate change** — prefer a single-file edit over multi-file refactoring;
   no unrelated formatting, renaming, dependency bumps, or architectural changes.
+- **Format only through the project's tooling** — `pnpm format:fix` to apply, `pnpm format` to
+  check; the same for C (clang-format runs from the Makefile/`pnpm`, never by hand). A bare
+  `prettier --write <file>` on its own does **not** read `config/prettier.config.js` or
+  `config/.prettierignore`, so it reformats files the gates deliberately leave alone: on 2026-09-22
+  that turned a 90-line e2e change into a 777-line diff in which the real change is invisible to a
+  reviewer, and the reformat had to be reverted by hand.
 - Preserve upstream provenance in `core/`: avoid unrelated changes to upstream-derived files
   (outside `updater/`, from xiaoxiaoflood/firefox-scripts, MPL-2.0).
 - Conventions matter (see AGENTS.md → Conventions): `.sys.mjs` via `ChromeUtils.importESModule` with
