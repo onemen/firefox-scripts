@@ -8,9 +8,11 @@
  * the browser's install dir (the scheduler only runs from there). CI's runners
  * are admins and can write `Program Files` / `/Applications`; a normal account
  * cannot, and the scenarios then fail with `EPERM` — so a local run needs a
- * browser the account owns. This installs the official build with NSIS `/D=`
- * (Windows), the Linux tarball or the macOS DMG into a directory you own, then
- * prints the `FIREFOX_BINARY` line the harness reads.
+ * browser the account owns. On Windows the official setup exe is downloaded and
+ * UNPACKED with 7z (its `core` folder is the install dir) — the installer is
+ * never executed, so nothing is registered: no Add/Remove Programs entry, no
+ * `Mozilla` registry keys. Linux/macOS install the tarball/DMG into a directory
+ * you own. The script then prints the `FIREFOX_BINARY` line the harness reads.
  *
  * Usage (see the README section in docs/DEVELOPING.md for the full recipe):
  *
@@ -90,8 +92,8 @@ async function main() {
   const browser = opts.browser || 'nightly';
   const dest = path.resolve(opts.dir || defaultPortableDir(browser));
 
-  // installBrowser() reads this to pick the portable route (the NSIS /D= path
-  // on Windows, the tarball/DMG elsewhere) instead of the system location.
+  // installBrowser() reads this to pick the portable route (the 7z extract
+  // path on Windows, the tarball/DMG elsewhere) instead of the system location.
   process.env.PORTABLE_BROWSER_DIR = dest;
 
   console.log(`Installing ${browser} into ${dest}`);

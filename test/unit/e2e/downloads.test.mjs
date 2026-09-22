@@ -30,8 +30,10 @@ const {
   parseFirefoxVersion,
   portableBinaryPath,
   resolveDownloadUrl,
+  run7zWithRetry,
   runInstallerWithRetry,
   runNsisInstallerWithRetry,
+  unpackNsisCore,
 } = await import(downloadsUrl);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
@@ -739,8 +741,8 @@ test('isMozillaPortableInstall: official builds go portable only with a dir (all
   for (const browser of ['firefox', 'firefox-dev', 'nightly']) {
     assert.equal(isMozillaPortableInstall(browser, 'win', ''), false, `${browser} win, no dir`);
   }
-  // Official NSIS installers honour /D= — the same mechanism the fork recipe
-  // and installPortableFirefox already use.
+  // Windows portable = download + 7z extract of the NSIS `core` folder — the
+  // installer binary is NEVER executed (no registry, no Add/Remove entry).
   for (const browser of ['firefox', 'firefox-dev', 'nightly']) {
     assert.equal(isMozillaPortableInstall(browser, 'win', dir), true, `${browser} win`);
     assert.equal(isMozillaPortableInstall(browser, 'linux', dir), true, `${browser} linux tarball`);
@@ -769,7 +771,103 @@ test('portableBinaryPath: launcher file per platform (not the top-level dir)', (
     portableBinaryPath('/p', 'darwin'),
     path.join('/p', 'Firefox.app', 'Contents', 'MacOS', 'firefox')
   );
+  // The macOS app name comes from the recipe (DMG contents differ per
+  // channel): Firefox.app / "Firefox Developer Edition.app" / "Firefox Nightly.app".
+  assert.equal(
+    portableBinaryPath('/p', 'darwin', 'Firefox Nightly.app'),
+    path.join('/p', 'Firefox Nightly.app', 'Contents', 'MacOS', 'firefox')
+  );
   assert.equal(portableBinaryPath('/p', 'win32'), path.join('/p', 'firefox.exe'));
+});
+
+// ── unpackNsisCore + run7zWithRetry (extract-only Windows portable) ─────
+// The setup exe is an NSIS archive: `core` (the browser tree) + `setup.exe` +
+// one data blob. Extraction alone yields the install dir — running the
+// installer would also write a per-user Add/Remove entry and registry keys,
+// which the portable install must not do. The 7z runner is injected, so these
+// tests never execute 7z or the exe.
+
+test('unpackNsisCore: extracts core, strips the wrapper, never runs the exe', () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-nsis-unpack-'));
+  try {
+    const calls = [];
+    const run7z = args => {
+      calls.push(args);
+      // Simulate 7z extracting a minimal core/.
+      fs.mkdirSync(path.join(dest, 'core'), {recursive: true});
+      fs.writeFileSync(path.join(dest, 'core', 'firefox.exe'), 'MZ');
+      fs.writeFileSync(path.join(dest, 'core', 'x.dll'), 'd');
+    };
+    const binary = unpackNsisCore('C:/dl/setup.exe', dest, {run7z});
+    assert.deepEqual(calls, [['x', '-y', '-aoa', 'C:/dl/setup.exe', 'core', `-o${dest}`]]);
+    assert.equal(binary, path.join(dest, 'firefox.exe'));
+    assert.equal(fs.statSync(binary).isFile(), true, 'launcher at dest root');
+    assert.equal(fs.statSync(path.join(dest, 'x.dll')).isFile(), true, 'core/* moved up');
+    assert.equal(fs.existsSync(path.join(dest, 'core')), false, 'wrapper dir stripped');
+  } finally {
+    fs.rmSync(dest, {recursive: true, force: true});
+  }
+});
+
+test('unpackNsisCore: a 7z failure propagates (fail fast, exe never run)', () => {
+  const run7z = () => {
+    throw new Error('7z failed to extract the Firefox installer (boom)');
+  };
+  assert.throws(() => unpackNsisCore('C:/dl/setup.exe', os.tmpdir(), {run7z}), /boom/);
+});
+
+test('unpackNsisCore: corrupt extract (no launcher) fails after stripping the wrapper', () => {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-nsis-unpack-'));
+  try {
+    // 7z succeeded but firefox.exe is missing (corrupt/truncated archive).
+    const run7z = () => {
+      fs.mkdirSync(path.join(dest, 'core'), {recursive: true});
+      fs.writeFileSync(path.join(dest, 'core', 'x.dll'), 'd');
+    };
+    assert.throws(() => unpackNsisCore('C:/dl/setup.exe', dest, {run7z}), /binary not found/);
+    assert.equal(fs.existsSync(path.join(dest, 'core')), false, 'wrapper dir still stripped');
+  } finally {
+    fs.rmSync(dest, {recursive: true, force: true});
+  }
+});
+
+test('run7zWithRetry: PATH 7z missing → Program Files fallback, AV-lock retried', () => {
+  const spawns = [];
+  const sleeps = [];
+  const spawn = bin => {
+    spawns.push(bin);
+    if (bin === '7z') return {status: null, error: {code: 'ENOENT'}};
+    // First attempt: the scanner holds the freshly downloaded exe (EBUSY-ish);
+    // the retry succeeds — the same race runInstallerWithRetry rides out.
+    if (spawns.filter(b => b === bin).length === 1) return {status: 1, stderr: 'os error 32'};
+    return {status: 0, stdout: '', stderr: ''};
+  };
+  const res = run7zWithRetry(['x', 'archive'], {spawn, sleep: ms => sleeps.push(ms)});
+  assert.equal(res.status, 0);
+  // Every candidate is tried per attempt (PATH first, then both install
+  // locations); attempt 2 succeeds via the Program Files 7z.
+  assert.deepEqual(spawns, [
+    '7z',
+    'C:\\Program Files\\7-Zip\\7z.exe',
+    'C:\\Program Files (x86)\\7-Zip\\7z.exe',
+    '7z',
+    'C:\\Program Files\\7-Zip\\7z.exe',
+  ]);
+  assert.deepEqual(sleeps, [4000], 'exponential backoff: one 4s wait before attempt 2');
+});
+
+test('run7zWithRetry: no 7z anywhere → hint immediately, no retry', () => {
+  const spawn = () => ({status: null, error: {code: 'ENOENT'}});
+  const sleeps = [];
+  assert.throws(
+    () => run7zWithRetry(['x'], {spawn, sleep: ms => sleeps.push(ms)}),
+    err => {
+      assert.match(err.message, /7-Zip \(7z on PATH\)/);
+      assert.match(err.message, /never executed/);
+      return true;
+    }
+  );
+  assert.deepEqual(sleeps, [], 'a missing 7z must not be retried');
 });
 
 test('fork portable: the fork-portable matrix browsers all declare portable capability', () => {

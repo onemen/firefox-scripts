@@ -43,12 +43,15 @@ import {discoverFirefoxBinary} from './browsers.mjs';
  *   binary path directly.
  * - {resolver: true, args} → version + mirror resolved by browserResolver.mjs
  *   (LibreWolf's bsys6-first chain, Waterfox's CDN); falls back to the
- *   temporary `ci-downloads` release and then the cached previous installer.
- * - {url|resolver, args, portable: true, portableExe} → the recipe's NSIS
- *   installer ALSO supports a portable layout (fork-portable E2E legs, #38):
- *   with PORTABLE_BROWSER_DIR set, the installer runs `/S /D=<dir>` into that
- *   directory instead of Program Files, and the binary is `portableExe` at its
- *   root. Firefox Release keeps its own richer portable path below.
+ *   temporary `ci-downloads` release and then the cached previous installer. *
+ *
+ *   - {url|resolver, args, portable: true, portableExe} → the recipe's NSIS
+ *       installer ALSO supports a portable layout (fork-portable E2E legs,
+ *       #38): with PORTABLE_BROWSER_DIR set, the installer runs `/S /D=<dir>`
+ *       into that directory instead of Program Files, and the binary is
+ *       `portableExe` at its root. The official Mozilla builds instead keep
+ *       their own portable path below — extract-only, the installer is never
+ *       run.
  * - `manual: true` → no automated install; `page` is the official download page
  *   (informational, for the manual legs).
  *
@@ -713,9 +716,10 @@ function runSilentInstaller(exe, args) {
  * The local updater E2E seeds `config.js` into the browser's install dir, so it
  * needs a GreD this account can write: CI's runners are admins and can use an
  * installed browser, a normal account cannot (`pnpm e2e:portable` installs a
- * user-owned copy). Same official artifacts either way — NSIS `/D=` on Windows,
- * the tarball on Linux, the DMG on macOS. `snap` and the forks' own `portable:
- * true` recipe opt out (they have their own paths).
+ * user-owned copy). Same official artifacts either way — the Windows setup exe
+ * is only unpacked (7z; running it would register the install), the tarball on
+ * Linux, the DMG on macOS. `snap` and the forks' own `portable: true` recipe
+ * opt out (they have their own paths).
  *
  * Pure, so the decision table is unit-tested without network access.
  *
@@ -736,17 +740,153 @@ export function isMozillaPortableInstall(
   return Boolean(recipe.tarball || recipe.url);
 }
 
-/** The launcher file each portable install produces, per platform. */
-export function portableBinaryPath(dest, platform) {
+/**
+ * The launcher file each portable install produces, per platform.
+ *
+ * `app` is the recipe's macOS app name (`Firefox.app`, `Firefox Developer
+ * Edition.app`, `Firefox Nightly.app`); on other platforms it is ignored.
+ */
+export function portableBinaryPath(dest, platform, app = 'Firefox.app') {
   return (
     platform === 'linux' ? path.join(dest, 'firefox', 'firefox')
-    : platform === 'darwin' ? path.join(dest, 'Firefox.app', 'Contents', 'MacOS', 'firefox')
+    : platform === 'darwin' ? path.join(dest, app, 'Contents', 'MacOS', 'firefox')
     : path.join(dest, 'firefox.exe')
   );
 }
 
-/** Download Firefox Release into a custom, non-registered directory. */
-async function installPortableFirefox(url, platform) {
+/**
+ * Extract-only Windows portable install: download the official NSIS setup exe
+ * and unpack its `core` folder into the destination with 7z — the installer
+ * binary is NEVER executed.
+ *
+ * Why not `setup.exe /S /D=<dest>`: a silent NSIS Firefox install still
+ * registers itself — a per-user Add/Remove Programs entry and the default-agent
+ * /TaskBarIDs registry keys are written even when /S /D= lands the files in a
+ * user-owned dir (observed live on this machine: stale per-user uninstall
+ * entries pointing at two retired portable dirs survived their deletions). The
+ * E2E needs a throwaway browser, not a registration, so extraction keeps the
+ * machine registry-clean by construction and there is nothing to uninstall.
+ *
+ * Verified live (2026-09-22, list/extract only) for the Release, Dev Edition
+ * and Nightly win64 installers: all three share the identical structure
+ * (`core`
+ *
+ * - `setup.exe` + one NSIS data blob) and `core/application.ini` identifies each
+ *   channel; the launcher is `core/firefox.exe` for every one.
+ *
+ * 7z is a hard dependency of the Windows E2E legs (e2e.yml installs it); the
+ * error message tells a local user how to get it.
+ */
+async function extractPortableFirefoxFromNsis(url, dest) {
+  const exe = path.join(downloadDir(), 'firefox-portable-setup.exe');
+  await downloadTo(url, exe);
+  return unpackNsisCore(exe, dest);
+}
+
+/**
+ * 7z.exe locations besides PATH. GitHub's Windows runner images ship 7-Zip
+ * there, but its PATH entry has drifted before (actions/runner-images#9361).
+ */
+const SEVENZIP_FALLBACKS = [
+  'C:\\Program Files\\7-Zip\\7z.exe',
+  'C:\\Program Files (x86)\\7-Zip\\7z.exe',
+];
+
+/** spawnSync with an ENOENT→null shim so absent candidates fall through. */
+function spawnSyncShim(bin, args, spawn) {
+  const res = spawn(bin, args, {stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8'});
+  if (res.error?.code === 'ENOENT') return null;
+  return res;
+}
+
+/**
+ * Run 7z on the given args, PATH first and then the fallback install locations.
+ * A 7z run that fails (or an AV scanner holding the freshly downloaded exe when
+ * 7z opens it — the same race the installer runners ride out) is retried with
+ * exponential backoff; a machine with no 7z at all fails immediately with the
+ * install hint (retrying ENOENT cannot help).
+ *
+ * @param {string[]} args 7z argv
+ * @param {{
+ *   attempts?: number;
+ *   baseDelayMs?: number;
+ *   spawn?: typeof import('node:child_process').spawnSync;
+ *   sleep?: (ms: number) => void;
+ * }} [deps]
+ * @returns {{status: number; stdout?: string; stderr?: string}} the successful
+ *   run
+ */
+export function run7zWithRetry(
+  args,
+  {attempts = 4, baseDelayMs = 4000, spawn = spawnSync, sleep} = {}
+) {
+  const wait = sleep ?? (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
+  const candidates = ['7z', ...SEVENZIP_FALLBACKS];
+  let lastDetail = '';
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    let foundAny = false;
+    for (const bin of candidates) {
+      const res = spawnSyncShim(bin, args, spawn);
+      if (!res) continue; // candidate binary not present on this machine
+      foundAny = true;
+      if (res.status === 0 && !res.error) return res;
+      lastDetail = res.error?.message ?? `${res.status}: ${res.stderr || res.stdout || ''}`;
+    }
+    // No 7z anywhere: retrying cannot conjure one — surface the hint now.
+    if (!foundAny) break;
+    if (attempt < attempts) wait(baseDelayMs * 2 ** (attempt - 1));
+  }
+  throw new Error(
+    lastDetail ||
+      '7-Zip (7z on PATH) is required for the Windows portable install: the setup exe is unpacked, never executed.'
+  );
+}
+
+/**
+ * Unpack a downloaded Firefox setup exe's `core` folder into `dest` with 7z and
+ * return the launcher path. Never executes the exe — exported pure (the 7z
+ * runner is injectable) so the layout contract is unit-tested without running
+ * anything.
+ *
+ * Verified live (2026-09-22, list/extract only) for the Release, Dev Edition
+ * and Nightly win64 installers: all three share the identical archive structure
+ * (`core` + `setup.exe` + one NSIS data blob), `core/application.ini`
+ * identifies each channel, and the launcher is `core/firefox.exe` for every
+ * one.
+ *
+ * @param {string} exe absolute path to the downloaded NSIS setup exe
+ * @param {string} dest portable install dir (receives core/*'s contents)
+ * @param {{run7z?: (args: string[]) => unknown}} [deps]
+ * @returns {string} absolute path to the launcher (dest/firefox.exe)
+ */
+export function unpackNsisCore(exe, dest, {run7z = run7zWithRetry} = {}) {
+  // Only `core` is extracted: setup.exe and the NSIS data blob stay inside
+  // the archive. -y overwrites (the skip-if-cached check guards reuse); -aoa
+  // keeps a half-extracted retry deterministic. The exe is never executed.
+  run7z(['x', '-y', '-aoa', exe, 'core', `-o${dest}`]);
+  // The archive's top-level `core` folder IS the install dir: strip the
+  // wrapper so dest/firefox.exe is the launcher the harness expects — the
+  // same layout a /D= install produces, minus the registration.
+  const core = path.join(dest, 'core');
+  for (const entry of fs.readdirSync(core)) {
+    fs.renameSync(path.join(core, entry), path.join(dest, entry));
+  }
+  fs.rmdirSync(core);
+  const binary = path.join(dest, 'firefox.exe');
+  if (!fs.existsSync(binary)) {
+    throw new Error(`portable Firefox binary not found after extraction: ${binary}`);
+  }
+  return binary;
+}
+
+/**
+ * Install a Mozilla official build into a custom, non-registered directory.
+ *
+ * `app` is the recipe's macOS app name (`Firefox.app`, `Firefox Developer
+ * Edition.app`, `Firefox Nightly.app`) — it names both the DMG copy source and
+ * the returned launcher path.
+ */
+async function installPortableFirefox(url, platform, app = 'Firefox.app') {
   const dest = process.env.PORTABLE_BROWSER_DIR;
   if (!dest) throw new Error('PORTABLE_BROWSER_DIR is required for portable Firefox');
   fs.mkdirSync(dest, {recursive: true});
@@ -756,7 +896,7 @@ async function installPortableFirefox(url, platform) {
   // launcher file is already in place, skip the extract/install work entirely.
   // statSync (not existsSync): a directory at that path must not count — the
   // Linux tarball's top-level `firefox/` dir shares the launcher's basename.
-  const portableBinary = portableBinaryPath(dest, platform);
+  const portableBinary = portableBinaryPath(dest, platform, app);
   if (fs.statSync(portableBinary, {throwIfNoEntry: false})?.isFile()) {
     console.log(`  reusing cached portable dir (${path.basename(dest)})`);
     return portableBinary;
@@ -768,16 +908,10 @@ async function installPortableFirefox(url, platform) {
   }
 
   if (platform === 'win32') {
-    const exe = path.join(downloadDir(), 'firefox-portable-setup.exe');
-    await downloadTo(url, exe);
-    // NSIS /D must be the final argument and uses a custom directory instead
-    // of the registered Program Files location. Verbatim args keep the /D=
-    // path unquoted; the retry wrapper rides out the AV file-lock race
-    // (spawnSync failure surfaces as error.code EBUSY).
-    runNsisInstallerWithRetry(exe, nsisPortableArgs(dest), 'Firefox portable installer');
-    const binary = path.join(dest, 'firefox.exe');
-    if (!fs.existsSync(binary)) throw new Error(`portable Firefox binary not found: ${binary}`);
-    return binary;
+    // Extract-only: download + 7z unpack of `core`, never running setup.exe
+    // (see extractPortableFirefoxFromNsis for why). All official channels
+    // (firefox, firefox-dev, nightly) share one archive layout.
+    return extractPortableFirefoxFromNsis(url, dest);
   }
 
   if (platform === 'darwin') {
@@ -795,11 +929,11 @@ async function installPortableFirefox(url, platform) {
     const device = (out.match(/\/dev\/disk\S+/g) || [])[0];
     try {
       if (!mount) throw new Error(`cannot find Firefox DMG mount point: ${out}`);
-      execSync(`cp -R "${mount}/Firefox.app" "${dest}/"`);
+      execSync(`cp -R "${mount}/${app}" "${dest}/"`);
     } finally {
       if (device || mount) execSync(`hdiutil detach "${device || mount}"`);
     }
-    const binary = path.join(dest, 'Firefox.app', 'Contents', 'MacOS', 'firefox');
+    const binary = path.join(dest, app, 'Contents', 'MacOS', 'firefox');
     if (!fs.existsSync(binary)) throw new Error(`portable Firefox binary not found: ${binary}`);
     return binary;
   }
@@ -1085,7 +1219,8 @@ export async function installBrowser(browser, platform = process.platform) {
       url,
       key === 'win' ? 'win32'
       : key === 'mac' ? 'darwin'
-      : 'linux'
+      : 'linux',
+      recipe.app
     );
     console.log(`  ${browser} installed portably: ${binary}`);
     return binary;

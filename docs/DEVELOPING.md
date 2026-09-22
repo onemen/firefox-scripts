@@ -502,9 +502,11 @@ The scenarios write fx-folder's `config.js` into the browser's install dir, so t
 test needs a **user-owned install dir**. CI's runners are admins and can write Program Files; a
 normal account cannot, and the scenarios then fail with `EPERM` — so install a portable copy first
 (the run warns when the GreD is not writable). `pnpm e2e:portable` downloads the browser's official
-build into `Documents/FireFox/portable/<browser>` (NSIS `/D=` on Windows, the Linux tarball or the
-macOS DMG elsewhere; `~/.cache/firefox-scripts-e2e/<browser>` off Windows), reuses it on later runs,
-and prints the `FIREFOX_BINARY` line to export:
+build into `Documents/FireFox/portable/<browser>` (`~/.cache/firefox-scripts-e2e/<browser>` off
+Windows), reuses it on later runs, and prints the `FIREFOX_BINARY` line to export. Nothing is
+installed system-wide: on Windows the setup exe is **unpacked with 7z** (its `core` folder is the
+install dir) — the installer is never executed, so there is no Add/Remove Programs entry and no
+`Mozilla` registry keys; Linux uses the tarball and macOS the DMG, copied into the destination:
 
 ```bash
 pnpm e2e:portable nightly                    # or: firefox, firefox-dev, a fork
