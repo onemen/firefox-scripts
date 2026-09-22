@@ -12,7 +12,84 @@ import {
   isRateLimited,
   parseArgs,
   parseOpenPrBranchesOutput,
+  removeTempWorktree,
 } from '../../../tools/ci/batch-review.mjs';
+
+// ── removeTempWorktree (temp-worktree teardown ladder) ─────────────────
+// Observed live on Windows: `git worktree remove --force` deregisters the
+// worktree but can fail the filesystem delete partway (MAX_PATH over deep
+// paths), leaving a cr-batch-* husk in %TEMP% that the old code never named.
+// The ladder is: git remove → rmSync of leftovers → prune → loud warning.
+
+test('removeTempWorktree: clean remove — no rmSync, prune, branch deleted', () => {
+  const cmds = [];
+  const run = (cmd, args) => cmds.push([cmd, ...args]);
+  removeTempWorktree('C:/t/cr-batch-1', 'cr-batch-1', {
+    run,
+    existsSync: () => false,
+    rmSync: () => {
+      throw new Error('must not be called when the directory is already gone');
+    },
+  });
+  assert.deepEqual(cmds, [
+    ['git', 'worktree', 'remove', '--force', 'C:/t/cr-batch-1'],
+    ['git', 'worktree', 'prune'],
+    ['git', 'branch', '-D', 'cr-batch-1'],
+  ]);
+});
+
+test('removeTempWorktree: Windows husk — leftover dir gets rmSync, then prune', () => {
+  const cmds = [];
+  const rms = [];
+  let firstProbe = true;
+  removeTempWorktree('C:/t/cr-batch-2', 'cr-batch-2', {
+    run: (cmd, args) => cmds.push([cmd, ...args]),
+    // First probe (before rmSync): the husk exists. Second (after prune): gone.
+    existsSync: () => {
+      const v = firstProbe;
+      firstProbe = false;
+      return v;
+    },
+    rmSync: (p, opts) => rms.push([p, opts.recursive, opts.force, opts.maxRetries > 0]),
+  });
+  assert.deepEqual(rms, [['C:/t/cr-batch-2', true, true, true]]);
+  assert.deepEqual(cmds, [
+    ['git', 'worktree', 'remove', '--force', 'C:/t/cr-batch-2'],
+    ['git', 'worktree', 'prune'],
+    ['git', 'branch', '-D', 'cr-batch-2'],
+  ]);
+});
+
+test('removeTempWorktree: undeletable husk warns loudly, still deletes the branch', () => {
+  const warnings = [];
+  const cmds = [];
+  removeTempWorktree('C:/t/cr-batch-3', 'cr-batch-3', {
+    run: (cmd, args) => cmds.push([cmd, ...args]),
+    existsSync: () => true,
+    rmSync: () => {},
+    log: (...a) => warnings.push(a.join(' ')),
+  });
+  assert.match(warnings.join('\n'), /could not fully remove the temp worktree/);
+  assert.match(warnings.join('\n'), /C:\/t\/cr-batch-3/);
+  assert.ok(
+    cmds.some(c => c.includes('prune')),
+    'prune still runs'
+  );
+  assert.ok(
+    cmds.some(c => c.includes('branch')),
+    'branch cleanup still runs'
+  );
+});
+
+test('removeTempWorktree: --keep spares the branch', () => {
+  const cmds = [];
+  removeTempWorktree('C:/t/cr-batch-4', 'cr-batch-4', {
+    run: (cmd, args) => cmds.push([cmd, ...args]),
+    existsSync: () => false,
+    keep: true,
+  });
+  assert.ok(!cmds.some(c => c.includes('branch')), 'branch -D must not run when keep=true');
+});
 
 test('parseArgs: flags and repeatables', () => {
   const args = parseArgs([

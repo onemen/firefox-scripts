@@ -43,6 +43,7 @@
 //   checkout is left exactly as it was.
 
 import {spawnSync} from 'node:child_process';
+import fs from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -192,6 +193,60 @@ function worktreePath() {
   return join(tmpdir(), `cr-batch-${process.pid}`);
 }
 
+/**
+ * Tear down the temp review worktree (and its branch, unless kept).
+ *
+ * `git worktree remove --force` alone is not enough on Windows: it can fail the
+ * filesystem delete partway (deep node_modules paths exceeding MAX_PATH) while
+ * still deregistering the worktree, leaving a husk dir behind that the script
+ * would never name. So the removal is layered: the git remove first
+ * (authoritative for the registration), then a plain recursive delete of
+ * whatever is left of the directory, then `git worktree prune` (cleans a
+ * registration that outlived its directory), and a loud warning only if the
+ * directory still could not be deleted — a husk is always safe to remove by
+ * hand, and now the user is told so instead of it rotting in %TEMP% silently.
+ *
+ * Injectable (run/existsSync/rmSync/log) so the failure ladder is unit-tested
+ * without git or the filesystem.
+ *
+ * @param {string} wtree absolute path of the temp worktree
+ * @param {string} tempBranch the temp branch name
+ * @param {{
+ *   run?: typeof run;
+ *   keep?: boolean;
+ *   existsSync?: (p: string) => boolean;
+ *   rmSync?: typeof fs.rmSync;
+ *   log?: (...a: unknown[]) => void;
+ * }} [deps]
+ */
+export function removeTempWorktree(
+  wtree,
+  tempBranch,
+  {
+    run = spawnSyncGit,
+    keep = false,
+    existsSync = fs.existsSync,
+    rmSync = fs.rmSync,
+    log = () => {},
+  } = {}
+) {
+  run('git', ['worktree', 'remove', '--force', wtree], {ignoreFail: true});
+  if (existsSync(wtree)) {
+    rmSync(wtree, {recursive: true, force: true, maxRetries: 3, retryDelay: 300});
+  }
+  run('git', ['worktree', 'prune'], {ignoreFail: true});
+  if (existsSync(wtree)) {
+    log(`⚠ could not fully remove the temp worktree: ${wtree}`);
+    log('  It is deregistered (git worktree prune is safe) — delete it by hand.');
+  }
+  if (!keep) run('git', ['branch', '-D', tempBranch], {ignoreFail: true});
+}
+
+/** run() default for the injectable: the module-level git runner. */
+function spawnSyncGit(cmd, args, opts) {
+  return run(cmd, args, opts);
+}
+
 function mergedDiffStat(base, refs) {
   // A conservative estimate of what the combined diff touches: union of each
   // ref's file list vs base. Real merges can differ slightly.
@@ -331,8 +386,7 @@ export async function main() {
     }
     throw err;
   } finally {
-    run('git', ['worktree', 'remove', '--force', wtree], {ignoreFail: true});
-    if (!args.keep) run('git', ['branch', '-D', tempBranch], {ignoreFail: true});
+    removeTempWorktree(wtree, tempBranch, {run, keep: Boolean(args.keep), log: console.error});
   }
   console.log(
     args.keep ?
