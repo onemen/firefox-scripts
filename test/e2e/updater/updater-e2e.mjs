@@ -290,6 +290,23 @@ function seedProfile(
  * data|null} — null means the file did NOT exist before the test (created by
  * installFxFolder) and should be removed.
  */
+/**
+ * Whether the browser's install dir is writable by this account.
+ *
+ * @param {string} greDir
+ * @returns {string} Empty when writable, else the reason (for the message).
+ */
+function greNotWritableReason(greDir) {
+  const probe = path.join(greDir, '.fxs-e2e-write-probe');
+  try {
+    fs.writeFileSync(probe, 'probe');
+    fs.unlinkSync(probe);
+    return '';
+  } catch (err) {
+    return `${greDir}: ${err.message}`;
+  }
+}
+
 function saveGreConfig(greDir) {
   const snapshot = {};
   for (const name of ['config.js', 'defaults/pref/config-prefs.js']) {
@@ -305,6 +322,10 @@ function restoreGreConfig(snapshot) {
   for (const [p, data] of Object.entries(snapshot)) {
     try {
       if (data !== null) {
+        // Only rewrite what the run actually changed. An unconditional rewrite
+        // fails with EPERM on an admin-owned GreD (Program Files) even though
+        // nothing needs restoring — noise, not a failure.
+        if (fs.existsSync(p) && fs.readFileSync(p).equals(data)) continue;
         fs.mkdirSync(path.dirname(p), {recursive: true});
         fs.writeFileSync(p, data);
       } else {
@@ -1880,19 +1901,35 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
     }
 
     const seeded = seedProfile(scratchSnap, {forceConfigStale: true});
+    // The seeded profile ships utils only; updater-ui.zip is a separate package
+    // the browser installs for itself, and this fixture's UI base is a file://
+    // scratch dir. Install the UI the way a real profile has it: with no UI on
+    // disk the scheduler's ensureUpdaterUi() has to fetch it first, and this
+    // scenario's tab never opened in that state with either manifest wiring
+    // (reproduced locally 2026-09-22 on a portable GreD: no tab on both
+    // attempts; the same run with the UI seeded proves the tab open on the
+    // first attempt). Keeps the scenario about the config update, not about
+    // self-updating the tab UI.
+    const uiZip = findZip(scratchSnap, ['updater-ui.zip', 'updater-ui-dev.zip']);
+    if (uiZip) {
+      extractZip(uiZip, path.join(seeded.profileDir, 'chrome', 'utils', 'updater', 'ui'));
+    }
     // Repoint the updater at the scratch snapshot (it baked the original
     // snapshot's dist path — helper stand-in + sidecar live there now).
     Object.assign(seeded.prefs, localConfigOverrides(seeded.chromeUtils, scratchSnap));
-    // But serve the MANIFEST over http://localhost like every other scenario:
-    // CI's current Firefox releases never opened the tab when the manifest
-    // override was a file:// URL (2026-09-21: every Windows leg, three runs —
-    // while this exact seed works locally on ESR 140). Scenarios 1–8 prove
-    // the http://localhost channel opens the tab on every CI browser; the
-    // scheduler only fetches HASHES_URL for the update decision, so only that
-    // override changes — zips/helper stay on the scratch snapshot's file://
-    // base (localConfigOverrides above).
+    // Serve the manifest over http://localhost (reachable on every runner) but
+    // serve the SNAPSHOT's own hashes.json — NOT startLocalManifestServer's
+    // default manifest, which is built to make utils match and leaves
+    // `fx-folder: {hash: '', files: []}`. With fx-folder emptied, the config
+    // package stops reading as stale, the scheduler decides there is nothing to
+    // surface, and the tab never opens — i.e. the scenario silently asserts
+    // nothing (reproduced locally 2026-09-22 on the portable GreD: no tab on
+    // either attempt, while the same seed with the snapshot manifest opens it).
+    // The snapshot's manifest keeps fx-folder's real hash, which the probed
+    // GreD config.js no longer matches → "config: Update Available" → tab.
     const manifestServer = await startLocalManifestServer(scratchSnap, seeded.chromeUtils, {
       multiRequest: true,
+      manifestOverride: JSON.parse(fs.readFileSync(path.join(scratchSnap, 'hashes.json'), 'utf-8')),
     });
     Object.assign(seeded.prefs, serverOverridePrefs(manifestServer.url));
     // fx-folder into the real GreD (utils go into the profile via seedProfile;
@@ -1967,11 +2004,30 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         'tab-open proof (mirror marker or lastUpdateTabShown pref)'
       ).catch(() => false);
       page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
-      check(counter, Boolean(page) || tabMirror === true, `tab opens (${label})`);
-      if (!page && !tabMirror) {
+      let tabOpened = Boolean(page) || tabMirror === true;
+      if (!tabOpened) {
+        // Both in-run channels can be unavailable at once: BiDi cannot
+        // enumerate the trusted chrome:// tab in this environment (the
+        // documented CI limitation), and prefs.js is flushed only at shutdown,
+        // so the in-run poll sees no pref even when the scheduler DID open the
+        // tab (verified 2026-09-22: both attempt profiles carried
+        // lastUpdateTabShown=<today> once their browsers had closed, while the
+        // in-run poll had timed out on both). Close the browser and read the
+        // flush: the scheduler sets that pref in its tab-open branch only, so
+        // it is exact proof, and the remaining assertions (ACL deny, no copy)
+        // need no live page.
         await dumpPages(browser);
-        dumpConsoleLog(seeded.profileDir);
+        await closeBrowser(browser).catch(() => {});
+        browser = null;
+        tabOpened = greShownToday(seeded.profileDir);
+        console.log(
+          tabOpened ?
+            '  [diag] tab-open proven by the persisted pref (flushed at shutdown)'
+          : '  [diag] no tab-open proof on any channel (BiDi, mirror, pref)'
+        );
+        if (!tabOpened) dumpConsoleLog(seeded.profileDir);
       }
+      check(counter, tabOpened, `tab opens (${label})`);
 
       // ── NOW deny writes to the seeded config files ──
       // (tab up; scheduler's read done — see the comment above)
@@ -2000,7 +2056,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       check(counter, denyWorks, `GreD write blocked by ACL (${label})`);
       if (page) {
         // (flow continues below)
-      } else if (tabMirror) {
+      } else {
         // Tab existed (pref/mirror proves it) but BiDi lost it — trusted-tab
         // enumeration is deterministic on CI (2026-09-21: every leg, every
         // scenario). No page to click, so the download→verify→gate→spawn flow
@@ -2012,8 +2068,18 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
           'Admin copy helper failed',
         ]);
         // The no-copy assertion is skipped by the early return below (it sits
-        // after the finally), so run it here — reads are unaffected by the
-        // write-deny.
+        // after the finally), so run it here. Drop the deny first: on some
+        // hosts the write-deny blocks READS too (observed locally 2026-09-22:
+        // EPERM on open, while CI allowed the same read), and the ACE never
+        // changes file content — so reading after the removal is still proof
+        // that the denied copy wrote nothing.
+        for (const f of seededFiles) {
+          try {
+            icacls([f, '/remove:d', process.env.USERNAME]);
+          } catch {
+            /* not denied */
+          }
+        }
         const configAfter = fs.readFileSync(seededFiles[0]);
         check(
           counter,
@@ -2173,13 +2239,43 @@ async function run() {
     process.exit(1);
   }
   console.log(`  firefox: ${firefoxBin}`);
-  console.log(`  GreD:    ${findGreDir(firefoxBin)}`);
+  const greDir = findGreDir(firefoxBin);
+  console.log(`  GreD:    ${greDir}`);
+  // Every seeded scenario copies fx-folder's config.js into GreD first (the
+  // scheduler cannot run without it), so a GreD this account cannot write means
+  // nothing can be tested. Fail once, with the fix, instead of a wall of EPERM
+  // failures: use a user-owned (portable) Firefox. CI's runners are admins,
+  // which is why the CI legs can seed into Program Files.
+  const greIssue = greNotWritableReason(greDir);
+  if (greIssue) {
+    console.error(
+      `  GreD is not writable — ${greIssue}\n` +
+        '  The updater scenarios seed config.js into the browser install dir, so they\n' +
+        '  need a user-owned Firefox: a portable copy (`PORTABLE_BROWSER_DIR`, see\n' +
+        '  test/e2e/shared/downloads.mjs) or `--firefox <portable firefox.exe>`.\n' +
+        '  An installed browser under Program Files needs an elevated account.'
+    );
+    process.exit(1);
+  }
 
-  // Scenario 9 (helper-checksum-win) IS in the default set: it self-skips on
-  // non-Windows, and on CI's Windows legs the seeded portable GreD is
-  // ACL-controllable. It was missing here from birth (#271 registered the
-  // step but never enabled it), so the helper path never ran on CI — the
-  // 2026-09-21 magic-gate bug shipped through a green matrix.
+  // Scenario 9 (helper-checksum-win) is in the default set (Windows-only; it
+  // self-skips elsewhere): ACL-denied GreD config files force the updater down
+  // the admin-copy-helper path, so it guards the scheduler's decision and the
+  // no-copy-without-elevation rule. Two fixture defects made it assert nothing
+  // until 2026-09-22 (every Windows leg red, locally too):
+  //
+  // 1. the seeded profile had no updater UI on disk, so the scheduler's
+  //    ensureUpdaterUi() tried to fetch updater-ui.zip from this fixture's
+  //    file:// scratch base, failed, and exited BEFORE opening the tab;
+  // 2. the manifest it was served declared `fx-folder: {hash:'', files:[]}`,
+  //    which removes the very staleness the scenario exists to produce.
+  //
+  // Both are fixed in runHelperChecksumScenario (UI seeded from updater-ui.zip,
+  // manifest served from the snapshot's own hashes.json), and the tab-open
+  // proof now also accepts the shutdown-flushed pref when BiDi cannot enumerate
+  // the trusted tab. What a headless CI run still cannot reach is elevation
+  // itself — the helper's byte-level gate is covered deterministically by
+  // test/unit/publish/branchPagesContract.test.mjs on every OS.
   const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8', '9'];
 
   const profiles = [];

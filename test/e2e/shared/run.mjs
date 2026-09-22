@@ -203,7 +203,7 @@ async function main() {
       }
       if (cfg.keepProfile) args.push('--keep-profile');
       const pass = await runChild(
-        path.join(REPO_ROOT, 'tools', 'test', 'e2e', 'updater-e2e.mjs'),
+        path.join(REPO_ROOT, 'test', 'e2e', 'updater', 'updater-e2e.mjs'),
         args,
         env
       );
