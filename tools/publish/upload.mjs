@@ -1057,6 +1057,13 @@ function runRefBuild(ref) {
         stdio: 'inherit',
       });
     }
+    // Same Windows husk mode as batch-review's removeTempWorktree(): git can
+    // deregister the worktree yet fail the filesystem delete partway (deep
+    // paths), silently leaving a full-worktree husk in %TEMP%. Remove whatever
+    // remains so nothing rots there between --ref builds.
+    if (fs.existsSync(worktree)) {
+      fs.rmSync(worktree, {recursive: true, force: true, maxRetries: 3, retryDelay: 300});
+    }
   }
 }
 
