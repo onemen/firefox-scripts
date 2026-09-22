@@ -1,6 +1,6 @@
 # 0023: E2E browser versions track latest at run time — explicit pin escape hatch
 
-- **Status:** accepted
+- **Status:** superseded by [0034](./0034-fork-e2e-legs-pin-to-validated-release.md)
 - **Date:** 2026-09-07
 
 Related: [0021](./0021-tiered-publish-gating-shared-resolver.md) (tiered gating + shared resolver +

@@ -1,0 +1,93 @@
+# AV watchdog — re-scan the binaries that are PUBLISHED, not the ones a run is
+# about to publish.
+#
+# The publish gate (tools/scan-vt.mjs, called by tools/publish/upload.mjs)
+# judges the exact bytes it uploads, once, at publish time. AV verdicts are not
+# stable: the 2026-09-05 incident was a binary that scanned clean when it
+# shipped and started being flagged afterwards, and Microsoft's `!ml` models
+# re-roll verdicts as their training data moves. Nothing watched the served
+# bytes, so the flip stayed invisible until a user reported it (issue #157).
+#
+# This workflow hashes each installer/helper on the published surface and asks
+# VirusTotal what it thinks of that hash (a lookup — never an upload; the bytes
+# are already public). Verdicts land in a per-hash ledger (tools/ci/avLedger.mjs)
+# and surface as one `[av-watchdog] published binaries` status issue plus one
+# deduped issue per flagged hash, auto-closed when a later run sees the hash
+# clean again — the shape the url/skills watchdogs already use.
+#
+# Fail-soft by design: a flagged published binary is a finding to triage
+# (re-report to Microsoft, publish a rebuild or a signed artifact), not a broken
+# pipeline, so the job never fails on a verdict. Without VT_API_KEY it records
+# the hashes as 'unknown' and skips verdicts; without a write token it skips the
+# issue surface.
+#
+# No PR trigger, deliberately: the tool's pure logic (the ledger shape, the
+# binary picker, the issue text) is unit-tested in test/unit/tools/, and a PR
+# run cannot reach a verdict anyway — VT_API_KEY is a repo secret that fork PRs
+# never receive, so a PR leg would only ever print "unknown".
+
+name: AV watchdog
+
+on:
+  schedule:
+    # Monday 05:00 UTC, an hour before the url watchdog — both Monday findings
+    # land in the same triage window.
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Published ref to scan (a dev-build-* branch during pre-release testing)'
+        required: false
+        default: 'gh-pages'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: av-watchdog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: check published binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      # Per-hash verdict ledger. Keys ROTATE per run (run_id): the cache service
+      # skips a save whose exact key already exists, so a fixed key would
+      # silently never persist the merged ledger after the first run. Restore
+      # falls back to the newest entry of a previous run via the prefix.
+      - name: Restore verdict ledger
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-av
+          key: av-watchdog-ledger-${{ github.run_id }}
+          restore-keys: av-watchdog-ledger-
+
+      - name: Check published binaries
+        # The ref arrives through the environment, never interpolated into the
+        # shell line: a workflow_dispatch input is influenced by whoever starts
+        # the run, and `run:` is a shell (GitHub's script-injection guidance).
+        run: node tools/check-published-av.mjs --ref "$AV_REF"
+        env:
+          AV_REF: ${{ inputs.ref || 'gh-pages' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+
+      # Explicit save (not save-always): the tool rewrites the ledger every run
+      # even when the restore step hit, and the fresh key persists it for the
+      # next run (immutable older entries just expire). if: always() keeps that
+      # behavior even when the scan step exits early.
+      - name: Save verdict ledger
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-av
+          key: av-watchdog-ledger-${{ github.run_id }}
+        if: always()

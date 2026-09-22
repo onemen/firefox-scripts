@@ -2,9 +2,10 @@
 name: ai-review
 description:
   Review a PR the ADR 0020 way — run the local `pnpm review:local` reviewer, assess every finding as
-  right / wrong / useless, post the accepted ones as a PR review via `gh pr review` (never `gh pr
-  comment`), and verify it landed. Use when a PR is ready for review or the user asks for the AI
-  review step.
+  right / wrong / useless with the disputed line quoted before any rejection, and post each accepted
+  finding as its own line-anchored, individually resolvable review thread (fallback: `gh pr review
+  <n> --comment`, never `gh pr comment`), resolving each thread as its fix lands. Use when a PR is
+  ready for review or the user asks for the AI review step.
 ---
 
 # AI review of a PR (ADR 0020)
@@ -35,7 +36,52 @@ self-initiated (see the boundary section below).
    - **wrong** — the model misread the code or the repo's intent;
    - **useless** — true but trivial, stylistic, or already covered by the gates.
 
-   Default to wrong/useless when unsure; the reviewer is advisory and fail-soft by design.
+   Default to wrong/useless only with the line in hand — see "Rejecting a finding" below. With
+   nothing quoted yet the honest state is _unverified_, not _wrong_; the reviewer is advisory and
+   fail-soft by design.
+
+### Rejecting a finding — quote the line, or don't reject
+
+A `wrong` verdict is a claim about code you have read, so make it checkable:
+
+- **Quote the disputed line with `path:line` in the posted triage** — what the finding says versus
+  what is actually there. No quote, no rejection: an unquoted "wrong" is an assertion, and the
+  operator cannot tell the reviewer's misread from your mistake.
+- **Read the PR's own head, not the checked-out branch or `main`** — `git show <head-sha>:path`,
+  `git diff origin/main...HEAD -- path`. A file the PR adds exists on no other branch, and a line
+  the PR fused, moved or rewrote reads differently (or is absent) in `main`. Inspecting the wrong
+  artifact is the standard way a real finding gets "disproved".
+- **A finding about text you edited in this PR is a finding about your own diff.** The reviewer is
+  reading what you produced; yours is the weaker reading.
+- **If the reviewer's remedy is stronger than your fix, take the stronger one or say why not, in the
+  thread.** Quietly shipping the weaker remedy is a rejection in disguise.
+- **Post rejections like acceptances** (reason + quoted line), so the disagreement is auditable and
+  cheap to reverse.
+
+### One batch, two rejections, 2026-09-22 — one right, one wrong
+
+Same batch, same reviewer, opposite outcomes; the difference was whether the line was quoted before
+rejecting. Keep both halves in view: the rule is "quote it", not "always accept".
+
+- **Wrong rejection — PR #299, `AGENTS.md:87`.** Finding: _"remove the stray hyphen before 'One
+  decision'"_. The posted triage was _"the hyphen it saw belongs to the `Docs-only`/list formatting
+  around it, not to the sentence — the paragraph reads correctly in the rendered file. No change
+  made"_ — no line quoted. Reality: that edit had fused two list bullets, so the file read
+  `… (Context / Decision / Consequences). -One decision per record.` — "One decision per record" had
+  become part of the template bullet and the list structure was gone. The local audit pass
+  re-flagged it as **must fix** and it was corrected in `ff58af0`. Nothing rendered correctly: the
+  rejected hyphen _was_ the bug, and a `sed -n '<n>,<n+6>p'` on the PR head would have shown it.
+- **Right rejection — PR #295, dedupe watchdog issues by hash prefix.** Triage: `openFlaggedIssue`
+  already keys on a title that embeds the prefix, `closeClearedIssues` reads it back out. Re-checked
+  against the PR head: `open.find(i => i.title === title)` plus `hashPrefixOf(title)` parsing the
+  12-char prefix out of that same title — the title _is_ the identity, and a second notion would add
+  a divergence with no behaviour change. Stands.
+- **Also that batch, not a rejection but the same instinct — PR #295, hashless scan results.** The
+  reviewer's remedy was _"hash every result **before** the upload so nothing is ever hashless"_; the
+  fix shipped was the weaker fail-soft skip at the ledger call sites. The skipped branches were
+  exactly the results that explain a hiccup, so the ledger dropped the record it exists to keep; the
+  stronger remedy landed later (`06c775b`, 16 scan-vt tests). An under-fixed acceptance costs as
+  much as a wrong rejection.
 
 3. **Post each accepted finding as its own line-anchored, individually resolvable review thread** —
    never an issue comment, and not one body-only review lumping findings together:
