@@ -504,28 +504,27 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
     // classifies those as info severity, so cut after the LEVEL MARKER, not
     // after a literal ' error ': a debug/info line has no ' error ' substring,
     // and the old cut silently relied on the remainder still containing the
-    // source. Anything from chrome://firefox-scripts at any level is a hit;
-    // foreign sources only count at error level AND only with an actual
-    // source tag (matches the old net's push semantics).
+    // source. Only OUR sources count, at any level.
     const levelMatch = / (error|debug|info|warn) \[/.exec(line);
     const rest = levelMatch ? line.slice(levelMatch.index + 1) : line;
     // The probe appends " [source:line] msg" for script errors; the updater
-    // scripts surface as chrome://firefox-scripts/... sources. The hit rule:
-    // chrome://firefox-scripts at ANY level (logError is console.debug now);
-    // a foreign source is only a hit at error level AND only when a source
-    // tag actually matched (a level word alone, e.g. Telemetry's "ERROR\t",
-    // inside a foreign error line with a resource:// tag, is NOT a hit —
-    // matches the old net, which required the chrome:// tag to push).
+    // scripts surface as chrome://firefox-scripts/... sources. The hit rule is
+    // OURS ONLY, at any level (logError is console.debug now) — a foreign
+    // source is Firefox's business, and counting it reds legs on pure noise:
+    // `chrome://browser/.../ext-browser.js:396 Cannot attach ID to a tab in a
+    // closed window` (ubuntu updater leg, 2026-09-22) and the resource://gre
+    // Telemetry line before it. Two shipped bugs were caught through this net
+    // (helper checksum mojibake, CSP-blocked inline style) and both were ours.
     const srcMatch = / \[(chrome:\/\/[^\]:]+[^\]]*?):\d+\]/.exec(rest);
     const source = srcMatch ? srcMatch[1] : '';
     const level = levelMatch ? levelMatch[1] : '';
     const ours = source.includes('chrome://firefox-scripts');
-    if (!ours && (level !== 'error' || !source)) continue;
+    if (!ours) continue;
     // Allowlist matches the FULL line (source AND message): scenario 9's
     // expected headless-elevation failure IS a chrome://firefox-scripts
     // logError and must be exemptable without masking any other error.
     if (allows.some(re => re.test(line))) continue;
-    hits.push({line: line.trim(), level: ours ? level : 'error', source});
+    hits.push({line: line.trim(), level, source});
   }
   return hits;
 }
