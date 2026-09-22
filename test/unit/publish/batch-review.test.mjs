@@ -66,11 +66,16 @@ test('removeTempWorktree: undeletable husk warns loudly, still deletes the branc
   removeTempWorktree('C:/t/cr-batch-3', 'cr-batch-3', {
     run: (cmd, args) => cmds.push([cmd, ...args]),
     existsSync: () => true,
-    rmSync: () => {},
+    // rmSync genuinely throws when its retries are exhausted (review finding:
+    // the throw must never escape a finally or skip the cleanup below it).
+    rmSync: () => {
+      throw new Error('EBUSY: resource busy or locked');
+    },
     log: (...a) => warnings.push(a.join(' ')),
   });
   assert.match(warnings.join('\n'), /could not fully remove the temp worktree/);
   assert.match(warnings.join('\n'), /C:\/t\/cr-batch-3/);
+  assert.match(warnings.join('\n'), /EBUSY/, 'the rmSync error surfaces in the warning');
   assert.ok(
     cmds.some(c => c.includes('prune')),
     'prune still runs'

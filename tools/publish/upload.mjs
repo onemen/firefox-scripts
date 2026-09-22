@@ -1060,9 +1060,14 @@ function runRefBuild(ref) {
     // Same Windows husk mode as batch-review's removeTempWorktree(): git can
     // deregister the worktree yet fail the filesystem delete partway (deep
     // paths), silently leaving a full-worktree husk in %TEMP%. Remove whatever
-    // remains so nothing rots there between --ref builds.
+    // remains so nothing rots there between --ref builds. rmSync is caught, not
+    // propagated: a cleanup failure must never override the build status above.
     if (fs.existsSync(worktree)) {
-      fs.rmSync(worktree, {recursive: true, force: true, maxRetries: 3, retryDelay: 300});
+      try {
+        fs.rmSync(worktree, {recursive: true, force: true, maxRetries: 3, retryDelay: 300});
+      } catch (err) {
+        console.error(`Could not remove temporary worktree ${worktree}: ${err.message}`);
+      }
     }
   }
 }

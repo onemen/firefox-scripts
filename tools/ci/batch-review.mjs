@@ -231,12 +231,21 @@ export function removeTempWorktree(
   } = {}
 ) {
   run('git', ['worktree', 'remove', '--force', wtree], {ignoreFail: true});
+  // rmSync throws if it exhausts its retries — caught, not propagated: this
+  // helper runs in a finally, and a cleanup failure must never mask the
+  // original error or skip the prune/branch cleanup below.
+  let removalError;
   if (existsSync(wtree)) {
-    rmSync(wtree, {recursive: true, force: true, maxRetries: 3, retryDelay: 300});
+    try {
+      rmSync(wtree, {recursive: true, force: true, maxRetries: 3, retryDelay: 300});
+    } catch (err) {
+      removalError = err;
+    }
   }
   run('git', ['worktree', 'prune'], {ignoreFail: true});
   if (existsSync(wtree)) {
     log(`⚠ could not fully remove the temp worktree: ${wtree}`);
+    if (removalError) log(`  rmSync gave up: ${removalError.message}`);
     log('  It is deregistered (git worktree prune is safe) — delete it by hand.');
   }
   if (!keep) run('git', ['branch', '-D', tempBranch], {ignoreFail: true});
