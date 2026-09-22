@@ -32,6 +32,13 @@ on:
   # Required checks must also run on the merge-queue's temporary branch when
   # a PR lands via the queue (Settings → merge queue) — see docs/DEVELOPING.md.
   merge_group:
+  # Weekly cadence for the legs whose vendor is the flakiest link and whose
+  # coverage does not need per-PR freshness (the snap leg: store CDN 502s and
+  # snapd self-refresh deadlocks cost ~4 min per updater-PR and, being
+  # advisory, never gated anything). Scheduled runs exercise it on a timer; a
+  # red scheduled snap leg still shows up as the usual advisory failure.
+  schedule:
+    - cron: '30 5 * * 1' # Monday 05:30 UTC — ahead of the url-watchdog (06:00)
   # Manual dispatch (ADR 0021): `browser` filters the browser-matrix to one
   # leg (the manual escape — test a browser whose installer CI cannot fetch;
   # pair with the temporary ci-downloads release via pnpm ci:download).
@@ -561,15 +568,28 @@ jobs:
   # through the snap store, verifies the actual GreD path, and runs the
   # installer (HTTP+UI detection) and updater E2E against the snap binary.
   #
-  # ADVISORY in the gate: hosted runners may lack snapd or block store
-  # downloads, and the snap refresh cycle is outside our control. Skipped
-  # quietly when snapd is unavailable.
+  # NOT on the PR path (since 2026-09-22): the snap store is the flakiest
+  # dependency in the matrix (CDN 502s, snapd self-refresh deadlocks — a
+  # red leg never blocked anything, it just burned ~4 min of every
+  # updater-PR run), so the leg runs on the WEEKLY schedule + manual
+  # dispatch only. The store revision is probed via the store API and the
+  # .snap + assertion are downloaded with plain retryable HTTPS (snap
+  # download), cached by revision, and installed OFFLINE (snap ack + snap
+  # install) — a store outage falls back to the cached revision, and the
+  # step exports SNAP_STORE_UNAVAILABLE=1 so the watchdog can open a
+  # deduped issue when even the fallback fails (see the final step).
+  #
+  # Still ADVISORY in the gate; skipped quietly when snapd is unavailable.
   snap-firefox:
     name: 'snap Firefox E2E · ubuntu-24.04'
     needs: [changes, snapshot]
-    if: needs.changes.outputs.updater == 'true'
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      (needs.changes.outputs.updater == 'true' && github.event_name == 'push')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      store_unavailable: ${{ steps.store.outputs.store_unavailable }}
     env:
       PUPPETEER_SKIP_DOWNLOAD: 'true'
 
@@ -593,14 +613,104 @@ jobs:
         if: steps.snapd.outputs.available == 'true'
         uses: ./.github/actions/linux-test-prereqs
 
-      # The snap store resolves the revision at install time (no cacheable
-      # URL, so no actions/cache step here); downloads.mjs wraps
-      # `sudo snap install firefox --classic` (it elevates the snap command
-      # itself — running this recipe under sudo would strip $GITHUB_ENV and
-      # FIREFOX_BINARY would never reach the later steps) and exports
-      # /snap/bin/firefox.
-      - name: Install Firefox (snap)
+      # Probe the store's current stable revision + cache the .snap/assert
+      # pair by revision (plain HTTPS via `snap download` — retryable and
+      # cacheable, unlike `snap install`, whose revision negotiation is not).
+      # Same key-invalidation pattern as setup-browser's URL-hash keys: a new
+      # store revision changes the key, so the cache can never pin a stale
+      # Firefox. On any store failure the cached pair is the fallback; when
+      # even that is missing the step fails AND exports
+      # SNAP_STORE_UNAVAILABLE=1 for the watchdog-issue step at the end.
+      - name: Resolve store revision
+        id: rev
         if: steps.snapd.outputs.available == 'true'
+        run: |
+          set -euo pipefail
+          REV=$(curl -fsS --retry 3 --retry-delay 5 --max-time 30 \
+            -H 'Snap-Device-Series: 16' \
+            'https://api.snapcraft.io/v2/snaps/info/firefox' \
+            | node --input-type=module -e "
+              let d=''; for await (const c of process.stdin) d += c;
+              const j = JSON.parse(d);
+              const e = (j['channel-map'] || []).find(c => c.channel.track === 'latest' && c.channel.risk === 'stable');
+              if (!e) process.exit(1);
+              console.log(e.revision);
+            ") || true
+          if [ -z "${REV:-}" ]; then
+            echo '::warning::snap store API unreachable — will try cache-only fallback'
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "revision=$REV" >> "$GITHUB_OUTPUT"
+            echo "store revision: $REV"
+          fi
+
+      - name: Cache snap download
+        if: steps.snapd.outputs.available == 'true' && steps.rev.outputs.available == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/snap-pkg
+          key: snap-firefox-${{ steps.rev.outputs.revision }}
+
+      - name: Download snap (revision-pinned, retryable)
+        id: dl
+        if: steps.snapd.outputs.available == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/snap-pkg
+          cd ~/snap-pkg
+          # Already cached for this revision? Skip the store entirely.
+          if ls firefox_*.snap >/dev/null 2>&1; then
+            echo "cache hit: using cached .snap + assertion"
+            echo "from-cache=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${{ steps.rev.outputs.available }}" != 'true' ]; then
+            echo "::error::no cached snap and the store API is unreachable — no fallback (SNAP_STORE_UNAVAILABLE)"
+            echo "SNAP_STORE_UNAVAILABLE=1" >> "$GITHUB_ENV"
+            exit 1
+          fi
+          # Two attempts, hard 8-min wall each: a hang must die before the
+          # 20-min job timeout so the diagnostic steps still run. cd + CWD
+          # output instead of `--directory` — that flag does not exist on the
+          # runner's snapd (first dispatch run: `unknown flag 'directory'`).
+          for i in 1 2; do
+            if timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}" --channel=latest/stable; then
+              echo "from-cache=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::snap download attempt $i failed — retrying in 20s"
+            sleep 20
+          done
+          echo "::error::snap download failed after retry — trying cache fallback"
+          if ls firefox_*.snap >/dev/null 2>&1; then
+            echo "::warning::store down — proceeding with an OLDER cached revision"
+            echo "from-cache=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "SNAP_STORE_UNAVAILABLE=1" >> "$GITHUB_ENV"
+          exit 1
+
+      # Offline install from the pinned pair — no store negotiation, no snapd
+      # self-refresh race. `snap ack` + `snap install` elevate themselves via
+      # sudo (passwordless on hosted runners); ack before install is required
+      # for unasserted local files (--dangerous accepts unasserted, ack keeps
+      # the provenance assertions in the verified path).
+      - name: Install Firefox (snap, offline from cache)
+        if: steps.snapd.outputs.available == 'true' && steps.dl.outputs.from-cache == 'true'
+        run: |
+          set -euo pipefail
+          sudo snap ack ~/snap-pkg/firefox_*.assert
+          sudo snap install ~/snap-pkg/firefox_*.snap --classic
+          test -x /snap/bin/firefox || { echo '::error::snap install ran, but /snap/bin/firefox not found'; exit 1; }
+
+      # Only reached when the store path succeeded above (from-cache=false);
+      # kept for provenance symmetry with downloads.mjs's own recipe. A store
+      # failure here cannot happen — the download step already handled it —
+      # but a failure still marks the leg failed without the fallback signal
+      # (the cache fallback IS the fallback).
+      - name: Install Firefox (snap)
+        if: steps.snapd.outputs.available == 'true' && steps.dl.outputs.from-cache != 'true'
         run: node test/e2e/shared/downloads.mjs firefox-snap
 
       # THE point of this leg (#55): discover the snap GreD at runtime —
@@ -640,8 +750,13 @@ jobs:
             exit 1
           }
 
+      # Snapshot gate for the two E2E steps below: when the download step
+      # already failed (e.g. no cache and the store down), the E2E steps would
+      # only hit the misleading "No snapshot found" — skip them instead; the
+      # leg is failed anyway and the store-watch job files the issue.
       - name: Download dev snapshot
-        if: steps.snapd.outputs.available == 'true'
+        id: snapshot
+        if: steps.snapd.outputs.available == 'true' && !failure() && !cancelled()
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dev-snapshot
@@ -689,7 +804,7 @@ jobs:
       # assertions (cards, badges, screenshot) still run.  The relaunch caveat
       # is documented in docs/future-work.md §2.
       - name: Run installer E2E (snap Firefox)
-        if: steps.snapd.outputs.available == 'true'
+        if: steps.snapd.outputs.available == 'true' && steps.snapshot.conclusion == 'success'
         run: xvfb-run -a node test/e2e/installer/installer-e2e.mjs --ui --ui-fallback-open
 
       # Updater flow against the snap build: tab opens, config seeds into the
@@ -699,8 +814,19 @@ jobs:
       # Runs even when the installer step above failed: each half of the leg
       # reports independently, so one failure never hides the other's result.
       - name: Run updater E2E (snap Firefox)
-        if: always() && steps.snapd.outputs.available == 'true'
+        if: always() && steps.snapshot.conclusion == 'success'
         run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
+
+      # Store-down signal for the follow-up job: the E2E workflow's token is
+      # deliberately contents: read (PR build code runs here — no issue-write
+      # in the same job, per the workflow-level permission note), so the
+      # deduped issue is filed by the snap-store-watch job below, which is the
+      # ONLY job granted issues: write. Exported as a JOB OUTPUT (not a step
+      # output) so the needs-chain can read it after the job ends.
+      - name: Export store status
+        if: always()
+        id: store
+        run: echo "store_unavailable=${SNAP_STORE_UNAVAILABLE:-0}" >> "$GITHUB_OUTPUT"
 
       - name: Upload diagnostics
         if: failure()
@@ -711,6 +837,54 @@ jobs:
             dist/installer-e2e-*.png
             dist/updater-e2e-*.png
           if-no-files-found: ignore
+
+  # ── Snap store-down issue (deduped) ─────────────────────────────────────
+  # When the snap leg could not install Firefox from the store AND had no
+  # cached fallback (SNAP_STORE_UNAVAILABLE=1), file the same deduped issue
+  # the url-watchdog uses for rot — title-stable so recurring outages comment
+  # on one thread instead of spamming new issues, auto-closable by the next
+  # green snap leg. Scoped to this one job: issues: write never touches a
+  # job that executes PR build code (the E2E workflow's own policy).
+  snap-store-watch:
+    name: snap store watchdog
+    needs: [snap-firefox, e2e-gate]
+    if: >-
+      always() && github.event_name != 'pull_request' && needs.snap-firefox.result == 'failure' &&
+      needs.snap-firefox.outputs.store_unavailable == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: File deduped store-outage issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE='[url-watchdog] snap store unreachable — snap Firefox E2E has no fallback'
+          BODY=$(cat <<'EOF'
+          The snap Firefox E2E leg could not reach the snap store AND found no
+          cached revision to fall back on (SNAP_STORE_UNAVAILABLE=1).
+
+          Watchdog run: ${RUN_URL}
+
+          The leg installs from the store API revision probe + plain-HTTPS
+          `snap download`, cached per revision; this failure means the store
+          API/CDN was unreachable through retries AND the Actions cache held
+          no prior revision. Verify store health; the next green scheduled
+          run auto-closes this issue.
+          EOF
+          )
+          MATCH="$(gh issue list --label url-watchdog --state open --search "$TITLE" --json number --jq '.[0].number // ""')"
+          if [ -n "$MATCH" ]; then
+            gh issue comment "$MATCH" --body "Recurring outage — ${RUN_URL}"
+          else
+            gh issue create --label url-watchdog --title "$TITLE" --body "$BODY"
+          fi
 
   # ── Browser matrix (advisory, Windows) ────────────────────────────────────
   # Each browser resolves its installer through test/e2e/shared/browserResolver.mjs:
@@ -1099,7 +1273,7 @@ jobs:
             updater:${{ needs.changes.outputs.updater == 'true' }}
             updater-waterfox:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
-            snap-firefox:${{ needs.changes.outputs.updater == 'true' }}
+            snap-firefox:${{ (needs.changes.outputs.updater == 'true' && github.event_name == 'push') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
             core-lifecycle:${{ needs.changes.outputs.core == 'true' }}
             browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr') }}
             fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr') }}
