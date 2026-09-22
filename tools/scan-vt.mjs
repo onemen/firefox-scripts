@@ -248,7 +248,17 @@ export async function scanVirusTotal(
   const vetoEngines = vtVetoEngines();
   const results = [];
   for (const file of files) {
+    // Hash and measure BEFORE the upload: every result this loop pushes — the
+    // completed verdicts, the skipped-not-clean branches and the failures — must
+    // be keyable in the per-hash ledger. ledgerEntry() throws on a missing
+    // sha256, so a hashless result cannot be recorded at all, and a scan hiccup
+    // would lose the one record that explains it.
+    let sha256;
+    let size;
     try {
+      const data = fs.readFileSync(file);
+      sha256 = crypto.createHash('sha256').update(data).digest('hex');
+      size = data.length;
       const uploaded = await uploadFile(key, file);
       let stats;
       if (uploaded.stats) {
@@ -258,6 +268,8 @@ export async function scanVirusTotal(
         if (!analysisComplete('completed', uploaded.stats)) {
           results.push({
             file,
+            sha256,
+            size,
             error:
               'VirusTotal has no completed analysis for these bytes yet — skipping, not treated as clean',
           });
@@ -280,6 +292,8 @@ export async function scanVirusTotal(
           // with no engine results).  Skip with a warning — never clean.
           results.push({
             file,
+            sha256,
+            size,
             error:
               `VirusTotal analysis incomplete after ${Math.round((Date.now() - start) / 1000)}s ` +
               `(status: ${attrs.status ?? 'unknown'}) — skipping, not treated as clean`,
@@ -309,7 +323,10 @@ export async function scanVirusTotal(
         flags: maliciousEngines(engines),
       });
     } catch (err) {
-      results.push({file, error: err.message});
+      // `sha256`/`size` are already computed for every file that could be read;
+      // a failure to read is the one case with nothing to key on (the caller's
+      // ledger guard skips it with a warning).
+      results.push({file, sha256, size, error: err.message});
     }
   }
   return {results};
