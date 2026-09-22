@@ -3,7 +3,14 @@
 - **Status:** accepted <!-- accepted | superseded by [NNNN](./NNNN-slug.md) -->
 - **Date:** YYYY-MM-DD
 
-<!-- An amendment that keeps this record valid carries a machine-readable link line,
+<!-- Reversing a decision? This record carries a reciprocal link back:
+       - **Supersedes:** [NNNN](./NNNN-slug.md) (what it replaces, and what survives)
+     ... and the replaced record's status becomes
+       - **Status:** superseded by [NNNN](./NNNN-slug.md)
+     Both halves are validated by check-decisions.mjs (ADR 0029), which also requires
+     the replaced record to sit under "## Historical" in index.md.
+
+     An amendment that keeps this record valid carries a machine-readable link line,
      validated by check-decisions.mjs (ADR 0029) — on THIS record when it amends another:
        - **Amends:** [NNNN](./NNNN-slug.md) (what changed)
      ... and the reciprocal line on the amended record:

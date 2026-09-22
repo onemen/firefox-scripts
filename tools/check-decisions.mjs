@@ -13,6 +13,14 @@
 //      links to itself, or the pair is not reciprocated (X Amends Y ⇔
 //      Y Amended X). A self-contained `Amended: YYYY-MM-DD — …` line carries no
 //      links and is declared, not validated.
+//   6. a supersede pair is one-sided or unexpressed: `Status: superseded by
+//      [Y](…)` on X requires Y to carry a `Supersedes: [X](…)` line (that is
+//      the check that somebody actually wrote the replacement, and for a
+//      scoped reversal that what survives is restated there), the target must
+//      be a record whose [NNNN] matches its filename, and a superseded record
+//      must be listed under the index's `## Historical` heading — the steering
+//      list is what a later agent reads, so a dead decision left there
+//      re-proposes itself.
 //
 // Usage: node tools/check-decisions.mjs   (wired into CI via pnpm check:decisions)
 
@@ -174,6 +182,37 @@ export function checkDecisionsDir(dir) {
   // bookkeeping. Reciprocity is checked from both ends so a one-sided link is
   // caught whichever record the author edited.
   const byNumber = new Map(records.map(record => [record.number, record]));
+
+  // A `Supersedes:` target must be a real record in this directory whose
+  // filename number matches the link — the same bar the amendment lines are
+  // held to. Returns the target's filename, or null when the link is already
+  // reported as an error (so callers never cascade a second message).
+  const recordTargetFile = (record, field, num, target) => {
+    if (num === record.number) {
+      fail(record.file, `${field} links to itself`);
+      return null;
+    }
+    const resolved = path.resolve(dir, target);
+    const targetFile = path.basename(resolved);
+    if (!fs.existsSync(resolved)) {
+      fail(record.file, `${field}: target missing: ${target}`);
+      return null;
+    }
+    const isRecord =
+      path.dirname(resolved) === dir &&
+      targetFile !== INDEX &&
+      targetFile !== TEMPLATE &&
+      records.some(r => r.file === targetFile);
+    if (!isRecord) {
+      fail(record.file, `${field}: ${target} is not a decision record`);
+      return null;
+    }
+    if (targetFile.slice(0, 4) !== num) {
+      fail(record.file, `${field}: link [${num}] does not match the target filename (${target})`);
+      return null;
+    }
+    return targetFile;
+  };
   // An `Amended:` line without links is valid only as the documented date
   // declaration (2026-09-16 — what changed); anything else link-free, and any
   // `Amends:` value with no record link at all, is a declared-but-empty field.
@@ -193,35 +232,8 @@ export function checkDecisionsDir(dir) {
           continue;
         }
         for (const {num, path: target} of targets) {
-          if (num === record.number) {
-            fail(record.file, `${field} links to itself`);
-            continue;
-          }
-          const resolved = path.resolve(dir, target);
-          const targetFile = path.basename(resolved);
-          if (!fs.existsSync(resolved)) {
-            fail(record.file, `${field}: target missing: ${target}`);
-            continue;
-          }
-          // A target must be one of the parsed records inside this directory —
-          // a basename that merely looks like NNNN-slug (or a path outside the
-          // dir) must not associate with an ADR number below.
-          const isRecord =
-            path.dirname(resolved) === dir &&
-            targetFile !== INDEX &&
-            targetFile !== TEMPLATE &&
-            records.some(r => r.file === targetFile);
-          if (!isRecord) {
-            fail(record.file, `${field}: ${target} is not a decision record`);
-            continue;
-          }
-          if (targetFile.slice(0, 4) !== num) {
-            fail(
-              record.file,
-              `${field}: link [${num}] does not match the target filename (${target})`
-            );
-            continue;
-          }
+          const targetFile = recordTargetFile(record, field, num, target);
+          if (!targetFile) continue;
           const back = field === 'Amends' ? 'Amended' : 'Amends';
           const backValues = byNumber.get(num)?.fields.get(back) ?? [];
           const backNums = backValues.flatMap(v => linkTargets(v).map(t => t.num));
@@ -232,6 +244,56 @@ export function checkDecisionsDir(dir) {
                 `link back to [${record.number}] (ADR 0029: X ${field} Y ⇔ Y ${back} X)`
             );
           }
+        }
+      }
+    }
+  }
+
+  // Supersede pairs. A reversal is expressed twice — `Status: superseded by
+  // [Y]` on the old record and a `Supersedes:` line on the replacement — and
+  // the pair must agree, so a scoped reversal cannot leave the old record's
+  // still-valid clauses resting on a stub nobody wrote.
+  for (const record of records) {
+    const superseded = record.status.match(supersededPattern);
+    if (superseded) {
+      const replacement = byNumber.get(superseded[1]);
+      // Existence was reported inline; a missing/renamed target needs no
+      // second message. A target that is not a record is caught below via its
+      // own `Supersedes:` link, or here as a missing reciprocal.
+      if (replacement) {
+        const backNums = (replacement.fields.get('Supersedes') ?? []).flatMap(value =>
+          linkTargets(value).map(t => t.num)
+        );
+        if (!backNums.includes(record.number)) {
+          fail(
+            replacement.file,
+            `Supersedes: missing — ${record.file} declares "superseded by ` +
+              `[${record.number}](./${record.file})", so this record must link it back with a ` +
+              '"Supersedes:" line (ADR 0029: X superseded by Y ⇔ Y Supersedes X)'
+          );
+        }
+      }
+    }
+    for (const value of record.fields.get('Supersedes') ?? []) {
+      const targets = linkTargets(value);
+      if (targets.length === 0) {
+        fail(
+          record.file,
+          `Supersedes: "${value}" declares no target — link the record it replaces with ` +
+            '[NNNN](./NNNN-slug.md)'
+        );
+        continue;
+      }
+      for (const {num, path: target} of targets) {
+        const targetFile = recordTargetFile(record, 'Supersedes', num, target);
+        if (!targetFile) continue;
+        const replaced = byNumber.get(num);
+        if (replaced?.status.match(supersededPattern)?.[1] !== record.number) {
+          fail(
+            record.file,
+            `Supersedes ${targetFile} is not reciprocated — ${targetFile} must carry ` +
+              `"Status: superseded by [${record.number}](./${record.file})"`
+          );
         }
       }
     }
@@ -255,6 +317,18 @@ export function checkDecisionsDir(dir) {
     for (const record of records) {
       if (!indexContent.includes(record.file)) {
         fail(record.file, `not listed in ${INDEX} (add it to the steering or historical list)`);
+      }
+    }
+    // Mention is not placement: a superseded record must sit under Historical,
+    // because the steering list is the list a later agent reads first.
+    const historicalSection = indexContent.split(/^## Historical\s*$/m)[1] ?? '';
+    for (const record of records) {
+      if (supersededPattern.test(record.status) && !historicalSection.includes(record.file)) {
+        fail(
+          record.file,
+          `is superseded but not listed under "## Historical" in ${INDEX} — move it out of the ` +
+            'steering list or the dead decision keeps being read as current'
+        );
       }
     }
   }
