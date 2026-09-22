@@ -1,6 +1,8 @@
 # 0002: Hash-based update detection with manifest-driven file lists
 
 - **Status:** accepted
+- **Supersedes:** [0001](./0001-versioninfo-and-gist.md) (`versionInfo.json` + Gist as the
+  update-version mechanism)
 - **Date:** 2026-08-01
 
 ## Context

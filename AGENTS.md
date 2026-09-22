@@ -84,11 +84,13 @@ proposing a new primitive, surface, storage home, or architecture change. A deci
 usually covers the need.
 
 - Template: `docs/decisions/0000-template.md` — copy to the next unused `NNNN` with a kebab-case
-  slug; keep the record to roughly half a page (Context / Decision / Consequences).
-- One decision per record. Supersede, don't edit: mark the old record `superseded by NNNN` and list
-  it under the index's Historical section. An additive amendment keeps its record and is declared
-  with `Amends:` / `Amended:` status lines (ADR 0029) — the pair must be reciprocal, which
-  `pnpm check:decisions` enforces.
+  slug; keep the record to roughly half a page (Context / Decision / Consequences). -One decision
+  per record. Supersede, don't edit: mark the old record `superseded by NNNN`, list it under the
+  index's Historical section, and declare the reversal from the other end with a
+  `Supersedes: [NNNN](...)` line on the replacing record (what it replaces, and what survives). An
+  additive amendment keeps its record and is declared with `Amends:` / `Amended:` status lines
+  (ADR 0029) — the pair must be reciprocal, which `pnpm check:decisions` enforces, along with the
+  supersede pair and the Historical placement.
 
 ## Skills
 
