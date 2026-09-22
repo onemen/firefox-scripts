@@ -441,6 +441,26 @@ pnpm test:e2e:updater
 pnpm test:e2e:legacy
 ```
 
+### Pre-push local gate (`pnpm test:e2e:prepush`)
+
+Convention (2026-09-22): **before pushing changes that need an E2E test to a PR, run one updater leg
+locally** — the embarrassing failures surface in ~1-2 minutes instead of a ~6-minute CI round-trip.
+The gate is a convenience, not the CI gate: the full matrix still runs (and stays authoritative) in
+CI.
+
+```bash
+pnpm test:e2e:prepush                 # snapshot (reuse or build) → one updater leg on Nightly
+pnpm test:e2e:prepush -- --firefox "C:/path/to/firefox.exe"   # explicit browser override
+```
+
+Behavior: reuses the newest `dist/` snapshot matching the current branch; if there is none it builds
+one via `pnpm upload:local -- --mode=dev` — which requires a **clean worktree, so commit your
+changes first** (that is the intended flow: you are about to push anyway). The leg runs on
+**Nightly** — resolution order: `--firefox`/`E2E_PREPUSH_FIREFOX`, then the portable nightly from
+`pnpm e2e:portable nightly`, then the installed Nightly (`C:\Program Files\Firefox Nightly`). Some
+scenarios (e.g. scenario 9's GreD-writability caveat) self-skip when the local environment cannot
+run them, mirroring CI's PR legs.
+
 The orchestrator (`run.mjs`) passes `--snapshot <dir>` to child scripts automatically; individual
 scripts can also be invoked directly:
 

@@ -462,6 +462,10 @@ export const MANUAL_TEST_SCRIPTS = new Map([
   ['test:e2e', 'local orchestrator — CI runs installer-e2e/updater-e2e directly'],
   ['test:e2e:installer', 'local convenience — e2e.yml runs installer-e2e.mjs directly'],
   ['test:e2e:updater', 'local convenience — e2e.yml runs updater-e2e.mjs directly'],
+  [
+    'test:e2e:prepush',
+    'pre-push local gate (DEVELOPING.md) — one Nightly updater leg before pushing; deliberately NOT in CI, whose full matrix stays authoritative',
+  ],
   ['test:skills', 'frontmatter-only variant of the lint pipeline stage'],
 ]);
 
