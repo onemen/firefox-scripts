@@ -4,12 +4,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CLI_FLAGS,
   compareToBaseline,
   formatReport,
   mainWorktree,
   parseStatus,
   parseWorktrees,
 } from '../../../tools/check-main-clean.mjs';
+
+test('CLI_FLAGS: every documented flag parses, --help included', () => {
+  // Regression: --help was reported as "unknown argument" and exited 2, so the
+  // one flag a confused user is most likely to try was the one that failed.
+  assert.ok(CLI_FLAGS.includes('--help'));
+  const unknown = ['--record', '--status', '--help'].filter(a => !CLI_FLAGS.includes(a));
+  assert.deepEqual(unknown, []);
+});
 
 const PORCELAIN = [
   'worktree C:/code/repo',

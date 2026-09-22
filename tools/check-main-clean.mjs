@@ -186,6 +186,9 @@ export function formatReport({mainPath, currentPath, current, result, recordedAt
   return lines.join('\n');
 }
 
+/** The flags this CLI accepts — `--help` included, so it is never "unknown". */
+export const CLI_FLAGS = ['--record', '--status', '--help'];
+
 const isCli =
   process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 
@@ -193,7 +196,7 @@ if (isCli) {
   const argv = process.argv.slice(2);
   const record = argv.includes('--record');
   const statusOnly = argv.includes('--status');
-  const unknown = argv.filter(a => !['--record', '--status'].includes(a));
+  const unknown = argv.filter(a => !CLI_FLAGS.includes(a));
   if (unknown.length > 0) {
     console.error(`unknown argument: ${unknown[0]} (see --help)`);
     process.exit(2);
@@ -202,7 +205,8 @@ if (isCli) {
     console.log(
       'usage: node tools/check-main-clean.mjs [--record | --status]\n' +
         "  --record  snapshot the shared checkout as this task's baseline\n" +
-        '  --status  print its current state (never fails)'
+        '  --status  print its current state (never fails)\n' +
+        '  --help    print this text'
     );
     process.exit(0);
   }
