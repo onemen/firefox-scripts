@@ -2358,22 +2358,20 @@ async function run() {
           // green → red → red on identical code). A fresh profile + relaunch
           // is the proven remedy.
           const failedBefore = counter.failed;
-          let result = await runHelperChecksumScenario(
-            counter,
-            opts,
-            snapshotDir,
-            'helper-checksum-win'
+          // Both attempts' profiles are pushed for centralized cleanup — the
+          // failed attempt's stays on disk until the run ends for post-mortem
+          // (same contract as scenario 1's createdProfiles). The counter is
+          // deliberately SHARED: attempt 1's failures stay in the tally, so a
+          // retry can never turn a real regression green (docs/DEVELOPING.md).
+          profiles.push(
+            await runHelperChecksumScenario(counter, opts, snapshotDir, 'helper-checksum-win')
           );
           if (counter.failed > failedBefore) {
             console.log('  [diag] attempt 1 failed — retrying scenario 9 with a fresh profile');
-            result = await runHelperChecksumScenario(
-              counter,
-              opts,
-              snapshotDir,
-              'helper-checksum-win'
+            profiles.push(
+              await runHelperChecksumScenario(counter, opts, snapshotDir, 'helper-checksum-win')
             );
           }
-          profiles.push(result);
         },
       },
     ];
