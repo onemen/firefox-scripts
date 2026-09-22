@@ -20,11 +20,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {createRequire} from 'node:module';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const ARTIFACT = path.join(REPO_ROOT, 'installer', 'src', 'script.built.js');
 const EMBED = path.join(REPO_ROOT, 'installer', 'embed.mjs');
+
+// The repo's eslint/prettier entry points, resolved from THIS checkout's
+// node_modules (via package.json so an exports map can't hide the subpath).
+// The gates spawn them through process.execPath directly — no `npx`, no
+// `shell`, no PATH lookup: a POSIX-style PATH environment variable (exported
+// in a Git Bash session, where MSYS_NO_PATHCONV=1 leaves it unconverted for
+// the spawned Windows process) used to break the npx lookup and fail the
+// gate through no fault of the artifact. An absolute executable path and
+// absolute bin script have no PATH dependence at all.
+const require = createRequire(import.meta.url);
+const pkgDir = name => path.dirname(require.resolve(`${name}/package.json`));
+const TOOL_BINS = {
+  eslint: path.join(pkgDir('eslint'), 'bin', 'eslint.js'),
+  prettier: path.join(pkgDir('prettier'), 'bin', 'prettier.cjs'),
+};
 
 /** Run embed.mjs (writes resources.h + the artifact); assert success. */
 function buildArtifact() {
@@ -57,12 +73,17 @@ function expectedConcat() {
   );
 }
 
-/** The repo's eslint/prettier entry points, run on the artifact. */
-function runTool(cmd, args) {
-  return spawnSync('npx', [cmd, ...args], {
+/**
+ * The repo's eslint/prettier entry points, run on the artifact.
+ *
+ * `env` (optional) merges over process.env for the child — used to prove the
+ * spawn survives a hostile (POSIX-style) PATH.
+ */
+function runTool(cmd, args, env) {
+  return spawnSync(process.execPath, [TOOL_BINS[cmd], ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
-    shell: process.platform === 'win32',
+    ...(env ? {env: {...process.env, ...env}} : {}),
   });
 }
 
@@ -113,4 +134,13 @@ test('concat-gate: artifact is eslint-clean under the repo config', () => {
 test('concat-gate: artifact is prettier-clean under the repo config', () => {
   const r = runTool('prettier', ['--check', 'installer/src/script.built.js']);
   assert.equal(r.status, 0, `prettier findings on the built concat:\n${r.stdout}${r.stderr}`);
+});
+
+test('concat-gate: tool spawn survives a POSIX-style PATH (MSYS_NO_PATHCONV=1 case)', () => {
+  // The old spawn (`npx` via shell) died under this env: cmd.exe cannot resolve
+  // npx through a colon-separated POSIX PATH, so the gate failed through no
+  // fault of the artifact. The direct spawn must not consult PATH at all.
+  const r = runTool('eslint', ['--version'], {PATH: '/usr/bin:/bin', MSYS_NO_PATHCONV: '1'});
+  assert.equal(r.status, 0, `spawn broke on a POSIX-style PATH:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /v\d+/, 'eslint answered under the hostile env');
 });
