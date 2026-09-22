@@ -24,7 +24,7 @@
 
 // ===== Restart helpers =====
 
-// Graceful shutdown is important: taskkill /F makes Firefox think it crashed,
+// Graceful shutdown is important: a forced kill makes Firefox think it crashed,
 // so the next launch runs crash-recovery (and can show restore-error pages).
 // Sending WM_CLOSE to the browser's top-level windows triggers Firefox's normal
 // quit path, which writes a valid session store.
@@ -37,6 +37,45 @@ static BOOL CALLBACK close_window_enum_proc(HWND hwnd, LPARAM lparam) {
     return TRUE;
 }
 #endif
+
+#ifdef _WIN32
+/**
+ * Terminate `pid` and its descendants, deepest first.
+ *
+ * `taskkill /T` used to do this; walking the process snapshot is equivalent
+ * and avoids launching a command interpreter — the binary no longer spawns a
+ * shell at all (see docs/DEVELOPING.md → AV false positives).  Children are
+ * collected and killed before their parent so a dying parent cannot orphan
+ * them mid-walk; Windows reuses process ids, so each level re-snapshots
+ * immediately before use and the recursion depth is bounded.
+ */
+static void terminate_process_tree(unsigned long pid, int depth) {
+    if (depth > 8) return;
+    DWORD kids[64];
+    int nkids = 0;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe;
+        pe.dwSize = sizeof(pe);
+        if (Process32FirstW(snapshot, &pe)) {
+            do {
+                if (pe.th32ProcessID != pe.th32ParentProcessID &&
+                    pe.th32ParentProcessID == (DWORD)pid && nkids < 64) {
+                    kids[nkids++] = pe.th32ProcessID;
+                }
+            } while (Process32NextW(snapshot, &pe));
+        }
+        CloseHandle(snapshot);
+    }
+    for (int i = 0; i < nkids; i++) terminate_process_tree(kids[i], depth + 1);
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, (DWORD)pid);
+    if (h) {
+        TerminateProcess(h, 1);
+        WaitForSingleObject(h, 1000);
+        CloseHandle(h);
+    }
+}
+#endif /* _WIN32 */
 
 // Wait up to wait_ms for the process to exit; force-kill the tree if it doesn't.
 #ifdef _WIN32
@@ -52,16 +91,9 @@ static void wait_close_or_force(unsigned long pid, int wait_ms) {
     } else if (GetLastError() == ERROR_INVALID_PARAMETER) {
         return;  // already gone
     }
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "taskkill /f /pid %lu /t", (unsigned long)pid);
-    STARTUPINFOA si = { sizeof(si) };
-    PROCESS_INFORMATION pi;
-    if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
-                       CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 3000);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-    }
+    log_msg("[restart] PID %lu did not exit in %d ms — terminating its process tree\n",
+            (unsigned long)pid, wait_ms);
+    terminate_process_tree(pid, 0);
     Sleep(300);
 }
 #endif
