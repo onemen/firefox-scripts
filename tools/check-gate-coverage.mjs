@@ -426,7 +426,10 @@ const CONTRACTS = [
     // Runs after e2e-gate: records the validated browser versions (#4) only
     // when every browser leg passed, and cleans up the temporary
     // ci-downloads release after a single-browser manual escape (ADR 0021).
-    postGate: ['record-validation', 'cleanup-ci-downloads'],
+    // snap-store-watch also runs after the gate: it files the deduped
+    // store-outage issue when the advisory snap leg failed with no cached
+    // fallback — a reporting job, not a gate input.
+    postGate: ['record-validation', 'cleanup-ci-downloads', 'snap-store-watch'],
   },
   {
     file: '.github/workflows/ci.yml',
