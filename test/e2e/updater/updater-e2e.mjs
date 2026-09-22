@@ -2248,14 +2248,18 @@ async function run() {
   // which is why the CI legs can seed into Program Files.
   const greIssue = greNotWritableReason(greDir);
   if (greIssue) {
+    // Warn, never hard-stop: some hosts legitimately can write where this
+    // probe cannot (and vice versa — platform quirks must not decide whether a
+    // leg runs). The scenarios report their own seeding failure when it does
+    // bite, with the same recipe to fix it.
     console.error(
-      `  GreD is not writable — ${greIssue}\n` +
-        '  The updater scenarios seed config.js into the browser install dir, so they\n' +
-        '  need a user-owned Firefox: a portable copy (`PORTABLE_BROWSER_DIR`, see\n' +
-        '  test/e2e/shared/downloads.mjs) or `--firefox <portable firefox.exe>`.\n' +
-        '  An installed browser under Program Files needs an elevated account.'
+      `  WARNING: GreD is not writable here — ${greIssue}\n` +
+        '  The updater scenarios seed config.js into the browser install dir; if they\n' +
+        '  fail with EPERM they need a user-owned Firefox: a portable copy\n' +
+        '  (`PORTABLE_BROWSER_DIR`, see test/e2e/shared/downloads.mjs) or\n' +
+        '  `--firefox <portable firefox.exe>`. An installed browser under\n' +
+        '  Program Files needs an elevated account.'
     );
-    process.exit(1);
   }
 
   // Scenario 9 (helper-checksum-win) is in the default set (Windows-only; it
