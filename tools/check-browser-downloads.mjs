@@ -700,10 +700,15 @@ export async function main() {
     const prev = prMode ? undefined : baseline[browser];
     const change = compareBaseline(prev, {version});
 
-    // Endpoint check (1 KB ranged GET) for every browser.
+    // Endpoint check (1 KB ranged GET) for every browser. `url` is resolved
+    // ONCE here and reused by the full-download verifications below: a second
+    // resolution could transiently fail after the endpoint check succeeded,
+    // and an unhandled rejection would abort runCheck without recording
+    // download-failed or publishing the rot finding.
     let endpoint;
+    let url;
     try {
-      const url = await resolveDownloadUrl(browser, 'win32');
+      url = await resolveDownloadUrl(browser, 'win32');
       console.log(`  url ${url}`);
       endpoint = await checkEndpoint(url);
     } catch (err) {
@@ -731,10 +736,7 @@ export async function main() {
         `  ${change === 'first-run' ? 'first run' : `new version: ${prev.version} → ${version}`}` +
           ' — verifying full download + SHA-256'
       );
-      const verified = await verifyFullDownload(
-        await resolveDownloadUrl(browser, 'win32'),
-        browser
-      );
+      const verified = await verifyFullDownload(url, browser);
       if (!verified.ok) {
         console.log(`  ✗ ${verified.reason}`);
         // Mark the failure so the meta issue does not render this browser as
@@ -785,10 +787,7 @@ export async function main() {
       console.log(
         `  nightly replaced its binary within the same ${version} window — re-verifying full download + SHA-256`
       );
-      const verified = await verifyFullDownload(
-        await resolveDownloadUrl(browser, 'win32'),
-        browser
-      );
+      const verified = await verifyFullDownload(url, browser);
       if (!verified.ok) {
         console.log(`  ✗ ${verified.reason}`);
         results[browser] = {status: 'download-failed'};
