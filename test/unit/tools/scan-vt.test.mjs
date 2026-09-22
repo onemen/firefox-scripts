@@ -9,6 +9,7 @@ import path from 'node:path';
 import {
   analysisComplete,
   enginesReported,
+  lookupVirusTotalHashes,
   maliciousEngines,
   scanVirusTotal,
   vtFailThreshold,
@@ -163,6 +164,98 @@ test('scanVirusTotal: VT_VETO_ENGINES env reaches the verdict (regression: veto 
     if (veto === undefined) delete process.env.VT_VETO_ENGINES;
     else process.env.VT_VETO_ENGINES = veto;
     fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+// The published-bytes path (tools/check-published-av.mjs): look a hash up
+// instead of uploading anything.  Every branch below must fail closed — an
+// unknown hash is never reported as clean, because the whole point is to notice
+// a verdict that flipped after a clean publish.
+test('lookupVirusTotalHashes: no key ⇒ no verdicts (never a silent clean)', async () => {
+  const key = process.env.VT_API_KEY;
+  const alt = process.env.VIRUSTOTAL_API_KEY;
+  try {
+    delete process.env.VT_API_KEY;
+    delete process.env.VIRUSTOTAL_API_KEY;
+    assert.deepEqual(await lookupVirusTotalHashes(['a'.repeat(64)]), []);
+  } finally {
+    if (key !== undefined) process.env.VT_API_KEY = key;
+    if (alt !== undefined) process.env.VIRUSTOTAL_API_KEY = alt;
+  }
+});
+
+test('lookupVirusTotalHashes: 404 ⇒ unknown, completed stats ⇒ real band', async () => {
+  const realFetch = globalThis.fetch;
+  const key = process.env.VT_API_KEY;
+  const seen = 'b'.repeat(64);
+  const clean = 'c'.repeat(64);
+  try {
+    process.env.VT_API_KEY = 'test-key';
+    const known = new Map([
+      [
+        clean,
+        {
+          last_analysis_stats: {malicious: 0, suspicious: 0, harmless: 68, undetected: 4},
+          last_analysis_results: {Microsoft: {category: 'undetected'}},
+        },
+      ],
+    ]);
+    globalThis.fetch = async url => {
+      const attrs = known.get(String(url).split('/').pop());
+      if (!attrs) return {ok: false, status: 404, json: async () => ({})};
+      return {ok: true, status: 200, json: async () => ({data: {attributes: attrs}})};
+    };
+    const results = await lookupVirusTotalHashes([seen, clean, 'd'.repeat(64)], {threshold: 3});
+    assert.equal(results[0].verdict, 'unknown');
+    assert.match(results[0].reason, /never seen/);
+    assert.equal(results[1].verdict, 'clean');
+    assert.equal(results[1].sha256, clean, 'the digest is carried through for the ledger');
+    assert.deepEqual(results[1].flags, []);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (key === undefined) delete process.env.VT_API_KEY;
+    else process.env.VT_API_KEY = key;
+  }
+});
+
+test('lookupVirusTotalHashes: threshold and veto both fail, empty stats stay unknown', async () => {
+  const realFetch = globalThis.fetch;
+  const key = process.env.VT_API_KEY;
+  const empty = 'e'.repeat(64);
+  try {
+    process.env.VT_API_KEY = 'test-key';
+    const known = new Map([
+      // 'completed' with no engine results: must not read as clean.
+      [empty, {last_analysis_stats: {}}],
+      [
+        'f'.repeat(64),
+        {
+          last_analysis_stats: {malicious: 1, suspicious: 0, harmless: 60, undetected: 5},
+          last_analysis_results: {
+            Microsoft: {category: 'malicious'},
+            Bkav: {category: 'undetected'},
+          },
+        },
+      ],
+    ]);
+    globalThis.fetch = async url => {
+      const attrs = known.get(String(url).split('/').pop());
+      if (!attrs) return {ok: false, status: 404, json: async () => ({})};
+      return {ok: true, status: 200, json: async () => ({data: {attributes: attrs}})};
+    };
+    const results = await lookupVirusTotalHashes([empty, 'f'.repeat(64)], {threshold: 3});
+    assert.equal(results[0].verdict, 'unknown');
+    assert.match(results[0].reason, /no completed analysis/);
+    assert.equal(
+      results[1].verdict,
+      'fail',
+      'the Microsoft veto fires at 1 engine, below threshold 3'
+    );
+    assert.deepEqual(results[1].flags, ['Microsoft']);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (key === undefined) delete process.env.VT_API_KEY;
+    else process.env.VT_API_KEY = key;
   }
 });
 

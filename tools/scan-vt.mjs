@@ -25,6 +25,8 @@ import fs from 'fs';
 import path from 'path';
 import {pathToFileURL} from 'url';
 
+import {ledgerEntry, mergeLedger} from './ci/avLedger.mjs';
+
 const VT_API = 'https://www.virustotal.com/api/v3';
 const POLL_INTERVAL_MS = 2000;
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -166,6 +168,65 @@ async function getFileEngines(apikey, sha256) {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * Look up files VirusTotal already knows, by SHA-256, without uploading
+ * anything. This is the published-bytes path (tools/check-published-av.mjs):
+ * the bytes are already public, so a lookup answers "what do the engines say
+ * about what users download TODAY?" — and it is the only way to notice a
+ * verdict that flipped after a clean publish.
+ *
+ * A hash VirusTotal has never seen, or one whose analysis has not completed,
+ * comes back as verdict 'unknown' — never as clean.
+ *
+ * @param {string[]} hashes lower-case sha256 digests
+ * @param {{threshold?: number; vetoEngines?: string[]}} [opts]
+ * @returns {Promise<Array>} entries: {sha256, status, stats, threshold,
+ *   verdict, flags} or {sha256, verdict: 'unknown', reason}
+ */
+export async function lookupVirusTotalHashes(
+  hashes,
+  {threshold = vtFailThreshold(), vetoEngines = vtVetoEngines()} = {}
+) {
+  const key = vtApiKey();
+  if (!key) return [];
+  const results = [];
+  for (const sha256 of hashes) {
+    try {
+      const res = await fetch(`${VT_API}/files/${sha256}`, {headers: {'x-apikey': key}});
+      if (res.status === 404) {
+        results.push({
+          sha256,
+          verdict: 'unknown',
+          reason: 'VirusTotal has never seen these bytes',
+        });
+        continue;
+      }
+      if (!res.ok) throw new Error(`VirusTotal lookup failed (HTTP ${res.status})`);
+      const attrs = (await res.json()).data?.attributes ?? {};
+      const stats = attrs.last_analysis_stats ?? {};
+      if (!analysisComplete('completed', stats)) {
+        results.push({
+          sha256,
+          verdict: 'unknown',
+          reason: 'VirusTotal has no completed analysis for these bytes',
+        });
+        continue;
+      }
+      results.push({
+        sha256,
+        status: 'completed',
+        stats,
+        threshold,
+        verdict: vtVerdict(stats, threshold, attrs.last_analysis_results, vetoEngines),
+        flags: maliciousEngines(attrs.last_analysis_results),
+      });
+    } catch (err) {
+      results.push({sha256, verdict: 'unknown', reason: err.message});
+    }
+  }
+  return results;
+}
+
+/**
  * Scan each binary against VirusTotal and return per-file results. Never throws
  * — per-file errors are captured in each result.
  *
@@ -187,7 +248,17 @@ export async function scanVirusTotal(
   const vetoEngines = vtVetoEngines();
   const results = [];
   for (const file of files) {
+    // Hash and measure BEFORE the upload: every result this loop pushes — the
+    // completed verdicts, the skipped-not-clean branches and the failures — must
+    // be keyable in the per-hash ledger. ledgerEntry() throws on a missing
+    // sha256, so a hashless result cannot be recorded at all, and a scan hiccup
+    // would lose the one record that explains it.
+    let sha256;
+    let size;
     try {
+      const data = fs.readFileSync(file);
+      sha256 = crypto.createHash('sha256').update(data).digest('hex');
+      size = data.length;
       const uploaded = await uploadFile(key, file);
       let stats;
       if (uploaded.stats) {
@@ -197,6 +268,8 @@ export async function scanVirusTotal(
         if (!analysisComplete('completed', uploaded.stats)) {
           results.push({
             file,
+            sha256,
+            size,
             error:
               'VirusTotal has no completed analysis for these bytes yet — skipping, not treated as clean',
           });
@@ -219,6 +292,8 @@ export async function scanVirusTotal(
           // with no engine results).  Skip with a warning — never clean.
           results.push({
             file,
+            sha256,
+            size,
             error:
               `VirusTotal analysis incomplete after ${Math.round((Date.now() - start) / 1000)}s ` +
               `(status: ${attrs.status ?? 'unknown'}) — skipping, not treated as clean`,
@@ -239,6 +314,8 @@ export async function scanVirusTotal(
       }
       results.push({
         file,
+        sha256: uploaded.sha256,
+        size: fs.statSync(file).size,
         status: 'completed',
         stats,
         threshold,
@@ -246,25 +323,75 @@ export async function scanVirusTotal(
         flags: maliciousEngines(engines),
       });
     } catch (err) {
-      results.push({file, error: err.message});
+      // `sha256`/`size` are already computed for every file that could be read;
+      // a failure to read is the one case with nothing to key on (the caller's
+      // ledger guard skips it with a warning).
+      results.push({file, sha256, size, error: err.message});
     }
   }
   return {results};
 }
 
-// CLI entry: node tools/scan-vt.mjs <binary> [<binary>...]
+// CLI entry: node tools/scan-vt.mjs [--ledger <file>] <binary> [<binary>...]
 // Reads VT_API_KEY from the environment (e.g. via `node --env-file-if-exists=.env`,
 // as pnpm scan:vt does).  Exits 0 = clean, 1 = flagged (>= threshold engines or
 // a veto engine), 2 = usage.
+//
+// --ledger appends every completed verdict to a per-hash ledger keyed by
+// SHA-256 (tools/ci/avLedger.mjs).  Each rebuild is a new hash, so the ledger
+// is what makes a WDSI/AV clearance reusable and auditable instead of being
+// re-derived from run logs.
 const isCli =
   process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isCli) {
-  const files = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const ledgerAt = argv.indexOf('--ledger');
+  let ledgerFile = null;
+  if (ledgerAt !== -1) {
+    ledgerFile = argv[ledgerAt + 1];
+    if (!ledgerFile) {
+      console.error('usage: node tools/scan-vt.mjs [--ledger <file>] <binary> [<binary>...]');
+      process.exit(2);
+    }
+    argv.splice(ledgerAt, 2);
+  }
+  const files = argv;
   if (files.length === 0) {
-    console.error('usage: node tools/scan-vt.mjs <binary> [<binary>...]');
+    console.error('usage: node tools/scan-vt.mjs [--ledger <file>] <binary> [<binary>...]');
     process.exit(2);
   }
   const {results} = await scanVirusTotal(files.map(f => path.resolve(f)));
+  if (ledgerFile && results.length > 0) {
+    const at = new Date().toISOString();
+    const entries = results
+      // Hashless results (upload or hashing failure) cannot be keyed in a
+      // per-hash ledger, and ledgerEntry() throws on them — skip, don't fail.
+      .filter(r => {
+        if (r.sha256) return true;
+        console.warn(`  no sha256 for ${path.basename(r.file)} — not ledgered`);
+        return false;
+      })
+      .map(r =>
+        ledgerEntry({
+          file: path.basename(r.file),
+          sha256: r.sha256,
+          size: r.size,
+          verdict: r.error ? 'unknown' : r.verdict,
+          stats: r.stats,
+          flags: r.flags,
+          threshold: r.threshold,
+          source: 'local',
+          at,
+          reason: r.error,
+        })
+      );
+    const prev =
+      fs.existsSync(ledgerFile) ? JSON.parse(fs.readFileSync(ledgerFile, 'utf-8')) : null;
+    const ledger = mergeLedger(prev, entries, {at});
+    fs.mkdirSync(path.dirname(path.resolve(ledgerFile)), {recursive: true});
+    fs.writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2) + '\n');
+    console.log(`ledger: ${ledgerFile} (${Object.keys(ledger.files).length} hash(es) total)`);
+  }
   if (results.length === 0) {
     console.warn('VirusTotal scan skipped — VT_API_KEY not set (add it to .env).');
     process.exit(0);
