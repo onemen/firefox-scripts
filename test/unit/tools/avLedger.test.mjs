@@ -170,7 +170,9 @@ test('ledgerStats: counts every band, worst-first ordering is the table sort', (
   const table = ledgerTable(ledger);
   assert.match(table, /\| verdict \| artifact \|/);
   const rows = table.split('\n').filter(l => l.startsWith('| ') && !l.startsWith('| ---'));
-  assert.match(rows[1], /^W|^| fail/, 'the worst verdict sorts first');
+  // `/^W|^| fail/` matched the empty alternative, so it passed whatever the
+  // table contained; assert the verdict cell itself.
+  assert.match(rows[1], /\| fail \|/, 'the worst verdict sorts first');
   assert.match(table, /Microsoft/);
   assert.match(table, /aaaaaaaaaaaa…/, 'the hash is shortened for display');
   assert.equal(ledgerTable(null).includes('no observations yet'), true);

@@ -225,8 +225,19 @@ const runUrl =
     `${process.env.GITHUB_SERVER_URL}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`
   : 'local run';
 
-const listing = await listPublished(token, repo, opts.ref);
-const releaseFiles = await listReleaseBinaries(token, repo);
+// Fail-soft by design: this job re-scans bytes that are already published, and
+// a listing outage (GitHub API hiccup, CDN flake) must not turn a scheduled run
+// into a red build — the next weekly run picks it up. A *verdict* is a finding;
+// an unreachable listing is not.
+let listing = [];
+let releaseFiles = [];
+try {
+  listing = await listPublished(token, repo, opts.ref);
+  releaseFiles = await listReleaseBinaries(token, repo);
+} catch (err) {
+  console.warn(`could not list the published surface (${err.message}) — skipping this run`);
+  process.exit(0);
+}
 const files = [...listing, ...releaseFiles].filter(f => pickPublishedBinaries([f.name]).length > 0);
 if (files.length === 0) {
   console.log(
@@ -240,7 +251,16 @@ if (files.length === 0) {
 const published = [];
 const bySha = new Map();
 for (const file of files) {
-  const {sha256, size} = await hashRemote(file);
+  // One unreadable artifact (a 404 after a re-publish, a stalled transfer)
+  // skips that file; it never aborts the watch over the rest.
+  let sha256;
+  let size;
+  try {
+    ({sha256, size} = await hashRemote(file));
+  } catch (err) {
+    console.warn(`${file.name} (${file.surface}): could not be read (${err.message}) — skipped`);
+    continue;
+  }
   const seen = bySha.get(sha256);
   if (seen) {
     seen.surfaces.push(file.surface);

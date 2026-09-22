@@ -1245,12 +1245,6 @@ async function main() {
         }
       }
       if (results.length === 0) warn('VirusTotal scan skipped — VT_API_KEY not set (optional).');
-      if (vtBlocked) {
-        error('Refusing to publish — VirusTotal flagged a built binary.');
-        process.exitCode = 1;
-        return;
-      }
-
       // Ledger the verdicts: an AV verdict is evidence about one hash, and this
       // build's hashes are brand new, so the record is what makes a WDSI/AV
       // clearance reusable and auditable across rebuilds (tools/ci/avLedger.mjs,
@@ -1258,20 +1252,30 @@ async function main() {
       // when every verdict is clean — "0 of 72 engines, at this time" is the
       // evidence; skipped verdicts are recorded as unknown, never as clean.
       const at = new Date().toISOString();
-      const entries = results.map(r =>
-        ledgerEntry({
-          file: path.basename(r.file),
-          sha256: r.sha256,
-          size: r.size,
-          verdict: r.error ? 'unknown' : r.verdict,
-          stats: r.stats,
-          flags: r.flags,
-          threshold: r.threshold,
-          source: 'publish',
-          at,
-          reason: r.error,
+      const entries = results
+        // A ledger entry is keyed by its hash: a result with no sha256 (upload or
+        // hashing failure) cannot be recorded — and ledgerEntry() throws on it,
+        // which would abort the entire publish. Skipped with a warning instead:
+        // the ledger must never be the reason a release fails.
+        .filter(r => {
+          if (r.sha256) return true;
+          warn(`  no sha256 for ${path.basename(r.file)} — not ledgered`);
+          return false;
         })
-      );
+        .map(r =>
+          ledgerEntry({
+            file: path.basename(r.file),
+            sha256: r.sha256,
+            size: r.size,
+            verdict: r.error ? 'unknown' : r.verdict,
+            stats: r.stats,
+            flags: r.flags,
+            threshold: r.threshold,
+            source: 'publish',
+            at,
+            reason: r.error,
+          })
+        );
       if (entries.length > 0) {
         const ledgerFile = path.join(DIST_ROOT, 'vt-ledger.json');
         const prev =
@@ -1293,6 +1297,16 @@ async function main() {
             `## VirusTotal verdicts (${REF_NAME}@${REF_SHA.slice(0, 7)})\n\n${ledgerTable(ledger)}\n`
           );
         }
+      }
+
+      // A blocked publish still ledgers its verdicts. The record of *why* a
+      // release stopped is exactly the evidence a later WDSI/AV exchange needs,
+      // and it is the one case where nothing else would have been written at
+      // all — so the check sits after the ledger, not before it.
+      if (vtBlocked) {
+        error('Refusing to publish — VirusTotal flagged a built binary.');
+        process.exitCode = 1;
+        return;
       }
     }
 

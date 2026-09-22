@@ -346,20 +346,28 @@ if (isCli) {
   const {results} = await scanVirusTotal(files.map(f => path.resolve(f)));
   if (ledgerFile && results.length > 0) {
     const at = new Date().toISOString();
-    const entries = results.map(r =>
-      ledgerEntry({
-        file: path.basename(r.file),
-        sha256: r.sha256,
-        size: r.size,
-        verdict: r.error ? 'unknown' : r.verdict,
-        stats: r.stats,
-        flags: r.flags,
-        threshold: r.threshold,
-        source: 'local',
-        at,
-        reason: r.error,
+    const entries = results
+      // Hashless results (upload or hashing failure) cannot be keyed in a
+      // per-hash ledger, and ledgerEntry() throws on them — skip, don't fail.
+      .filter(r => {
+        if (r.sha256) return true;
+        console.warn(`  no sha256 for ${path.basename(r.file)} — not ledgered`);
+        return false;
       })
-    );
+      .map(r =>
+        ledgerEntry({
+          file: path.basename(r.file),
+          sha256: r.sha256,
+          size: r.size,
+          verdict: r.error ? 'unknown' : r.verdict,
+          stats: r.stats,
+          flags: r.flags,
+          threshold: r.threshold,
+          source: 'local',
+          at,
+          reason: r.error,
+        })
+      );
     const prev =
       fs.existsSync(ledgerFile) ? JSON.parse(fs.readFileSync(ledgerFile, 'utf-8')) : null;
     const ledger = mergeLedger(prev, entries, {at});

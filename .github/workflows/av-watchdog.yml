@@ -72,8 +72,12 @@ jobs:
           restore-keys: av-watchdog-ledger-
 
       - name: Check published binaries
-        run: node tools/check-published-av.mjs --ref "${{ inputs.ref || 'gh-pages' }}"
+        # The ref arrives through the environment, never interpolated into the
+        # shell line: a workflow_dispatch input is influenced by whoever starts
+        # the run, and `run:` is a shell (GitHub's script-injection guidance).
+        run: node tools/check-published-av.mjs --ref "$AV_REF"
         env:
+          AV_REF: ${{ inputs.ref || 'gh-pages' }}
           GITHUB_TOKEN: ${{ github.token }}
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
 
