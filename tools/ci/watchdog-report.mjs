@@ -38,6 +38,20 @@ export const BROWSERS = [
 export const INFORMATIONAL_BROWSERS = ['nightly'];
 
 /**
+ * Browsers whose vendor replaces the binary WITHIN one version string: nightly
+ * stays N.0a1 for ~2 weeks while Mozilla ships fresh dailies into it, so a
+ * same-version size change there is by design, not a tamper signal (#276). The
+ * watchdog re-verifies such a replacement with a full download + SHA-256 (same
+ * as a version bump) instead of opening a size-change issue.
+ */
+export const ROLLING_BINARIES = new Set(['nightly']);
+
+/** True when a same-version size change is expected for `browser` (#276). */
+export function isRollingBinary(browser) {
+  return ROLLING_BINARIES.has(browser);
+}
+
+/**
  * The dynamic ESR window: browser keys are `firefox-esr-<major>` (e.g.
  * `firefox-esr-140`), one ledger row + one advisory E2E leg per watched major.
  * The window is the two newest ESR majors, maintained by updateEsrState() from
