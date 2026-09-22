@@ -3,7 +3,7 @@
 // `pnpm test:skills` / the lint gate itself; these tests pin the frontmatter
 // rules with fixture directories.
 
-import {test} from 'node:test';
+import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,8 +16,19 @@ const {checkSkillsDir, findVendoredTests, agentsSkillsTable, checkAgentsTableDri
   scriptUrl
 );
 
+// Every makeSkillsDir() call creates a mkdtemp ROOT in os.tmpdir() but returns
+// only the inner `skills` dir, so the tests' finally blocks never removed the
+// root — each run of this file leaked 19 empty `skills-*` dirs into the OS
+// temp dir (~1.9k accumulated on one machine before the sweep). The roots are
+// registered here and removed once, after the whole file's tests finish.
+const tempRoots = [];
+after(() => {
+  for (const root of tempRoots) fs.rmSync(root, {recursive: true, force: true});
+});
+
 function makeSkillsDir(skills) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-'));
+  tempRoots.push(root);
   const skillsDir = path.join(root, 'skills');
   for (const [name, files] of Object.entries(skills)) {
     for (const [rel, content] of Object.entries(files)) {
