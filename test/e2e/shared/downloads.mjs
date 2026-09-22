@@ -315,11 +315,30 @@ export async function resolveDownloadUrl(browser, platform = process.platform) {
     // URL gets a stable identifier (and so --url documents the mechanism).
     return 'snap://firefox';
   }
-  if (recipe.resolver) {
+  if (recipe.resolver || versionPinned()) {
+    // A pinned run resolves through the resolver even for the browsers whose
+    // recipe is a version-agnostic `/releases/latest/` URL (floorp, zen): that
+    // URL cannot express a pinned version, so the resolver's release-tagged
+    // source serves it instead (ADR 0023 strict-pin rule, ADR 0034).
     const {url} = await resolveInstallerUrl(browser);
     return url;
   }
   return recipe.tarball || recipe.url;
+}
+
+/**
+ * True when this run pins the browser version — e2e.yml exports
+ * `BROWSER_PIN_VERSION` from the dispatch's `version` input, and the watchdog's
+ * per-release dispatch sets it when a new fork release needs validating.
+ *
+ * Unpinned runs keep the static URL for floorp/zen: no version lookup, and the
+ * stable cache key the fork legs rely on. Only a pinned run pays for the
+ * version-embedded path.
+ *
+ * @returns {boolean}
+ */
+export function versionPinned() {
+  return Boolean(process.env.BROWSER_PIN_VERSION);
 }
 
 /** Download an official Mozilla tarball and extract it; returns the binary path. */
@@ -1235,10 +1254,11 @@ export async function installBrowser(browser, platform = process.platform) {
     console.log(`  ${browser} installed from official tarball: ${binary}`);
     return binary;
   }
-  if (recipe.resolver && recipe.args) {
-    // Version + mirror resolved by browserResolver.mjs (LibreWolf, Waterfox):
-    // official mirrors first, then the temporary ci-downloads release, then
-    // the cached previous installer (advisory legs warn instead of failing).
+  if ((recipe.resolver || versionPinned()) && recipe.args) {
+    // Version + mirror resolved by browserResolver.mjs (LibreWolf, Waterfox —
+    // and floorp/zen too when the run pins a version): official mirrors first,
+    // then the temporary ci-downloads release, then the cached previous
+    // installer (advisory legs warn instead of failing).
     let resolved;
     try {
       resolved = await resolveInstallerUrl(browser);
