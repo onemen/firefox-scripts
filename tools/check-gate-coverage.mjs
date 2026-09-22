@@ -429,7 +429,17 @@ const CONTRACTS = [
     // snap-store-watch also runs after the gate: it files the deduped
     // store-outage issue when the advisory snap leg failed with no cached
     // fallback — a reporting job, not a gate input.
-    postGate: ['record-validation', 'cleanup-ci-downloads', 'snap-store-watch'],
+    // record-fork-validation is post-gate for the same reason: it records the
+    // release the (advisory) fork legs validated, so the next runs can install
+    // that pinned release (ADR 0034). It reads a green leg's artifact and
+    // writes the fork record — it must never be an input to the gate, or a fork
+    // release would gate every merge.
+    postGate: [
+      'record-validation',
+      'record-fork-validation',
+      'cleanup-ci-downloads',
+      'snap-store-watch',
+    ],
   },
   {
     file: '.github/workflows/ci.yml',

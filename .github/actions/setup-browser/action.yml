@@ -16,6 +16,15 @@
 # librewolf, floorp, zen, waterfox); `portable-dir-suffix` distinguishes
 # cache scopes that share a runner (the installer job's firefox-portable vs
 # the portable-firefox job's keyed scope).
+#
+# Fork browsers (librewolf, floorp, zen) additionally install the LAST
+# E2E-VALIDATED release rather than resolving `latest` at run time (ADR 0034):
+# the forks release far more often than Firefox, and a version bump cannot be
+# served from the cache either way, so latest-at-run-time put a cold ~160 MB
+# download on every open PR's fork legs every other day. The record comes from
+# the watchdog's per-release E2E dispatch via `record-fork-validation`; a cold
+# or stale record warns and falls back to `latest` (never fails — these are
+# advisory legs), and an explicit dispatch `pin-version` still wins (ADR 0021).
 
 name: Set up browser (portable install)
 description: >-
@@ -38,6 +47,12 @@ inputs:
       asserts a portable layout)
     required: false
     default: 'false'
+  pin-version:
+    description: >-
+      Version to pin the resolver to (the workflow's dispatch `version` escape, ADR 0021). Empty =
+      the last E2E-validated release for fork browsers when the record has one, else `latest`.
+    required: false
+    default: ''
 
 outputs:
   cache-key:
@@ -50,6 +65,62 @@ outputs:
 runs:
   using: composite
   steps:
+    # ADR 0034: a fork leg installs the release the watchdog's dispatch last
+    # validated. The record is written only by a green `browser-matrix` run on a
+    # dispatch, so nothing here can advance its own pin. Restore is best-effort
+    # (cache miss = no record) and the pin is only an OUTPUT — the two steps
+    # below pass it to the resolver through the environment.
+    - name: Restore the validated fork record
+      if:
+        ${{ inputs.pin-version == '' && contains(fromJSON('["librewolf","floorp","zen"]'),
+        inputs.browser) }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/fork-validated
+        key: browser-fork-validated-${{ github.run_id }}
+        restore-keys: browser-fork-validated-
+
+    - name: Pin the last E2E-validated release
+      id: fork-pin
+      if:
+        ${{ inputs.pin-version == '' && contains(fromJSON('["librewolf","floorp","zen"]'),
+        inputs.browser) }}
+      shell: bash
+      env:
+        BROWSER: ${{ inputs.browser }}
+        RECORD: ${{ runner.temp }}/fork-validated/forks.json
+        MAX_AGE_DAYS: '30'
+      run: |
+        node --input-type=module -e '
+          import fs from "node:fs";
+          const browser = process.env.BROWSER;
+          const warn = m => console.log(`::warning::${m}`);
+          if (!fs.existsSync(process.env.RECORD)) {
+            warn(`no validated record for ${browser} (cold cache) — resolving latest`);
+            process.exit(0);
+          }
+          const entry = JSON.parse(fs.readFileSync(process.env.RECORD, "utf8")).forks?.[browser];
+          if (!entry?.version) {
+            warn(`the validated record has no ${browser} entry — resolving latest`);
+            process.exit(0);
+          }
+          const when = Date.parse(entry.validatedAt ?? "");
+          if (!Number.isFinite(when)) {
+            warn(`${browser} record has no usable validatedAt — resolving latest`);
+            process.exit(0);
+          }
+          const ageDays = Math.floor((Date.now() - when) / 86400000);
+          const max = Number(process.env.MAX_AGE_DAYS ?? 30);
+          console.log(
+            `pinned ${browser} ${entry.version} — validated ${ageDays} d ago` +
+              ` (${entry.runUrl ?? "no run link"}), was newest at that time`
+          );
+          if (ageDays > max) {
+            warn(`${browser} pin is ${ageDays} d old (> ${max}) — the watchdog dispatch may be failing`);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${entry.version}\n`);
+        '
+
     # The ~100 MB official browser download is the bulk of the install step;
     # cache it keyed on the exact download URL (which embeds the release
     # version — Firefox stable bumps ~monthly, invalidating the key). Only the
@@ -64,6 +135,9 @@ runs:
         PREFIX: ${{ inputs.cache-key-prefix }}
         OS: ${{ runner.os }}
         TEMPDIR: ${{ runner.temp }}
+        # Empty for every non-fork browser (the pin step is skipped) and for a
+        # fork leg whose record is cold.
+        BROWSER_PIN_VERSION: ${{ steps.fork-pin.outputs.version || inputs.pin-version }}
       run: |
         URL=$(node test/e2e/shared/downloads.mjs "$BROWSER" --url)
         KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
@@ -113,4 +187,5 @@ runs:
       shell: bash
       env:
         BROWSER: ${{ inputs.browser }}
+        BROWSER_PIN_VERSION: ${{ steps.fork-pin.outputs.version || inputs.pin-version }}
       run: node test/e2e/shared/downloads.mjs "$BROWSER"
