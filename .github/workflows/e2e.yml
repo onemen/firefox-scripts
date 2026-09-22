@@ -25,6 +25,20 @@ permissions:
   # issue). A job-level permissions block REPLACES this one, so that job lists
   # its own (contents: read + issues: write) explicitly.
 
+# Browser-installer download budget (test/e2e/shared/downloads.mjs). Its default
+# is 20 min — exactly the `timeout-minutes` every browser leg carries — so a slow
+# transfer used to consume the whole leg and surface as a bare job cancellation:
+# no message naming the browser, no budget error, and no chance for the
+# cached-installer fallback (findCachedInstaller) to engage. Observed 2026-09-22
+# on PR #294's librewolf leg: 160 MB at 51-61 KB/s, cancelled at the cap having
+# fetched ~60 MB. 12 min leaves ~8 min inside the 20-minute legs for the install
+# + scenarios + that fallback, while a healthy-but-slow transfer (0.3 MB/s, the
+# slowest measured) still completes well inside it.
+# The invariant — budget + slack < every downloading leg's timeout — is enforced
+# by test/unit/tools/download-budget.test.mjs.
+env:
+  DOWNLOAD_TOTAL_BUDGET_MS: '720000'
+
 on:
   pull_request:
   push:
@@ -206,10 +220,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.installer == 'true'
     runs-on: ${{ matrix.os }}
-    # 15 min > the runner's own 10-min watchdog (installer-e2e.mjs), so on a
+    # 20 min > the runner's own 10-min watchdog (installer-e2e.mjs), so on a
     # wedge the script's orphan sweep + [watchdog] log always wins the race
-    # and CI never shows a bare VM kill. Slowest green run: 143 s.
-    timeout-minutes: 15
+    # and CI never shows a bare VM kill. Slowest green run: 143 s. The
+    # headroom over 15 min is for the browser install this leg shares with the
+    # other legs (`setup-browser`): the 12-min download budget plus the install
+    # and the installer suite have to fit inside one cap, or a slow vendor
+    # mirror would be reported as a cancelled job instead of a download error.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
