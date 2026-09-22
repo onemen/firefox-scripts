@@ -145,7 +145,7 @@
     btn.innerHTML = INSTALL_ICON + ' Install / Update';
     btn.title = 'Select from available updates';
     btn.onclick = function () {
-      console.log(
+      console.debug(
         '[install] Install button clicked, disabled=' + this.disabled,
         group && group.binaryPath
       );
@@ -179,7 +179,7 @@
       btnRestart.removeAttribute('title');
       btnRestart.innerHTML = RESTART_ICON + ' Restarting...';
       const firstIdx = group.browsers[0].index;
-      console.log(
+      console.debug(
         '[install] Restart clicked for ' + group.binaryPath + ' (browser=' + firstIdx + ')'
       );
       fetchJSON('/api/restart?browser=' + firstIdx + '&t=' + getSessionToken())

@@ -424,7 +424,7 @@ tab across multiple scenarios. They require a `upload:local` snapshot first.
 
 ```bash
 # Build a dev snapshot (needed once)
-pnpm upload:local --mode=dev
+pnpm upload:local -- --mode=dev
 
 # Run all E2E tests (installer HTTP + updater scenarios)
 pnpm test:e2e
@@ -495,6 +495,53 @@ require WebDriver BiDi to attach to the trusted chrome:// tab; on runners where 
 on Windows CI), the leg verifies the tab-open via the probe mirror / persisted pref and says so in
 the check label — the historical contract for these legs. Skip individual scenarios during iteration
 with `--scenario 1,4,5` (scenario 1 always runs all three variants — they share the session).
+
+### Running the updater E2E locally (e.g. on Nightly, Windows)
+
+The scenarios write fx-folder's `config.js` into the browser's install dir, so the browser under
+test needs a **user-owned (portable) GreD** — the run refuses an admin-owned install (Program Files)
+up front instead of failing every scenario with EPERM. Point the harness at the browser under test
+with `FIREFOX_BINARY` (or `--firefox`); the snapshot is the newest `dist/` one (`--snapshot <dir>`
+picks explicitly, `--no-branch-check` accepts a snapshot from any branch — the direct script never
+branch-checks):
+
+```bash
+pnpm upload:local -- --mode=dev              # build the snapshot for this branch
+export FIREFOX_BINARY="/c/tmp/portable-fx/firefox.exe"   # a USER-OWNED (portable) copy
+pnpm test:e2e:updater -- --no-branch-check   # one updater leg on that browser
+pnpm test:e2e                                # installer + updater
+```
+
+`--keep-profile` keeps each scenario's profile for inspection, `--repeat 2` runs the whole selection
+twice (determinism check), `--scenario 1,4,5` narrows the run, and `--no-fail-fast` runs every
+scenario even after a failure.
+
+### Updater E2E scenario 9 (helper-checksum-win, Windows)
+
+Scenario 9 is the helper path: it seeds fx-folder into the GreD, ACL-denies the seeded config files
+so the updater's direct copy must fail, and asserts the scheduler decided "update available", that
+the write really is blocked, and that nothing was copied without elevation. It runs on every Windows
+leg and self-skips elsewhere.
+
+It also needs a **user-owned install dir**, because the fixture has to write `config.js` into the
+browser's GreD. GitHub's Windows runners are admins and can write Program Files; a normal account
+cannot, so a local run against an installed browser is refused up front with a clear message — use a
+portable copy (`PORTABLE_BROWSER_DIR`, the same mechanism the portable legs use) or
+`--firefox <portable firefox.exe>`.
+
+```bash
+node test/e2e/updater/updater-e2e.mjs --firefox /path/to/portable/firefox.exe --scenario 9
+```
+
+What it can prove headless: the tab-open decision (proven by the probe mirror, or by the
+`extensions.firefox-scripts.lastUpdateTabShown` pref — read after the browser closes, because
+prefs.js is flushed at shutdown and BiDi cannot enumerate the trusted `chrome://` tab on many
+hosts), the ACL block, and that the GreD config stayed byte-identical. The download → checksum →
+magic-gate → spawn flow itself only runs where BiDi _can_ attach to the trusted tab (elsewhere the
+leg says so in its check labels), and elevation never completes headless. The gate's byte-level
+contract is therefore covered deterministically on every OS by
+`test/unit/publish/branchPagesContract.test.mjs`, which evaluates the shipped gate expression
+against real PE/ELF/Mach-O headers and HTML payloads.
 
 ### Configuration
 

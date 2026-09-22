@@ -41,7 +41,7 @@
     });
 
     if (installQueue.length === 0) {
-      console.log(
+      console.debug(
         '[install] QUEUE EMPTY',
         group.binaryPath,
         'browsers=' + (group.browsers ? group.browsers.length : 'none'),
@@ -54,7 +54,7 @@
       return;
     }
 
-    console.log(
+    console.debug(
       '[install] startGroupInstall queue=',
       installQueue
         .map(function (i) {
@@ -100,7 +100,7 @@
       '&utils=' +
       (item.utils ? 1 : 0);
 
-    console.log('[install] POST ' + url);
+    console.debug('[install] POST ' + url);
 
     function showError(msg) {
       const els = getCardProgressEls(group);

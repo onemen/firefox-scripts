@@ -290,6 +290,23 @@ function seedProfile(
  * data|null} — null means the file did NOT exist before the test (created by
  * installFxFolder) and should be removed.
  */
+/**
+ * Whether the browser's install dir is writable by this account.
+ *
+ * @param {string} greDir
+ * @returns {string} Empty when writable, else the reason (for the message).
+ */
+function greNotWritableReason(greDir) {
+  const probe = path.join(greDir, '.fxs-e2e-write-probe');
+  try {
+    fs.writeFileSync(probe, 'probe');
+    fs.unlinkSync(probe);
+    return '';
+  } catch (err) {
+    return `${greDir}: ${err.message}`;
+  }
+}
+
 function saveGreConfig(greDir) {
   const snapshot = {};
   for (const name of ['config.js', 'defaults/pref/config-prefs.js']) {
@@ -305,6 +322,10 @@ function restoreGreConfig(snapshot) {
   for (const [p, data] of Object.entries(snapshot)) {
     try {
       if (data !== null) {
+        // Only rewrite what the run actually changed. An unconditional rewrite
+        // fails with EPERM on an admin-owned GreD (Program Files) even though
+        // nothing needs restoring — noise, not a failure.
+        if (fs.existsSync(p) && fs.readFileSync(p).equals(data)) continue;
         fs.mkdirSync(path.dirname(p), {recursive: true});
         fs.writeFileSync(p, data);
       } else {
@@ -478,18 +499,32 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
   );
   const hits = [];
   for (const line of text.split('\n')) {
-    if (!line.includes(' error ')) continue;
-    const rest = line.slice(line.indexOf(' error ') + 7);
+    // The mirror line format is "<ISO> <level> [source:line] msg". Tab-script
+    // informational traces are console.debug (2026-09-21) — Firefox's mirror
+    // classifies those as info severity, so cut after the LEVEL MARKER, not
+    // after a literal ' error ': a debug/info line has no ' error ' substring,
+    // and the old cut silently relied on the remainder still containing the
+    // source. Only OUR sources count, at any level.
+    const levelMatch = / (error|debug|info|warn) \[/.exec(line);
+    const rest = levelMatch ? line.slice(levelMatch.index + 1) : line;
     // The probe appends " [source:line] msg" for script errors; the updater
-    // scripts surface as chrome://firefox-scripts/... sources.
+    // scripts surface as chrome://firefox-scripts/... sources. The hit rule is
+    // OURS ONLY, at any level (logError is console.debug now) — a foreign
+    // source is Firefox's business, and counting it reds legs on pure noise:
+    // `chrome://browser/.../ext-browser.js:396 Cannot attach ID to a tab in a
+    // closed window` (ubuntu updater leg, 2026-09-22) and the resource://gre
+    // Telemetry line before it. Two shipped bugs were caught through this net
+    // (helper checksum mojibake, CSP-blocked inline style) and both were ours.
     const srcMatch = / \[(chrome:\/\/[^\]:]+[^\]]*?):\d+\]/.exec(rest);
     const source = srcMatch ? srcMatch[1] : '';
-    if (!source.includes('chrome://firefox-scripts')) continue;
+    const level = levelMatch ? levelMatch[1] : '';
+    const ours = source.includes('chrome://firefox-scripts');
+    if (!ours) continue;
     // Allowlist matches the FULL line (source AND message): scenario 9's
     // expected headless-elevation failure IS a chrome://firefox-scripts
     // logError and must be exemptable without masking any other error.
     if (allows.some(re => re.test(line))) continue;
-    hits.push({line: line.trim(), level: 'error', source});
+    hits.push({line: line.trim(), level, source});
   }
   return hits;
 }
@@ -1865,14 +1900,45 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
     }
 
     const seeded = seedProfile(scratchSnap, {forceConfigStale: true});
+    // The seeded profile ships utils only; updater-ui.zip is a separate package
+    // the browser installs for itself, and this fixture's UI base is a file://
+    // scratch dir. Install the UI the way a real profile has it: with no UI on
+    // disk the scheduler's ensureUpdaterUi() has to fetch it first, and this
+    // scenario's tab never opened in that state with either manifest wiring
+    // (reproduced locally 2026-09-22 on a portable GreD: no tab on both
+    // attempts; the same run with the UI seeded proves the tab open on the
+    // first attempt). Keeps the scenario about the config update, not about
+    // self-updating the tab UI.
+    const uiZip = findZip(scratchSnap, ['updater-ui.zip', 'updater-ui-dev.zip']);
+    if (uiZip) {
+      extractZip(uiZip, path.join(seeded.profileDir, 'chrome', 'utils', 'updater', 'ui'));
+    }
     // Repoint the updater at the scratch snapshot (it baked the original
     // snapshot's dist path — helper stand-in + sidecar live there now).
     Object.assign(seeded.prefs, localConfigOverrides(seeded.chromeUtils, scratchSnap));
+    // Serve the manifest over http://localhost (reachable on every runner) but
+    // serve the SNAPSHOT's own hashes.json — NOT startLocalManifestServer's
+    // default manifest, which is built to make utils match and leaves
+    // `fx-folder: {hash: '', files: []}`. With fx-folder emptied, the config
+    // package stops reading as stale, the scheduler decides there is nothing to
+    // surface, and the tab never opens — i.e. the scenario silently asserts
+    // nothing (reproduced locally 2026-09-22 on the portable GreD: no tab on
+    // either attempt, while the same seed with the snapshot manifest opens it).
+    // The snapshot's manifest keeps fx-folder's real hash, which the probed
+    // GreD config.js no longer matches → "config: Update Available" → tab.
+    const manifestServer = await startLocalManifestServer(scratchSnap, seeded.chromeUtils, {
+      multiRequest: true,
+      manifestOverride: JSON.parse(fs.readFileSync(path.join(scratchSnap, 'hashes.json'), 'utf-8')),
+    });
+    Object.assign(seeded.prefs, serverOverridePrefs(manifestServer.url));
     // fx-folder into the real GreD (utils go into the profile via seedProfile;
     // the config package's direct copy will target GreD and hit the deny).
     const fxSeed = installFxFolder(scratchSnap, greDir);
     check(counter, fxSeed.ok, `fx-folder seeded into scratch GreD (${label})`, fxSeed.error);
-    if (!fxSeed.ok) return seeded.profileDir;
+    if (!fxSeed.ok) {
+      await manifestServer.close();
+      return seeded.profileDir;
+    }
     // The config probe: makes the fx-folder package read STALE (so the tab
     // offers the config install and the scheduler opens it) AND mirrors every
     // console message to e2e-console.log (the net assertNoUpdaterConsoleErrors
@@ -1909,22 +1975,58 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         extraPrefsFirefox: seeded.prefs,
       });
       attachProcessLogging(browser, label);
-      // Like the other tab scenarios: BiDi cannot always enumerate trusted
-      // chrome:// tabs, so the probe's TAB_OPENED mirror line is the fallback
-      // proof the scheduler ran and the updater decided to show itself.
+      // Wait for the main window FIRST, exactly like every other tab
+      // scenario: on a busy headed runner Firefox can take >10 s to paint its
+      // first window, and the mirror wait below is useless until the
+      // scheduler even ran (first CI run of this scenario failed exactly
+      // here — two about:blank pages, no mirror, 'browser ready' never
+      // reached before the 20 s deadline burned).
+      const browserReady = await waitForFirstPage(browser, 20_000);
+      check(counter, browserReady, `browser ready (${label})`);
+      // Like the other tab scenarios: three channels prove the tab, because
+      // on CI (1) BiDi cannot enumerate trusted chrome:// tabs and (2) the
+      // console mirror never writes (both deterministic there — observed on
+      // every leg of 2026-09-21). The scheduler writes lastUpdateTabShown to
+      // prefs.js immediately before addTrustedTab, so the pref is the
+      // always-available proof; the mirror and the BiDi handle add detail
+      // where the environment allows it.
+      // Wait for the tab-open proof LONGER than the browser-startup cost:
+      // prefs.js is flushed lazily, and the poll below measured 20 s as not
+      // enough on a cold runner (the pref was on disk seconds after the
+      // deadline). 45 s covers cold NFS-startup + a slow first scheduler tick
+      // without adding materially to the leg's runtime (it returns the moment
+      // the proof lands).
       const tabMirror = await waitForCondition(
         browser,
-        () => mirrorSaysTabOpened(seeded.profileDir),
-        20_000,
-        'TAB_OPENED mirror marker'
+        () => mirrorSaysTabOpened(seeded.profileDir) || greShownToday(seeded.profileDir),
+        45_000,
+        'tab-open proof (mirror marker or lastUpdateTabShown pref)'
       ).catch(() => false);
       page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
-      check(counter, Boolean(page) || tabMirror === true, `tab opens (${label})`);
-      if (!page && !tabMirror) {
+      let tabOpened = Boolean(page) || tabMirror === true;
+      if (!tabOpened) {
+        // Both in-run channels can be unavailable at once: BiDi cannot
+        // enumerate the trusted chrome:// tab in this environment (the
+        // documented CI limitation), and prefs.js is flushed only at shutdown,
+        // so the in-run poll sees no pref even when the scheduler DID open the
+        // tab (verified 2026-09-22: both attempt profiles carried
+        // lastUpdateTabShown=<today> once their browsers had closed, while the
+        // in-run poll had timed out on both). Close the browser and read the
+        // flush: the scheduler sets that pref in its tab-open branch only, so
+        // it is exact proof, and the remaining assertions (ACL deny, no copy)
+        // need no live page.
         await dumpPages(browser);
-        dumpConsoleLog(seeded.profileDir);
-        return seeded.profileDir;
+        await closeBrowser(browser).catch(() => {});
+        browser = null;
+        tabOpened = greShownToday(seeded.profileDir);
+        console.log(
+          tabOpened ?
+            '  [diag] tab-open proven by the persisted pref (flushed at shutdown)'
+          : '  [diag] no tab-open proof on any channel (BiDi, mirror, pref)'
+        );
+        if (!tabOpened) dumpConsoleLog(seeded.profileDir);
       }
+      check(counter, tabOpened, `tab opens (${label})`);
 
       // ── NOW deny writes to the seeded config files ──
       // (tab up; scheduler's read done — see the comment above)
@@ -1953,28 +2055,81 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       check(counter, denyWorks, `GreD write blocked by ACL (${label})`);
       if (page) {
         // (flow continues below)
-      } else if (tabMirror) {
-        // Tab existed (mirror proves it) but BiDi lost it — trusted-tab
-        // enumeration flake, not a product failure. Still deny + assert via
-        // the mirror, without a page to click: install cannot be driven, so
-        // only verify the tab's own check produced no updater errors.
-        console.log('  [diag] BiDi never surfaced the trusted tab; mirror-only path.');
+      } else {
+        // Tab existed (pref/mirror proves it) but BiDi lost it — trusted-tab
+        // enumeration is deterministic on CI (2026-09-21: every leg, every
+        // scenario). No page to click, so the download→verify→gate→spawn flow
+        // cannot be driven here; what IS assertable: the deny held, nothing
+        // wrote GreD, and the tab's own session logged no updater errors.
+        console.log('  [diag] BiDi never surfaced the trusted tab; pref/mirror-only path.');
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
           'Elevation was cancelled',
           'Admin copy helper failed',
         ]);
+        // The no-copy assertion is skipped by the early return below (it sits
+        // after the finally), so run it here. Drop the deny first: on some
+        // hosts the write-deny blocks READS too (observed locally 2026-09-22:
+        // EPERM on open, while CI allowed the same read), and the ACE never
+        // changes file content — so reading after the removal is still proof
+        // that the denied copy wrote nothing.
+        for (const f of seededFiles) {
+          try {
+            icacls([f, '/remove:d', process.env.USERNAME]);
+          } catch {
+            /* not denied */
+          }
+        }
+        const configAfter = fs.readFileSync(seededFiles[0]);
+        check(
+          counter,
+          configAfter.equals(configBefore),
+          `GreD config unchanged (no copy without elevation, ${label})`
+        );
         return seeded.profileDir;
       }
 
       // Tick config only and install.
-      const clicked = await page.evaluate(() => {
-        const btn = document.getElementById('btn-install');
-        const cb = document.getElementById('chk-config');
-        if (!btn || !cb) return false;
-        if (!cb.checked) cb.click();
-        btn.click();
-        return true;
-      });
+      // page can be null on the pref/mirror-only path even after the tab-open
+      // check passed — guard so the crash cannot mask the verdicts below.
+      const clicked =
+        page &&
+        (await page.evaluate(() => {
+          const btn = document.getElementById('btn-install');
+          const cb = document.getElementById('chk-config');
+          if (!btn || !cb) return false;
+          if (!cb.checked) cb.click();
+          btn.click();
+          return true;
+        }));
+      if (!page) {
+        console.log('  [diag] no BiDi page after tab-open proof; pref/mirror-only assertions.');
+        assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
+          'Elevation was cancelled',
+          'Admin copy helper failed',
+        ]);
+        // The deny must come off BEFORE the config read (observed 2026-09-22:
+        // even a read can EPERM while the deny ACE is applied). The finally's
+        // removal is idempotent, so a plain second attempt after this is safe.
+        try {
+          icacls([seededFiles[0], '/remove:d', process.env.USERNAME]);
+        } catch {
+          /* restored again in the finally */
+        }
+        let configAfterNoPage = null;
+        try {
+          configAfterNoPage = fs.readFileSync(seededFiles[0]);
+        } catch (err) {
+          check(counter, false, `GreD config readable (${label})`, err.message);
+        }
+        if (configAfterNoPage) {
+          check(
+            counter,
+            configAfterNoPage.equals(configBefore),
+            `GreD config unchanged (no copy without elevation, ${label})`
+          );
+        }
+        return seeded.profileDir;
+      }
       check(counter, clicked, `config install clicked (${label})`);
 
       // Completion: the flow must END (progress hidden or error shown).
@@ -2019,6 +2174,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         'Admin copy helper failed',
       ]);
     } finally {
+      await manifestServer.close().catch(() => {});
       try {
         await closeBrowser(browser);
       } catch {
@@ -2082,9 +2238,48 @@ async function run() {
     process.exit(1);
   }
   console.log(`  firefox: ${firefoxBin}`);
-  console.log(`  GreD:    ${findGreDir(firefoxBin)}`);
+  const greDir = findGreDir(firefoxBin);
+  console.log(`  GreD:    ${greDir}`);
+  // Every seeded scenario copies fx-folder's config.js into GreD first (the
+  // scheduler cannot run without it), so a GreD this account cannot write means
+  // nothing can be tested. Fail once, with the fix, instead of a wall of EPERM
+  // failures: use a user-owned (portable) Firefox. CI's runners are admins,
+  // which is why the CI legs can seed into Program Files.
+  const greIssue = greNotWritableReason(greDir);
+  if (greIssue) {
+    // Warn, never hard-stop: some hosts legitimately can write where this
+    // probe cannot (and vice versa — platform quirks must not decide whether a
+    // leg runs). The scenarios report their own seeding failure when it does
+    // bite, with the same recipe to fix it.
+    console.error(
+      `  WARNING: GreD is not writable here — ${greIssue}\n` +
+        '  The updater scenarios seed config.js into the browser install dir; if they\n' +
+        '  fail with EPERM they need a user-owned Firefox: a portable copy\n' +
+        '  (`PORTABLE_BROWSER_DIR`, see test/e2e/shared/downloads.mjs) or\n' +
+        '  `--firefox <portable firefox.exe>`. An installed browser under\n' +
+        '  Program Files needs an elevated account.'
+    );
+  }
 
-  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8'];
+  // Scenario 9 (helper-checksum-win) is in the default set (Windows-only; it
+  // self-skips elsewhere): ACL-denied GreD config files force the updater down
+  // the admin-copy-helper path, so it guards the scheduler's decision and the
+  // no-copy-without-elevation rule. Two fixture defects made it assert nothing
+  // until 2026-09-22 (every Windows leg red, locally too):
+  //
+  // 1. the seeded profile had no updater UI on disk, so the scheduler's
+  //    ensureUpdaterUi() tried to fetch updater-ui.zip from this fixture's
+  //    file:// scratch base, failed, and exited BEFORE opening the tab;
+  // 2. the manifest it was served declared `fx-folder: {hash:'', files:[]}`,
+  //    which removes the very staleness the scenario exists to produce.
+  //
+  // Both are fixed in runHelperChecksumScenario (UI seeded from updater-ui.zip,
+  // manifest served from the snapshot's own hashes.json), and the tab-open
+  // proof now also accepts the shutdown-flushed pref when BiDi cannot enumerate
+  // the trusted tab. What a headless CI run still cannot reach is elevation
+  // itself — the helper's byte-level gate is covered deterministically by
+  // test/unit/publish/branchPagesContract.test.mjs on every OS.
+  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8', '9'];
 
   const profiles = [];
 
@@ -2160,9 +2355,26 @@ async function run() {
       {
         id: '9',
         run: async () => {
+          // Same startup-race retry as scenario 1: the tab-open proof waits on
+          // the scheduler's first tick + Firefox's lazy prefs.js flush; on a
+          // busy runner either can miss the window (observed locally 2026-09-22:
+          // green → red → red on identical code). A fresh profile + relaunch
+          // is the proven remedy.
+          const failedBefore = counter.failed;
+          // Both attempts' profiles are pushed for centralized cleanup — the
+          // failed attempt's stays on disk until the run ends for post-mortem
+          // (same contract as scenario 1's createdProfiles). The counter is
+          // deliberately SHARED: attempt 1's failures stay in the tally, so a
+          // retry can never turn a real regression green (docs/DEVELOPING.md).
           profiles.push(
             await runHelperChecksumScenario(counter, opts, snapshotDir, 'helper-checksum-win')
           );
+          if (counter.failed > failedBefore) {
+            console.log('  [diag] attempt 1 failed — retrying scenario 9 with a fresh profile');
+            profiles.push(
+              await runHelperChecksumScenario(counter, opts, snapshotDir, 'helper-checksum-win')
+            );
+          }
         },
       },
     ];

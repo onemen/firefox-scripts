@@ -1282,7 +1282,16 @@ async function runUiLayer(counter, opts, snapshotDir) {
             const type = msg.type();
             const line = `[${type}] ${text}`;
             consoleLines.push(line);
-            if (type === 'error' || type === 'warning' || text.includes('[ingest]')) {
+            // Tab-script convention (2026-09-21): informational traces are
+            // console.debug — tagged '[ingest]'/'[install]' lines still
+            // surface so the UI-12 failure tail is attributable; errors come
+            // through as type 'error' and always print.
+            if (
+              text.includes('[ingest]') ||
+              text.includes('[install]') ||
+              type === 'error' ||
+              type === 'warning'
+            ) {
               console.log(`  [tab-console] ${line}`);
             }
           } catch {
