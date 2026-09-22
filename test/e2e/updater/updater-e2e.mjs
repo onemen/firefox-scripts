@@ -265,24 +265,39 @@ function seedProfile(
 
   // Per-package skip prefs (extensions.firefox-scripts.skippedHash.<pkg> =
   // remote hash) — seeded from the snapshot's own manifest.
-  if (skipUtils || skipConfig) {
-    try {
-      const hashesPath = path.join(snapshotDir, 'hashes.json');
-      if (fs.existsSync(hashesPath)) {
-        const hashes = JSON.parse(fs.readFileSync(hashesPath, 'utf-8'));
-        if (skipUtils && hashes.utils?.hash) {
-          prefs['extensions.firefox-scripts.skippedHash.utils'] = hashes.utils.hash;
-        }
-        if (skipConfig && hashes['fx-folder']?.hash) {
-          prefs['extensions.firefox-scripts.skippedHash.fx-folder'] = hashes['fx-folder'].hash;
-        }
-      }
-    } catch {
-      /* manifest missing */
-    }
-  }
+  addSkipPrefs(prefs, snapshotDir, skipUtils, skipConfig);
 
   return {profileDir, chromeUtils, _greModNeeded: false, prefs};
+}
+
+/**
+ * Set the per-package skip prefs (extensions.firefox-scripts.skippedHash.<pkg>
+ * = remote hash) from the snapshot's own manifest. Shared by seedProfile and
+ * the launch-reuse hand-off (scenario 4 → 5): launch prefs re-inject on every
+ * start, so a reused profile needs the same pref deltas a fresh seed would have
+ * written, sourced from the same manifest.
+ *
+ * @param {Record<string, string>} prefs launch prefs (mutated)
+ * @param {string} snapshotDir
+ * @param {boolean} skipUtils
+ * @param {boolean} skipConfig
+ */
+function addSkipPrefs(prefs, snapshotDir, skipUtils, skipConfig) {
+  if (!skipUtils && !skipConfig) return;
+  try {
+    const hashesPath = path.join(snapshotDir, 'hashes.json');
+    if (fs.existsSync(hashesPath)) {
+      const hashes = JSON.parse(fs.readFileSync(hashesPath, 'utf-8'));
+      if (skipUtils && hashes.utils?.hash) {
+        prefs['extensions.firefox-scripts.skippedHash.utils'] = hashes.utils.hash;
+      }
+      if (skipConfig && hashes['fx-folder']?.hash) {
+        prefs['extensions.firefox-scripts.skippedHash.fx-folder'] = hashes['fx-folder'].hash;
+      }
+    }
+  } catch {
+    /* manifest missing */
+  }
 }
 
 /**
@@ -367,6 +382,30 @@ function computeInstalledHash(files, dir) {
     hash.update(fs.readFileSync(abs));
   }
   return hash.digest('hex');
+}
+
+/**
+ * Wait until an installed tree re-hashes to the expected manifest hash (or the
+ * timeout expires). This is the install-completion ground truth — the same disk
+ * state the updater itself verifies in refreshPackageState — so the harness can
+ * wait on it instead of polling the tab's DOM badges (which are a UI proxy that
+ * can miss or lag the actual copy). File watches are platform-fragile; a fast
+ * hash poll (250 ms) is event-adjacent: it detects the copy within one tick of
+ * completion without a fixed sleep.
+ *
+ * @param {string[]} files manifest file list
+ * @param {string} dir installed tree root
+ * @param {string} expectedHash manifest hash
+ * @param {number} [timeoutMs=30_000] Default is `30_000`
+ * @returns {Promise<boolean>} true when the tree matched
+ */
+async function waitForTreeHash(files, dir, expectedHash, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (computeInstalledHash(files, dir) === expectedHash) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise(r => setTimeout(r, 250));
+  }
 }
 
 // ── Scenario runners ───────────────────────────────────────────────────────
@@ -465,6 +504,27 @@ function mirrorHasMarker(profileDir, marker) {
     return fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8').includes(marker);
   } catch {
     return false;
+  }
+}
+
+/**
+ * Poll the console mirror (250 ms) until any of the markers appears — the
+ * event-driven completion signal. The mirror is fed by the config probe's
+ * console-service listener, and the tab's logError() writes console.error, so
+ * an install flow's terminal error lands here the moment it happens; no DOM
+ * polling needed.
+ *
+ * @param {string} profileDir
+ * @param {string[]} markers
+ * @param {number} [timeoutMs=30_000] Default is `30_000`
+ * @returns {Promise<boolean>} true when a marker was seen
+ */
+async function waitForMirrorMarker(profileDir, markers, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (markers.some(m => mirrorHasMarker(profileDir, m))) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise(r => setTimeout(r, 250));
   }
 }
 
@@ -1040,7 +1100,8 @@ async function runNoTabScenario(
   opts,
   snapshotDir,
   label,
-  {skipUtils, skipConfig, forceUtilsStale = false}
+  {skipUtils, skipConfig, forceUtilsStale = false},
+  reuseState = null
 ) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
@@ -1049,12 +1110,30 @@ async function runNoTabScenario(
   const t0 = Date.now();
   const phases = {};
 
-  const seeded = seedProfile(snapshotDir, {
-    forceConfigStale: false,
-    forceUtilsStale,
-    skipUtils,
-    skipConfig,
-  });
+  const seeded =
+    reuseState ??
+    seedProfile(snapshotDir, {
+      forceConfigStale: false,
+      forceUtilsStale,
+      skipUtils,
+      skipConfig,
+    });
+  if (reuseState) {
+    // Launch-reuse hand-off (scenario 4 → 5): the profile already holds the
+    // seeded utils + GreD state; scenario 5's deltas are applied on top —
+    // (a) forceUtilsStale is the disk marker below, (b) skipUtils is a launch
+    // pref (addSkipPrefs — extraPrefsFirefox re-injects every start, so no
+    // user.js write), (c) the GreD is re-seeded for byte-identical state.
+    // The daily gate is already cleared by the seeded prefs on every launch.
+    console.log(
+      "  [reuse] continuing on scenario 4's profile (profile + utils state reused; GreD re-seeded for byte-identical state)"
+    );
+    if (forceUtilsStale) {
+      const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
+      fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
+    }
+    addSkipPrefs(seeded.prefs, snapshotDir, skipUtils, skipConfig);
+  }
   phases.seed = Date.now() - t0;
 
   const greDir = findGreDir(firefoxBin);
@@ -1138,7 +1217,6 @@ async function runNoTabScenario(
 
     phases.total = Date.now() - t0;
     logScenarioTime(label, t0, phases);
-    return seeded.profileDir;
   } finally {
     try {
       await closeBrowser(browser);
@@ -1158,6 +1236,14 @@ async function runNoTabScenario(
       shown ? 'lastUpdateTabShown persisted although the tab should stay closed' : ''
     );
   }
+
+  // Launch-reuse hand-off (scenario 4 → 5): return the full seeded state so
+  // step 5 can continue on this profile. `chromeUtils` + `prefs` are what the
+  // reuse path mutates (stale marker, skip prefs); the daily-gate clears stay
+  // in `prefs` so the second launch re-runs the check. The `'profileDir' in
+  // state` unwrap in run() still routes the profile into `profiles` for
+  // centralized cleanup.
+  return {profileDir: seeded.profileDir, chromeUtils: seeded.chromeUtils, prefs: seeded.prefs};
 }
 
 /**
@@ -1292,26 +1378,11 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       });
       check(counter, clicked, `install clicked (utils only, ${label})`);
 
-      // Completion: utils badge flipped to OK and the progress bar hidden.
-      const completed = await waitForCondition(
-        page,
-        () => {
-          const utilsOk = document.getElementById('utils-badge-ok');
-          const utilsUpd = document.getElementById('utils-badge-update');
-          const progress = document.getElementById('card-progress');
-          const err = document.getElementById('card-progress-error');
-          return Boolean(
-            utilsOk &&
-            !utilsOk.hidden &&
-            utilsUpd &&
-            utilsUpd.hidden &&
-            progress?.hidden &&
-            err?.style.display === 'none'
-          );
-        },
-        60_000,
-        'utils install completed'
-      );
+      // Completion: the installed utils TREE re-hashes to the manifest — the
+      // ground truth, waited on directly (waitForTreeHash) instead of polling
+      // the tab's DOM badges for 60 s. One read-only evaluate afterwards still
+      // asserts the UI layer reflected the install.
+      const completed = await waitForTreeHash(utilsFiles, seeded.chromeUtils, utilsHash, 30_000);
       check(counter, completed, `utils install completes in tab (${label})`);
       if (!completed) {
         // Diagnostic: capture the tab's error banner + badge DOM and the
@@ -1387,28 +1458,13 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       });
       check(counter, clicked, `install clicked (${label})`);
 
-      // Completion: both badges flipped to OK and the progress bar hidden once
-      // the whole flow finishes. Local file:// downloads take a couple of
-      // seconds per package, so allow a generous margin.
-      const completed = await waitForCondition(
-        page,
-        () => {
-          const utilsOk = document.getElementById('utils-badge-ok');
-          const configOk = document.getElementById('config-badge-ok');
-          const progress = document.getElementById('card-progress');
-          const err = document.getElementById('card-progress-error');
-          return Boolean(
-            utilsOk &&
-            !utilsOk.hidden &&
-            configOk &&
-            !configOk.hidden &&
-            progress?.hidden &&
-            err?.style.display === 'none'
-          );
-        },
-        60_000,
-        'install completed'
-      );
+      // Completion: BOTH installed trees re-hash to the manifest (utils then
+      // config — the tab installs config first). Disk hash is the completion
+      // ground truth; the badge DOM is asserted once afterwards instead of
+      // being polled for a minute.
+      const completed =
+        (await waitForTreeHash(utilsFiles, seeded.chromeUtils, utilsHash, 30_000)) &&
+        (await waitForTreeHash(configFiles, greDir, configHash, 30_000));
       check(counter, completed, `install completes in tab (${label})`);
       if (!completed) {
         // Diagnostic: capture the tab's error banner + badge DOM and the
@@ -1444,6 +1500,20 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
         .evaluate(() => !document.getElementById('success-banner')?.hidden)
         .catch(() => false);
       check(counter, successShown, `success banner shown after install (${label})`);
+
+      // UI reflection, asserted once (not polled): the badges must show the
+      // installed state by now — the disk waits above guarantee the updater's
+      // own refreshPackageState has run for both packages.
+      const badgesOk = await page
+        .evaluate(() => {
+          const ok = id => {
+            const el = document.getElementById(id);
+            return Boolean(el && !el.hidden);
+          };
+          return ok('utils-badge-ok') && ok('config-badge-ok');
+        })
+        .catch(() => false);
+      check(counter, badgesOk, `badges show OK after install (${label})`);
     }
   } finally {
     try {
@@ -2238,18 +2308,15 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       }
       check(counter, clicked, `config install clicked (${label})`);
 
-      // Completion: the flow must END (progress hidden or error shown).
-      // Pass = verification ran on the stand-in bytes and the flow proceeded
-      // to the elevation step (which fails/cancels headless).
-      const finished = await waitForCondition(
-        page,
-        () => {
-          const progress = document.getElementById('card-progress');
-          const err = document.getElementById('card-progress-error');
-          return Boolean(progress?.hidden || err?.style.display !== 'none');
-        },
-        60_000,
-        'config install flow finished (elevation expected to fail headless)'
+      // Completion: the flow must END. Pass = verification ran on the stand-in
+      // bytes and the flow reached the elevation step (which fails/cancels
+      // headless). The terminal error lands in the console mirror the moment
+      // logError writes it (installConfig's catch), so wait on the mirror —
+      // event-driven — instead of polling the tab's progress DOM for 60 s.
+      const finished = await waitForMirrorMarker(
+        seeded.profileDir,
+        ['Elevation was cancelled', 'Admin copy helper failed'],
+        30_000
       );
       check(counter, finished, `config install flow finished (${label})`);
 
@@ -2391,6 +2458,9 @@ async function run() {
   // Scenario 7 → 8 state hand-off (launch-reuse prototype). Populated by
   // step 7 when it runs; consumed (and cleared) by step 8 in the same pass.
   let handoff = null;
+  // Scenario 4 → 5 state hand-off (same prototype): the no-tab legs re-seed
+  // identical profiles, so step 5 can continue on step 4's.
+  let noTabHandoff = null;
 
   // Save GreD config before we overwrite it (see issue #4)
   const savedGre = saveGreConfig(findGreDir(firefoxBin));
@@ -2418,22 +2488,36 @@ async function run() {
       {
         id: '4',
         run: async () => {
-          profiles.push(
-            await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
-              skipUtils: false,
-              skipConfig: false,
-            })
-          );
+          // When 5 follows in the same selection, hand 4's end state to 5
+          // (launch-reuse prototype): one profile, one GreD seed, one fewer
+          // fresh-profile build. Scenario 4's standalone behavior and
+          // assertions are unchanged.
+          const state = await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
+            skipUtils: false,
+            skipConfig: false,
+          });
+          const result =
+            state && typeof state === 'object' && 'profileDir' in state ?
+              state
+            : {profileDir: state};
+          profiles.push(result.profileDir);
+          noTabHandoff = result;
         },
       },
       {
         id: '5',
         run: async () => {
+          const reuse = scenarios.includes('4') ? noTabHandoff : null;
+          noTabHandoff = null;
           profiles.push(
-            await runNoTabScenario(counter, opts, snapshotDir, 'skipped', {
-              skipUtils: true,
-              forceUtilsStale: true,
-            })
+            await runNoTabScenario(
+              counter,
+              opts,
+              snapshotDir,
+              'skipped',
+              {skipUtils: true, forceUtilsStale: true},
+              reuse
+            )
           );
         },
       },
