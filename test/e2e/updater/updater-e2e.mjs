@@ -522,27 +522,6 @@ function mirrorHasMarker(profileDir, marker) {
   }
 }
 
-/**
- * Poll the console mirror (250 ms) until any of the markers appears — the
- * event-driven completion signal. The mirror is fed by the config probe's
- * console-service listener, and the tab's logError() writes console.error, so
- * an install flow's terminal error lands here the moment it happens; no DOM
- * polling needed.
- *
- * @param {string} profileDir
- * @param {string[]} markers
- * @param {number} [timeoutMs=30_000] Default is `30_000`
- * @returns {Promise<boolean>} true when a marker was seen
- */
-async function waitForMirrorMarker(profileDir, markers, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (markers.some(m => mirrorHasMarker(profileDir, m))) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise(r => setTimeout(r, 250));
-  }
-}
-
 /** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
 function mirrorSaysTabOpened(profileDir) {
   return mirrorHasMarker(profileDir, 'TAB_OPENED');
@@ -2357,14 +2336,40 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
 
       // Completion: the flow must END. Pass = verification ran on the stand-in
       // bytes and the flow reached the elevation step (which fails/cancels
-      // headless). The terminal error lands in the console mirror the moment
-      // logError writes it (installConfig's catch), so wait on the mirror —
-      // event-driven — instead of polling the tab's progress DOM for 60 s.
-      const finished = await waitForMirrorMarker(
-        seeded.profileDir,
-        ['Elevation was cancelled', 'Admin copy helper failed'],
-        30_000
-      );
+      // headless). TWO completion channels, whichever fires first:
+      // - the console mirror's terminal error (logError → installConfig's
+      //   catch) — event-driven, lands the moment it happens where the mirror
+      //   writes (verified locally; CI legs are a separate root cause, #292);
+      // - the tab's progress DOM completing (progress hidden or error shown)
+      //   — the historically CI-proven channel. A host-side in-page evaluate
+      //   is impossible (waitForCondition requires a Page — #292), so the DOM
+      //   check rides along via findPageByUrl's live handle every 500ms tick.
+      const flowDeadline = Date.now() + 60_000;
+      let finished = false;
+      while (Date.now() < flowDeadline) {
+        if (
+          mirrorHasMarker(seeded.profileDir, 'Elevation was cancelled') ||
+          mirrorHasMarker(seeded.profileDir, 'Admin copy helper failed')
+        ) {
+          finished = true;
+          break;
+        }
+        const live =
+          page && !page.isClosed() ?
+            page
+          : await findPageByUrl(browser, UPDATER_URL, 500).catch(() => null);
+        page = live || page;
+        if (live) {
+          finished = await live
+            .evaluate(() => {
+              const progress = document.getElementById('card-progress');
+              const err = document.getElementById('card-progress-error');
+              return Boolean(progress?.hidden || err?.style.display !== 'none');
+            })
+            .catch(() => false);
+          if (finished) break;
+        }
+      }
       check(counter, finished, `config install flow finished (${label})`);
 
       // THE assertion: no 'failed checksum verification' console error — the
