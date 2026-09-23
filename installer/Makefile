@@ -130,7 +130,7 @@ $(TARGET): $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h $(WIN_RES)
 	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(WIN_RES) -o $(TARGET) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) $(WIN_LIBS)
 
 # Compile the Windows version resource + manifest into a COFF object.
-$(SRC_DIR)/installer.res: $(SRC_DIR)/installer.rc $(SRC_DIR)/installer.manifest
+$(SRC_DIR)/installer.res: $(SRC_DIR)/installer.rc $(SRC_DIR)/installer.manifest $(SRC_DIR)/installer.ico
 	$(WINDRES) $(SRC_DIR)/installer.rc -O coff -o $@
 
 # Publish mode for the generated config: see tools/publish/publishMode.mjs.
@@ -253,7 +253,7 @@ dist_all: dist_win dist_linux dist_linux_aarch64 dist_mac
 # The PE manifest is compiled into the binary through version.rc
 # (1 RT_MANIFEST), so a manifest edit must relink the helper — hence the
 # explicit prerequisite.
-helper_win: $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.rc $(SRC_DIR)/helper/helper.manifest | $(DIST_DIR)
+helper_win: $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.rc $(SRC_DIR)/helper/helper.manifest $(SRC_DIR)/installer.ico | $(DIST_DIR)
 	windres $(SRC_DIR)/helper/version.rc -O coff -o $(SRC_DIR)/helper/version.res
 	$(CC) $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.res -o $(DIST_DIR)/helper_win$(ASSET_SUFFIX).exe $(CFLAGS) -static -static-libgcc -luser32 -lshell32 "-Wl,--gc-sections" "-Wl,--strip-all" "-Wl,--subsystem,windows"
 

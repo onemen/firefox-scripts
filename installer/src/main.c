@@ -161,8 +161,8 @@ static int request_has_valid_token(const char *query) {
 }
 
 #ifdef _WIN32
-// Set once the shutdown path starts, so the console handler and the keyboard
-// watchdog below never run the graceful shutdown twice (exit(0) races).
+// Set once the shutdown path starts, so the console handler never runs the
+// graceful shutdown twice (exit(0) races).
 static volatile LONG g_shutting_down = 0;
 
 static BOOL WINAPI on_ctrl_c(DWORD dwCtrlType) {
@@ -175,56 +175,6 @@ static BOOL WINAPI on_ctrl_c(DWORD dwCtrlType) {
         return TRUE;
     }
     return FALSE;
-}
-
-// ---------------------------------------------------------------------------
-// Ctrl+C keyboard watchdog.
-//
-// SetConsoleCtrlHandler only fires when the console delivers CTRL_C_EVENT to
-// this process.  That works under cmd.exe, which broadcasts the event to
-// every process attached to the console, but NOT under PowerShell: PowerShell
-// starts native processes in a new process group (CREATE_NEW_PROCESS_GROUP),
-// which is excluded from the broadcast, and Windows PowerShell 5.1 never
-// forwards Ctrl+C the way pwsh 7.3+ does.  The user then sees Ctrl+C do
-// nothing even though the banner says "Press Ctrl+C to stop the installer."
-//
-// The watchdog polls the physical keyboard instead, so it works in every
-// terminal host.  It only fires while a terminal window has input focus, so a
-// Ctrl+C in the browser (copy) cannot accidentally stop the installer, and it
-// is only started when a parent console was attached (i.e. the app was
-// started from a terminal, not double-clicked).
-// ---------------------------------------------------------------------------
-
-// True while the foreground window belongs to a terminal/console host.
-static int terminal_has_focus(void) {
-    HWND con = GetConsoleWindow();
-    HWND fg = GetForegroundWindow();
-    if (!fg) return 0;
-    if (con && fg == con) return 1;  // classic conhost window
-    // Pseudoconsole (Windows Terminal, VS Code, third-party terminals):
-    // GetConsoleWindow() is NULL, so identify the foreground process instead.
-    DWORD pid = 0;
-    GetWindowThreadProcessId(fg, &pid);
-    if (!pid || pid == GetCurrentProcessId()) return 0;
-    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!h) return 0;
-    char path[MAX_PATH] = "";
-    DWORD sz = (DWORD)sizeof(path);
-    BOOL ok = QueryFullProcessImageNameA(h, 0, path, &sz);
-    CloseHandle(h);
-    if (!ok) return 0;
-    const char *base = strrchr(path, '\\');
-    base = base ? base + 1 : path;
-    static const char *const terminals[] = {
-        "conhost.exe", "openconsole.exe", "windowsterminal.exe",
-        "cmd.exe", "powershell.exe", "pwsh.exe",
-        "wezterm.exe", "alacritty.exe", "mintty.exe", "kitty.exe",
-        "ghostty.exe", "code.exe", NULL
-    };
-    for (int i = 0; terminals[i]; i++) {
-        if (strcasecmp(base, terminals[i]) == 0) return 1;
-    }
-    return 0;
 }
 
 #ifdef _WIN32
@@ -279,27 +229,6 @@ static void focus_browser_window(unsigned long pid) {
 }
 #endif
 
-static DWORD WINAPI ctrl_c_watchdog(LPVOID unused) {
-    (void)unused;
-    // Two consecutive samples (~100 ms) of a held Ctrl+C while a terminal has
-    // focus.  A quick Ctrl+C tap is typically held 100-300 ms.
-    int samples = 0;
-    for (;;) {
-        Sleep(50);
-        if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) &&
-            (GetAsyncKeyState('C') & 0x8000) &&
-            terminal_has_focus()) {
-            if (++samples >= 2) {
-                samples = 0;
-                on_ctrl_c(CTRL_C_EVENT);
-                return 0;
-            }
-        } else {
-            samples = 0;
-        }
-    }
-    return 0;
-}
 #else
 static int find_last_used_browser_index(const RunningBrowser *browsers, int count) {
     (void)browsers;
@@ -1904,15 +1833,19 @@ static int main_impl(int argc, char *argv[]) {
     // Attach to parent console so printf works with -mwindows AND Ctrl+C
     // can reach us.  OK if it fails (no parent console).
     BOOL console_attached = AttachConsole(ATTACH_PARENT_PROCESS);
+    // SetConsoleCtrlHandler only fires when the console delivers CTRL_C_EVENT
+    // to this process.  A parent that starts us in a new process group hands
+    // the whole group the console's inherited "ignore Ctrl+C" attribute, and
+    // the group is then excluded from the broadcast: Windows PowerShell 5.1
+    // starts native processes with CREATE_NEW_PROCESS_GROUP, so the keypress
+    // reached no handler at all and the banner's "Press Ctrl+C to stop the
+    // installer" was a lie.  SetConsoleCtrlHandler(NULL, FALSE) is the
+    // documented API that restores normal Ctrl+C processing for that
+    // inherited attribute — measured against a new-group parent: plain child
+    // = no CTRL_C_EVENT, re-enabled child = CTRL_C_EVENT.  Ctrl+C only ever
+    // originates from OUR console, so no foreground-window check is needed.
+    if (console_attached) SetConsoleCtrlHandler(NULL, FALSE);
     SetConsoleCtrlHandler(on_ctrl_c, TRUE);
-    // Ctrl+C via SetConsoleCtrlHandler only fires when the console delivers
-    // CTRL_C_EVENT (cmd.exe, pwsh 7.3+).  PowerShell 5.1 starts native
-    // processes in a new process group that never receives the broadcast, so
-    // also watch the keyboard while a terminal window has focus.
-    if (console_attached) {
-        HANDLE hWatch = CreateThread(NULL, 0, ctrl_c_watchdog, NULL, 0, NULL);
-        if (hWatch) CloseHandle(hWatch);
-    }
 #endif
 
     // Handle flags.  The existing one-shot modes (--help, --test-hash,
