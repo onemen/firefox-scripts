@@ -2123,9 +2123,11 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
           'Elevation was cancelled',
           'Admin copy helper failed',
-          // logStringMessage-routed duplicates of the expected elevation
-          // failure (#292 logError routing) — see the sibling allowlist above.
-          'Firefox Scripts updater: install config',
+          // These also match the logStringMessage-routed duplicates (#292):
+          // the routed line embeds the same tail — "Firefox Scripts updater:
+          // install config — <expected tail>" — so no broader routed entry is
+          // needed (a bare "install config" prefix would mask every other
+          // install-config failure, violating the net's no-masking rule).
         ]);
         // The deny must come off BEFORE the config read (observed 2026-09-22:
         // even a read can EPERM while the deny ACE is applied). The finally's
@@ -2192,10 +2194,11 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
         'Elevation was cancelled',
         'Admin copy helper failed',
-        // logError now ALSO routes through logStringMessage (#292): the
-        // expected elevation-failure errors arrive a second time as plain
-        // "Firefox Scripts updater: install config — <tail>" lines.
-        'Firefox Scripts updater: install config',
+        // These also match the logStringMessage-routed duplicates (#292):
+        // the routed line embeds the same tail — "Firefox Scripts updater:
+        // install config — <expected tail>" — so no broader routed entry is
+        // needed (a bare "install config" prefix would mask every other
+        // install-config failure, violating the net's no-masking rule).
       ]);
     } finally {
       await manifestServer.close().catch(() => {});
