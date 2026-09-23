@@ -394,6 +394,8 @@ export function statusTag(status) {
       return '⚠️ download failed';
     case 'size-change':
       return '🔄 size changed';
+    case 'report-only':
+      return 'ℹ️ not checked';
     default:
       return status || '—';
   }
@@ -446,12 +448,105 @@ export function escapeTableCell(value) {
 }
 
 /**
+ * Cache-key prefixes per (non-fork) browser ledger name, used to attribute
+ * opaque URL-hash cache keys to browsers. The Mozilla namespace is SHARED:
+ * firefox, firefox-dev, nightly and waterfox all cache under `firefox-dl-`
+ * (different URLs → different hashes, indistinguishable offline). Attribution
+ * is therefore at NAMESPACE level and duplicated across the consumers (each
+ * sees the whole namespace's keys) — the inventory proves presence/age; the
+ * VERSION still comes from the baseline entry (what the last verified download
+ * cached). `firefox` also matches the portable job's namespace; the advisory
+ * ESR legs use `esr-portable-`.
+ */
+export function cacheKeyPrefixesFor(browser) {
+  if (FORK_BROWSERS.includes(browser)) return []; // sticky namespace, parsed separately
+  if (browser === 'firefox') return ['firefox-dl-', 'firefox-portable-'];
+  if (browser.startsWith('firefox-esr')) return ['esr-portable-'];
+  return ['firefox-dl-']; // firefox-dev, nightly, waterfox
+}
+
+/**
+ * One sticky fork cache key: `browser-dl-<OS>-<browser>[-portable]-v<version>`
+ * (ADR 0034). The extracted-dir twin (`…-portable-dir-v…`) does NOT match — the
+ * `dir` segment cannot be absorbed by `[a-z]+`, so dir entries never double-
+ * count the same release. Hard-gate URL-hash keys (`<prefix>-<OS>-<hex>`) can't
+ * match either: hex hashes contain no dash before `-v` and never start with a
+ * letter followed by a `-v` boundary. (Old dead fork keys from the URL-hash
+ * regime, `browser-dl-<OS>-<hex>`, are hex — also no match.)
+ */
+const FORK_STICKY_RE = /^browser-dl-[^-]+-([a-z]+)(?:-portable)?-v(\S+)$/;
+
+/**
+ * Group the repo's Actions-cache entries (as returned by the caches API:
+ * `[{key, createdAt}]`) per browser ledger name. Fork browsers are attributed
+ * exactly (their sticky keys name the browser); Mozilla-family browsers are
+ * attributed per the shared-namespace rule of cacheKeyPrefixesFor — every
+ * consumer of a namespace sees that namespace's whole key list. Unknown keys
+ * (pnpm, node-cache, the watchdog's own caches) land nowhere.
+ */
+export function groupCacheKeysByBrowser(entries, browsers) {
+  const groups = {};
+  for (const name of browsers) groups[name] = [];
+  for (const entry of entries) {
+    const sticky = FORK_STICKY_RE.exec(entry.key);
+    if (sticky && FORK_BROWSERS.includes(sticky[1])) {
+      groups[sticky[1]]?.push(entry);
+      continue;
+    }
+    for (const name of browsers) {
+      if (cacheKeyPrefixesFor(name).some(prefix => entry.key.startsWith(prefix))) {
+        groups[name].push(entry);
+      }
+    }
+  }
+  return groups;
+}
+
+/**
+ * Truthful Fallback (CI cache) cell from the live cache inventory.
+ *
+ * - Fork browsers: the version is decoded from the sticky key itself (the key IS
+ *   the ground truth — it is named after the installed version that saved it),
+ *   so the cell cannot drift from the cache the way a baseline-derived cell
+ *   could (issue #136: the table showed a version the cache no longer held
+ *   after a key-regime change).
+ * - Hard gates: version comes from the baseline entry (hash keys carry no
+ *   version); the inventory proves the entry still exists and how fresh it is.
+ * - No matching keys: `⚠️ cache miss` when a baseline version exists (the cache
+ *   was evicted — the next leg re-downloads), '—' when there is nothing to fall
+ *   back to at all.
+ *
+ * The age suffix is the newest matching entry's age: for forks that is the
+ * watchdog validation run that saved the release; for hard gates the last
+ * version-bump download.
+ */
+export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {}) {
+  const list = Array.isArray(keys) ? keys : [];
+  if (list.length === 0) return entry?.version ? '⚠️ cache miss' : '—';
+  const newest = Math.max(...list.map(k => Date.parse(k.createdAt) || 0));
+  const age = newest > 0 && now > newest ? ` · ${formatAge(now - newest)}` : '';
+  if (FORK_BROWSERS.includes(browser)) {
+    const sticky = list.map(k => FORK_STICKY_RE.exec(k.key)).find(Boolean);
+    if (sticky) return `cached: ${sticky[2]}${age}`;
+    return entry?.version ? `cached: ${entry.version}${age}` : 'cached (unknown version)';
+  }
+  return entry?.version ? `cached: ${entry.version}${age}` : 'cached (unknown version)';
+}
+
+/**
  * Markdown status table for the meta issue. `baseline` is the per-browser
  * record AFTER this run — a browser that failed keeps its previous entry, which
  * is exactly what the version-aware CI installer cache still serves (the
  * fallback column). `validated` is the E2E record (see validatedCell).
+ *
+ * `cache` (optional) is the live Actions-cache inventory grouped per browser
+ * (groupCacheKeysByBrowser). When provided, the Fallback column is derived from
+ * the REAL keys — decoded version + age for forks (ADR 0034 sticky namespace),
+ * presence + age for the shared Mozilla namespace — instead of the
+ * baseline-derived approximation. Omitted (local runs, PR mode): the column
+ * renders exactly as before. `now` pins the clock for deterministic tests.
  */
-export function buildStatusTable({results, baseline, validated, browsers = BROWSERS}) {
+export function buildStatusTable({results, baseline, validated, browsers = BROWSERS, cache, now}) {
   const rows = browsers.map(browser => {
     const res = results[browser] || {status: 'ok'};
     const entry = baseline[browser] || {};
@@ -466,10 +561,14 @@ export function buildStatusTable({results, baseline, validated, browsers = BROWS
       entry.size || entry.sha256 ? `${formatSize(entry.size)} · ${shortSha(entry.sha256)}` : '—';
     const lastCheck = formatCheck(entry.checkedAt, entry.checkedUrl);
     // The CI cache always holds the last verified version, green run or not —
-    // show it unconditionally (the staleness suffix matters only on failure,
-    // where it tells the operator how old the fallback is).
+    // show it unconditionally. With a live inventory the cell is cache-backed
+    // (cacheFallbackCell — real keys, ages, and fork versions decoded from the
+    // sticky keys, issue #136); without one, the baseline-derived view stands
+    // (the staleness suffix matters only on failure, where it tells the
+    // operator how old the fallback is).
     const fallback =
       version === '—' ? '—'
+      : cache ? cacheFallbackCell(browser, cache[browser] || [], entry, {now: now ?? Date.now()})
       : failed ? `cached: ${version} · ${lastCheck}`
       : `cached: ${version}`;
     // Download time of the last VERIFIED full download — the transfer-speed

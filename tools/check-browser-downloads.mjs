@@ -89,6 +89,7 @@ import {
   compareBaseline,
   esrLedgerNames,
   formatAge,
+  groupCacheKeysByBrowser,
   isFailureIssueTitle,
   isRollingBinary,
   issueBody,
@@ -114,6 +115,8 @@ export {
   buildEsrMatrix,
   buildMetaIssueBody,
   buildStatusTable,
+  cacheFallbackCell,
+  cacheKeyPrefixesFor,
   collectDrift,
   collectValidatedDrift,
   compareBaseline,
@@ -125,6 +128,7 @@ export {
   formatDownloadMs,
   formatRunDate,
   formatSize,
+  groupCacheKeysByBrowser,
   isFailureIssueTitle,
   isRollingBinary,
   issueBody,
@@ -279,6 +283,24 @@ async function verifyFullDownload(url, browser) {
   } finally {
     fs.rmSync(tmp, {force: true});
   }
+}
+
+/**
+ * List the repo's Actions-cache entries (key + creation time), all pages. Used
+ * to derive the truthful Fallback (CI cache) column (issue #136): the sticky
+ * fork keys decode to their version; the shared Mozilla namespace proves
+ * presence/age. Needs the `actions: read` scope (the watchdog's check job
+ * already carries `actions: write` for the E2E dispatch).
+ */
+export async function listActionsCaches(token, repo) {
+  const out = [];
+  for (let page = 1; ; page++) {
+    const body = await ghApi(token, `/repos/${repo}/actions/caches?per_page=100&page=${page}`);
+    out.push(...(body.actions_caches ?? []).map(c => ({key: c.key, createdAt: c.created_at})));
+    if ((body.actions_caches ?? []).length < 100) break;
+    if (page >= (body.total_count ?? 0) / 100 + 1) break;
+  }
+  return out;
 }
 
 /** Minimal GitHub REST helper (issues only). */
@@ -478,6 +500,13 @@ export async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const prMode = process.argv.includes('--pr');
   const driftMode = process.argv.includes('--drift');
+  // Report-only: skip every vendor-facing probe (no version lookups, no
+  // endpoint checks, no downloads) and only rebuild the meta issue from the
+  // existing baseline + the LIVE Actions-cache inventory. Cost: two GitHub API
+  // calls (caches list + issue list) — cheap enough to run after any cache
+  // save. Fail-open: an inventory fetch failure renders the baseline-derived
+  // column instead of failing the run (the table is informational).
+  const reportOnly = process.argv.includes('--report-only');
   const token = process.env.GITHUB_TOKEN || '';
   const repo = process.env.GITHUB_REPOSITORY || '';
   const baselineDir = process.env.BASELINE_DIR || path.join(REPO_ROOT, '.watchdog');
@@ -602,6 +631,7 @@ export async function main() {
   }
 
   let baseline = {};
+  // Report-only reads the baseline too — it is the table's data source.
   const baselineFound = !prMode && fs.existsSync(baselineFile);
   if (baselineFound) {
     baseline = JSON.parse(fs.readFileSync(baselineFile, 'utf-8'));
@@ -654,32 +684,42 @@ export async function main() {
   // A product-details outage keeps the previous window — the state machine is
   // never fed nulls that would shrink it.
   let esrState = baseline.esr ?? null;
-  try {
-    const {esr, next: esrNext} = await fetchEsrVersions();
-    const rotated = updateEsrState(esrState, esr, esrNext);
-    esrState = rotated.state;
-    // Slide cleanup: a dropped major leaves the ledger — its baseline entry and
-    // history rows go with it (the rebuilt meta issue sheds the row too).
-    for (const major of rotated.droppedMajors) {
-      const dropped = `firefox-esr-${major}`;
-      delete next[dropped];
-      if (Array.isArray(next.history)) {
-        next.history = next.history.map(h => {
-          const c = {...h, changes: (h.changes || []).filter(ch => ch.browser !== dropped)};
-          return c;
-        });
+  // Report-only: no vendor probes — the watched window comes from the restored
+  // baseline verbatim (a rotation slide is next scheduled run's business).
+  if (reportOnly) {
+    console.log(
+      esrState ?
+        `  esr window (from baseline): ${esrState.majors.join(' + ')}`
+      : '  esr: no baseline state — generic row only'
+    );
+  } else {
+    try {
+      const {esr, next: esrNext} = await fetchEsrVersions();
+      const rotated = updateEsrState(esrState, esr, esrNext);
+      esrState = rotated.state;
+      // Slide cleanup: a dropped major leaves the ledger — its baseline entry and
+      // history rows go with it (the rebuilt meta issue sheds the row too).
+      for (const major of rotated.droppedMajors) {
+        const dropped = `firefox-esr-${major}`;
+        delete next[dropped];
+        if (Array.isArray(next.history)) {
+          next.history = next.history.map(h => {
+            const c = {...h, changes: (h.changes || []).filter(ch => ch.browser !== dropped)};
+            return c;
+          });
+        }
+        console.log(`  esr: major ${major} dropped from the watched window (${dropped})`);
       }
-      console.log(`  esr: major ${major} dropped from the watched window (${dropped})`);
+      next.esr = esrState;
+      console.log(
+        `  esr window: ${esrState.majors.join(' + ')}` +
+          ` (${esrState.majors.map(m => esrState.versions[m] || '?').join(', ')})`
+      );
+    } catch (err) {
+      console.log(
+        `  esr: product-details unavailable (${err.message}) — keeping the previous window`
+      );
     }
-    next.esr = esrState;
-    console.log(
-      `  esr window: ${esrState.majors.join(' + ')}` +
-        ` (${esrState.majors.map(m => esrState.versions[m] || '?').join(', ')})`
-    );
-  } catch (err) {
-    console.log(
-      `  esr: product-details unavailable (${err.message}) — keeping the previous window`
-    );
   }
   const esrNames = esrLedgerNames(esrState);
 
@@ -836,17 +876,30 @@ export async function main() {
     }
   };
 
-  for (const browser of BROWSERS) {
-    await runCheck(browser);
-  }
-  for (const browser of esrNames) {
-    await runCheck(browser);
+  if (reportOnly) {
+    // No vendor probes at all. runCheck below is skipped; results mark every
+    // row so the table shows 'ℹ️ not checked' instead of a stale ✅/❌.
+    for (const browser of BROWSERS) {
+      results[browser] = {status: 'report-only'};
+    }
+    for (const browser of esrNames) {
+      results[browser] = {status: 'report-only'};
+    }
+  } else {
+    for (const browser of BROWSERS) {
+      await runCheck(browser);
+    }
+    for (const browser of esrNames) {
+      await runCheck(browser);
+    }
   }
 
   // ── GitHub surface (schedule mode only) ─────────────────────────────────
   // Error issues first, then auto-close resolved failures, then the meta
   // issue — all BEFORE the fail-closed exit so a failed run still updates
-  // GitHub. New-version findings no longer open their own issues: the meta
+  // GitHub. Report-only skips 1) and 2): the baseline was not re-checked, so
+  // opening rot issues or auto-closing resolved ones would act on stale
+  // evidence — the refreshed table is the entire deliverable. New-version findings no longer open their own issues: the meta
   // issue's status table + version history carry the release ledger.
 
   const versionFindings = findings.filter(f => f.kind === 'new-version');
@@ -916,11 +969,28 @@ export async function main() {
   //    cache eviction) the body falls back to a date-free 'baseline' seed
   //    derived from the baseline itself, so it stays stable across no-op runs.
   if (!prMode) {
+    // Live cache inventory for the Fallback column (skipped in PR mode — the
+    // PR job has no actions scope and needs no table). Fail-open: without a
+    // token the column degrades to the baseline-derived view.
+    let cacheGroups;
+    if (token && repo && !prMode) {
+      try {
+        const caches = await listActionsCaches(token, repo);
+        cacheGroups = groupCacheKeysByBrowser(caches, [...BROWSERS, ...esrNames]);
+        console.log(`cache inventory: ${caches.length} entries fetched`);
+      } catch (err) {
+        console.log(
+          `::warning file=tools/check-browser-downloads.mjs::cache inventory fetch failed ` +
+            `(${err.message}) — Fallback column falls back to the baseline view`
+        );
+      }
+    }
     const table = buildStatusTable({
       results,
       baseline: next,
       validated,
       browsers: [...BROWSERS, ...esrNames],
+      cache: cacheGroups,
     });
     const history = (next.history || []).length > 0 ? next.history : seedHistoryFromBaseline(next);
     const metaBody = buildMetaIssueBody({table, history: renderHistory(history)});
@@ -952,7 +1022,7 @@ export async function main() {
     );
     process.exit(1);
   }
-  if (!prMode && !dryRun) {
+  if (!prMode && !dryRun && !reportOnly) {
     fs.mkdirSync(baselineDir, {recursive: true});
     fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + '\n');
   }
@@ -992,6 +1062,7 @@ export async function main() {
   console.log(
     `\n${findings.length} finding(s); ` +
       (prMode ? 'PR mode — no baseline, no issues.'
+      : reportOnly ? 'report-only — table refreshed, nothing checked, nothing written.'
       : dryRun ? 'baseline not written (dry-run).'
       : 'baseline written.')
   );

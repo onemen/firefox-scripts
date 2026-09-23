@@ -15,7 +15,10 @@ const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-browser-dow
 const {
   buildMetaIssueBody,
   buildStatusTable,
+  cacheFallbackCell,
+  cacheKeyPrefixesFor,
   escapeTableCell,
+  groupCacheKeysByBrowser,
   collectDrift,
   collectValidatedDrift,
   compareBaseline,
@@ -409,6 +412,127 @@ test('buildStatusTable: cell-count integrity under extreme cell values', () => {
   const cols = assertTableIntegrity(table, 'kitchen-sink table');
   assert.equal(cols, 8);
   assert.equal(table.split('\n').length, 9); // header + delimiter + 7 browsers (incl. nightly)
+});
+
+test('buildStatusTable: cache-backed Fallback column (live inventory) — fork decodes, gate uses baseline', () => {
+  const now = Date.parse('2026-09-23T12:00:00Z');
+  const results = {
+    librewolf: {status: 'report-only'},
+    firefox: {status: 'report-only'},
+  };
+  const baseline = {
+    librewolf: {version: '156.0-1', checkedAt: '2026-09-21T10:00:00Z'},
+    firefox: {version: '156.0', checkedAt: '2026-09-21T10:00:00Z'},
+  };
+  // Live inventory: librewolf's sticky key names 156.0.1-1 (the baseline says
+  // 156.0-1 — stale). The cell must show the KEY's version, not the baseline's
+  // (issue #136: the table showed a version the cache no longer held).
+  const cache = {
+    librewolf: [
+      {key: 'browser-dl-Windows-librewolf-v156.0.1-1', createdAt: '2026-09-23T08:00:35Z'},
+    ],
+    firefox: [{key: 'firefox-dl-Windows-abc123def456789a', createdAt: '2026-09-21T10:00:00Z'}],
+  };
+  const table = buildStatusTable({results, baseline, cache, now});
+  assertTableIntegrity(table, 'cache-backed table');
+  const lw = table.split('\n').find(l => l.startsWith('| librewolf '));
+  assert.match(lw, /\| cached: 156\.0\.1-1 · [\dsmhd ]+ \|/);
+  // The stale baseline version shows in 'Last verified' but NOT in the
+  // Fallback cell — the fallback cell is split out and checked alone:
+  const fallbackCell = lw.split('|').map(c => c.trim())[6]; // split[0] is the empty lead; Fallback is cell 6
+  assert.ok(fallbackCell.startsWith('cached: 156.0.1-1'), `fallback cell: ${fallbackCell}`);
+  assert.ok(
+    !fallbackCell.includes('156.0-1 '),
+    'stale baseline version must not leak into the fallback cell'
+  );
+  const ff = table.split('\n').find(l => l.startsWith('| firefox '));
+  // Shared Mozilla namespace: version from the baseline, age from the key.
+  assert.match(ff, /\| cached: 156\.0 · [\dsmhd ]+ \|/);
+});
+
+test('buildStatusTable: cache-backed Fallback shows ⚠️ cache miss when the entry is gone', () => {
+  const now = Date.parse('2026-09-23T12:00:00Z');
+  const table = buildStatusTable({
+    results: {zen: {status: 'report-only'}},
+    baseline: {zen: {version: '1.22.2b'}},
+    cache: {zen: []}, // inventory fetched; nothing matches this browser
+    now,
+  });
+  const zen = table.split('\n').find(l => l.startsWith('| zen '));
+  assert.match(zen, /\| ⚠️ cache miss \|/);
+  // And with NO inventory at all (token-less / fetch failed), the old
+  // baseline-derived view stands.
+  const legacy = buildStatusTable({
+    results: {zen: {status: 'ok'}},
+    baseline: {zen: {version: '1.22.2b'}},
+  });
+  const zen2 = legacy.split('\n').find(l => l.startsWith('| zen '));
+  assert.match(zen2, /\| cached: 1\.22\.2b \|/);
+});
+
+test('groupCacheKeysByBrowser: sticky keys attribute exactly; dir twins and hashes excluded', () => {
+  const entries = [
+    {key: 'browser-dl-Windows-librewolf-v156.0.1-1', createdAt: '2026-09-23T08:00:35Z'},
+    {key: 'browser-dl-Windows-librewolf-portable-v156.0.1-1', createdAt: '2026-09-23T08:00:36Z'},
+    // The extracted-DIR twin must NOT count as an installer entry:
+    {
+      key: 'browser-dl-Windows-librewolf-portable-dir-v156.0.1-1',
+      createdAt: '2026-09-23T08:00:37Z',
+    },
+    // Dead URL-hash regime keys (fork, opaque):
+    {key: 'browser-dl-Windows-68ef2d7c0700996e', createdAt: '2026-09-22T20:14:01Z'},
+    // Shared Mozilla namespace + unrelated keys:
+    {key: 'firefox-dl-Windows-abc123def456789a', createdAt: '2026-09-21T10:00:00Z'},
+    {key: 'esr-portable-Linux-deadbeefdeadbeef', createdAt: '2026-09-20T10:00:00Z'},
+    {key: 'pnpm-bin-Windows-X64-11', createdAt: '2026-09-21T10:00:00Z'},
+  ];
+  const browsers = [...FORK_BROWSERS, 'firefox', 'firefox-esr-140'];
+  const g = groupCacheKeysByBrowser(entries, browsers);
+  assert.equal(g.librewolf.length, 2); // installer + portable, NOT the dir twin, NOT the hash
+  assert.ok(g.librewolf.every(e => !e.key.includes('-dir-')));
+  assert.ok(g.librewolf.every(e => !/-[0-9a-f]{16}$/.test(e.key)));
+  assert.equal(g.floorp.length, 0);
+  assert.equal(g.zen.length, 0);
+  assert.equal(g.firefox.length, 1);
+  assert.equal(g['firefox-esr-140'].length, 1);
+});
+
+test('cacheFallbackCell: version preference, ages, and the empty cases', () => {
+  const now = Date.parse('2026-09-23T12:00:00Z');
+  const sticky = [{key: 'browser-dl-Windows-zen-v1.22.2b', createdAt: '2026-09-23T08:00:00Z'}];
+  assert.equal(
+    cacheFallbackCell('zen', sticky, {version: '1.22.1'}, {now}),
+    'cached: 1.22.2b · 4h 0m' // formatAge's exact band format; key version wins over the stale baseline
+  );
+  // Non-fork: baseline version + namespace age.
+  const ns = [{key: 'firefox-dl-Linux-abc123def456789a', createdAt: '2026-09-22T12:00:00Z'}];
+  assert.equal(
+    cacheFallbackCell('firefox', ns, {version: '156.0'}, {now}),
+    'cached: 156.0 · 1d 0h' // formatAge's exact band format
+  );
+  // A baseline version with no keys at all is a MISS, not a silent '—'.
+  assert.equal(cacheFallbackCell('zen', [], {version: '1.22.2b'}, {now}), '⚠️ cache miss');
+  // Nothing recorded and nothing cached: nothing to fall back to.
+  assert.equal(cacheFallbackCell('zen', [], {}, {now}), '—');
+  // Malformed createdAt must not crash the age math.
+  assert.match(
+    cacheFallbackCell(
+      'zen',
+      [{key: 'browser-dl-Windows-zen-v9.9', createdAt: 'garbage'}],
+      {version: '9.9'},
+      {now}
+    ),
+    /^cached: 9\.9/ // age suffix omitted, cell still renders
+  );
+});
+
+test('cacheKeyPrefixesFor: shared Mozilla namespace, ESR separate, forks sticky-only', () => {
+  assert.deepEqual(cacheKeyPrefixesFor('firefox'), ['firefox-dl-', 'firefox-portable-']);
+  assert.deepEqual(cacheKeyPrefixesFor('firefox-dev'), ['firefox-dl-']);
+  assert.deepEqual(cacheKeyPrefixesFor('nightly'), ['firefox-dl-']);
+  assert.deepEqual(cacheKeyPrefixesFor('waterfox'), ['firefox-dl-']);
+  assert.deepEqual(cacheKeyPrefixesFor('firefox-esr-140'), ['esr-portable-']);
+  for (const fork of FORK_BROWSERS) assert.deepEqual(cacheKeyPrefixesFor(fork), []);
 });
 
 test('buildStatusTable: hostile pipe in a vendor-served value cannot split a cell', () => {
