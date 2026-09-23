@@ -35,10 +35,13 @@ Do not record layout or UI tweaks, mode assignments, or "we use library X" unles
 that will otherwise be re-litigated.
 
 When a later record **reverses** a decision, mark the old one `superseded by NNNN` rather than
-editing or deleting it, and list it under Historical. History stays; it is not silently deleted. An
-**additive** amendment keeps its record and is declared with machine-readable `Amends:` / `Amended:`
-status lines (ADR [0029](./0029-status-line-amendments.md)) — `check-decisions.mjs` validates the
-pair and CI fails a one-sided amendment.
+editing or deleting it, and list it under Historical. The reversing record carries a reciprocal
+`Supersedes: [NNNN](...)` line stating what it replaces — and, for a scoped reversal, what of the
+old record survives — so a supersede can never leave the still-valid clauses resting on a stub.
+History stays; it is not silently deleted. `pnpm check:decisions` validates the pair and the
+placement. An **additive** amendment keeps its record and is declared with machine-readable
+`Amends:` / `Amended:` status lines (ADR [0029](./0029-status-line-amendments.md)) —
+`check-decisions.mjs` validates the pair and CI fails a one-sided amendment.
 
 ## Steering list
 
@@ -81,8 +84,6 @@ Open these before proposing a new primitive, surface, or storage home.
   resolver (retry + mirror chains, fail-closed watchdog) + temporary `ci-downloads` manual escape
 - [0022](./0022-agent-skills-management.md) — Agent skills are `gh`-installed and pristine; no
   `skills-lock.json`, no second `.agent/` root; drift = watchdog issue → reviewed PR
-- [0023](./0023-e2e-browser-version-pinning.md) — E2E browser versions track latest at run time;
-  explicit pin escape hatch with strict pin semantics (version-embedded sources + `ci-downloads`)
 - [0024](./0024-release-asset-set.md) — Release asset set: ARM64 Linux installer/helper pair +
   universal macOS installer; additive platform growth under [0019]'s naming rules
 - [0025](./0025-waterfox-hard-gate.md) — Waterfox joins the hard gate after its 4-green-run soak:
@@ -106,6 +107,9 @@ Open these before proposing a new primitive, surface, or storage home.
   `msys2-toolchain.json` + provenance assertion; upgrades are manifest edits, never `pacman -Syu`
 - [0033](./0033-dependency-update-policy.md) — Dependency-update policy: dev-tooling-only npm tree,
   weekly grouped minor/patch, audit gate; majors never automated
+- [0034](./0034-fork-e2e-legs-pin-to-validated-release.md) — Fork E2E legs (librewolf, zen, floorp)
+  pin to the last E2E-validated release, advanced only by the watchdog's per-release dispatch; hard
+  gates keep tracking latest ([0023]'s pin semantics carried forward)
 
 ## Historical
 
@@ -118,6 +122,9 @@ silently deleted.
   publish gate — superseded by [0008](./0008-generated-files-untracked.md)
 - [0006](./0006-hosted-remote-updater-ui.md) — Updater tab UI hosted as a remote page (iframe /
   data: / postMessage) — superseded by [0007](./0007-updater-ui-ships-as-package.md)
+- [0023](./0023-e2e-browser-version-pinning.md) — E2E browser versions track latest at run time;
+  explicit pin escape hatch with strict pin semantics — superseded by
+  [0034](./0034-fork-e2e-legs-pin-to-validated-release.md)
 
 ## Not recorded
 
