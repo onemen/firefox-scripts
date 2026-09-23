@@ -32,6 +32,12 @@ BEGIN
     END
 END
 
+// Application icon: the installer's own icon resource (rendered per size from
+// the updater logo by tools/make-installer-icon.mjs), reused here so both PEs
+// the user ever sees carry the same mark.  See installer.rc for why the icon
+// resource matters.
+1 ICON "../installer.ico"
+
 // Application manifest (helper.manifest), mirroring installer.rc: asInvoker —
 // the helper self-elevates via ShellExecuteExW("runas") — plus the Win10/11
 // compatibility GUIDs and DPI awareness.  Declared explicitly instead of
