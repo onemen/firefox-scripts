@@ -121,7 +121,7 @@ const {Downloads} = ChromeUtils.importESModule('resource://gre/modules/Downloads
 
 // The actual update tab (updater-ui.zip) — a privileged chrome:// page.
 const UPDATER_UI_URI = 'chrome://firefox-scripts/content/ui/updater.html';
-const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // once per day
+const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily re-check while the session lives
 const MANIFEST_TIMEOUT_MS = 15000; // dead manifest host -> failed check, not a hang
 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
@@ -152,6 +152,12 @@ const CHANNEL_DEV = 'dev';
 const CHANNEL_LOCAL = 'local';
 
 let gActiveChannel = null;
+// Repeating daily timer (see initScriptsUpdater). An nsITimer, not setInterval:
+// window-bound timer globals don't exist in this ESM's module scope (the bare
+// ReferenceError was swallowed for the updater's entire lifetime — #292), and
+// a window-scoped one would die with the first window while the browser stays
+// up. nsITimer lives on the main thread for the session's lifetime.
+let gDailyTimer = null;
 // True only for the session in which the daily check actually migrated from
 // the dev channel to stable — the updater tab turns this into its banner.
 let gMigratedFromDev = false;
@@ -245,15 +251,33 @@ let gWindow = null;
  */
 export function initScriptsUpdater(win) {
   if (gInitialized) {
+    // Window churn (the browser can outlive its first window): a new window
+    // must become the tab-opening target, or the daily timer's re-checks
+    // would no-op on a closed gWindow for the rest of the session.
+    if (!gWindow || gWindow.closed) {
+      gWindow = win;
+    }
     return;
   }
   gInitialized = true;
 
   gWindow = win;
 
-  // Check immediately (gated by the daily prefs), then once per day.
+  // Check on startup, then re-check daily for as long as the session lives.
+  // The daily prefs (PREF_LAST_CHECK / PREF_LAST_SHOWN vs todayStr()) gate
+  // every invocation, so same-day re-checks are no-ops. The timer must be an
+  // nsITimer: window-bound timer globals (setInterval / win.setInterval) don't
+  // exist in, or die with, the ESM's module scope vs the window (the original
+  // bare setInterval never actually fired — its ReferenceError was swallowed
+  // by the loader's catch for the updater's entire lifetime; found via the
+  // #292 seeded-error experiment).
   checkForUpdates();
-  setInterval(checkForUpdates, CHECK_INTERVAL_MS);
+  gDailyTimer = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
+  gDailyTimer.initWithCallback(
+    checkForUpdates,
+    CHECK_INTERVAL_MS,
+    Ci.nsITimer.TYPE_REPEATING_SLACK
+  );
 }
 
 function todayStr() {

@@ -90,12 +90,23 @@ try {
   const Cc = Components.classes;
   const Ci = Components.interfaces;
   const cs = Cc['@mozilla.org/consoleservice;1'].getService(Ci.nsIConsoleService);
-  const f = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
-  f.initWithPath(Services.dirsvc.get('ProfD', Ci.nsIFile).path + '/e2e-console.log');
+  // Build the mirror path via clone()+appendRelativePath, NOT a string
+  // concat into initWithPath: the concat mixes separators on Windows
+  // ("C:\\...\\profile/e2e-console.log") and initWithPath throws
+  // NS_ERROR_FILE_UNRECOGNIZED_PATH — the whole probe died there (swallowed
+  // by this catch), so the mirror never wrote a byte and TAB_OPENED never
+  // landed (root-caused 2026-09-23, issue #292). clone()+append is proven
+  // working by the same experiment.
+  const f = Services.dirsvc
+    .get('ProfD', Ci.nsIFile)
+    .clone()
+    .QueryInterface(Ci.nsIFile);
+  f.appendRelativePath('e2e-console.log');
   const fos = Cc['@mozilla.org/network/file-output-stream;1'].createInstance(
     Ci.nsIFileOutputStream
   );
   fos.init(f, 0x02 | 0x08 | 0x10, -1, 0); // write | create | append
+  fos.write('MIRROR-OPEN' + String.fromCharCode(10), 12);
   cs.registerListener({
     observe(aMessage, aTopic, aData) {
       try {
@@ -2172,14 +2183,30 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       // deadline). 45 s covers cold NFS-startup + a slow first scheduler tick
       // without adding materially to the leg's runtime (it returns the moment
       // the proof lands).
-      const tabMirror = await waitForCondition(
-        browser,
-        () => mirrorSaysTabOpened(seeded.profileDir) || greShownToday(seeded.profileDir),
-        45_000,
-        'tab-open proof (mirror marker or lastUpdateTabShown pref)'
-      ).catch(() => false);
-      page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
-      let tabOpened = Boolean(page) || tabMirror === true;
+      //
+      // HOST-side poll (mirrorSaysTabOpened/greShownToday read host disk and
+      // close over host state). The previous waitForCondition(browser, …)
+      // call was doubly broken: Browser has no .evaluate in puppeteer-core
+      // 25.10.0, and even with a page the host closure cannot run in-page —
+      // both errors were swallowed by waitForCondition's catch, so the loop
+      // always burned its full 45 s before findPageByUrl ever ran (also
+      // root-caused 2026-09-23, #292). Same loop shape as the other tab
+      // scenarios' mirror+page polls: BiDi page check rides along so this
+      // exits the moment ANY of the three channels lands.
+      const tabProofDeadline = Date.now() + 45_000;
+      let tabMirror = false;
+      while (Date.now() < tabProofDeadline) {
+        if (mirrorSaysTabOpened(seeded.profileDir) || greShownToday(seeded.profileDir)) {
+          tabMirror = true;
+          break;
+        }
+        page = await findPageByUrl(browser, UPDATER_URL, 500).catch(() => null);
+        if (page) break;
+      }
+      if (!page) {
+        page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
+      }
+      let tabOpened = Boolean(page) || tabMirror;
       if (!tabOpened) {
         // Both in-run channels can be unavailable at once: BiDi cannot
         // enumerate the trusted chrome:// tab in this environment (the
