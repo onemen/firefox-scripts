@@ -172,6 +172,12 @@ this in check:
    the same pair as the installer (`installer/src/helper/version.rc` + `helper.manifest`), instead
    of relying on the mingw crt's auto-linked `default-manifest.o`: the crt version CI installs did
    not supply one, so the shipped helper used to have a version resource and no manifest at all.
+   Both PEs also carry an **icon resource** — `installer/src/installer.ico`, reused by
+   `src/helper/version.rc` — rendered at 16/24/32/48/128/256 px from the updater's own
+   `tools/publish/remote-ui/logos/favicon.svg` by `tools/make-installer-icon.mjs` and committed
+   (re-run that script after an artwork change; it needs a local Chrome, so it never runs in CI).
+   Without it Explorer and the taskbar show a blank-document glyph, and the PE is one more piece of
+   missing metadata.
 2. **The AV scan gate** — `tools/scan-av.mjs` scans built binaries before they are published
    (Windows: Windows Defender via `MpCmdRun.exe`; Linux/macOS: ClamAV `clamscan`). The publish flow
    (`tools/publish/upload.mjs`) scans the EXACT bytes about to be uploaded and refuses to publish
@@ -186,6 +192,16 @@ this in check:
    be hashed and shipped. The check runs after the build/reuse pass and again before the pass-2
    security gates. If it fires: delete the named artifact(s) and re-run the build (the link usually
    succeeds on retry).
+4. **No shell surface** — neither binary starts a command interpreter. The forced browser close
+   walks the process snapshot and terminates the tree itself (`terminate_process_tree()` in
+   `installer/src/restart.c`) instead of shelling out to `taskkill /t`, and Ctrl+C is handled purely
+   through the console API: `SetConsoleCtrlHandler(NULL, FALSE)` restores Ctrl+C delivery for the
+   new process group Windows PowerShell 5.1 starts native processes in (measured against a new-group
+   parent: plain child = no `CTRL_C_EVENT`, re-enabled child = `CTRL_C_EVENT`), which retired the
+   global-keyboard-polling watchdog and its terminal image-name list along with it. A GUI exe that
+   launches `cmd.exe` to kill a process tree, plus `GetAsyncKeyState` polling in a background
+   thread, is precisely the behaviour process-detection heuristics score; removing it is hygiene
+   with an FP side effect, not a cure.
 
 ### Local scan (after `make dist_win`)
 
@@ -643,15 +659,17 @@ log shows the transfer is alive.
 Three environment variables tune it — the defaults fit every observed runner; override only for an
 unusually slow CI link:
 
-| Variable                    | Default          | Meaning                                                                                                                                                 |
-| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DOWNLOAD_STALL_TIMEOUT_MS` | 60000            | Abort the attempt when no bytes arrive for this long. A 0.3 MB/s trickle delivers a chunk every ~2 s and is never killed — only a dead stream trips it. |
-| `DOWNLOAD_TOTAL_BUDGET_MS`  | 1200000 (20 min) | Wall-clock budget across all 5 attempts (retries resume, so slow links still complete). Must stay below the watchdog job's `timeout-minutes: 30`.       |
-| `DOWNLOAD_RETRY_BACKOFF_MS` | 5000             | Wait between attempts.                                                                                                                                  |
+| Variable                    | Default          | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DOWNLOAD_STALL_TIMEOUT_MS` | 60000            | Abort the attempt when no bytes arrive for this long. A 0.3 MB/s trickle delivers a chunk every ~2 s and is never killed — only a dead stream trips it.                                                                                                                                                                                                                                                                                                 |
+| `DOWNLOAD_TOTAL_BUDGET_MS`  | 1200000 (20 min) | Wall-clock budget across all 5 attempts (retries resume, so slow links still complete). **Must leave room inside the calling job's `timeout-minutes`** — the budget has to fire first, or the runner kills the job and the failure reads as a bare cancellation. `e2e.yml` sets 720000 (12 min) for its 20-minute browser legs; the watchdog's 30-minute `check` job keeps the default. `test/unit/tools/download-budget.test.mjs` enforces the margin. |
+| `DOWNLOAD_RETRY_BACKOFF_MS` | 5000             | Wait between attempts.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 Each is read per call, so a workflow step can set one (e.g. `env: DOWNLOAD_TOTAL_BUDGET_MS: 1500000`
 — 25 min, still inside the watchdog job's 30-minute timeout — on a known-slow runner) without
-touching the others.
+touching the others. When the budget does fire, an advisory browser leg does not fail: it logs the
+reason and reuses the previously downloaded installer from the cache (`findCachedInstaller`), so the
+leg tests the previous release and the gate reports the warning instead of a dead job.
 
 The script creates the fixed-tag **`ci-downloads`** release on demand, uploads the asset under the
 resolver's expected name, and dispatches `e2e.yml` with `browser` (+ optional `version`) — a

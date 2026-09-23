@@ -36,6 +36,15 @@ BEGIN
     END
 END
 
+// Application icon (resource id 1): the updater's own mark, rendered at each
+// icon size by tools/make-installer-icon.mjs into the committed
+// src/installer.ico (re-run that script when the artwork changes).  Without an
+// icon resource Explorer and the taskbar show a blank-document glyph, and a
+// stripped PE carrying neither icon nor metadata is part of the weak-signal
+// profile AV machine learning scores — see docs/DEVELOPING.md → AV false
+// positives.  The helper reuses the same file (src/helper/version.rc).
+1 ICON "installer.ico"
+
 // Application manifest: explicit asInvoker (no UAC prompt for the installer
 // itself — the standalone helper elevates), DPI-aware, and Win10/11
 // compatibility GUIDs.  A manifest is a standard legitimacy signal for

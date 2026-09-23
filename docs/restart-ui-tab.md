@@ -44,9 +44,11 @@ Relevant code: `installer/src/main.c` (restart helpers, `handle_api_restart`,
    `location.href = 'about:blank'` — `about:blank` tabs are excluded from the saved session, so the
    installer tab is not restored.
 3. The worker waits ~1.5 s for the navigation to commit, then **graceful quit**: `EnumWindows` +
-   `WM_CLOSE` on every top-level window of the target process(es), wait up to 8 s for exit,
-   `taskkill /f /pid X /t` as fallback. `WM_CLOSE` runs Firefox's normal quit path and writes a
-   valid `sessionstore.jsonlz4`; `taskkill /F` would make the next launch look like a crash (the
+   `WM_CLOSE` on every top-level window of the target process(es), wait up to 8 s for exit, then a
+   forced termination of the process tree (`terminate_process_tree`: a `CreateToolhelp32Snapshot`
+   walk — children first — killed with `TerminateProcess`; it replaced a `taskkill /t` shell-out so
+   the binary spawns no command interpreter). `WM_CLOSE` runs Firefox's normal quit path and writes
+   a valid `sessionstore.jsonlz4`; a forced kill would make the next launch look like a crash (the
    "Sorry. We're having trouble getting your pages back." tab).
 4. For each relaunched profile, write `user_pref("browser.sessionstore.resume_session_once", true);`
    into its `prefs.js` (`set_resume_session_once`) — the one-shot pref that restores the session
@@ -68,7 +70,7 @@ Result: the user's previous session restores and exactly one installer tab opens
   re-applies every start and would make the restore permanent).
 - `firefox --new-tab about:sessionrestore` only opens the restore-list page; it does not restore by
   itself.
-- `taskkill /F` is a crash; `WM_CLOSE` is a clean quit that saves the session.
+- A forced kill is a crash; `WM_CLOSE` is a clean quit that saves the session.
 - `about:blank` / `about:newtab` / `about:home` tabs are not persisted in the saved session.
 - Launching a bare URL lets Firefox route it to whichever instance claims it — with multiple
   profiles running, the installer tab could land in the wrong profile. The restart therefore

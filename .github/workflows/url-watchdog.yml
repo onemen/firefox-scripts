@@ -10,9 +10,12 @@
 # table + version history (the SHA-256 ledger); rot and size changes open
 # deduped error issues that auto-close once a later run checks green again.
 #
-# Two modes (see tools/check-browser-downloads.mjs):
+# Three modes (see tools/check-browser-downloads.mjs):
 # - Weekly (schedule/dispatch): version baseline + history in the Actions cache
 #   (.watchdog/baseline.json), status meta issue, deduped error issues.
+# - Report-only (dispatch with report-only=true): no vendor calls — rebuilds
+#   the status table from the baseline + the LIVE Actions-cache inventory, so
+#   the Fallback column stays truthful after any cache save (issue #136).
 # - PR (pull_request touching the download map): stateless and always green —
 #   findings surface as ::warning:: / ::notice:: annotations, so the check can
 #   be required without ever blocking.
@@ -36,6 +39,12 @@ on:
   schedule:
     - cron: '0 6 * * 1' # Monday 06:00 UTC — browsers release ~monthly
   workflow_dispatch:
+    inputs:
+      report-only:
+        description:
+          'Refresh the status table only — no vendor API calls, no downloads, no baseline write'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -88,7 +97,10 @@ jobs:
           restore-keys: browser-validated-
 
       - name: Check browser downloads
-        run: node tools/check-browser-downloads.mjs
+        run: |
+          ARGS=""
+          if [ "${{ inputs.report-only }}" = "true" ]; then ARGS="--report-only"; fi
+          node tools/check-browser-downloads.mjs $ARGS
         env:
           GITHUB_TOKEN: ${{ github.token }}
           VALIDATED_DIR: .watchdog-validated
@@ -103,7 +115,9 @@ jobs:
         with:
           path: .watchdog
           key: url-watchdog-baseline-${{ github.run_id }}
-        if: always()
+        # Report-only never rewrote the baseline file — saving would mint a
+        # redundant ~KB cache entry per manual refresh.
+        if: always() && inputs.report-only != true
 
     # Job-level scoping (the E2E workflow's precedent): dispatching the browser
     # E2E when a new release is recorded needs actions: write; the issue
