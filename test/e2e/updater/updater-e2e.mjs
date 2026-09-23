@@ -1300,7 +1300,11 @@ async function runNoTabScenario(
   // in `prefs` so the second launch re-runs the check. The `'profileDir' in
   // state` unwrap in run() still routes the profile into `profiles` for
   // centralized cleanup.
-  return {profileDir: seeded.profileDir, chromeUtils: seeded.chromeUtils, prefs: seeded.prefs};
+  return {
+    profileDir: seeded.profileDir,
+    chromeUtils: seeded.chromeUtils,
+    prefs: seeded.prefs,
+  };
 }
 
 /**
@@ -2109,6 +2113,20 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
 }
 
 /**
+ * Scenario 9's third expected headless terminal mode: the stand-in helper's
+ * spawn itself failing. CI Windows runners refuse CreateProcess on the fake
+ * helper bytes before it ever runs (Subprocess.call throws "Failed to create
+ * process"; observed on every Windows leg 2026-09-23) — locally the spawn gets
+ * as far as the exit-code paths above. The routed line is "<ISO> Firefox
+ * Scripts updater: install config — Failed to create process"; the pattern pins
+ * BOTH the install-config context and the spawn-failure tail, so no other
+ * install-config failure is masked (net no-masking rule).
+ *
+ * @type {string[]}
+ */
+const HELPER_SPAWN_ALLOW = ['Firefox Scripts updater: install config — Failed to create process'];
+
+/**
  * Scenario 9 — Windows helper-checksum path (PR #271 regression net).
  *
  * The 2026-09-20 manual session caught the elevated-copy helper's checksum
@@ -2361,6 +2379,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
           'Elevation was cancelled',
           'Admin copy helper failed',
+          ...HELPER_SPAWN_ALLOW,
         ]);
         // The no-copy assertion is skipped by the early return below (it sits
         // after the finally), so run it here. Drop the deny first: on some
@@ -2402,6 +2421,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
           'Elevation was cancelled',
           'Admin copy helper failed',
+          ...HELPER_SPAWN_ALLOW,
           // These also match the logStringMessage-routed duplicates (#292):
           // the routed line embeds the same tail — "Firefox Scripts updater:
           // install config — <expected tail>" — so no broader routed entry is
@@ -2490,12 +2510,14 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       );
       // And no other updater errors either (the generic net). On a headless
       // runner the flow legitimately dies at elevation — either "Elevation
-      // was cancelled" (real helper + declined UAC) or "Admin copy helper
-      // failed (exit code N)" (spawn/copy failure, e.g. this scenario's
-      // stand-in bytes) — both via logError('install config'). Expected.
+      // was cancelled" (real helper + declined UAC), "Admin copy helper
+      // failed (exit code N)" (the helper ran and failed), or the stand-in's
+      // CreateProcess itself failing (Subprocess.call throws; CI Windows
+      // runners, 2026-09-23) — all via logError('install config'). Expected.
       assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
         'Elevation was cancelled',
         'Admin copy helper failed',
+        ...HELPER_SPAWN_ALLOW,
         // These also match the logStringMessage-routed duplicates (#292):
         // the routed line embeds the same tail — "Firefox Scripts updater:
         // install config — <expected tail>" — so no broader routed entry is
