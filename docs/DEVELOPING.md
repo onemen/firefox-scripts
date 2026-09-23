@@ -659,15 +659,17 @@ log shows the transfer is alive.
 Three environment variables tune it — the defaults fit every observed runner; override only for an
 unusually slow CI link:
 
-| Variable                    | Default          | Meaning                                                                                                                                                 |
-| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DOWNLOAD_STALL_TIMEOUT_MS` | 60000            | Abort the attempt when no bytes arrive for this long. A 0.3 MB/s trickle delivers a chunk every ~2 s and is never killed — only a dead stream trips it. |
-| `DOWNLOAD_TOTAL_BUDGET_MS`  | 1200000 (20 min) | Wall-clock budget across all 5 attempts (retries resume, so slow links still complete). Must stay below the watchdog job's `timeout-minutes: 30`.       |
-| `DOWNLOAD_RETRY_BACKOFF_MS` | 5000             | Wait between attempts.                                                                                                                                  |
+| Variable                    | Default          | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DOWNLOAD_STALL_TIMEOUT_MS` | 60000            | Abort the attempt when no bytes arrive for this long. A 0.3 MB/s trickle delivers a chunk every ~2 s and is never killed — only a dead stream trips it.                                                                                                                                                                                                                                                                                                 |
+| `DOWNLOAD_TOTAL_BUDGET_MS`  | 1200000 (20 min) | Wall-clock budget across all 5 attempts (retries resume, so slow links still complete). **Must leave room inside the calling job's `timeout-minutes`** — the budget has to fire first, or the runner kills the job and the failure reads as a bare cancellation. `e2e.yml` sets 720000 (12 min) for its 20-minute browser legs; the watchdog's 30-minute `check` job keeps the default. `test/unit/tools/download-budget.test.mjs` enforces the margin. |
+| `DOWNLOAD_RETRY_BACKOFF_MS` | 5000             | Wait between attempts.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 Each is read per call, so a workflow step can set one (e.g. `env: DOWNLOAD_TOTAL_BUDGET_MS: 1500000`
 — 25 min, still inside the watchdog job's 30-minute timeout — on a known-slow runner) without
-touching the others.
+touching the others. When the budget does fire, an advisory browser leg does not fail: it logs the
+reason and reuses the previously downloaded installer from the cache (`findCachedInstaller`), so the
+leg tests the previous release and the gate reports the warning instead of a dead job.
 
 The script creates the fixed-tag **`ci-downloads`** release on demand, uploads the asset under the
 resolver's expected name, and dispatches `e2e.yml` with `browser` (+ optional `version`) — a

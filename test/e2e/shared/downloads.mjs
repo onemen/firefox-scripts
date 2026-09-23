@@ -368,6 +368,12 @@ async function installTarball(url, browser, dest = path.join(os.homedir(), 'fire
 // window (a 0.3 MB/s trickle delivers a chunk every ~2 s and is never killed),
 // and resume interrupted attempts via a Range request instead of restarting.
 
+// The budget must leave room inside the calling job's `timeout-minutes` for the
+// install, the scenarios and the cached-installer fallback — otherwise the job
+// cap fires first and a crawl is reported as a bare cancellation instead of the
+// clear "exceeded its budget" error below (2026-09-22, PR #294). e2e.yml sets
+// 12 min for its 20-minute browser legs for exactly that reason; the watchdog's
+// 30-minute job leaves the 20-minute default with room to spare.
 const DEFAULT_STALL_MS = 60_000;
 const DEFAULT_TOTAL_BUDGET_MS = 20 * 60_000;
 const DEFAULT_RETRY_BACKOFF_MS = 5000;
