@@ -515,11 +515,18 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
     // closed window` (ubuntu updater leg, 2026-09-22) and the resource://gre
     // Telemetry line before it. Two shipped bugs were caught through this net
     // (helper checksum mojibake, CSP-blocked inline style) and both were ours.
+    //
+    // logError additionally routes through Services.console.logStringMessage
+    // (#292 fix): those lines carry NO source and NO level marker — plain
+    // "<ISO> Firefox Scripts updater: <msg>". Count them as hits too (they are
+    // updater-tab errors by definition); the allowlist exemption below then
+    // decides per-scenario whether the line is expected.
     const srcMatch = / \[(chrome:\/\/[^\]:]+[^\]]*?):\d+\]/.exec(rest);
     const source = srcMatch ? srcMatch[1] : '';
     const level = levelMatch ? levelMatch[1] : '';
-    const ours = source.includes('chrome://firefox-scripts');
-    if (!ours) continue;
+    const routed = /^\S+ Firefox Scripts updater: /.test(line);
+    const hit = routed || source.includes('chrome://firefox-scripts');
+    if (!hit) continue;
     // Allowlist matches the FULL line (source AND message): scenario 9's
     // expected headless-elevation failure IS a chrome://firefox-scripts
     // logError and must be exemptable without masking any other error.
@@ -530,14 +537,24 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
 }
 
 /**
- * Assert the console mirror recorded zero errors sourced from the updater
- * scripts (chrome://firefox-scripts/.../updater/* — the engine module and the
- * tab's updater.js/updater-ui.js). The 2026-09-20 manual session caught TWO
- * shipped bugs as console errors (helper checksum mojibake, CSP-blocked inline
- * style) that green CI never saw — every updater scenario now closes the net.
+ * Assert the console mirror recorded zero errors from the updater scripts. Two
+ * line shapes count as ours (2026-09-23):
  *
- * Allow patterns: other components legitimately error (e.g. blocked processes
- * under the harness); only chrome://firefox-scripts sources are ours.
+ * - script errors sourced from chrome://firefox-scripts/.../updater/* (the engine
+ *   module and the tab's updater.js/updater-ui.js), and
+ * - the logStringMessage-routed logError lines (#292 fix) — ConsoleAPI
+ *   (console.error) never reaches the console service, so the tab's logError
+ *   now also emits a plain "Firefox Scripts updater: <msg>" line that carries
+ *   no source; the stable prefix is the marker. The 2026-09-20 manual session
+ *   caught TWO shipped bugs as console errors (helper checksum mojibake,
+ *   CSP-blocked inline style) that green CI never saw — every updater scenario
+ *   now closes the net.
+ *
+ * Allow patterns match the FULL mirror line: other components legitimately
+ * error (e.g. blocked processes under the harness), and scenarios that
+ * deliberately drive logError (elevation cancelled, helper failure) exempt
+ * those exact expected messages — only chrome://firefox-scripts sources and the
+ * routed updater prefix are ours.
  */
 function assertNoUpdaterConsoleErrors(counter, profileDir, label, allowPatterns = []) {
   const hits = collectConsoleErrors(profileDir, allowPatterns);
@@ -2106,6 +2123,11 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
           'Elevation was cancelled',
           'Admin copy helper failed',
+          // These also match the logStringMessage-routed duplicates (#292):
+          // the routed line embeds the same tail — "Firefox Scripts updater:
+          // install config — <expected tail>" — so no broader routed entry is
+          // needed (a bare "install config" prefix would mask every other
+          // install-config failure, violating the net's no-masking rule).
         ]);
         // The deny must come off BEFORE the config read (observed 2026-09-22:
         // even a read can EPERM while the deny ACE is applied). The finally's
@@ -2172,6 +2194,11 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
         'Elevation was cancelled',
         'Admin copy helper failed',
+        // These also match the logStringMessage-routed duplicates (#292):
+        // the routed line embeds the same tail — "Firefox Scripts updater:
+        // install config — <expected tail>" — so no broader routed entry is
+        // needed (a bare "install config" prefix would mask every other
+        // install-config failure, violating the net's no-masking rule).
       ]);
     } finally {
       await manifestServer.close().catch(() => {});

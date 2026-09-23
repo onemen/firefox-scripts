@@ -128,7 +128,21 @@ let onState = null;
 let onProgress = null;
 
 function logError(msg, err) {
+  const detail = err ? ' — ' + (err.message || String(err)) : '';
+  // Two channels on purpose: console.error styles the entry in the user's
+  // Browser Console (2026-09-21 convention: errors keep console.error), but
+  // ConsoleAPI output never reaches nsIConsoleService observers — the E2E
+  // console mirror only sees script errors and logStringMessage plain lines
+  // (#292 root-cause). Routing the same text through logStringMessage makes
+  // updater-tab failures observable to the harness net
+  // (assertNoUpdaterConsoleErrors matches the stable "Firefox Scripts
+  // updater:" prefix).
   console.error(`Firefox Scripts updater: ${msg}`, err);
+  try {
+    Services.console.logStringMessage(`Firefox Scripts updater: ${msg}${detail}`);
+  } catch {
+    // Console service unavailable (early shutdown) — console.error still stands.
+  }
 }
 
 /**
