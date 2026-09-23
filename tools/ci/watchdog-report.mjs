@@ -510,15 +510,21 @@ export function groupCacheKeysByBrowser(entries, browsers) {
  *   so the cell cannot drift from the cache the way a baseline-derived cell
  *   could (issue #136: the table showed a version the cache no longer held
  *   after a key-regime change).
- * - Hard gates: version comes from the baseline entry (hash keys carry no
- *   version); the inventory proves the entry still exists and how fresh it is.
+ * - Non-fork browsers: the URL-hash keys are opaque (the hash is of the URL, not
+ *   of the browser) and the Mozilla namespace is SHARED across
+ *   firefox/firefox-dev/nightly/waterfox — a key in it cannot be attributed to
+ *   one browser. The cell reports namespace-level presence + age and says so:
+ *   `cached (namespace shared) · <age>` instead of claiming a per-browser
+ *   `cached: <version>` the keys cannot prove (the baseline version remains
+ *   visible in the 'Last verified' column).
  * - No matching keys: `⚠️ cache miss` when a baseline version exists (the cache
  *   was evicted — the next leg re-downloads), '—' when there is nothing to fall
- *   back to at all.
+ *   back to at all. Fork cells decode their own version, so a miss is
+ *   unambiguous.
  *
  * The age suffix is the newest matching entry's age: for forks that is the
- * watchdog validation run that saved the release; for hard gates the last
- * version-bump download.
+ * watchdog validation run that saved the release; for the shared namespace the
+ * last download by ANY of its consumers.
  */
 export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {}) {
   const list = Array.isArray(keys) ? keys : [];
@@ -530,7 +536,11 @@ export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {})
     if (sticky) return `cached: ${sticky[2]}${age}`;
     return entry?.version ? `cached: ${entry.version}${age}` : 'cached (unknown version)';
   }
-  return entry?.version ? `cached: ${entry.version}${age}` : 'cached (unknown version)';
+  // Non-fork: URL-hash keys are opaque AND the namespace is shared across
+  // firefox/firefox-dev/nightly/waterfox (cacheKeyPrefixesFor), so no
+  // per-browser version can be proven from the inventory. Say so explicitly
+  // instead of claiming a per-browser hit (review:batch on the first draft).
+  return `cached (namespace shared)${age}`;
 }
 
 /**

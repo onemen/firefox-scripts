@@ -446,8 +446,9 @@ test('buildStatusTable: cache-backed Fallback column (live inventory) — fork d
     'stale baseline version must not leak into the fallback cell'
   );
   const ff = table.split('\n').find(l => l.startsWith('| firefox '));
-  // Shared Mozilla namespace: version from the baseline, age from the key.
-  assert.match(ff, /\| cached: 156\.0 · [\dsmhd ]+ \|/);
+  // Shared Mozilla namespace: no per-browser version is provable — the cell
+  // states presence + age and labels the ambiguity.
+  assert.match(ff, /\| cached \(namespace shared\) · [\dsmhd ]+ \|/);
 });
 
 test('buildStatusTable: cache-backed Fallback shows ⚠️ cache miss when the entry is gone', () => {
@@ -504,11 +505,11 @@ test('cacheFallbackCell: version preference, ages, and the empty cases', () => {
     cacheFallbackCell('zen', sticky, {version: '1.22.1'}, {now}),
     'cached: 1.22.2b · 4h 0m' // formatAge's exact band format; key version wins over the stale baseline
   );
-  // Non-fork: baseline version + namespace age.
+  // Non-fork: shared namespace — presence + age, no per-browser version claim.
   const ns = [{key: 'firefox-dl-Linux-abc123def456789a', createdAt: '2026-09-22T12:00:00Z'}];
   assert.equal(
     cacheFallbackCell('firefox', ns, {version: '156.0'}, {now}),
-    'cached: 156.0 · 1d 0h' // formatAge's exact band format
+    'cached (namespace shared) · 1d 0h' // formatAge's exact band format
   );
   // A baseline version with no keys at all is a MISS, not a silent '—'.
   assert.equal(cacheFallbackCell('zen', [], {version: '1.22.2b'}, {now}), '⚠️ cache miss');
