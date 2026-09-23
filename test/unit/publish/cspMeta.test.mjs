@@ -187,12 +187,43 @@ test('updater.js logError routes through logStringMessage with the stable net pr
     'logError must keep console.error for the user Browser Console (2026-09-21 convention)'
   );
   // The routed line text is assertion-critical (the E2E net allowlists match
-  // it), and the mirror probe writes its listener output one byte per char —
-  // a non-ASCII detail separator reaches the harness mangled (em-dash became
-  // byte 0x14 on CI, 2026-09-23). The detail separator must stay ASCII " - ".
+  // it). The mirror probe IS Unicode-safe now (writes UTF-8 via
+  // nsIBinaryOutputStream, see the probe contract test below), but ASCII stays
+  // the convention for the separator: the C twin hash paths and legacy
+  // snapshots must stay byte-stable, and assertion strings in docs/tests quote
+  // this shape.
   assert.ok(
     src.includes("' - ' + (err.message || String(err))"),
-    'logError detail separator must stay ASCII " - " (the mirror probe is not Unicode-safe)'
+    'logError detail separator must stay ASCII " - "'
+  );
+});
+
+test('E2E console-mirror probe writes UTF-8 bytes (Unicode-safe)', () => {
+  // The probe (CONFIG_PROBE_SNIPPET in the updater E2E) appends its listener
+  // output to e2e-console.log through nsIFileOutputStream. Its write() treats
+  // each JS char code as ONE byte, so a char above U+00FF arrived mangled —
+  // em-dash U+2014 became byte 0x14 ("^T") on every CI Windows leg
+  // (2026-09-23), and allowlist matching on the routed line could never hit.
+  // The probe must therefore encode every line to UTF-8 bytes first and write
+  // them via nsIBinaryOutputStream.writeBytes. Losing that plumbing silently
+  // re-opens the mangling hole for any non-ASCII in updater messages.
+  const e2e = readFileSync(join(ROOT, 'test/e2e/updater/updater-e2e.mjs'), 'utf8');
+  const snippetStart = e2e.indexOf('const CONFIG_PROBE_SNIPPET = `');
+  assert.ok(snippetStart !== -1, 'CONFIG_PROBE_SNIPPET exists');
+  const snippetEnd = e2e.indexOf('`;', snippetStart);
+  const snippet = e2e.slice(snippetStart, snippetEnd);
+
+  assert.ok(
+    snippet.includes("Cc['@mozilla.org/binaryoutputstream;1']") && snippet.includes('writeBytes'),
+    'probe must write through nsIBinaryOutputStream.writeBytes, not fos.write'
+  );
+  assert.ok(
+    !/fos\.write\(/.test(snippet),
+    'no raw fos.write may remain — every write must go through writeUtf8'
+  );
+  assert.ok(
+    snippet.includes('new TextEncoder().encode(s)') && snippet.includes('charCodeAt'),
+    'probe must UTF-8-encode (TextEncoder with the manual charCodeAt fallback)'
   );
 });
 
