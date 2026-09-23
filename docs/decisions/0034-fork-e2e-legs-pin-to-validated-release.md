@@ -1,6 +1,6 @@
 # 0034: Fork E2E legs pin to the last validated release; hard gates track latest
 
-- **Status:** accepted
+- **Status:** accepted (amended 2026-09-23: cache-first sticky installer cache for the fork legs)
 - **Supersedes:** [0023](./0023-e2e-browser-version-pinning.md) (latest-at-run-time default for
   every browser; its pin semantics, non-pinnable Firefox rule and per-run ground truth are carried
   forward below)
@@ -37,6 +37,13 @@ watchdog downloads and hashes each new release and dispatches the browser E2E fo
 ([0021](./0021-tiered-publish-gating-shared-resolver.md), ADR 0021's single-browser escape). The
 PR-time legs do not need to re-encounter every fork bump.
 
+**Amendment context (2026-09-23).** Even with the pin, the URL-hash key remained the load-bearing
+defect: PR #300's librewolf leg resolved the same URL pinned or unpinned (`156.0.1-1`), yet logged
+`Cache not found` again — the cache _entry_ for the previous release existed, but a key derived from
+the resolved URL cannot see across a release bump. The user-visible contract was therefore
+sharpened: a fork leg must not download at all when a cached installer exists; only the watchdog
+downloads new fork versions.
+
 ## Decision
 
 **The fork legs — librewolf, zen, floorp — pin to the last E2E-validated release instead of
@@ -53,6 +60,32 @@ version (`ci-downloads` as the fallback), Firefox/Dev/Nightly stay deliberately 
 what a leg validated is recorded per run via `downloads.mjs --installed-version`, never inferred
 from a redirect. The dispatch `version` input remains the single-run escape hatch.
 
+**Amendment (2026-09-23): cache-first sticky installer cache for the fork legs.** The fork legs'
+cache key namespace is sticky per browser × OS × layout (`<prefix>-<os>-<browser>[-portable]-v`) and
+decoupled from the resolved URL. Under it:
+
+- An **unpinned** fork leg is cache-first: when the restore finds any cached installer, it installs
+  it with zero network calls — the URL-resolve step is skipped entirely, so neither a vendor API
+  stall nor a new release can delay or fail the leg. `BROWSER_PREFER_CACHE` (set by the composite
+  only for unpinned fork legs) selects this in `downloads.mjs`; a present cached installer wins over
+  any download.
+- Only a **pinned dispatch** — the watchdog validating a release — downloads, and its green run
+  saves under `<sticky>-v<installed-version>`, the version measured from the binary that actually
+  ran (the same ground truth the validated-versions record stores). Same version → same key →
+  `actions/cache/save` no-ops, so the quota carries one entry per browser × OS × layout × release,
+  never one per run.
+- A cold cache bootstraps from the record pin (else latest) and saves; saves happen only after a
+  successful install, so a killed download cannot poison the entry. The extracted portable dir is
+  cached in the same sticky style under a disjoint `-dir-` namespace so installer and dir entries
+  cannot restore into each other's paths via prefix matching.
+- The cache materializes the pin: the newest sticky entry _is_ the last validated release, so the
+  leg installs it whether or not the record cache was evicted. The validated-record pin stays in
+  force for what the leg reports and for the bootstrap path; cache and record are written only by a
+  green watchdog dispatch, so nothing self-advances.
+
+The hard gates' URL-hash regime is unchanged — their stable Mozilla URLs embed the version, so the
+key invalidates on a bump and the leg tracks latest, exactly as before.
+
 ## Consequences
 
 A fork release stops invalidating the PR-time installer cache: it costs the watchdog one validated
@@ -66,6 +99,7 @@ and the leg must report the pinned version and its age, so a pin that outlives s
 loud; an absent or evicted record (the Actions cache expires) falls back to latest with a warning
 rather than failing the leg. Implementation is a separate change — the decision here is the default.
 
-Revisit-if: the forks publish immutable version-addressable URLs per release (a stable cache key
-would remove the need for a pin), the watchdog dispatch cannot keep up with fork release frequency,
-or a specific contract needs the newest fork build on PR legs.
+Revisit-if: the watchdog dispatch cannot keep up with fork release frequency, or a specific contract
+needs the newest fork build on PR legs. (The original revisit-if clause — immutable
+version-addressable vendor URLs enabling a stable key — is now partially realized by the sticky keys
+themselves.)

@@ -959,6 +959,8 @@ jobs:
         with:
           browser: ${{ matrix.browser }}
           cache-key-prefix: browser-dl
+          # The manual escape (ADR 0021) beats the validated-record pin.
+          pin-version: ${{ inputs.version }}
 
       # Restores dist/dev-<branch>-<sha>/ built by the `snapshot` job. The
       # ubuntu snapshot's baked LOCAL_DIST_PATH differs from this Windows
@@ -972,6 +974,35 @@ jobs:
 
       - name: Run updater E2E
         run: node test/e2e/updater/updater-e2e.mjs
+
+      # ADR 0034: the release THIS leg validated is what the fork pin will serve
+      # to later runs. Only fork browsers upload — the hard-gate versions come
+      # from the `updater` matrix legs, and a same-named artifact from here would
+      # collide with theirs in the recorder's flattened version dir.
+      #
+      # `matrix.os || 'windows-latest'`: this job is Windows-only and its matrix
+      # carries NO os key, so a bare `matrix.os` expands to the empty string —
+      # which produced `e2e-version-zen-.json` with `"os":""` on PR #304 (the
+      # recorder rejects an unknown OS, and the recording job only runs on a
+      # dispatch, so the artifact bug would have surfaced only then). The `||`
+      # keeps the label correct if an os dimension is ever added here.
+      - name: Capture installed ${{ matrix.browser }} version
+        if: ${{ contains(fromJSON('["librewolf","floorp","zen"]'), matrix.browser) }}
+        shell: bash
+        run: |
+          VER="$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --installed-version)"
+          OS="${{ matrix.os || 'windows-latest' }}"
+          echo "Validated ${{ matrix.browser }} $VER on $OS"
+          printf '{"browser":"%s","os":"%s","version":"%s"}\n' \
+            "${{ matrix.browser }}" "$OS" "$VER" > "e2e-version-${{ matrix.browser }}-$OS.json"
+
+      - name: Upload ${{ matrix.browser }} version artifact
+        if: ${{ contains(fromJSON('["librewolf","floorp","zen"]'), matrix.browser) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-version-${{ matrix.browser }}-${{ matrix.os || 'windows-latest' }}
+          path: e2e-version-${{ matrix.browser }}-${{ matrix.os || 'windows-latest' }}.json
+          if-no-files-found: error
 
       - name: Upload diagnostics
         if: failure()
@@ -1035,6 +1066,9 @@ jobs:
           browser: ${{ matrix.browser }}
           cache-key-prefix: browser-dl
           portable: 'true'
+          # Same pin as browser-matrix: the portable leg must install the release
+          # its registered twin validated, never a newer one (ADR 0034).
+          pin-version: ${{ inputs.version }}
 
       - name: Assert portable layout
         shell: pwsh
@@ -1395,6 +1429,70 @@ jobs:
         with:
           path: .watchdog-validated
           key: browser-validated-${{ github.run_id }}
+        if: always()
+
+  # ── Fork validation record (ADR 0034) ─────────────────────────────────────
+  # Records the release the fork legs actually validated — the version the fork
+  # E2E legs then install instead of resolving `latest`.
+  #
+  # Deliberately SEPARATE from record-validation, in job, cache and file: that
+  # job writes validated.json, which the prod publish pre-flight compares against
+  # the current releases, and it refuses to record on a partial dispatch for
+  # exactly that reason. A single-browser fork dispatch (the watchdog's
+  # per-release validation) is the run that must advance a fork pin, so it gets
+  # its own record — a fork run can never reach the publish gate's semantics.
+  #
+  # Dispatch-only: a green PR leg installs the PINNED release, so recording from
+  # a PR would let the pin chase whatever a PR happened to resolve. Only a green
+  # browser-matrix run on a dispatch (the watchdog's planDispatches output, issue
+  # #143) advances it.
+  #
+  # `success || failure`, not `success`: a fork leg's version artifact exists
+  # only when that leg's E2E passed, so recording from a partially-failed matrix
+  # still advances exactly the forks that were validated. Requiring a fully
+  # green matrix would let one flaky fork (they are advisory, fail-fast: false)
+  # freeze the other two pins. `skipped`/`cancelled` are excluded — a
+  # firefox-esr dispatch never runs this matrix, and a cancelled run validated
+  # nothing.
+  record-fork-validation:
+    name: record validated fork versions
+    needs: [e2e-gate, browser-matrix]
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' && (needs.browser-matrix.result ==
+      'success' || needs.browser-matrix.result == 'failure')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      # Best-effort: carries the other forks (and their validation dates)
+      # forward while this run refreshes the one it dispatched.
+      - name: Restore the fork record
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-fork-validated
+          key: browser-fork-validated-${{ github.run_id }}
+          restore-keys: browser-fork-validated-
+      - name: Download tested fork versions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: e2e-version-*
+          path: .e2e-fork-versions
+          merge-multiple: true
+      - name: Record validated fork versions
+        env:
+          VALIDATED_DIR: .watchdog-fork-validated
+          E2E_VERSIONS_DIR: .e2e-fork-versions
+        run: node tools/ci/record-validated-versions.mjs --forks-only
+      - name: Save the fork record
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-fork-validated
+          key: browser-fork-validated-${{ github.run_id }}
         if: always()
 
   # ── Manual-escape cleanup (ADR 0021) ─────────────────────────────────────

@@ -24,8 +24,8 @@
  *
  * Only the hard-gated browsers (VALIDATED_BROWSERS in
  * check-browser-downloads.mjs — firefox, firefox-dev on 3 OSes; waterfox on
- * Windows since ADR 0025) are recorded: fork legs are advisory, so they stay on
- * the watchdog-baseline drift check.
+ * Windows since ADR 0025) are recorded in validated.json: fork legs are
+ * advisory, so they stay on the watchdog-baseline drift check.
  *
  * Usage (inside the E2E workflow's record-validation job):
  *
@@ -36,11 +36,21 @@
  * GITHUB_RUN_ID, GITHUB_SHA (record metadata), GITHUB_STEP_SUMMARY (optional
  * human summary). Exits 1 if the leg artifacts are missing or disagree — a
  * record with holes would silently weaken the publish gate.
+ *
+ * `--forks-only` writes the SEPARATE fork record (forks.json, FORK_RECORD_FILE)
+ * consumed by the fork E2E pin (ADR 0034) instead. It is deliberately a
+ * different FILE: validated.json is what the prod publish pre-flight compares
+ * against the current releases, so a fork-only run (the watchdog's
+ * single-browser dispatch, which the hard-gate job refuses to record precisely
+ * to protect that file) must not be able to rewrite it. Fork entries are sparse
+ * and cumulative — a librewolf dispatch refreshes librewolf and carries the
+ * other forks forward from the restored record.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  FORK_BROWSERS,
   META_ISSUE_TITLE,
   REPO_ROOT,
   VALIDATED_BROWSERS,
@@ -61,6 +71,21 @@ export const BROWSER_LEG_OSES = {
 };
 
 /**
+ * OSes a fork leg runs on when it validates a release (e2e.yml
+ * `browser-matrix`, Windows-only). Only the legs that ACTUALLY ran constrain a
+ * fork entry: a fork dispatch runs one browser on one OS, so requiring the full
+ * set would make every fork record unrecordable.
+ */
+export const FORK_LEG_OSES = {
+  librewolf: ['windows-latest'],
+  floorp: ['windows-latest'],
+  zen: ['windows-latest'],
+};
+
+/** Sidecar record the fork pin reads; never the file the publish gate reads. */
+export const FORK_RECORD_FILE = 'forks.json';
+
+/**
  * Read the per-leg version artifacts the e2e workflow's updater matrix legs
  * upload — the exact versions those legs INSTALLED and validated.
  *
@@ -75,7 +100,15 @@ export const BROWSER_LEG_OSES = {
  *   artifacts
  * @returns {Record<string, {version: string}>} per-browser record entries
  */
-export function collectLegVersions(dir) {
+/**
+ * Parse the flattened e2e-version-* artifacts into `{browser: [{os,
+ * version}]}`.
+ *
+ * @param {string} dir E2E_VERSIONS_DIR (where download-artifact flattened the
+ *   e2e-version-*.json artifacts)
+ * @returns {Record<string, {os: string; version: string}[]>} legs per browser
+ */
+export function readLegArtifacts(dir) {
   if (!dir || !fs.existsSync(dir)) {
     throw new Error(
       `E2E_VERSIONS_DIR ${JSON.stringify(dir ?? '')} not found — the updater matrix legs ` +
@@ -99,8 +132,22 @@ export function collectLegVersions(dir) {
     ) {
       throw new Error(`malformed version artifact ${file}: expected {browser, os, version}`);
     }
-    (perBrowser[leg.browser] ??= []).push({os: leg.os ?? '?', version: leg.version});
+    // An EMPTY os is treated as unknown, not as a label: a leg that expanded
+    // `${{ matrix.os }}` in a job whose matrix has no os key uploads `"os":""`
+    // (PR #304), and '?' makes the unknown-OS error say so instead of looking
+    // like a legitimately empty OS name.
+    const os = typeof leg.os === 'string' && leg.os !== '' ? leg.os : '?';
+    (perBrowser[leg.browser] ??= []).push({os, version: leg.version});
   }
+  return perBrowser;
+}
+
+/**
+ * The hard-gate record: every VALIDATED_BROWSER must have one artifact per
+ * expected OS, and all legs must report the SAME version.
+ */
+export function collectLegVersions(dir) {
+  const perBrowser = readLegArtifacts(dir);
   const out = {};
   for (const browser of VALIDATED_BROWSERS) {
     const expectedOses = BROWSER_LEG_OSES[browser] ?? UPDATER_LEG_OSES;
@@ -125,8 +172,156 @@ export function collectLegVersions(dir) {
   return out;
 }
 
+/**
+ * Collect the fork legs that ran in this run, as `{browser: {os, version}}`.
+ *
+ * A fork entry requires only the legs that actually ran to agree — a
+ * single-browser dispatch (`browser=librewolf`) validates one fork on one OS,
+ * which is exactly the run ADR 0034 lets advance that fork's pin. A browser
+ * with no artifact is simply absent (the merge carries the older entry
+ * forward); it is never an error, because no single run is expected to cover
+ * all three forks.
+ *
+ * @param {string} dir E2E_VERSIONS_DIR
+ * @returns {Record<string, {os: string; version: string}>}
+ */
+export function collectForkVersions(dir) {
+  const perBrowser = readLegArtifacts(dir);
+  const out = {};
+  for (const browser of FORK_BROWSERS) {
+    const legs = perBrowser[browser] ?? [];
+    if (legs.length === 0) continue;
+    const distinct = [...new Set(legs.map(l => l.version))];
+    if (distinct.length !== 1) {
+      throw new Error(
+        `${browser}: legs disagree on the validated version — ` +
+          legs.map(l => `${l.os}=${l.version}`).join(', ')
+      );
+    }
+    const oses = FORK_LEG_OSES[browser] ?? [];
+    const ran = legs.map(l => l.os);
+    const expected = oses.filter(o => ran.includes(o));
+    if (expected.length === 0) {
+      throw new Error(
+        `${browser}: version artifact from an unexpected OS (${ran.join(', ')}) — ` +
+          `expected one of: ${oses.join(', ') || 'none declared'}`
+      );
+    }
+    out[browser] = {version: distinct[0], os: ran.sort().join('+')};
+  }
+  return out;
+}
+
+/**
+ * Merge this run's fork findings into the restored record: a fork that ran wins
+ * (with this run's provenance so the pin can report its age), a fork that did
+ * not run keeps its earlier entry. Pure, so the cumulative semantics are
+ * unit-testable without a cache or a network.
+ *
+ * @param {{forks?: Record<string, object>} | null} previous the restored record
+ * @param {Record<string, {os: string; version: string}>} found this run's forks
+ * @param {{
+ *   validatedAt: string;
+ *   runId: string | null;
+ *   runUrl: string | null;
+ *   sha: string | null;
+ * }} meta
+ * @returns {Record<string, object>} the cumulative fork map
+ */
+export function mergeForkRecord(previous, found, meta) {
+  const out = {...(previous?.forks ?? {})};
+  for (const [browser, entry] of Object.entries(found)) {
+    out[browser] = {...entry, ...meta};
+  }
+  return out;
+}
+
+/** Read a JSON file, or null when it is absent/unreadable (cold cache). */
+function readJsonIfPresent(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** The run's URL — provenance for both records. */
+function runUrl() {
+  return process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY ?
+      `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
+    : null;
+}
+
+/**
+ * Write the fork record: the forks this run validated, plus the ones it did not
+ * cover carried forward from the restored record.
+ *
+ * A run with no fork artifacts at all throws instead of writing an empty map —
+ * the record is the pin's evidence, so "nothing to say" must not look like
+ * "nothing to pin".
+ */
+function writeForkRecord(outDir) {
+  const found = collectForkVersions(process.env.E2E_VERSIONS_DIR);
+  if (Object.keys(found).length === 0) {
+    throw new Error(
+      'no fork version artifacts found — refusing to write a fork record that would ' +
+        'pin nothing (the browser-matrix fork legs upload them; a green leg is the evidence)'
+    );
+  }
+  const outFile = path.join(outDir, FORK_RECORD_FILE);
+  const forks = mergeForkRecord(readJsonIfPresent(outFile), found, {
+    validatedAt: new Date().toISOString(),
+    runId: process.env.GITHUB_RUN_ID || null,
+    runUrl: runUrl(),
+    sha: process.env.GITHUB_SHA || null,
+  });
+  fs.mkdirSync(outDir, {recursive: true});
+  fs.writeFileSync(
+    outFile,
+    JSON.stringify(
+      {
+        recordedAt: new Date().toISOString(),
+        runUrl: runUrl(),
+        sha: process.env.GITHUB_SHA || null,
+        forks,
+      },
+      null,
+      2
+    ) + '\n'
+  );
+  console.log(`fork validated-versions record written: ${outFile}`);
+  for (const [browser, entry] of Object.entries(forks)) {
+    const fresh = Object.hasOwn(found, browser) ? 'validated now' : 'carried forward';
+    console.log(`  ${browser}: ${entry.version} (${fresh}, ${entry.validatedAt})`);
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const lines = [
+      '### Validated fork versions recorded',
+      '',
+      '| Fork | Version | Validated |',
+      '| --- | --- | --- |',
+      ...Object.entries(forks).map(
+        ([browser, entry]) =>
+          `| ${browser} | ${entry.version} | ${entry.validatedAt}${Object.hasOwn(found, browser) ? '' : ' (carried forward)'} |`
+      ),
+      '',
+      'The fork E2E legs pin to these versions until the watchdog validates a newer release.',
+      `Run: ${runUrl() || 'local'}`,
+    ];
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+  }
+}
+
 async function main() {
   const outDir = process.env.VALIDATED_DIR || path.join(REPO_ROOT, '.watchdog');
+  // `--forks-only` writes the separate fork record (forks.json) the fork pin
+  // reads (ADR 0034) and returns — validated.json, the file the prod publish
+  // pre-flight compares against the current releases, is never written from a
+  // fork-only run.
+  if (process.argv.includes('--forks-only')) {
+    writeForkRecord(outDir);
+    return;
+  }
   const outFile = path.join(outDir, 'validated.json');
 
   // The tested versions come from the legs' artifacts, never from a live
@@ -143,10 +338,7 @@ async function main() {
   const record = {
     recordedAt: new Date().toISOString(),
     runId: process.env.GITHUB_RUN_ID || null,
-    runUrl:
-      process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY ?
-        `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
-      : null,
+    runUrl: runUrl(),
     sha: process.env.GITHUB_SHA || null,
     browsers,
   };
