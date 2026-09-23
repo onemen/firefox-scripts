@@ -674,8 +674,12 @@ jobs:
           # 20-min job timeout so the diagnostic steps still run. cd + CWD
           # output instead of `--directory` — that flag does not exist on the
           # runner's snapd (first dispatch run: `unknown flag 'directory'`).
+          # --revision alone pins the download; the snap CLI rejects
+          # `--channel` alongside `--revision` ("cannot specify both channel
+          # and revision"), so the channel is never passed here (regression
+          # from #290, every leg red since Sep 22).
           for i in 1 2; do
-            if timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}" --channel=latest/stable; then
+            if timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}"; then
               echo "from-cache=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
