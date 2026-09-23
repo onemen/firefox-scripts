@@ -718,6 +718,12 @@ jobs:
       # sudo (passwordless on hosted runners); ack before install is required
       # for unasserted local files (--dangerous accepts unasserted, ack keeps
       # the provenance assertions in the verified path).
+      #
+      # This path bypasses the `downloads.mjs firefox-snap` recipe (the only
+      # other place a snap Firefox is installed), so it must publish
+      # FIREFOX_BINARY itself — the steps below (Verify snap GreD, both E2E
+      # runs) read it, and without the export the cache-hit path died with
+      # `FIREFOX_BINARY: unbound variable` (every run after #311 until fixed).
       - name: Install Firefox (snap, offline from cache)
         if: steps.snapd.outputs.available == 'true' && steps.dl.outputs.from-cache == 'true'
         run: |
@@ -725,6 +731,7 @@ jobs:
           sudo snap ack ~/snap-pkg/firefox_*.assert
           sudo snap install ~/snap-pkg/firefox_*.snap --classic
           test -x /snap/bin/firefox || { echo '::error::snap install ran, but /snap/bin/firefox not found'; exit 1; }
+          echo "FIREFOX_BINARY=/snap/bin/firefox" >> "$GITHUB_ENV"
 
       # Only reached when the store path succeeded above (from-cache=false);
       # kept for provenance symmetry with downloads.mjs's own recipe. A store
