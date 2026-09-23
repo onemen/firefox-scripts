@@ -277,9 +277,11 @@ regeneration moments: the `generated-files` skill.
 - **Window-context legacy JS:** plain `.js` with `'use strict';` loaded via
   `Services.scriptloader.loadSubScript`. No `innerHTML` in the updater tab (XML-parsed XHTML; toggle
   via `hidden`). Tab-script logging convention (2026-09-21): errors keep `console.error`;
-  informational traces use `console.debug` so the user's Browser Console stays clean by default —
-  the E2E mirrors still capture both (the updater console net treats any `chrome://firefox-scripts`
-  message at any level as a hit).
+  informational traces use `console.debug` so the user's Browser Console stays clean by default.
+  ConsoleAPI output never reaches `nsIConsoleService` observers (#292 root-cause), so updater-tab
+  `logError` additionally routes the same text through `Services.console.logStringMessage` — that
+  routed line (stable `Firefox Scripts updater: ` prefix) is what the E2E console mirror and its net
+  (`assertNoUpdaterConsoleErrors`) see; informational traces are mirror-invisible by design.
 - **C:** clang-format LLVM base; UTF-8 paths with wide/UTF-16 conversion on Windows;
   `installer_log()` logging; vendored miniz read-only (`-DMINIZ_NO_DEFLATE_APIS`).
 - **JS formatting/lint** is enforced by prettier + eslint (configs in `config/`) — run

@@ -169,6 +169,25 @@ test('updater.js helper checksum uses the portable nsICryptoHash hex conversion'
   );
 });
 
+test('updater.js logError routes through logStringMessage with the stable net prefix', () => {
+  // The #292 root-cause contract: ConsoleAPI (console.error) never reaches
+  // nsIConsoleService observers, so the E2E console mirror cannot see it.
+  // logError must therefore ALSO emit a Services.console.logStringMessage
+  // line carrying the exact prefix the harness net
+  // (assertNoUpdaterConsoleErrors in test/e2e/updater/updater-e2e.mjs)
+  // matches. Losing either half silently re-opens the observability gap.
+  const src = readFileSync(join(ROOT, 'tools/publish/remote-ui/updater.js'), 'utf8');
+
+  assert.ok(
+    src.includes('Services.console.logStringMessage(`Firefox Scripts updater: '),
+    'logError must route a logStringMessage line with the "Firefox Scripts updater: " prefix'
+  );
+  assert.ok(
+    /console\.error\(`Firefox Scripts updater: \$\{msg\}`/.test(src),
+    'logError must keep console.error for the user Browser Console (2026-09-21 convention)'
+  );
+});
+
 test('installer CSP connect-src covers every host /api/package-urls can emit (prod + dev)', () => {
   // The contract behind the 2026-09-21 regression: PR #228 set
   // connect-src 'self' only, which silently blocked every remote ingest on
