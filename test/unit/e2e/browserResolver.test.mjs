@@ -353,7 +353,7 @@ test('resolveInstallerUrl: bsys6 release asset before ci-downloads', async () =>
   }
 });
 
-test('resolveInstallerUrl: pin skips version-agnostic mirrors (floorp/zen) → ci-downloads', async () => {
+test('resolveInstallerUrl: pin skips the version-agnostic mirror and serves the tagged vendor URL', async () => {
   resetCiDownloadsProbe();
   const {restore} = stubFetch([
     // The version-agnostic official mirror MUST NOT be probed: it always
@@ -365,14 +365,64 @@ test('resolveInstallerUrl: pin skips version-agnostic mirrors (floorp/zen) → c
         throw new Error('version-agnostic mirror reached under a pin');
       },
     ],
-    // ci-downloads carries the EXACT pinned asset.
+    // The release-tagged URL can express the pinned version, so it is eligible
+    // and wins — the vendor serves the pin (ADR 0023 strict-pin rule, 0034).
+    ['releases/download/v12.17.2/', u => ({ok: true, status: 200, url: u})],
+  ]);
+  try {
+    const resolved = await resolveInstallerUrl('floorp', {version: '12.17.2'});
+    assert.equal(
+      resolved.url,
+      'https://github.com/Floorp-Projects/Floorp/releases/download/v12.17.2/floorp-windows-x86_64.installer.exe'
+    );
+    assert.equal(resolved.source, 'official');
+    assert.equal(resolved.version, '12.17.2');
+  } finally {
+    restore();
+  }
+});
+
+test('resolveInstallerUrl: pinned zen uses its release tag (tag == version)', async () => {
+  resetCiDownloadsProbe();
+  const {restore} = stubFetch([
+    [
+      'releases/latest/download/zen.installer.exe',
+      () => {
+        throw new Error('version-agnostic mirror reached under a pin');
+      },
+    ],
+    ['releases/download/1.22.2b/', u => ({ok: true, status: 200, url: u})],
+  ]);
+  try {
+    const resolved = await resolveInstallerUrl('zen', {version: '1.22.2b'});
+    assert.equal(
+      resolved.url,
+      'https://github.com/zen-browser/desktop/releases/download/1.22.2b/zen.installer.exe'
+    );
+    assert.equal(resolved.source, 'official');
+  } finally {
+    restore();
+  }
+});
+
+test('resolveInstallerUrl: a pin the vendor tag cannot serve still falls back to ci-downloads', async () => {
+  resetCiDownloadsProbe();
+  const {restore} = stubFetch([
+    [
+      'releases/latest/download/floorp-windows-x86_64.installer.exe',
+      () => {
+        throw new Error('version-agnostic mirror reached under a pin');
+      },
+    ],
+    // The tag is gone (or named differently) — the escape hatch takes over.
+    ['releases/download/v9.9.9/', () => ({ok: false, status: 404})],
     [
       'releases/tags/ci-downloads',
       () =>
         okJson({
           assets: [
             {
-              name: 'floorp-12.17.2-installer.exe',
+              name: 'floorp-9.9.9-installer.exe',
               browser_download_url: 'https://x/ci-floorp.exe',
             },
           ],
@@ -380,10 +430,10 @@ test('resolveInstallerUrl: pin skips version-agnostic mirrors (floorp/zen) → c
     ],
   ]);
   try {
-    const resolved = await resolveInstallerUrl('floorp', {version: '12.17.2'});
+    const resolved = await resolveInstallerUrl('floorp', {version: '9.9.9'});
     assert.equal(resolved.url, 'https://x/ci-floorp.exe');
     assert.equal(resolved.source, CI_DOWNLOADS_TAG);
-    assert.equal(resolved.version, '12.17.2');
+    assert.equal(resolved.version, '9.9.9');
   } finally {
     restore();
   }
