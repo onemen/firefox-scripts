@@ -540,16 +540,89 @@ export async function downloadTo(url, dest) {
 
 /**
  * Find a previously downloaded installer in the download dir (a prior run's
- * cache restore) — the fallback when a fresh download is impossible. The
- * browser-matrix legs are ADVISORY in the E2E gate, so testing an older release
- * beats failing the leg outright (and the gate still surfaces the warning).
+ * cache restore) — the fallback when a fresh download is impossible, and the
+ * cache-first source on an unpinned fork leg (ADR 0034, cache-first
+ * amendment).
+ *
+ * `filePrefix` selects the naming scheme: the registered installs save
+ * `<browser>-setup[.<ext>]`/`<browser>-setup-<version>.exe` while the portable
+ * fork install saves `<browser>-portable-setup.exe`.
+ *
+ * `version` (the ADR 0034 pin, when the leg has one) prefers the exact
+ * `<prefix>-<version>.exe`; otherwise the NEWEST match by mtime wins — the
+ * newest file is the one the last successful save wrote, i.e. the release the
+ * watchdog validated last. Exported for the unit tests.
  */
-function findCachedInstaller(browser) {
+export function findCachedInstaller(browser, {filePrefix = `${browser}-setup`, version} = {}) {
   const dir = downloadDir();
   if (!fs.existsSync(dir)) return null;
-  const prefix = `${browser}-setup`;
-  const found = fs.readdirSync(dir).find(f => f.startsWith(prefix) && f.endsWith('.exe'));
-  return found ? path.join(dir, found) : null;
+  const matches = fs
+    .readdirSync(dir)
+    .filter(f => f.startsWith(filePrefix) && f.endsWith('.exe'))
+    .map(f => {
+      const p = path.join(dir, f);
+      const st = fs.statSync(p, {throwIfNoEntry: false});
+      return {p, m: st?.isFile() ? st.mtimeMs : 0}; // a directory never counts
+    })
+    .filter(e => e.m > 0)
+    .sort((a, b) => b.m - a.m); // newest first
+  if (version) {
+    const exact = matches.find(e => e.p === path.join(dir, `${filePrefix}-${version}.exe`));
+    if (exact) return exact.p;
+  }
+  return matches[0]?.p ?? null;
+}
+
+/**
+ * Cache-first contract for the fork legs (ADR 0034, cache-first amendment
+ * 2026-09-23).
+ *
+ * The workflow sets BROWSER_PREFER_CACHE only for an UNPINNED fork leg
+ * (librewolf, zen, floorp). Under it, an existing cached installer wins over
+ * any download: the leg installs the release the watchdog last validated with
+ * zero network calls. A PINNED dispatch — the watchdog validating a new release
+ * — never gets the flag and always downloads, which is the only path a new fork
+ * version enters CI.
+ *
+ * Pure so the decision table is unit-tested without env or fs access.
+ *
+ * @param {boolean} preferCache BROWSER_PREFER_CACHE is set (unpinned fork leg)
+ * @param {boolean} hasCachedInstaller findCachedInstaller() found an entry
+ * @returns {'cached' | 'download'} the install source to use
+ */
+export function cacheFirstDecision(preferCache, hasCachedInstaller) {
+  return preferCache && hasCachedInstaller ? 'cached' : 'download';
+}
+
+function prefersCachedInstaller() {
+  return process.env.BROWSER_PREFER_CACHE === '1';
+}
+
+/**
+ * Install the cached installer when the cache-first contract allows it
+ * (BROWSER_PREFER_CACHE + an entry present). Returns the binary path when it
+ * installed from cache, else null (caller proceeds with the normal download
+ * flow — including the cold-bootstrap case, which then SAVES into the sticky
+ * cache namespace the next unpinned leg restores).
+ */
+function installFromCacheIfAllowed(browser, args, {filePrefix} = {}) {
+  const cached = findCachedInstaller(browser, {
+    filePrefix,
+    version: process.env.BROWSER_PIN_VERSION || undefined,
+  });
+  if (cacheFirstDecision(prefersCachedInstaller(), Boolean(cached)) === 'download') {
+    if (prefersCachedInstaller()) {
+      console.log(
+        '  install-source=download (cache-first on, no cached installer yet — cold bootstrap)'
+      );
+    }
+    return null;
+  }
+  console.log(
+    `  install-source=cached (${path.basename(cached)}) — ADR 0034 cache-first: no download on an unpinned fork leg`
+  );
+  runSilentInstaller(cached, args);
+  return requireBinary(browser);
 }
 
 /**
@@ -1006,18 +1079,69 @@ async function installForkPortable(browser, recipe) {
   if (!dest) throw new Error('PORTABLE_BROWSER_DIR is required for a portable fork install');
   fs.mkdirSync(dest, {recursive: true});
   // The fork-portable E2E job caches the extracted dir alongside the
-  // installer (same URL-derived key as the portable Firefox leg, so it can
-  // only match this browser version). When the launcher is already in place,
-  // skip the download + silent install entirely. statSync (not existsSync): a
-  // directory at that path must not count as installed.
+  // installer. statSync (not existsSync): a directory at that path must not
+  // count as installed.
   const cachedBinary = path.join(dest, recipe.portableExe);
+  const preferCache = prefersCachedInstaller();
+  // ADR 0034 cache-first: an unpinned fork leg reuses the extracted dir as-is — zero
+  // network calls. The dir is whatever the last successful install in this
+  // browser's sticky cache namespace saved (i.e. the watchdog's validating
+  // run on a warm cache), so the launcher being present is the whole check.
+  if (preferCache && fs.statSync(cachedBinary, {throwIfNoEntry: false})?.isFile()) {
+    console.log(
+      `  install-source=cached (${path.basename(dest)}) — ADR 0034 cache-first: no download on an unpinned fork leg`
+    );
+    return cachedBinary;
+  }
+  if (preferCache) {
+    // Dir cache missed but the installer cache hit (e.g. an eviction race
+    // between the two entries): install the cached installer into the
+    // portable dir instead of downloading — still zero network calls.
+    const cachedExe = findCachedInstaller(browser, {filePrefix: `${browser}-portable-setup`});
+    if (cachedExe) {
+      console.log(
+        `  install-source=cached (${path.basename(cachedExe)}) — ADR 0034 cache-first: dir cache missed, re-installing without a download`
+      );
+      runNsisInstallerWithRetry(cachedExe, nsisPortableArgs(dest), `${browser} portable installer`);
+      if (!fs.statSync(cachedBinary, {throwIfNoEntry: false})?.isFile()) {
+        throw new Error(
+          `${browser} cached portable installer ran, but no binary at ${cachedBinary} — ` +
+            'does this installer honor /D= into a fresh directory?'
+        );
+      }
+      return cachedBinary;
+    }
+    console.log(
+      '  cache-first on but nothing cached — cold bootstrap (this run downloads and saves)'
+    );
+  }
+  let url;
+  let sha256Url;
+  if (recipe.resolver) {
+    // Same fallback chain as the registered install (mirrors → ci-downloads →
+    // cached previous installer), so a vendor outage degrades identically.
+    const resolved = await resolveInstallerUrl(browser);
+    url = resolved.url;
+    sha256Url = resolved.sha256Url;
+    console.log(`  ${browser} ${resolved.version} installer resolved from ${resolved.source}`);
+  } else {
+    if (!recipe.url) throw new Error(`${browser} portable recipe has no url and no resolver`);
+    url = recipe.url;
+  }
+  // URL-keyed regime (pinned dispatches, waterfox): when the launcher is
+  // already in place, skip the download + silent install entirely — but only
+  // after validating the dir against the remote (see below).
   if (fs.statSync(cachedBinary, {throwIfNoEntry: false})?.isFile()) {
     // Defense in depth against a same-key content change (a stable
     // latest/download URL whose asset changed under the old redirect hash):
     // only reuse the extracted dir when the cached installer that produced
     // it still matches the remote size — the same self-heal rule downloadTo
     // applies to the installer file. A mismatch falls through to a fresh
-    // download + install over the stale dir.
+    // download + install over the stale dir. The HEAD check must read `url`
+    // AFTER the resolver block above: it previously sat before the
+    // declaration, so every lookup died on a TDZ ReferenceError that the
+    // catch swallowed as "HEAD failed" — the freshness check never ran and a
+    // pinned dispatch on a warm cache silently revalidated the stale dir.
     const cachedExe = path.join(downloadDir(), `${browser}-portable-setup.exe`);
     const exeStat = fs.statSync(cachedExe, {throwIfNoEntry: false});
     if (exeStat?.isFile() && exeStat.size > 0) {
@@ -1033,7 +1157,7 @@ async function installForkPortable(browser, recipe) {
         );
       } catch {
         // HEAD failed (flaky network): reuse the dir rather than fail — the
-        // job's version-derived cache key already guards the common case.
+        // sticky/URL-keyed cache restore already guards the common case.
         console.log(`  HEAD failed; reusing cached portable dir (${path.basename(dest)})`);
         return cachedBinary;
       }
@@ -1042,19 +1166,6 @@ async function installForkPortable(browser, recipe) {
       // entries): cannot prove freshness — re-install over the stale dir.
       console.log('  no cached installer to validate against — re-installing portable dir');
     }
-  }
-  let url;
-  let sha256Url;
-  if (recipe.resolver) {
-    // Same fallback chain as the registered install (mirrors → ci-downloads →
-    // cached previous installer), so a vendor outage degrades identically.
-    const resolved = await resolveInstallerUrl(browser);
-    url = resolved.url;
-    sha256Url = resolved.sha256Url;
-    console.log(`  ${browser} ${resolved.version} installer resolved from ${resolved.source}`);
-  } else {
-    if (!recipe.url) throw new Error(`${browser} portable recipe has no url and no resolver`);
-    url = recipe.url;
   }
   const exe = path.join(downloadDir(), `${browser}-portable-setup.exe`);
   await downloadTo(url, exe);
@@ -1239,6 +1350,13 @@ export async function installBrowser(browser, platform = process.platform) {
     // Version + mirror resolved by browserResolver.mjs (LibreWolf, Waterfox):
     // official mirrors first, then the temporary ci-downloads release, then
     // the cached previous installer (advisory legs warn instead of failing).
+    // ADR 0034 cache-first: an unpinned fork leg (BROWSER_PREFER_CACHE) installs the
+    // cached installer FIRST — before any resolver call — so the leg makes
+    // zero network calls when the watchdog's validating dispatch has already
+    // saved the release. Waterfox is a hard gate (0025) and never gets the
+    // flag from the workflow, so its latest-at-run-time contract is intact.
+    const cachedBinary = installFromCacheIfAllowed(browser, recipe.args);
+    if (cachedBinary) return cachedBinary;
     let resolved;
     try {
       resolved = await resolveInstallerUrl(browser);
@@ -1282,6 +1400,11 @@ export async function installBrowser(browser, platform = process.platform) {
   }
   if (recipe.url && recipe.args) {
     // Official installer (e.g. NSIS silent install on Windows).
+    // ADR 0034 cache-first: zen/floorp resolve to stable `releases/latest/download` URLs
+    // here; an unpinned fork leg installs the cached installer first (zero
+    // network) exactly like the resolver path above.
+    const cachedBinary = installFromCacheIfAllowed(browser, recipe.args);
+    if (cachedBinary) return cachedBinary;
     await installInstaller(recipe.url, browser, recipe.args);
     const binary = resolveBinary(browser);
     if (!binary) {
