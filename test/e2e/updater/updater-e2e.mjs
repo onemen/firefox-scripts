@@ -2118,13 +2118,22 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
  * helper bytes before it ever runs (Subprocess.call throws "Failed to create
  * process"; observed on every Windows leg 2026-09-23) — locally the spawn gets
  * as far as the exit-code paths above. The routed line is "<ISO> Firefox
- * Scripts updater: install config — Failed to create process"; the pattern pins
+ * Scripts updater: install config - Failed to create process"; the pattern pins
  * BOTH the install-config context and the spawn-failure tail, so no other
  * install-config failure is masked (net no-masking rule).
  *
+ * Separator history: logError originally joined msg and detail with an em-dash,
+ * which the mirror probe's per-byte nsIFileOutputStream.write mangled to byte
+ * 0x14 ("^T" in the harness output) — the CI lines could never contain a
+ * literal em-dash. updater.js now uses ASCII " - "; the middle group stays
+ * permissive so an older packaged snapshot's mangled or exact-em-dash rendering
+ * still matches.
+ *
  * @type {string[]}
  */
-const HELPER_SPAWN_ALLOW = ['Firefox Scripts updater: install config — Failed to create process'];
+const HELPER_SPAWN_ALLOW = [
+  /Firefox Scripts updater: install config ([\s\S]*)Failed to create process/.source,
+];
 
 /**
  * Scenario 9 — Windows helper-checksum path (PR #271 regression net).
@@ -2424,7 +2433,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
           ...HELPER_SPAWN_ALLOW,
           // These also match the logStringMessage-routed duplicates (#292):
           // the routed line embeds the same tail — "Firefox Scripts updater:
-          // install config — <expected tail>" — so no broader routed entry is
+          // install config - <expected tail>" — so no broader routed entry is
           // needed (a bare "install config" prefix would mask every other
           // install-config failure, violating the net's no-masking rule).
         ]);
@@ -2520,7 +2529,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         ...HELPER_SPAWN_ALLOW,
         // These also match the logStringMessage-routed duplicates (#292):
         // the routed line embeds the same tail — "Firefox Scripts updater:
-        // install config — <expected tail>" — so no broader routed entry is
+        // install config - <expected tail>" — so no broader routed entry is
         // needed (a bare "install config" prefix would mask every other
         // install-config failure, violating the net's no-masking rule).
       ]);
