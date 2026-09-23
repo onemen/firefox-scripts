@@ -59,7 +59,11 @@ import {
   summary,
   localConfigOverrides,
 } from '../shared/helpers.mjs';
-import {startLocalManifestServer, serverOverridePrefs} from '../shared/localManifestServer.mjs';
+import {
+  startLocalManifestServer,
+  serverOverridePrefs,
+  buildTreeManifest,
+} from '../shared/localManifestServer.mjs';
 import {
   findSnapshot,
   findZip,
@@ -1696,11 +1700,27 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
     const browserReady = await waitForFirstPage(browser, 15_000);
     check(counter, browserReady, `old-utils browser ready (${label})`);
     if (browserReady) {
-      // Negative assertion: with no updater module the scheduler cannot run at
-      // all, so a short blind margin + tab poll is sufficient evidence.
-      await new Promise(r => setTimeout(r, 3_000));
-      const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
-      check(counter, !page, `no updater tab with old utils (${label})`);
+      // Negative assertion: with the firefox-scripts mapping stripped from
+      // chrome.manifest the scheduler module cannot load, so no updater tab
+      // can open. The probe mirror IS live here (the probe runs from the GreD
+      // autoconfig regardless of profile utils), so two channels must BOTH
+      // stay silent for a bounded window: the mirror's TAB_OPENED marker and
+      // the BiDi page handle. The window (~2.5 s) covers the ~1-2 s a running
+      // scheduler needs to open the tab (measured 2026-09-23, #292) — the old
+      // shape (blind 3 s sleep + 2 s tab poll) paid 5 s and saw only BiDi.
+      const quietDeadline = Date.now() + 2_500;
+      let tabEvidence = '';
+      while (Date.now() < quietDeadline) {
+        if (mirrorSaysTabOpened(seeded.profileDir)) {
+          tabEvidence = 'probe mirror recorded TAB_OPENED although the mapping is stripped';
+          break;
+        }
+        if (await findPageByUrl(browser, UPDATER_URL, 500).catch(() => null)) {
+          tabEvidence = 'BiDi found the updater tab although the mapping is stripped';
+          break;
+        }
+      }
+      check(counter, !tabEvidence, `no updater tab with old utils (${label})`, tabEvidence);
     }
   } finally {
     try {
@@ -2406,6 +2426,124 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
   }
 }
 
+/**
+ * Scenario 10 — timer regression (#292): the daily in-session re-check must
+ * actually fire.
+ *
+ * History: for the updater's entire lifetime the re-check never ran —
+ * initScriptsUpdater called the window-bound setInterval global, which does not
+ * exist in a chrome ESM's module scope; the ReferenceError (thrown after the
+ * startup check had returned) was swallowed by userChrome.js's silent catch.
+ * Every browser start re-ran the startup check, so the only observable was a
+ * missing daily re-check — invisible to any test that only asserts tab-open
+ * behavior. This scenario pins the fix (session-lifetime nsITimer).
+ *
+ * Mechanism: the scheduler runs its check on a prefs-gated cadence and the
+ * shipped interval is 24h — too slow to observe. So the harness patches the
+ * EXTRACTED scheduler's CHECK_INTERVAL_MS down to 4s (host-side string replace,
+ * before launch), serves a fully up-to-date manifest built from the PATCHED
+ * tree (nothing to surface → no tab, gates stay clear), and counts manifest
+ * fetches: startup check + N timer fires in the observation window. On the
+ * pre-fix code this scenario measured exactly 1 fetch (startup only); with the
+ * fix it grows with the window.
+ *
+ * Assertions:
+ *
+ * - served >= 3 (startup + >= 2 timer fires inside the ~9s window): the timer
+ *   demonstrably re-runs checkForUpdates within one browser session.
+ * - no tab, no daily gates set: the re-check is pref-gated (same-day no-op for
+ *   the tab path) — the timer must not nag the user between daily gates.
+ */
+async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
+  console.log(`\n## Scenario: ${label}`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error('Firefox not found');
+
+  const t0 = Date.now();
+  const seeded = seedProfile(snapshotDir, {});
+  try {
+    // Patch the extracted scheduler: 24h → 4s (host-side, pre-launch). The
+    // snapshot's utils.zip may predate the source tree (e.g. built before a
+    // scheduler fix landed), so first overwrite the extracted module from
+    // REPO_ROOT/core — this scenario tests the CURRENT source. If the constant
+    // is ever renamed this fails LOUDLY here instead of silently measuring
+    // only the startup fetch.
+    const schedPath = path.join(seeded.chromeUtils, 'updater', 'scriptsUpdater.sys.mjs');
+    const repoSched = path.join(
+      REPO_ROOT,
+      'core',
+      'chrome',
+      'utils',
+      'updater',
+      'scriptsUpdater.sys.mjs'
+    );
+    const schedSrc = fs.readFileSync(repoSched, 'utf8');
+    const patched = schedSrc.replace(
+      'const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;',
+      'const CHECK_INTERVAL_MS = 4000;'
+    );
+    if (patched === schedSrc) {
+      throw new Error(
+        'timer scenario: CHECK_INTERVAL_MS declaration not found in scriptsUpdater.sys.mjs — ' +
+          'the constant was renamed; update this scenario'
+      );
+    }
+    fs.writeFileSync(schedPath, patched);
+
+    // Serve an UP-TO-DATE manifest built from the PATCHED tree: the check
+    // succeeds, finds nothing to surface, and never opens the tab — leaving
+    // the fetch counter as the only timer observable.
+    const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
+      multiRequest: true,
+      manifestOverride: buildTreeManifest(seeded.chromeUtils),
+    });
+    Object.assign(seeded.prefs, serverOverridePrefs(server.url));
+
+    let browser;
+    try {
+      browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+        headless: opts.headless,
+        extraPrefsFirefox: seeded.prefs,
+      });
+      attachProcessLogging(browser, label);
+      const browserReady = await waitForFirstPage(browser, 20_000);
+      check(counter, browserReady, `browser ready (${label})`);
+
+      // Observation window: startup check lands with the first window; ~9 s
+      // then allows the 4s timer 2 fires beyond it. Generous to scheduler
+      // startup jitter; small enough to keep the leg cheap.
+      await new Promise(r => setTimeout(r, 9_000));
+      const served = server.servedCount();
+      check(
+        counter,
+        served >= 3,
+        `daily re-check timer fires (startup + >=2 re-fetches, got ${served}, ${label})`,
+        served < 3 ?
+          'manifest fetched only ' + served + 'x — the in-session re-check did not run'
+        : ''
+      );
+
+      // The re-check must stay pref-gated: an up-to-date tree surfaces
+      // nothing, so no tab may open and the daily gates stay unset.
+      const page = await findPageByUrl(browser, UPDATER_URL, 1_000).catch(() => null);
+      check(counter, !page, `no updater tab when up to date (${label})`);
+      check(counter, !greShownToday(seeded.profileDir), `daily tab gate untouched (${label})`);
+      console.log(`  [timing] timer scenario wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    } finally {
+      try {
+        await closeBrowser(browser);
+      } catch {
+        /* ignore */
+      }
+      await server.close().catch(() => {});
+    }
+  } finally {
+    if (!opts.keepProfile) rmDir(seeded.profileDir);
+    else console.log(`  [keep] profile: ${seeded.profileDir}`);
+  }
+  return null;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -2479,7 +2617,7 @@ async function run() {
   // the trusted tab. What a headless CI run still cannot reach is elevation
   // itself — the helper's byte-level gate is covered deterministically by
   // test/unit/publish/branchPagesContract.test.mjs on every OS.
-  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8', '9'];
+  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8', '9', '10'];
 
   const profiles = [];
   // Scenario 7 → 8 state hand-off (launch-reuse prototype). Populated by
@@ -2616,6 +2754,15 @@ async function run() {
               await runHelperChecksumScenario(counter, opts, snapshotDir, 'helper-checksum-win')
             );
           }
+        },
+      },
+      {
+        id: '10',
+        run: async () => {
+          // Timer regression (#292): the daily in-session re-check must fire.
+          // No retry — a missed timer is deterministic (module-level bug), not
+          // a startup race; a retry would only mask a real regression.
+          await runTimerRegressionScenario(counter, opts, snapshotDir, 'daily-recheck-timer');
         },
       },
     ];
