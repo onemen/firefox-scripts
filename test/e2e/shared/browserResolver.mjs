@@ -577,12 +577,22 @@ const INSTALLER_CHAINS = {
     sources: [
       () =>
         'https://github.com/Floorp-Projects/Floorp/releases/latest/download/floorp-windows-x86_64.installer.exe',
+      // Version-embedded vendor URL (the release tag is `v` + display version,
+      // verified live 2026-09-22: 12.18.0 → v12.18.0). Under a pin the
+      // version-agnostic source above is skipped, so a pinned floorp run is now
+      // served by the vendor instead of requiring a manual `ci-downloads`
+      // upload (ADR 0023's strict-pin rule, ADR 0034).
+      v =>
+        `https://github.com/Floorp-Projects/Floorp/releases/download/v${v}/floorp-windows-x86_64.installer.exe`,
     ],
     assetName: v => `floorp-${v}-installer.exe`,
   },
   zen: {
     sources: [
       () => 'https://github.com/zen-browser/desktop/releases/latest/download/zen.installer.exe',
+      // Version-embedded vendor URL (zen's tag IS the display version, verified
+      // live 2026-09-22: 1.22.2b → tag 1.22.2b). See the floorp note above.
+      v => `https://github.com/zen-browser/desktop/releases/download/${v}/zen.installer.exe`,
     ],
     assetName: v => `zen-${v}-installer.exe`,
   },

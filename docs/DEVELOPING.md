@@ -226,6 +226,27 @@ but do not block (the known-FP band at the default of 3). The run log names the 
 Without a key it just skips with a warning, and an analysis VirusTotal has not finished when the
 poll times out is reported as a skip — never as clean.
 
+### Verdict ledger and the published-binary watchdog
+
+A verdict is evidence about ONE hash, and every rebuild produces a new one — which is why a WDSI
+"incorrect detection" clearance does not carry over to the next build. Two mechanisms keep that
+evidence usable instead of buried in run logs:
+
+- **The ledger** (`tools/ci/avLedger.mjs`; written by the publish flow to `dist/vt-ledger.json`, and
+  by `pnpm scan:vt --ledger <file>`) stores a per-hash record: band, engine counts, flagging
+  engines, first/last sighting. The worst band a hash was ever seen in sticks, while `lastVerdict`
+  records the newest observation, so "flagged once, clean since" stays visible instead of being
+  erased. A publish run appends the table to the job summary — the warn band (1–2 engines, below the
+  fail threshold) is otherwise only in the step log.
+- **The published-binary watchdog** (`.github/workflows/av-watchdog.yml`, weekly + manual dispatch
+  with a `ref` input) hashes the installer/helper binaries on the published surface and asks
+  VirusTotal about each hash — a lookup, never an upload. The publish gate only judges the bytes one
+  run uploads, so a verdict that flips _after_ a clean publish (exactly the 2026-09-05 shape) is
+  invisible without this. Findings surface as one `[av-watchdog] published binaries` meta issue plus
+  a deduped issue per flagged hash, auto-closed when a later run sees the hash clean. Without
+  `VT_API_KEY` it records hashes as `unknown` (never clean); it never fails the job — a flagged
+  published binary is a triage item, not a broken pipeline.
+
 ### False-positive handling
 
 - If a scanner flags a freshly built binary, do **not** publish it — investigate first. Local builds

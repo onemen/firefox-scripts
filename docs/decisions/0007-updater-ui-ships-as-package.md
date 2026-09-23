@@ -1,6 +1,7 @@
 # 0007: Updater tab UI ships as a chrome-privileged package
 
 - **Status:** accepted
+- **Supersedes:** [0006](./0006-hosted-remote-updater-ui.md) (remote-hosted updater tab UI)
 - **Date:** 2026-08-11
 
 ## Context

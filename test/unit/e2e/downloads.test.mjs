@@ -22,8 +22,10 @@ const downloadsUrl = pathToFileURL(
 ).href;
 const {
   DOWNLOADS,
+  cacheFirstDecision,
   downloadDir,
   downloadTo,
+  findCachedInstaller,
   isFileLockError,
   isMozillaPortableInstall,
   nsisPortableArgs,
@@ -921,5 +923,78 @@ test('installPortableFirefox skip check: only a regular launcher file counts', a
     assert.equal(stat2?.isFile(), true, 'launcher file counts as cached');
   } finally {
     fs.rmSync(dest, {recursive: true, force: true});
+  }
+});
+
+// ── cache-first fork legs (ADR 0034, cache-first amendment) ───────────────
+
+test('cacheFirstDecision: cached installer wins only under prefer-cache', () => {
+  // Unpinned fork leg with a cache hit → install from cache, zero network.
+  assert.equal(cacheFirstDecision(true, true), 'cached');
+  // Unpinned fork leg, cache empty → download (cold bootstrap; the run saves).
+  assert.equal(cacheFirstDecision(true, false), 'download');
+  // Pinned dispatch (watchdog validating a release) → always download.
+  assert.equal(cacheFirstDecision(false, true), 'download');
+  assert.equal(cacheFirstDecision(false, false), 'download');
+});
+
+test('findCachedInstaller: newest mtime wins; exact version preferred over newer mtime', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-cache-first-'));
+  const prevDir = process.env.BROWSER_DL_DIR;
+  process.env.BROWSER_DL_DIR = tmp;
+  try {
+    // One entry per release, saved newest-last so mtimes are distinct.
+    const oldExe = path.join(tmp, 'librewolf-setup-156.0.1.exe');
+    const newExe = path.join(tmp, 'librewolf-setup-156.0.1-1.exe');
+    fs.writeFileSync(oldExe, 'old');
+    fs.utimesSync(oldExe, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    fs.writeFileSync(newExe, 'new');
+
+    // No pin: newest mtime wins — the release the last save wrote.
+    assert.equal(findCachedInstaller('librewolf', {filePrefix: 'librewolf-setup'}), newExe);
+
+    // The ADR 0034 pin (BROWSER_PIN_VERSION) prefers the exact release even
+    // though a newer-named file exists (name ≠ mtime ≠ what the record pins).
+    assert.equal(
+      findCachedInstaller('librewolf', {filePrefix: 'librewolf-setup', version: '156.0.1'}),
+      oldExe
+    );
+    // A pin with no matching file still returns the newest (the resolver will
+    // not be reached — the pin falls back rather than failing the leg).
+    assert.equal(
+      findCachedInstaller('librewolf', {filePrefix: 'librewolf-setup', version: '999.0'}),
+      newExe
+    );
+  } finally {
+    if (prevDir === undefined) delete process.env.BROWSER_DL_DIR;
+    else process.env.BROWSER_DL_DIR = prevDir;
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('findCachedInstaller: null on a missing dir, prefix filters foreign files', () => {
+  const prevDir = process.env.BROWSER_DL_DIR;
+  delete process.env.BROWSER_DL_DIR;
+  try {
+    // No download dir at all → null (the cold-cache bootstrap case).
+    assert.equal(findCachedInstaller('zen', {filePrefix: 'zen-setup'}), null);
+  } finally {
+    if (prevDir === undefined) delete process.env.BROWSER_DL_DIR;
+    else process.env.BROWSER_DL_DIR = prevDir;
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-cache-prefix-'));
+  process.env.BROWSER_DL_DIR = tmp;
+  try {
+    // A different browser's installer must never satisfy this browser's
+    // cache-first lookup (the sticky keys are per browser for exactly this).
+    fs.writeFileSync(path.join(tmp, 'librewolf-setup-1.0.exe'), 'x');
+    assert.equal(findCachedInstaller('floorp', {filePrefix: 'floorp-setup'}), null);
+    // A directory matching the prefix must not count (statSync guard).
+    fs.mkdirSync(path.join(tmp, 'floorp-setup-2.0.exe'));
+    assert.equal(findCachedInstaller('floorp', {filePrefix: 'floorp-setup'}), null);
+  } finally {
+    if (prevDir === undefined) delete process.env.BROWSER_DL_DIR;
+    else process.env.BROWSER_DL_DIR = prevDir;
+    fs.rmSync(tmp, {recursive: true, force: true});
   }
 });
