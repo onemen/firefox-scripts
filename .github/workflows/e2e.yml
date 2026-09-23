@@ -453,6 +453,21 @@ jobs:
         if: ${{ runner.os != 'Windows' }}
         shell: bash
         run: |
+          # -e so the assertions below actually fail the step: without it a
+          # false `test -f` just falls through to the next echo and the step
+          # reports success.
+          set -euo pipefail
+          # Name the missing variable instead of dying as `unbound variable`
+          # (or comparing two empty strings) — both are published by the
+          # setup-browser install step above.
+          if [ -z "${FIREFOX_BINARY:-}" ]; then
+            echo "::error title=FIREFOX_BINARY unset::the setup-browser install step did not publish FIREFOX_BINARY"
+            exit 1
+          fi
+          if [ -z "${PORTABLE_BROWSER_DIR:-}" ]; then
+            echo "::error title=PORTABLE_BROWSER_DIR unset::setup-browser must run with portable: 'true' for this leg"
+            exit 1
+          fi
           case "$FIREFOX_BINARY" in
             "$PORTABLE_BROWSER_DIR"/*) ;;
             *) echo "::error::Firefox binary is not inside portable directory: $FIREFOX_BINARY"; exit 1 ;;
@@ -464,6 +479,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Name the missing variable instead of throwing PowerShell's
+          # "You cannot call a method on a null-valued expression" — both are
+          # published by the setup-browser install step above.
+          if (-not $env:FIREFOX_BINARY) {
+            throw "FIREFOX_BINARY is unset -- the setup-browser install step did not publish it"
+          }
+          if (-not $env:PORTABLE_BROWSER_DIR) {
+            throw "PORTABLE_BROWSER_DIR is unset -- setup-browser must run with portable: 'true' for this leg"
+          }
           if (-not $env:FIREFOX_BINARY.StartsWith($env:PORTABLE_BROWSER_DIR, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Firefox binary is not inside portable directory: $env:FIREFOX_BINARY"
           }
@@ -750,6 +774,15 @@ jobs:
         if: steps.snapd.outputs.available == 'true'
         run: |
           set -euo pipefail
+          # Fail with the fix, not `FIREFOX_BINARY: unbound variable`: the only
+          # publisher is an install step above, and BOTH snap install paths —
+          # the store download and the offline-from-cache pair — have to export
+          # it. The cache-hit path skipped the export and took this leg down on
+          # every run after #311 (#313).
+          if [ -z "${FIREFOX_BINARY:-}" ]; then
+            echo "::error title=FIREFOX_BINARY unset::no snap install step published FIREFOX_BINARY — check the store AND the offline-from-cache install paths"
+            exit 1
+          fi
           BIN="$FIREFOX_BINARY"
           test -x "$BIN" || { echo "::error::snap Firefox binary missing: $BIN"; exit 1; }
           # One single-quoted-script string: a second quoted fragment would
@@ -1084,6 +1117,15 @@ jobs:
       - name: Assert portable layout
         shell: pwsh
         run: |
+          # Name the missing variable instead of throwing PowerShell's
+          # "You cannot call a method on a null-valued expression" — both are
+          # published by the setup-browser install step above.
+          if (-not $env:FIREFOX_BINARY) {
+            throw "FIREFOX_BINARY is unset -- the setup-browser install step did not publish ${{ matrix.browser }}"
+          }
+          if (-not $env:PORTABLE_BROWSER_DIR) {
+            throw "PORTABLE_BROWSER_DIR is unset -- setup-browser must run with portable: 'true' for this leg"
+          }
           if (-not $env:FIREFOX_BINARY.StartsWith($env:PORTABLE_BROWSER_DIR, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "${{ matrix.browser }} binary is not inside portable directory: $env:FIREFOX_BINARY"
           }
@@ -1188,6 +1230,15 @@ jobs:
       - name: Assert portable layout
         shell: pwsh
         run: |
+          # Name the missing variable instead of throwing PowerShell's
+          # "You cannot call a method on a null-valued expression" — both are
+          # published by the setup-browser install step above.
+          if (-not $env:FIREFOX_BINARY) {
+            throw "FIREFOX_BINARY is unset -- the setup-browser install step did not publish ${{ matrix.browser }}"
+          }
+          if (-not $env:PORTABLE_BROWSER_DIR) {
+            throw "PORTABLE_BROWSER_DIR is unset -- setup-browser must run with portable: 'true' for this leg"
+          }
           if (-not $env:FIREFOX_BINARY.StartsWith($env:PORTABLE_BROWSER_DIR, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "${{ matrix.browser }} binary is not inside portable directory: $env:FIREFOX_BINARY"
           }
