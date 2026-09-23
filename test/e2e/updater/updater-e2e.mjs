@@ -426,6 +426,52 @@ async function waitForTreeHash(files, dir, expectedHash, timeoutMs = 30_000) {
 // ── Scenario runners ───────────────────────────────────────────────────────
 
 /**
+ * Launch-reuse hand-off shape helpers (scenarios 4→5 and 7→8).
+ *
+ * A hand-off-capable runner returns EITHER the full state object (`{profileDir,
+ * chromeUtils, prefs}`) on its success path OR a bare profile-dir string on an
+ * early-exit path (GreD-seed failure, browser never became ready, …).
+ * Everything downstream guards on `fullHandoffState` so a partial return can
+ * never flow into a step that would consume its `chromeUtils`/`prefs` fields as
+ * undefined (which built paths like "undefined/…" and confused step 5), and
+ * `handoffProfileDir` always yields a string for the centralized `profiles`
+ * cleanup list.
+ *
+ * @param {any} state - whatever a hand-off-capable runner returned
+ * @returns {{profileDir: string; chromeUtils: string; prefs: object} | null}
+ *   the full state, or null when it is a bare/early-exit return
+ */
+function fullHandoffState(state) {
+  return (
+      Boolean(state) &&
+        typeof state === 'object' &&
+        typeof state.profileDir === 'string' &&
+        typeof state.chromeUtils === 'string' &&
+        Boolean(state.prefs)
+    ) ?
+      state
+    : null;
+}
+
+/**
+ * Always a profile-dir string: unwraps a full hand-off state object, passes
+ * through a bare path, and throws loudly on anything else (never silently
+ * pushes an object into `profiles` — `rmDir` would swallow it and leak the
+ * profile directory).
+ *
+ * @param {any} state - whatever a hand-off-capable runner returned
+ * @returns {string} the profile directory for the cleanup list
+ */
+function handoffProfileDir(state) {
+  if (typeof state === 'string') return state;
+  const full = fullHandoffState(state);
+  if (full) return full.profileDir;
+  throw new Error(
+    'hand-off: unexpected runner return — expected a profile dir string or full hand-off state'
+  );
+}
+
+/**
  * Launch Firefox with a seeded profile, wait for the updater tab, run generic
  * action assertions (identity, buttons, checkbox, errors, screenshot).
  */
@@ -1490,23 +1536,38 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
         dumpConsoleLog(seeded.profileDir);
       }
 
-      const successShown = await page
-        .evaluate(() => !document.getElementById('success-banner')?.hidden)
-        .catch(() => false);
+      // UI reflection: POLL, don't read once (review on #310). The disk waits
+      // above prove the FILES are installed, but the tab's refreshPackageState
+      // + re-render runs after the last copy — a single read can execute
+      // before it and fail on a slow runner even though the install succeeded
+      // (the exact class the old 60s DOM poll covered). Bounded 10s poll per
+      // condition, 250ms tick: fast when the render already landed, bounded
+      // when it never will.
+      const uiCondition = async (fn, what) => {
+        const deadline = Date.now() + 10_000;
+        for (;;) {
+          const v = await page.evaluate(fn).catch(() => false);
+          if (v) return true;
+          if (Date.now() >= deadline) {
+            console.log(`  [diag] UI condition not reached within 10s: ${what}`);
+            return false;
+          }
+          await new Promise(r => setTimeout(r, 250));
+        }
+      };
+      const successShown = await uiCondition(
+        () => !document.getElementById('success-banner')?.hidden,
+        'success banner'
+      );
       check(counter, successShown, `success banner shown after install (${label})`);
 
-      // UI reflection, asserted once (not polled): the badges must show the
-      // installed state by now — the disk waits above guarantee the updater's
-      // own refreshPackageState has run for both packages.
-      const badgesOk = await page
-        .evaluate(() => {
-          const ok = id => {
-            const el = document.getElementById(id);
-            return Boolean(el && !el.hidden);
-          };
-          return ok('utils-badge-ok') && ok('config-badge-ok');
-        })
-        .catch(() => false);
+      const badgesOk = await uiCondition(() => {
+        const ok = id => {
+          const el = document.getElementById(id);
+          return Boolean(el && !el.hidden);
+        };
+        return ok('utils-badge-ok') && ok('config-badge-ok');
+      }, 'badges OK');
       check(counter, badgesOk, `badges show OK after install (${label})`);
     }
   } finally {
@@ -1596,14 +1657,30 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
  */
 async function waitForProfileUnlocked(profileDir, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
-  let i = 0;
   while (Date.now() < deadline) {
-    const probe = path.join(profileDir, `.fxs-lock-probe-${i++}`);
+    // Probe the LOCK ARTIFACT, not the directory (review on #310): Firefox
+    // holds the profile lock on parent.lock (Windows) / .parentlock (Linux) —
+    // the directory itself stays writable, so a create+delete probe succeeds
+    // while the dying process still holds the lock and the wait proves
+    // nothing. On Windows opening parent.lock for write access fails with
+    // EBUSY/EPERM until the owning process is gone; elsewhere the sentinel
+    // file disappears at shutdown.
+    const lock = path.join(
+      profileDir,
+      process.platform === 'win32' ? 'parent.lock' : '.parentlock'
+    );
     try {
-      fs.writeFileSync(probe, '');
-      fs.unlinkSync(probe);
+      // 'r+' without truncation: opens the existing lock file for write
+      // access, which is exactly what the lock holder forbids.
+      const fh = fs.openSync(lock, 'r+');
+      fs.closeSync(fh);
       return;
-    } catch {
+    } catch (err) {
+      // ENOENT is a pass: the lock file is gone (or was never created) —
+      // nothing is holding the profile.
+      if (err.code === 'ENOENT') return;
+      // Unix: the sentinel file disappearing is the actual unlock signal.
+      if (process.platform !== 'win32' && !fs.existsSync(lock)) return;
       await new Promise(r => setTimeout(r, 100));
     }
   }
@@ -2466,6 +2543,14 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
 
   const t0 = Date.now();
   const seeded = seedProfile(snapshotDir, {});
+  // Seed the GreD HERE — never rely on a previous scenario having done it
+  // (review on #310): standalone (`--scenario 10`) on a clean install there is
+  // no fx-folder config.js in the GreD, autoconfig never loads the loader, the
+  // manifest server sees 0 requests, and the scenario fails for a reason that
+  // has nothing to do with the timer.
+  const greDir10 = findGreDir(firefoxBin);
+  const greSeed10 = installFxFolder(snapshotDir, greDir10);
+  check(counter, greSeed10.ok, `seed GreD (${label})`, greSeed10.error);
   try {
     // Patch the extracted scheduler: 24h → 4s (host-side, pre-launch). The
     // snapshot's utils.zip may predate the source tree (e.g. built before a
@@ -2666,12 +2751,11 @@ async function run() {
             skipUtils: false,
             skipConfig: false,
           });
-          const result =
-            state && typeof state === 'object' && 'profileDir' in state ?
-              state
-            : {profileDir: state};
-          profiles.push(result.profileDir);
-          noTabHandoff = result;
+          profiles.push(handoffProfileDir(state));
+          // Only a FULL state carries the reuse fields; an early-exit string
+          // (or partial object) leaves noTabHandoff null and step 5 seeds its
+          // own profile instead of consuming undefined chromeUtils/prefs.
+          noTabHandoff = fullHandoffState(state);
         },
       },
       {
@@ -2680,13 +2764,15 @@ async function run() {
           const reuse = scenarios.includes('4') ? noTabHandoff : null;
           noTabHandoff = null;
           profiles.push(
-            await runNoTabScenario(
-              counter,
-              opts,
-              snapshotDir,
-              'skipped',
-              {skipUtils: true, forceUtilsStale: true},
-              reuse
+            handoffProfileDir(
+              await runNoTabScenario(
+                counter,
+                opts,
+                snapshotDir,
+                'skipped',
+                {skipUtils: true, forceUtilsStale: true},
+                reuse
+              )
             )
           );
         },
@@ -2712,12 +2798,9 @@ async function run() {
             snapshotDir,
             'manual-install-upgrade'
           );
-          const result =
-            state && typeof state === 'object' && 'profileDir' in state ?
-              state
-            : {profileDir: state};
-          profiles.push(result.profileDir);
-          handoff = result;
+          profiles.push(handoffProfileDir(state));
+          // Full state only — same guard as scenario 4 (see fullHandoffState).
+          handoff = fullHandoffState(state);
         },
       },
       {
@@ -2726,12 +2809,14 @@ async function run() {
           const reuse = scenarios.includes('7') ? handoff : null;
           handoff = null;
           profiles.push(
-            await runManualInstallNoUiScenario(
-              counter,
-              opts,
-              snapshotDir,
-              'manual-install-no-ui',
-              reuse
+            handoffProfileDir(
+              await runManualInstallNoUiScenario(
+                counter,
+                opts,
+                snapshotDir,
+                'manual-install-no-ui',
+                reuse
+              )
             )
           );
         },

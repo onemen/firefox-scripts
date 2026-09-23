@@ -256,6 +256,12 @@ export function initScriptsUpdater(win) {
     // would no-op on a closed gWindow for the rest of the session.
     if (!gWindow || gWindow.closed) {
       gWindow = win;
+      // A check may be in flight (started before window 1 closed) holding a
+      // stale window; it can never open the tab. The daily prefs make this
+      // cheap: a same-day check no-ops right after the gate. Without this, a
+      // user who closed window 1 mid-check misses the notification until the
+      // next daily tick (review on #310).
+      checkForUpdates();
     }
     return;
   }
@@ -299,8 +305,10 @@ function todayStr() {
  *   not re-open every few minutes within the same day.
  */
 async function checkForUpdates() {
-  const win = gWindow;
-  if (!win || win.closed) {
+  // The early gate only needs A live window for the fetch phase; the tab-open
+  // step below re-reads gWindow (window churn mid-check must not attach the
+  // tab to a captured, possibly-closed window — review on #310).
+  if (!gWindow || gWindow.closed) {
     return;
   }
 
@@ -328,7 +336,12 @@ async function checkForUpdates() {
     return;
   }
 
-  const b = win.gBrowser;
+  // Re-read gWindow, don't trust a captured window: an await above may have
+  // outlived window 1 (window churn mid-check). The refreshed gWindow (set by
+  // a later initScriptsUpdater) is the live tab target; if the browser is now
+  // windowless there is nothing to attach the tab to.
+  const liveWin = !gWindow || gWindow.closed ? null : gWindow;
+  const b = liveWin?.gBrowser;
   if (!b) {
     return;
   }
@@ -351,10 +364,10 @@ async function checkForUpdates() {
   // stale "All packages are up to date.".
   Services.prefs.setCharPref(PREF_LAST_SHOWN, today);
 
-  const tab = b.addTrustedTab(UPDATER_UI_URI);
+  const tab = liveWin.gBrowser.addTrustedTab(UPDATER_UI_URI);
   tab._scriptsUpdateTab = true;
   tab.loadOnStartup = true;
-  b.selectedTab = tab;
+  liveWin.gBrowser.selectedTab = tab;
 }
 
 /**
