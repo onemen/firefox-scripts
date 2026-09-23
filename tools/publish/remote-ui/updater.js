@@ -128,7 +128,12 @@ let onState = null;
 let onProgress = null;
 
 function logError(msg, err) {
-  const detail = err ? ' — ' + (err.message || String(err)) : '';
+  // ASCII-only separator: the E2E console-mirror probe writes its listener
+  // output one byte per char (nsIFileOutputStream.write), so a non-ASCII char
+  // here reaches the harness mangled (em-dash U+2014 became byte 0x14, "^T",
+  // observed 2026-09-23 on every CI Windows leg) and breaks allowlist
+  // matching on assertion-critical lines.
+  const detail = err ? ' - ' + (err.message || String(err)) : '';
   // Two channels on purpose: console.error styles the entry in the user's
   // Browser Console (2026-09-21 convention: errors keep console.error), but
   // ConsoleAPI output never reaches nsIConsoleService observers — the E2E

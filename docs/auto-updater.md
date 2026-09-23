@@ -44,7 +44,7 @@ The installer (`installer_win.exe` / `installer_linux` / `installer_linux_aarch6
 The **auto-updater** is privileged code that runs _inside_ the browser (not the C installer) and
 keeps those packages up to date automatically:
 
-- checks **periodically** (daily) for newer published versions,
+- checks **daily** (startup + a pref-gated in-session re-check) for newer published versions,
 - **notifies** the user when an update is available,
 - lets the user apply the update **in a tab** without re-downloading the installer,
 - applies updates that land in **admin-protected folders** (config files → Program Files) with a
@@ -73,7 +73,7 @@ keeps those packages up to date automatically:
 
 | File                                                    | Package          | Role                                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `scriptsUpdater.sys.mjs` (`core/chrome/utils/updater/`) | `utils.zip`      | ESM scheduler: daily check, hash comparison, `ensureUpdaterUi` (download/verify/extract `updater-ui.zip`), launching the tab. Loaded once per window by `BootstrapLoader.js` / `userChrome.js`.                                                                                                                          |
+| `scriptsUpdater.sys.mjs` (`core/chrome/utils/updater/`) | `utils.zip`      | ESM scheduler: daily check (startup + pref-gated in-session re-check), hash comparison, `ensureUpdaterUi` (download/verify/extract `updater-ui.zip`), launching the tab. Loaded once per window by `BootstrapLoader.js` / `userChrome.js`.                                                                               |
 | `updater-config.sys.mjs` (`core/chrome/utils/updater/`) | `utils.zip`      | **Auto-generated** (untracked/gitignored) from `config/installer.conf`: `HASHES_URL`, `ZIP_BASE_URL`, `UI_BASE_URL`, `HELPER_BASE_URL`, `ASSET_SUFFIX` plus the test-build identity `IS_DEV`/`IS_LOCAL`/`LOCAL_DIST_PATH`/`DEV_BRANCH`. Ships in the zip (added back explicitly); URL changes propagate as hash changes. |
 | `updater.html` (`tools/publish/remote-ui/`)             | `updater-ui.zip` | The chrome-privileged tab page. No iframe, no remote page — it loads the engine and client directly.                                                                                                                                                                                                                     |
 | `updater.js` (`tools/publish/remote-ui/`)               | `updater-ui.zip` | Privileged engine (`window.UpdaterEngine`): fresh hash check, zip download/verify/extract/copy, elevated helper, skip prefs, restart. Loaded via a `chrome://` script src.                                                                                                                                               |
@@ -173,10 +173,17 @@ browser window opens
 BootstrapLoader / userChrome imports scriptsUpdater.sys.mjs
         │
         ▼
-initScriptsUpdater(win)                     # idempotent
-  ├─ checkForUpdates(win)                   # skipped if lastScriptsCheckDate == today or
+initScriptsUpdater(win)                     # idempotent; refreshes gWindow when the
+  ├─ checkForUpdates()                      #   first window closed (new window = tab target);
+  │                                         #   the refresh re-runs the check so an in-flight
+  │                                         #   check holding the dead window cannot strand
+  │                                         #   the notification; skipped if
+  │                                         #   lastScriptsCheckDate == today or
   │                                         #   lastUpdateTabShown == today
-  └─ setInterval(checkForUpdates, 24h)
+  └─ nsITimer daily re-check (TYPE_REPEATING_SLACK, session lifetime) — window
+                                            #   timers don't exist in the ESM scope; same-day
+                                            #   re-checks are pref-gated no-ops; the tab opens
+                                            #   on the CURRENT gWindow (re-read after awaits)
         │
         ▼ (fetch manifest — with the ADR 0026 stable fallback on a dead dev channel,
         │   compute local hashes, apply skippedHash prefs)

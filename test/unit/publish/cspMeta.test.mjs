@@ -186,6 +186,14 @@ test('updater.js logError routes through logStringMessage with the stable net pr
     /console\.error\(`Firefox Scripts updater: \$\{msg\}`/.test(src),
     'logError must keep console.error for the user Browser Console (2026-09-21 convention)'
   );
+  // The routed line text is assertion-critical (the E2E net allowlists match
+  // it), and the mirror probe writes its listener output one byte per char —
+  // a non-ASCII detail separator reaches the harness mangled (em-dash became
+  // byte 0x14 on CI, 2026-09-23). The detail separator must stay ASCII " - ".
+  assert.ok(
+    src.includes("' - ' + (err.message || String(err))"),
+    'logError detail separator must stay ASCII " - " (the mirror probe is not Unicode-safe)'
+  );
 });
 
 test('installer CSP connect-src covers every host /api/package-urls can emit (prod + dev)', () => {

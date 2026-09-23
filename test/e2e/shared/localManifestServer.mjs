@@ -115,6 +115,46 @@ function readZipEntry(buf, entry) {
 }
 
 /** Build a manifest that matches the files in chromeUtils dir. */
+/**
+ * Build a manifest whose utils entry exactly matches the files on disk in
+ * chromeUtilsDir (the full-tree hash algorithm: sha256(rel_path + '\n') +
+ * file bytes, paths sorted with localeCompare, mirroring buildMatchingManifest's
+ * fallback). Unlike buildMatchingManifest, the snapshot's hashes.json is
+ * ignored — used when the harness mutates the extracted tree (e.g. the timer
+ * regression scenario patches CHECK_INTERVAL_MS) and must serve a manifest
+ * that matches the MUTATED files.
+ *
+ * fx-folder and updater-ui ship empty entries: the scheduler skips packages
+ * without a hash, so they read as "nothing to check".
+ *
+ * @param {string} chromeUtilsDir - the profile's chrome/utils tree
+ * @returns {object} manifest (utils/fx-folder/updater-ui)
+ */
+export function buildTreeManifest(chromeUtilsDir) {
+  const files = [];
+  for (const entry of fs.readdirSync(chromeUtilsDir, {recursive: true})) {
+    const abs = path.join(chromeUtilsDir, entry);
+    if (fs.statSync(abs).isFile()) {
+      files.push(path.relative(chromeUtilsDir, abs).replace(/\\/g, '/'));
+    }
+  }
+  files.sort((a, b) => a.localeCompare(b));
+  const hash = crypto.createHash('sha256');
+  for (const rel of files) {
+    hash.update(rel + '\n');
+    hash.update(fs.readFileSync(path.join(chromeUtilsDir, rel)));
+  }
+  return {
+    'utils': {
+      hash: hash.digest('hex'),
+      files,
+      date: new Date().toISOString().slice(0, 10),
+    },
+    'fx-folder': {hash: '', files: [], date: ''},
+    'updater-ui': {hash: '', files: [], date: ''},
+  };
+}
+
 function buildMatchingManifest(chromeUtilsDir, snapshotDir) {
   const manifestPath = path.join(snapshotDir, 'hashes.json');
   if (fs.existsSync(manifestPath)) {

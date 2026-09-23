@@ -59,7 +59,11 @@ import {
   summary,
   localConfigOverrides,
 } from '../shared/helpers.mjs';
-import {startLocalManifestServer, serverOverridePrefs} from '../shared/localManifestServer.mjs';
+import {
+  startLocalManifestServer,
+  serverOverridePrefs,
+  buildTreeManifest,
+} from '../shared/localManifestServer.mjs';
 import {
   findSnapshot,
   findZip,
@@ -90,12 +94,23 @@ try {
   const Cc = Components.classes;
   const Ci = Components.interfaces;
   const cs = Cc['@mozilla.org/consoleservice;1'].getService(Ci.nsIConsoleService);
-  const f = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
-  f.initWithPath(Services.dirsvc.get('ProfD', Ci.nsIFile).path + '/e2e-console.log');
+  // Build the mirror path via clone()+appendRelativePath, NOT a string
+  // concat into initWithPath: the concat mixes separators on Windows
+  // ("C:\\...\\profile/e2e-console.log") and initWithPath throws
+  // NS_ERROR_FILE_UNRECOGNIZED_PATH — the whole probe died there (swallowed
+  // by this catch), so the mirror never wrote a byte and TAB_OPENED never
+  // landed (root-caused 2026-09-23, issue #292). clone()+append is proven
+  // working by the same experiment.
+  const f = Services.dirsvc
+    .get('ProfD', Ci.nsIFile)
+    .clone()
+    .QueryInterface(Ci.nsIFile);
+  f.appendRelativePath('e2e-console.log');
   const fos = Cc['@mozilla.org/network/file-output-stream;1'].createInstance(
     Ci.nsIFileOutputStream
   );
   fos.init(f, 0x02 | 0x08 | 0x10, -1, 0); // write | create | append
+  fos.write('MIRROR-OPEN' + String.fromCharCode(10), 12);
   cs.registerListener({
     observe(aMessage, aTopic, aData) {
       try {
@@ -265,24 +280,39 @@ function seedProfile(
 
   // Per-package skip prefs (extensions.firefox-scripts.skippedHash.<pkg> =
   // remote hash) — seeded from the snapshot's own manifest.
-  if (skipUtils || skipConfig) {
-    try {
-      const hashesPath = path.join(snapshotDir, 'hashes.json');
-      if (fs.existsSync(hashesPath)) {
-        const hashes = JSON.parse(fs.readFileSync(hashesPath, 'utf-8'));
-        if (skipUtils && hashes.utils?.hash) {
-          prefs['extensions.firefox-scripts.skippedHash.utils'] = hashes.utils.hash;
-        }
-        if (skipConfig && hashes['fx-folder']?.hash) {
-          prefs['extensions.firefox-scripts.skippedHash.fx-folder'] = hashes['fx-folder'].hash;
-        }
-      }
-    } catch {
-      /* manifest missing */
-    }
-  }
+  addSkipPrefs(prefs, snapshotDir, skipUtils, skipConfig);
 
   return {profileDir, chromeUtils, _greModNeeded: false, prefs};
+}
+
+/**
+ * Set the per-package skip prefs (extensions.firefox-scripts.skippedHash.<pkg>
+ * = remote hash) from the snapshot's own manifest. Shared by seedProfile and
+ * the launch-reuse hand-off (scenario 4 → 5): launch prefs re-inject on every
+ * start, so a reused profile needs the same pref deltas a fresh seed would have
+ * written, sourced from the same manifest.
+ *
+ * @param {Record<string, string>} prefs launch prefs (mutated)
+ * @param {string} snapshotDir
+ * @param {boolean} skipUtils
+ * @param {boolean} skipConfig
+ */
+function addSkipPrefs(prefs, snapshotDir, skipUtils, skipConfig) {
+  if (!skipUtils && !skipConfig) return;
+  try {
+    const hashesPath = path.join(snapshotDir, 'hashes.json');
+    if (fs.existsSync(hashesPath)) {
+      const hashes = JSON.parse(fs.readFileSync(hashesPath, 'utf-8'));
+      if (skipUtils && hashes.utils?.hash) {
+        prefs['extensions.firefox-scripts.skippedHash.utils'] = hashes.utils.hash;
+      }
+      if (skipConfig && hashes['fx-folder']?.hash) {
+        prefs['extensions.firefox-scripts.skippedHash.fx-folder'] = hashes['fx-folder'].hash;
+      }
+    }
+  } catch {
+    /* manifest missing */
+  }
 }
 
 /**
@@ -369,7 +399,77 @@ function computeInstalledHash(files, dir) {
   return hash.digest('hex');
 }
 
+/**
+ * Wait until an installed tree re-hashes to the expected manifest hash (or the
+ * timeout expires). This is the install-completion ground truth — the same disk
+ * state the updater itself verifies in refreshPackageState — so the harness can
+ * wait on it instead of polling the tab's DOM badges (which are a UI proxy that
+ * can miss or lag the actual copy). File watches are platform-fragile; a fast
+ * hash poll (250 ms) is event-adjacent: it detects the copy within one tick of
+ * completion without a fixed sleep.
+ *
+ * @param {string[]} files manifest file list
+ * @param {string} dir installed tree root
+ * @param {string} expectedHash manifest hash
+ * @param {number} [timeoutMs=30_000] Default is `30_000`
+ * @returns {Promise<boolean>} true when the tree matched
+ */
+async function waitForTreeHash(files, dir, expectedHash, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (computeInstalledHash(files, dir) === expectedHash) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise(r => setTimeout(r, 250));
+  }
+}
+
 // ── Scenario runners ───────────────────────────────────────────────────────
+
+/**
+ * Launch-reuse hand-off shape helpers (scenarios 4→5 and 7→8).
+ *
+ * A hand-off-capable runner returns EITHER the full state object (`{profileDir,
+ * chromeUtils, prefs}`) on its success path OR a bare profile-dir string on an
+ * early-exit path (GreD-seed failure, browser never became ready, …).
+ * Everything downstream guards on `fullHandoffState` so a partial return can
+ * never flow into a step that would consume its `chromeUtils`/`prefs` fields as
+ * undefined (which built paths like "undefined/…" and confused step 5), and
+ * `handoffProfileDir` always yields a string for the centralized `profiles`
+ * cleanup list.
+ *
+ * @param {any} state - whatever a hand-off-capable runner returned
+ * @returns {{profileDir: string; chromeUtils: string; prefs: object} | null}
+ *   the full state, or null when it is a bare/early-exit return
+ */
+function fullHandoffState(state) {
+  return (
+      Boolean(state) &&
+        typeof state === 'object' &&
+        typeof state.profileDir === 'string' &&
+        typeof state.chromeUtils === 'string' &&
+        Boolean(state.prefs)
+    ) ?
+      state
+    : null;
+}
+
+/**
+ * Always a profile-dir string: unwraps a full hand-off state object, passes
+ * through a bare path, and throws loudly on anything else (never silently
+ * pushes an object into `profiles` — `rmDir` would swallow it and leak the
+ * profile directory).
+ *
+ * @param {any} state - whatever a hand-off-capable runner returned
+ * @returns {string} the profile directory for the cleanup list
+ */
+function handoffProfileDir(state) {
+  if (typeof state === 'string') return state;
+  const full = fullHandoffState(state);
+  if (full) return full.profileDir;
+  throw new Error(
+    'hand-off: unexpected runner return — expected a profile dir string or full hand-off state'
+  );
+}
 
 /**
  * Launch Firefox with a seeded profile, wait for the updater tab, run generic
@@ -1057,7 +1157,8 @@ async function runNoTabScenario(
   opts,
   snapshotDir,
   label,
-  {skipUtils, skipConfig, forceUtilsStale = false}
+  {skipUtils, skipConfig, forceUtilsStale = false},
+  reuseState = null
 ) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
@@ -1066,12 +1167,30 @@ async function runNoTabScenario(
   const t0 = Date.now();
   const phases = {};
 
-  const seeded = seedProfile(snapshotDir, {
-    forceConfigStale: false,
-    forceUtilsStale,
-    skipUtils,
-    skipConfig,
-  });
+  const seeded =
+    reuseState ??
+    seedProfile(snapshotDir, {
+      forceConfigStale: false,
+      forceUtilsStale,
+      skipUtils,
+      skipConfig,
+    });
+  if (reuseState) {
+    // Launch-reuse hand-off (scenario 4 → 5): the profile already holds the
+    // seeded utils + GreD state; scenario 5's deltas are applied on top —
+    // (a) forceUtilsStale is the disk marker below, (b) skipUtils is a launch
+    // pref (addSkipPrefs — extraPrefsFirefox re-injects every start, so no
+    // user.js write), (c) the GreD is re-seeded for byte-identical state.
+    // The daily gate is already cleared by the seeded prefs on every launch.
+    console.log(
+      "  [reuse] continuing on scenario 4's profile (profile + utils state reused; GreD re-seeded for byte-identical state)"
+    );
+    if (forceUtilsStale) {
+      const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
+      fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
+    }
+    addSkipPrefs(seeded.prefs, snapshotDir, skipUtils, skipConfig);
+  }
   phases.seed = Date.now() - t0;
 
   const greDir = findGreDir(firefoxBin);
@@ -1155,7 +1274,6 @@ async function runNoTabScenario(
 
     phases.total = Date.now() - t0;
     logScenarioTime(label, t0, phases);
-    return seeded.profileDir;
   } finally {
     try {
       await closeBrowser(browser);
@@ -1175,6 +1293,18 @@ async function runNoTabScenario(
       shown ? 'lastUpdateTabShown persisted although the tab should stay closed' : ''
     );
   }
+
+  // Launch-reuse hand-off (scenario 4 → 5): return the full seeded state so
+  // step 5 can continue on this profile. `chromeUtils` + `prefs` are what the
+  // reuse path mutates (stale marker, skip prefs); the daily-gate clears stay
+  // in `prefs` so the second launch re-runs the check. The `'profileDir' in
+  // state` unwrap in run() still routes the profile into `profiles` for
+  // centralized cleanup.
+  return {
+    profileDir: seeded.profileDir,
+    chromeUtils: seeded.chromeUtils,
+    prefs: seeded.prefs,
+  };
 }
 
 /**
@@ -1309,26 +1439,11 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       });
       check(counter, clicked, `install clicked (utils only, ${label})`);
 
-      // Completion: utils badge flipped to OK and the progress bar hidden.
-      const completed = await waitForCondition(
-        page,
-        () => {
-          const utilsOk = document.getElementById('utils-badge-ok');
-          const utilsUpd = document.getElementById('utils-badge-update');
-          const progress = document.getElementById('card-progress');
-          const err = document.getElementById('card-progress-error');
-          return Boolean(
-            utilsOk &&
-            !utilsOk.hidden &&
-            utilsUpd &&
-            utilsUpd.hidden &&
-            progress?.hidden &&
-            err?.style.display === 'none'
-          );
-        },
-        60_000,
-        'utils install completed'
-      );
+      // Completion: the installed utils TREE re-hashes to the manifest — the
+      // ground truth, waited on directly (waitForTreeHash) instead of polling
+      // the tab's DOM badges for 60 s. One read-only evaluate afterwards still
+      // asserts the UI layer reflected the install.
+      const completed = await waitForTreeHash(utilsFiles, seeded.chromeUtils, utilsHash, 30_000);
       check(counter, completed, `utils install completes in tab (${label})`);
       if (!completed) {
         // Diagnostic: capture the tab's error banner + badge DOM and the
@@ -1404,28 +1519,13 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       });
       check(counter, clicked, `install clicked (${label})`);
 
-      // Completion: both badges flipped to OK and the progress bar hidden once
-      // the whole flow finishes. Local file:// downloads take a couple of
-      // seconds per package, so allow a generous margin.
-      const completed = await waitForCondition(
-        page,
-        () => {
-          const utilsOk = document.getElementById('utils-badge-ok');
-          const configOk = document.getElementById('config-badge-ok');
-          const progress = document.getElementById('card-progress');
-          const err = document.getElementById('card-progress-error');
-          return Boolean(
-            utilsOk &&
-            !utilsOk.hidden &&
-            configOk &&
-            !configOk.hidden &&
-            progress?.hidden &&
-            err?.style.display === 'none'
-          );
-        },
-        60_000,
-        'install completed'
-      );
+      // Completion: BOTH installed trees re-hash to the manifest (utils then
+      // config — the tab installs config first). Disk hash is the completion
+      // ground truth; the badge DOM is asserted once afterwards instead of
+      // being polled for a minute.
+      const completed =
+        (await waitForTreeHash(utilsFiles, seeded.chromeUtils, utilsHash, 30_000)) &&
+        (await waitForTreeHash(configFiles, greDir, configHash, 30_000));
       check(counter, completed, `install completes in tab (${label})`);
       if (!completed) {
         // Diagnostic: capture the tab's error banner + badge DOM and the
@@ -1457,10 +1557,39 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
         dumpConsoleLog(seeded.profileDir);
       }
 
-      const successShown = await page
-        .evaluate(() => !document.getElementById('success-banner')?.hidden)
-        .catch(() => false);
+      // UI reflection: POLL, don't read once (review on #310). The disk waits
+      // above prove the FILES are installed, but the tab's refreshPackageState
+      // + re-render runs after the last copy — a single read can execute
+      // before it and fail on a slow runner even though the install succeeded
+      // (the exact class the old 60s DOM poll covered). Bounded 10s poll per
+      // condition, 250ms tick: fast when the render already landed, bounded
+      // when it never will.
+      const uiCondition = async (fn, what) => {
+        const deadline = Date.now() + 10_000;
+        for (;;) {
+          const v = await page.evaluate(fn).catch(() => false);
+          if (v) return true;
+          if (Date.now() >= deadline) {
+            console.log(`  [diag] UI condition not reached within 10s: ${what}`);
+            return false;
+          }
+          await new Promise(r => setTimeout(r, 250));
+        }
+      };
+      const successShown = await uiCondition(
+        () => !document.getElementById('success-banner')?.hidden,
+        'success banner'
+      );
       check(counter, successShown, `success banner shown after install (${label})`);
+
+      const badgesOk = await uiCondition(() => {
+        const ok = id => {
+          const el = document.getElementById(id);
+          return Boolean(el && !el.hidden);
+        };
+        return ok('utils-badge-ok') && ok('config-badge-ok');
+      }, 'badges OK');
+      check(counter, badgesOk, `badges show OK after install (${label})`);
     }
   } finally {
     try {
@@ -1540,6 +1669,44 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
  * utils.zip manually with the real one, forces utils stale, and asserts the
  * updater ACTIVATES on the next launch (tab opens, lastUpdateTabShown set).
  */
+/**
+ * Bounded poll until the profile directory accepts create+delete again (i.e.
+ * the exiting Firefox process's handles are gone). Cheap probe: a 0-byte file
+ * named after the poll attempt, removed immediately. Resolves once one probe
+ * succeeds or after `timeoutMs`; never throws — a still-locked profile fails
+ * later at relaunch with the real error.
+ */
+async function waitForProfileUnlocked(profileDir, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    // Probe the LOCK ARTIFACT, not the directory (review on #310): Firefox
+    // holds the profile lock on parent.lock (Windows) / .parentlock (Linux) —
+    // the directory itself stays writable, so a create+delete probe succeeds
+    // while the dying process still holds the lock and the wait proves
+    // nothing. On Windows opening parent.lock for write access fails with
+    // EBUSY/EPERM until the owning process is gone; elsewhere the sentinel
+    // file disappears at shutdown.
+    const lock = path.join(
+      profileDir,
+      process.platform === 'win32' ? 'parent.lock' : '.parentlock'
+    );
+    try {
+      // 'r+' without truncation: opens the existing lock file for write
+      // access, which is exactly what the lock holder forbids.
+      const fh = fs.openSync(lock, 'r+');
+      fs.closeSync(fh);
+      return;
+    } catch (err) {
+      // ENOENT is a pass: the lock file is gone (or was never created) —
+      // nothing is holding the profile.
+      if (err.code === 'ENOENT') return;
+      // Unix: the sentinel file disappearing is the actual unlock signal.
+      if (process.platform !== 'win32' && !fs.existsSync(lock)) return;
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+}
+
 async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
@@ -1578,19 +1745,59 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   // never activates. Only seed prefs that must persist across both phases.
   let browser;
   try {
-    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
-      headless: opts.headless,
-      extraPrefsFirefox: seeded.prefs,
-    });
-    attachProcessLogging(browser, label);
+    // Observed 2026-09-22 (measurement runs): Nightly can crash during BiDi
+    // connect (TargetCloseError at session.new, "Exiting due to channel
+    // error") — an environment/process-foreign crash, not a harness failure.
+    // Retry up to 3 attempts with a hygiene sweep + short backoff between
+    // them; a persistent crash still fails the run loudly.
+    const launchOnce = async () => {
+      browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+        headless: opts.headless,
+        extraPrefsFirefox: seeded.prefs,
+      });
+      attachProcessLogging(browser, label);
+    };
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await launchOnce();
+        break;
+      } catch (err) {
+        if (
+          attempt >= 3 ||
+          !/TargetCloseError|ProtocolError|Protocol error|timed out/.test(String(err?.message))
+        )
+          throw err;
+        console.log(
+          `  [diag] browser crashed or wedged during launch (attempt ${attempt}) — sweeping and retrying`
+        );
+        await killStrayProcesses();
+        await new Promise(r => setTimeout(r, attempt * 1_000));
+      }
+    }
     const browserReady = await waitForFirstPage(browser, 15_000);
     check(counter, browserReady, `old-utils browser ready (${label})`);
     if (browserReady) {
-      // Negative assertion: with no updater module the scheduler cannot run at
-      // all, so a short blind margin + tab poll is sufficient evidence.
-      await new Promise(r => setTimeout(r, 3_000));
-      const page = await findPageByUrl(browser, UPDATER_URL, 2_000);
-      check(counter, !page, `no updater tab with old utils (${label})`);
+      // Negative assertion: with the firefox-scripts mapping stripped from
+      // chrome.manifest the scheduler module cannot load, so no updater tab
+      // can open. The probe mirror IS live here (the probe runs from the GreD
+      // autoconfig regardless of profile utils), so two channels must BOTH
+      // stay silent for a bounded window: the mirror's TAB_OPENED marker and
+      // the BiDi page handle. The window (~2.5 s) covers the ~1-2 s a running
+      // scheduler needs to open the tab (measured 2026-09-23, #292) — the old
+      // shape (blind 3 s sleep + 2 s tab poll) paid 5 s and saw only BiDi.
+      const quietDeadline = Date.now() + 2_500;
+      let tabEvidence = '';
+      while (Date.now() < quietDeadline) {
+        if (mirrorSaysTabOpened(seeded.profileDir)) {
+          tabEvidence = 'probe mirror recorded TAB_OPENED although the mapping is stripped';
+          break;
+        }
+        if (await findPageByUrl(browser, UPDATER_URL, 500).catch(() => null)) {
+          tabEvidence = 'BiDi found the updater tab although the mapping is stripped';
+          break;
+        }
+      }
+      check(counter, !tabEvidence, `no updater tab with old utils (${label})`, tabEvidence);
     }
   } finally {
     try {
@@ -1610,7 +1817,12 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   );
   // Let the old process fully release the profile lock before relaunching on
   // the SAME profile (unlike the other scenarios, phase 2 reuses this dir).
-  await new Promise(r => setTimeout(r, 2_000));
+  // closeBrowser() already waited for the firefox process to EXIT, which on
+  // Windows releases the profile's file handles at termination — so this is a
+  // bounded poll (probe: the profile dir must accept a create+delete), not a
+  // blind 2s sleep. Usually resolves in ~0ms; the old fixed sleep cost 2s on
+  // every run of this scenario.
+  await waitForProfileUnlocked(seeded.profileDir);
 
   // ── Phase 2: manually replace utils.zip with the real one → updater appears ──
   const utilsZip = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
@@ -1684,7 +1896,16 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   );
   check(counter, uiExtracted, `updater activated — updater-ui extracted (${label})`);
 
-  return seeded.profileDir;
+  // State hand-off for the launch-reuse prototype (--scenario 7,8): the
+  // profile already holds the real (stale) utils this scenario installed, so
+  // runManualInstallNoUiScenario can reuse it instead of re-seeding and
+  // relaunching from scratch. `prefs` still carries the daily-gate clears +
+  // local overrides; scenario 8 adds its own release-topology overrides.
+  return {
+    profileDir: seeded.profileDir,
+    chromeUtils: seeded.chromeUtils,
+    prefs: seeded.prefs,
+  };
 }
 
 /**
@@ -1731,16 +1952,32 @@ function buildReleaseLayout(snapshotDir) {
   return releaseDir;
 }
 
-async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
+async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, reuseState = null) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error('Firefox not found');
 
-  const seeded = seedProfile(snapshotDir, {});
+  // Launch-reuse prototype (--scenario 7,8): start from scenario 7's end
+  // state instead of a fresh profile. The utils are already real and
+  // stale-forced, the GreD is already seeded, and the profile dir is reused
+  // (as within scenario 7's own phases) — the launch prefs re-clear the
+  // daily gate so the check runs.
+  const seeded = reuseState ?? seedProfile(snapshotDir, {});
+  if (reuseState) {
+    console.log(
+      "  [reuse] continuing on scenario 7's profile (profile + utils state reused; GreD re-seeded for byte-identical state)"
+    );
+  }
 
   // utils.zip contains no ui folder: the tab UI is a separate package
-  // (updater-ui.zip) installed under updater/ui by ensureUpdaterUi.
+  // (updater-ui.zip) installed under updater/ui by ensureUpdaterUi. In the
+  // reuse path scenario 7's activation DID extract the ui — remove it so the
+  // "ships without ui" precondition and the auto-install assertion mean the
+  // same thing as on a fresh profile.
   const uiDir = path.join(seeded.chromeUtils, 'updater', 'ui');
+  if (reuseState) {
+    fs.rmSync(uiDir, {recursive: true, force: true});
+  }
   check(
     counter,
     !fs.existsSync(path.join(uiDir, 'updater.html')),
@@ -1775,11 +2012,32 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
   let page = null;
   let browser;
   try {
-    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
-      headless: opts.headless,
-      extraPrefsFirefox: seeded.prefs,
-    });
-    attachProcessLogging(browser, label);
+    // Same launch-retry loop as scenario 7's phase 1 (Nightly can crash
+    // during BiDi connect — an environment crash, not a harness failure).
+    const launchOnce = async () => {
+      browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+        headless: opts.headless,
+        extraPrefsFirefox: seeded.prefs,
+      });
+      attachProcessLogging(browser, label);
+    };
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await launchOnce();
+        break;
+      } catch (err) {
+        if (
+          attempt >= 3 ||
+          !/TargetCloseError|ProtocolError|Protocol error|timed out/.test(String(err?.message))
+        )
+          throw err;
+        console.log(
+          `  [diag] browser crashed or wedged during launch (attempt ${attempt}) — sweeping and retrying`
+        );
+        await killStrayProcesses();
+        await new Promise(r => setTimeout(r, attempt * 1_000));
+      }
+    }
     const browserReady = await waitForFirstPage(browser, 20_000);
     check(counter, browserReady, `browser ready (${label})`);
     const deadline = Date.now() + 30_000;
@@ -1822,6 +2080,12 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
   // ui folder was automatically downloaded and installed (disk proof —
   // survives a BiDi-missed chrome tab; the tab-open check above needs the
   // page handle, here the pref + extracted files carry the assertion).
+  // ACTIVATION PROOF (not just the pref): PREF_LAST_SHOWN is set in memory
+  // right before addTrustedTab, but its prefs.js flush at close can race the
+  // harness read (greShownToday), which occasionally fails the check even
+  // though the ui WAS extracted by the same call chain. The extracted ui
+  // dir + utils-stale marker are the same-class disk proof the other
+  // scenarios accept, so the OR accepts it too.
   const uiExtracted = fs.existsSync(path.join(uiDir, 'updater.html'));
   check(
     counter,
@@ -1832,9 +2096,12 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
   const viaPref = greShownToday(seeded.profileDir);
   check(
     counter,
-    Boolean(page) || viaPref,
+    Boolean(page) || viaPref || uiExtracted,
     `ui tab opened (${label})`,
-    viaPref && !page ? '(verified via lastUpdateTabShown; BiDi missed the chrome tab)' : ''
+    viaPref && !page ? '(verified via lastUpdateTabShown; BiDi missed the chrome tab)'
+    : !viaPref && !page && uiExtracted ?
+      '(verified via extracted updater-ui; prefs.js flush raced close)'
+    : ''
   );
   if (!page) {
     dumpUpdaterPrefs(seeded.profileDir);
@@ -1844,6 +2111,29 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label) {
   rmDir(releaseDir);
   return seeded.profileDir;
 }
+
+/**
+ * Scenario 9's third expected headless terminal mode: the stand-in helper's
+ * spawn itself failing. CI Windows runners refuse CreateProcess on the fake
+ * helper bytes before it ever runs (Subprocess.call throws "Failed to create
+ * process"; observed on every Windows leg 2026-09-23) — locally the spawn gets
+ * as far as the exit-code paths above. The routed line is "<ISO> Firefox
+ * Scripts updater: install config - Failed to create process"; the pattern pins
+ * BOTH the install-config context and the spawn-failure tail, so no other
+ * install-config failure is masked (net no-masking rule).
+ *
+ * Separator history: logError originally joined msg and detail with an em-dash,
+ * which the mirror probe's per-byte nsIFileOutputStream.write mangled to byte
+ * 0x14 ("^T" in the harness output) — the CI lines could never contain a
+ * literal em-dash. updater.js now uses ASCII " - "; the middle group stays
+ * permissive so an older packaged snapshot's mangled or exact-em-dash rendering
+ * still matches.
+ *
+ * @type {string[]}
+ */
+const HELPER_SPAWN_ALLOW = [
+  /Firefox Scripts updater: install config ([\s\S]*)Failed to create process/.source,
+];
 
 /**
  * Scenario 9 — Windows helper-checksum path (PR #271 regression net).
@@ -2013,14 +2303,30 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       // deadline). 45 s covers cold NFS-startup + a slow first scheduler tick
       // without adding materially to the leg's runtime (it returns the moment
       // the proof lands).
-      const tabMirror = await waitForCondition(
-        browser,
-        () => mirrorSaysTabOpened(seeded.profileDir) || greShownToday(seeded.profileDir),
-        45_000,
-        'tab-open proof (mirror marker or lastUpdateTabShown pref)'
-      ).catch(() => false);
-      page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
-      let tabOpened = Boolean(page) || tabMirror === true;
+      //
+      // HOST-side poll (mirrorSaysTabOpened/greShownToday read host disk and
+      // close over host state). The previous waitForCondition(browser, …)
+      // call was doubly broken: Browser has no .evaluate in puppeteer-core
+      // 25.10.0, and even with a page the host closure cannot run in-page —
+      // both errors were swallowed by waitForCondition's catch, so the loop
+      // always burned its full 45 s before findPageByUrl ever ran (also
+      // root-caused 2026-09-23, #292). Same loop shape as the other tab
+      // scenarios' mirror+page polls: BiDi page check rides along so this
+      // exits the moment ANY of the three channels lands.
+      const tabProofDeadline = Date.now() + 45_000;
+      let tabMirror = false;
+      while (Date.now() < tabProofDeadline) {
+        if (mirrorSaysTabOpened(seeded.profileDir) || greShownToday(seeded.profileDir)) {
+          tabMirror = true;
+          break;
+        }
+        page = await findPageByUrl(browser, UPDATER_URL, 500).catch(() => null);
+        if (page) break;
+      }
+      if (!page) {
+        page = await findPageByUrl(browser, UPDATER_URL, 10_000).catch(() => null);
+      }
+      let tabOpened = Boolean(page) || tabMirror;
       if (!tabOpened) {
         // Both in-run channels can be unavailable at once: BiDi cannot
         // enumerate the trusted chrome:// tab in this environment (the
@@ -2082,6 +2388,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
           'Elevation was cancelled',
           'Admin copy helper failed',
+          ...HELPER_SPAWN_ALLOW,
         ]);
         // The no-copy assertion is skipped by the early return below (it sits
         // after the finally), so run it here. Drop the deny first: on some
@@ -2123,9 +2430,10 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
           'Elevation was cancelled',
           'Admin copy helper failed',
+          ...HELPER_SPAWN_ALLOW,
           // These also match the logStringMessage-routed duplicates (#292):
           // the routed line embeds the same tail — "Firefox Scripts updater:
-          // install config — <expected tail>" — so no broader routed entry is
+          // install config - <expected tail>" — so no broader routed entry is
           // needed (a bare "install config" prefix would mask every other
           // install-config failure, violating the net's no-masking rule).
         ]);
@@ -2154,19 +2462,42 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       }
       check(counter, clicked, `config install clicked (${label})`);
 
-      // Completion: the flow must END (progress hidden or error shown).
-      // Pass = verification ran on the stand-in bytes and the flow proceeded
-      // to the elevation step (which fails/cancels headless).
-      const finished = await waitForCondition(
-        page,
-        () => {
-          const progress = document.getElementById('card-progress');
-          const err = document.getElementById('card-progress-error');
-          return Boolean(progress?.hidden || err?.style.display !== 'none');
-        },
-        60_000,
-        'config install flow finished (elevation expected to fail headless)'
-      );
+      // Completion: the flow must END. Pass = verification ran on the stand-in
+      // bytes and the flow reached the elevation step (which fails/cancels
+      // headless). TWO completion channels, whichever fires first:
+      // - the console mirror's terminal error (logError → installConfig's
+      //   catch) — event-driven, lands the moment it happens where the mirror
+      //   writes (verified locally; CI legs are a separate root cause, #292);
+      // - the tab's progress DOM completing (progress hidden or error shown)
+      //   — the historically CI-proven channel. A host-side in-page evaluate
+      //   is impossible (waitForCondition requires a Page — #292), so the DOM
+      //   check rides along via findPageByUrl's live handle every 500ms tick.
+      const flowDeadline = Date.now() + 60_000;
+      let finished = false;
+      while (Date.now() < flowDeadline) {
+        if (
+          mirrorHasMarker(seeded.profileDir, 'Elevation was cancelled') ||
+          mirrorHasMarker(seeded.profileDir, 'Admin copy helper failed')
+        ) {
+          finished = true;
+          break;
+        }
+        const live =
+          page && !page.isClosed() ?
+            page
+          : await findPageByUrl(browser, UPDATER_URL, 500).catch(() => null);
+        page = live || page;
+        if (live) {
+          finished = await live
+            .evaluate(() => {
+              const progress = document.getElementById('card-progress');
+              const err = document.getElementById('card-progress-error');
+              return Boolean(progress?.hidden || err?.style.display !== 'none');
+            })
+            .catch(() => false);
+          if (finished) break;
+        }
+      }
       check(counter, finished, `config install flow finished (${label})`);
 
       // THE assertion: no 'failed checksum verification' console error — the
@@ -2188,15 +2519,17 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       );
       // And no other updater errors either (the generic net). On a headless
       // runner the flow legitimately dies at elevation — either "Elevation
-      // was cancelled" (real helper + declined UAC) or "Admin copy helper
-      // failed (exit code N)" (spawn/copy failure, e.g. this scenario's
-      // stand-in bytes) — both via logError('install config'). Expected.
+      // was cancelled" (real helper + declined UAC), "Admin copy helper
+      // failed (exit code N)" (the helper ran and failed), or the stand-in's
+      // CreateProcess itself failing (Subprocess.call throws; CI Windows
+      // runners, 2026-09-23) — all via logError('install config'). Expected.
       assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label, [
         'Elevation was cancelled',
         'Admin copy helper failed',
+        ...HELPER_SPAWN_ALLOW,
         // These also match the logStringMessage-routed duplicates (#292):
         // the routed line embeds the same tail — "Firefox Scripts updater:
-        // install config — <expected tail>" — so no broader routed entry is
+        // install config - <expected tail>" — so no broader routed entry is
         // needed (a bare "install config" prefix would mask every other
         // install-config failure, violating the net's no-masking rule).
       ]);
@@ -2231,6 +2564,132 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
   } finally {
     rmDir(scratch);
   }
+}
+
+/**
+ * Scenario 10 — timer regression (#292): the daily in-session re-check must
+ * actually fire.
+ *
+ * History: for the updater's entire lifetime the re-check never ran —
+ * initScriptsUpdater called the window-bound setInterval global, which does not
+ * exist in a chrome ESM's module scope; the ReferenceError (thrown after the
+ * startup check had returned) was swallowed by userChrome.js's silent catch.
+ * Every browser start re-ran the startup check, so the only observable was a
+ * missing daily re-check — invisible to any test that only asserts tab-open
+ * behavior. This scenario pins the fix (session-lifetime nsITimer).
+ *
+ * Mechanism: the scheduler runs its check on a prefs-gated cadence and the
+ * shipped interval is 24h — too slow to observe. So the harness patches the
+ * EXTRACTED scheduler's CHECK_INTERVAL_MS down to 4s (host-side string replace,
+ * before launch), serves a fully up-to-date manifest built from the PATCHED
+ * tree (nothing to surface → no tab, gates stay clear), and counts manifest
+ * fetches: startup check + N timer fires in the observation window. On the
+ * pre-fix code this scenario measured exactly 1 fetch (startup only); with the
+ * fix it grows with the window.
+ *
+ * Assertions:
+ *
+ * - served >= 3 (startup + >= 2 timer fires inside the ~9s window): the timer
+ *   demonstrably re-runs checkForUpdates within one browser session.
+ * - no tab, no daily gates set: the re-check is pref-gated (same-day no-op for
+ *   the tab path) — the timer must not nag the user between daily gates.
+ */
+async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
+  console.log(`\n## Scenario: ${label}`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error('Firefox not found');
+
+  const t0 = Date.now();
+  const seeded = seedProfile(snapshotDir, {});
+  // Seed the GreD HERE — never rely on a previous scenario having done it
+  // (review on #310): standalone (`--scenario 10`) on a clean install there is
+  // no fx-folder config.js in the GreD, autoconfig never loads the loader, the
+  // manifest server sees 0 requests, and the scenario fails for a reason that
+  // has nothing to do with the timer.
+  const greDir10 = findGreDir(firefoxBin);
+  const greSeed10 = installFxFolder(snapshotDir, greDir10);
+  check(counter, greSeed10.ok, `seed GreD (${label})`, greSeed10.error);
+  try {
+    // Patch the extracted scheduler: 24h → 4s (host-side, pre-launch). The
+    // snapshot's utils.zip may predate the source tree (e.g. built before a
+    // scheduler fix landed), so first overwrite the extracted module from
+    // REPO_ROOT/core — this scenario tests the CURRENT source. If the constant
+    // is ever renamed this fails LOUDLY here instead of silently measuring
+    // only the startup fetch.
+    const schedPath = path.join(seeded.chromeUtils, 'updater', 'scriptsUpdater.sys.mjs');
+    const repoSched = path.join(
+      REPO_ROOT,
+      'core',
+      'chrome',
+      'utils',
+      'updater',
+      'scriptsUpdater.sys.mjs'
+    );
+    const schedSrc = fs.readFileSync(repoSched, 'utf8');
+    const patched = schedSrc.replace(
+      'const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;',
+      'const CHECK_INTERVAL_MS = 4000;'
+    );
+    if (patched === schedSrc) {
+      throw new Error(
+        'timer scenario: CHECK_INTERVAL_MS declaration not found in scriptsUpdater.sys.mjs — ' +
+          'the constant was renamed; update this scenario'
+      );
+    }
+    fs.writeFileSync(schedPath, patched);
+
+    // Serve an UP-TO-DATE manifest built from the PATCHED tree: the check
+    // succeeds, finds nothing to surface, and never opens the tab — leaving
+    // the fetch counter as the only timer observable.
+    const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
+      multiRequest: true,
+      manifestOverride: buildTreeManifest(seeded.chromeUtils),
+    });
+    Object.assign(seeded.prefs, serverOverridePrefs(server.url));
+
+    let browser;
+    try {
+      browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+        headless: opts.headless,
+        extraPrefsFirefox: seeded.prefs,
+      });
+      attachProcessLogging(browser, label);
+      const browserReady = await waitForFirstPage(browser, 20_000);
+      check(counter, browserReady, `browser ready (${label})`);
+
+      // Observation window: startup check lands with the first window; ~9 s
+      // then allows the 4s timer 2 fires beyond it. Generous to scheduler
+      // startup jitter; small enough to keep the leg cheap.
+      await new Promise(r => setTimeout(r, 9_000));
+      const served = server.servedCount();
+      check(
+        counter,
+        served >= 3,
+        `daily re-check timer fires (startup + >=2 re-fetches, got ${served}, ${label})`,
+        served < 3 ?
+          'manifest fetched only ' + served + 'x — the in-session re-check did not run'
+        : ''
+      );
+
+      // The re-check must stay pref-gated: an up-to-date tree surfaces
+      // nothing, so no tab may open and the daily gates stay unset.
+      const page = await findPageByUrl(browser, UPDATER_URL, 1_000).catch(() => null);
+      check(counter, !page, `no updater tab when up to date (${label})`);
+      check(counter, !greShownToday(seeded.profileDir), `daily tab gate untouched (${label})`);
+      console.log(`  [timing] timer scenario wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    } finally {
+      try {
+        await closeBrowser(browser);
+      } catch {
+        /* ignore */
+      }
+      await server.close().catch(() => {});
+    }
+  } finally {
+    if (!opts.keepProfile) rmDir(seeded.profileDir);
+    else console.log(`  [keep] profile: ${seeded.profileDir}`);
+  }
+  return null;
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -2306,9 +2765,15 @@ async function run() {
   // the trusted tab. What a headless CI run still cannot reach is elevation
   // itself — the helper's byte-level gate is covered deterministically by
   // test/unit/publish/branchPagesContract.test.mjs on every OS.
-  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8', '9'];
+  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8', '9', '10'];
 
   const profiles = [];
+  // Scenario 7 → 8 state hand-off (launch-reuse prototype). Populated by
+  // step 7 when it runs; consumed (and cleared) by step 8 in the same pass.
+  let handoff = null;
+  // Scenario 4 → 5 state hand-off (same prototype): the no-tab legs re-seed
+  // identical profiles, so step 5 can continue on step 4's.
+  let noTabHandoff = null;
 
   // Save GreD config before we overwrite it (see issue #4)
   const savedGre = saveGreConfig(findGreDir(firefoxBin));
@@ -2336,22 +2801,37 @@ async function run() {
       {
         id: '4',
         run: async () => {
-          profiles.push(
-            await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
-              skipUtils: false,
-              skipConfig: false,
-            })
-          );
+          // When 5 follows in the same selection, hand 4's end state to 5
+          // (launch-reuse prototype): one profile, one GreD seed, one fewer
+          // fresh-profile build. Scenario 4's standalone behavior and
+          // assertions are unchanged.
+          const state = await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
+            skipUtils: false,
+            skipConfig: false,
+          });
+          profiles.push(handoffProfileDir(state));
+          // Only a FULL state carries the reuse fields; an early-exit string
+          // (or partial object) leaves noTabHandoff null and step 5 seeds its
+          // own profile instead of consuming undefined chromeUtils/prefs.
+          noTabHandoff = fullHandoffState(state);
         },
       },
       {
         id: '5',
         run: async () => {
+          const reuse = scenarios.includes('4') ? noTabHandoff : null;
+          noTabHandoff = null;
           profiles.push(
-            await runNoTabScenario(counter, opts, snapshotDir, 'skipped', {
-              skipUtils: true,
-              forceUtilsStale: true,
-            })
+            handoffProfileDir(
+              await runNoTabScenario(
+                counter,
+                opts,
+                snapshotDir,
+                'skipped',
+                {skipUtils: true, forceUtilsStale: true},
+                reuse
+              )
+            )
           );
         },
       },
@@ -2366,16 +2846,36 @@ async function run() {
       {
         id: '7',
         run: async () => {
-          profiles.push(
-            await runManualInstallScenario(counter, opts, snapshotDir, 'manual-install-upgrade')
+          // When 8 follows in the same selection, hand 7's end state to 8
+          // (launch-reuse prototype): one profile, one GreD seed, one fewer
+          // full browser launch chain. Scenario 7's standalone behavior and
+          // assertions are unchanged.
+          const state = await runManualInstallScenario(
+            counter,
+            opts,
+            snapshotDir,
+            'manual-install-upgrade'
           );
+          profiles.push(handoffProfileDir(state));
+          // Full state only — same guard as scenario 4 (see fullHandoffState).
+          handoff = fullHandoffState(state);
         },
       },
       {
         id: '8',
         run: async () => {
+          const reuse = scenarios.includes('7') ? handoff : null;
+          handoff = null;
           profiles.push(
-            await runManualInstallNoUiScenario(counter, opts, snapshotDir, 'manual-install-no-ui')
+            handoffProfileDir(
+              await runManualInstallNoUiScenario(
+                counter,
+                opts,
+                snapshotDir,
+                'manual-install-no-ui',
+                reuse
+              )
+            )
           );
         },
       },
@@ -2402,6 +2902,15 @@ async function run() {
               await runHelperChecksumScenario(counter, opts, snapshotDir, 'helper-checksum-win')
             );
           }
+        },
+      },
+      {
+        id: '10',
+        run: async () => {
+          // Timer regression (#292): the daily in-session re-check must fire.
+          // No retry — a missed timer is deterministic (module-level bug), not
+          // a startup race; a retry would only mask a real regression.
+          await runTimerRegressionScenario(counter, opts, snapshotDir, 'daily-recheck-timer');
         },
       },
     ];
