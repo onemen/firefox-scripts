@@ -172,6 +172,12 @@ this in check:
    the same pair as the installer (`installer/src/helper/version.rc` + `helper.manifest`), instead
    of relying on the mingw crt's auto-linked `default-manifest.o`: the crt version CI installs did
    not supply one, so the shipped helper used to have a version resource and no manifest at all.
+   Both PEs also carry an **icon resource** — `installer/src/installer.ico`, reused by
+   `src/helper/version.rc` — rendered at 16/24/32/48/128/256 px from the updater's own
+   `tools/publish/remote-ui/logos/favicon.svg` by `tools/make-installer-icon.mjs` and committed
+   (re-run that script after an artwork change; it needs a local Chrome, so it never runs in CI).
+   Without it Explorer and the taskbar show a blank-document glyph, and the PE is one more piece of
+   missing metadata.
 2. **The AV scan gate** — `tools/scan-av.mjs` scans built binaries before they are published
    (Windows: Windows Defender via `MpCmdRun.exe`; Linux/macOS: ClamAV `clamscan`). The publish flow
    (`tools/publish/upload.mjs`) scans the EXACT bytes about to be uploaded and refuses to publish
@@ -186,6 +192,16 @@ this in check:
    be hashed and shipped. The check runs after the build/reuse pass and again before the pass-2
    security gates. If it fires: delete the named artifact(s) and re-run the build (the link usually
    succeeds on retry).
+4. **No shell surface** — neither binary starts a command interpreter. The forced browser close
+   walks the process snapshot and terminates the tree itself (`terminate_process_tree()` in
+   `installer/src/restart.c`) instead of shelling out to `taskkill /t`, and Ctrl+C is handled purely
+   through the console API: `SetConsoleCtrlHandler(NULL, FALSE)` restores Ctrl+C delivery for the
+   new process group Windows PowerShell 5.1 starts native processes in (measured against a new-group
+   parent: plain child = no `CTRL_C_EVENT`, re-enabled child = `CTRL_C_EVENT`), which retired the
+   global-keyboard-polling watchdog and its terminal image-name list along with it. A GUI exe that
+   launches `cmd.exe` to kill a process tree, plus `GetAsyncKeyState` polling in a background
+   thread, is precisely the behaviour process-detection heuristics score; removing it is hygiene
+   with an FP side effect, not a cure.
 
 ### Local scan (after `make dist_win`)
 
