@@ -212,10 +212,10 @@ test('E2E console-mirror probe writes UTF-8 bytes (Unicode-safe)', () => {
   assert.ok(snippetStart !== -1, 'CONFIG_PROBE_SNIPPET exists');
   const snippetEnd = e2e.indexOf('`;', snippetStart);
   const snippet = e2e.slice(snippetStart, snippetEnd);
-
   assert.ok(
-    snippet.includes("Cc['@mozilla.org/binaryoutputstream;1']") && snippet.includes('writeBytes'),
-    'probe must write through nsIBinaryOutputStream.writeBytes, not fos.write'
+    snippet.includes("Cc['@mozilla.org/binaryoutputstream;1']") &&
+      snippet.includes('writeByteArray'),
+    'probe must write through nsIBinaryOutputStream.writeByteArray, not fos.write'
   );
   assert.ok(
     !/fos\.write\(/.test(snippet),

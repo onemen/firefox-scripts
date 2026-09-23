@@ -152,9 +152,14 @@ try {
     Ci.nsIBinaryOutputStream
   );
   bos.setOutputStream(fos);
+  // writeByteArray, NOT writeBytes: writeBytes' IDL takes an opaque string
+  // (one char = one byte — the exact char-code trap this fixes), while
+  // writeByteArray takes [array,size_is] in uint8_t — a plain number Array.
+  // (A Uint8Array through writeBytes throws "String does not have as many
+  // characters" — proven in the autoconfig sandbox, 2026-09-23.)
   const writeUtf8 = s => {
     const bytes = utf8Bytes(s);
-    bos.writeBytes(bytes, bytes.length);
+    bos.writeByteArray(Array.from(bytes), bytes.length);
   };
   writeUtf8('MIRROR-OPEN' + String.fromCharCode(10));
   cs.registerListener({
