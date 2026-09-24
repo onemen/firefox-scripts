@@ -13,13 +13,13 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.10.0)
+        version: 10.0.1(eslint@10.11.0)
       '@eslint/markdown':
         specifier: 8.0.3
         version: 8.0.3
       '@microsoft/eslint-plugin-sdl':
         specifier: 1.1.0
-        version: 1.1.0(eslint@10.10.0)
+        version: 1.1.0(eslint@10.11.0)
       '@octokit/rest':
         specifier: 22.0.1
         version: 22.0.1
@@ -33,14 +33,14 @@ importers:
         specifier: 1.8.0
         version: 1.8.0
       eslint:
-        specifier: 10.10.0
-        version: 10.10.0
+        specifier: 10.11.0
+        version: 10.11.0
       eslint-config-prettier:
         specifier: 10.1.8
-        version: 10.1.8(eslint@10.10.0)
+        version: 10.1.8(eslint@10.11.0)
       eslint-plugin-mozilla:
         specifier: 5.0.1
-        version: 5.0.1(eslint-plugin-jsdoc@63.3.3(eslint@10.10.0))(eslint-plugin-no-unsanitized@4.1.5(eslint@10.10.0))(eslint-plugin-promise@7.3.0(eslint@10.10.0))(eslint@10.10.0)
+        version: 5.0.1(eslint-plugin-jsdoc@63.3.3(eslint@10.11.0))(eslint-plugin-no-unsanitized@4.1.5(eslint@10.11.0))(eslint-plugin-promise@7.3.0(eslint@10.11.0))(eslint@10.11.0)
       eslint-plugin-security:
         specifier: 4.0.1
         version: 4.0.1
@@ -57,14 +57,14 @@ importers:
         specifier: 9.0.3
         version: 9.0.3
       prettier:
-        specifier: 3.9.6
-        version: 3.9.6
+        specifier: 3.9.8
+        version: 3.9.8
       prettier-plugin-jsdoc:
         specifier: 1.8.1
-        version: 1.8.1(prettier@3.9.6)
+        version: 1.8.1(prettier@3.9.8)
       puppeteer-core:
-        specifier: 25.10.0
-        version: 25.10.0
+        specifier: 25.11.0
+        version: 25.11.0
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -694,8 +694,8 @@ packages:
   devlop@1.1.0:
     resolution: {integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==}
 
-  devtools-protocol@0.0.1666840:
-    resolution: {integrity: sha512-gCcO42XCHKEs7Ag0S7aGYsnJ7hlgrO3qderYqeiY0Eqk+0GFfuvT13IA0hHreJTa2KCdDVyGMeOhdMNmrrTjVg==}
+  devtools-protocol@0.0.1680125:
+    resolution: {integrity: sha512-rVARKAvOFJCFkvgX01VLvYqKIvt+cRCqvUxIhB2oAqVGPalxk3w3sb5TUGDagpow/EFblBpm/Zl/29QA2dd+jA==}
 
   doctrine@2.1.0:
     resolution: {integrity: sha512-35mSku4ZXK0vfCuHEDAwt55dg2jNajHZ1odvF+8SSr82EsZY4QmXfuWso8oEd8zRhVObSN18aM0CjSdoBX7zIw==}
@@ -868,8 +868,8 @@ packages:
     resolution: {integrity: sha512-tD40eHxA35h0PEIZNeIjkHoDR4YjjJp34biM0mDvplBe//mB+IHCqHDGV7pxF+7MklTvighcCPPZC7ynWyjdTA==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  eslint@10.10.0:
-    resolution: {integrity: sha512-NPXn6r5zl4uET1DAVPaOwzX3rut4c0wcmw3dWJAfOsTM5+TogXo0DDjz8pwm/hL8cyVNpHqeK4JpN0NjnyFFNw==}
+  eslint@10.11.0:
+    resolution: {integrity: sha512-P7a6UEEqb9G95MYAtqkmsTbVXIYyzIfl6NGOIJk162PaahFxFyeGcrlXYFSiagECg4sEm8IseJdZBKR3rx6MsQ==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
     hasBin: true
     peerDependencies:
@@ -1622,8 +1622,8 @@ packages:
     peerDependencies:
       prettier: ^3.0.0
 
-  prettier@3.9.6:
-    resolution: {integrity: sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g==}
+  prettier@3.9.8:
+    resolution: {integrity: sha512-WRFq3Wn3WId7LLROfMLdH7xaFr2jR62wU8nLO6rQUOLOxNZUviyJQs1M0iIhLexSFy+L+w0ch66wtoO2jRjG0A==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -1645,8 +1645,8 @@ packages:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
 
-  puppeteer-core@25.10.0:
-    resolution: {integrity: sha512-Hy5eMQshOEMil4JUUx03h5pw1HYkYCso1RG/gcpPlFSd4cYPOcopxcXEAxpLPOkOPJb9LIJtwxuj66bSdvknFg==}
+  puppeteer-core@25.11.0:
+    resolution: {integrity: sha512-Ujym7JbxoAqanaxGcHgmTomfhC01HfDCSuGZ8Hs9boHrDjzbNVMnFRJo2KtbDT9LCRgeJoFnkn9JQZ41eEUrLw==}
     engines: {node: '>=22.12.0'}
 
   qified@0.10.1:
@@ -2049,9 +2049,9 @@ snapshots:
 
   '@es-joy/resolve.exports@1.2.0': {}
 
-  '@eslint-community/eslint-utils@4.10.1(eslint@10.10.0)':
+  '@eslint-community/eslint-utils@4.10.1(eslint@10.11.0)':
     dependencies:
-      eslint: 10.10.0
+      eslint: 10.11.0
       eslint-visitor-keys: 3.4.3
 
   '@eslint-community/regexpp@4.12.2': {}
@@ -2072,9 +2072,9 @@ snapshots:
     dependencies:
       '@types/json-schema': 7.0.15
 
-  '@eslint/js@10.0.1(eslint@10.10.0)':
+  '@eslint/js@10.0.1(eslint@10.11.0)':
     optionalDependencies:
-      eslint: 10.10.0
+      eslint: 10.11.0
 
   '@eslint/markdown@8.0.3':
     dependencies:
@@ -2128,11 +2128,11 @@ snapshots:
 
   '@keyv/serialize@1.1.1': {}
 
-  '@microsoft/eslint-plugin-sdl@1.1.0(eslint@10.10.0)':
+  '@microsoft/eslint-plugin-sdl@1.1.0(eslint@10.11.0)':
     dependencies:
-      eslint: 10.10.0
-      eslint-plugin-n: 17.10.3(eslint@10.10.0)
-      eslint-plugin-react: 7.37.3(eslint@10.10.0)
+      eslint: 10.11.0
+      eslint-plugin-n: 17.10.3(eslint@10.11.0)
+      eslint-plugin-react: 7.37.3(eslint@10.11.0)
       eslint-plugin-security: 1.4.0
 
   '@nodelib/fs.scandir@2.1.5':
@@ -2523,9 +2523,9 @@ snapshots:
 
   character-reference-invalid@2.0.1: {}
 
-  chromium-bidi@17.0.2(devtools-protocol@0.0.1666840):
+  chromium-bidi@17.0.2(devtools-protocol@0.0.1680125):
     dependencies:
-      devtools-protocol: 0.0.1666840
+      devtools-protocol: 0.0.1680125
       mitt: 3.0.1
       zod: 3.25.76
 
@@ -2618,7 +2618,7 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
-  devtools-protocol@0.0.1666840: {}
+  devtools-protocol@0.0.1680125: {}
 
   doctrine@2.1.0:
     dependencies:
@@ -2776,23 +2776,23 @@ snapshots:
 
   escape-string-regexp@5.0.0: {}
 
-  eslint-compat-utils@0.5.1(eslint@10.10.0):
+  eslint-compat-utils@0.5.1(eslint@10.11.0):
     dependencies:
-      eslint: 10.10.0
+      eslint: 10.11.0
       semver: 7.8.5
 
-  eslint-config-prettier@10.1.8(eslint@10.10.0):
+  eslint-config-prettier@10.1.8(eslint@10.11.0):
     dependencies:
-      eslint: 10.10.0
+      eslint: 10.11.0
 
-  eslint-plugin-es-x@7.8.0(eslint@10.10.0):
+  eslint-plugin-es-x@7.8.0(eslint@10.11.0):
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.10.0)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.11.0)
       '@eslint-community/regexpp': 4.12.2
-      eslint: 10.10.0
-      eslint-compat-utils: 0.5.1(eslint@10.10.0)
+      eslint: 10.11.0
+      eslint-compat-utils: 0.5.1(eslint@10.11.0)
 
-  eslint-plugin-jsdoc@63.3.3(eslint@10.10.0):
+  eslint-plugin-jsdoc@63.3.3(eslint@10.11.0):
     dependencies:
       '@es-joy/jsdoccomment': 0.91.0
       '@es-joy/resolve.exports': 1.2.0
@@ -2800,7 +2800,7 @@ snapshots:
       comment-parser: 1.4.7
       debug: 4.4.3
       escape-string-regexp: 4.0.0
-      eslint: 10.10.0
+      eslint: 10.11.0
       espree: 11.2.0
       esquery: 1.7.0
       html-entities: 2.6.0
@@ -2812,12 +2812,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-plugin-mozilla@5.0.1(eslint-plugin-jsdoc@63.3.3(eslint@10.10.0))(eslint-plugin-no-unsanitized@4.1.5(eslint@10.10.0))(eslint-plugin-promise@7.3.0(eslint@10.10.0))(eslint@10.10.0):
+  eslint-plugin-mozilla@5.0.1(eslint-plugin-jsdoc@63.3.3(eslint@10.11.0))(eslint-plugin-no-unsanitized@4.1.5(eslint@10.11.0))(eslint-plugin-promise@7.3.0(eslint@10.11.0))(eslint@10.11.0):
     dependencies:
-      eslint: 10.10.0
-      eslint-plugin-jsdoc: 63.3.3(eslint@10.10.0)
-      eslint-plugin-no-unsanitized: 4.1.5(eslint@10.10.0)
-      eslint-plugin-promise: 7.3.0(eslint@10.10.0)
+      eslint: 10.11.0
+      eslint-plugin-jsdoc: 63.3.3(eslint@10.11.0)
+      eslint-plugin-no-unsanitized: 4.1.5(eslint@10.11.0)
+      eslint-plugin-promise: 7.3.0(eslint@10.11.0)
       eslint-scope: 8.4.0
       eslint-visitor-keys: 4.2.1
       espree: 10.4.0
@@ -2825,28 +2825,28 @@ snapshots:
       htmlparser2: 10.1.0
       toml-eslint-parser: 1.0.3
 
-  eslint-plugin-n@17.10.3(eslint@10.10.0):
+  eslint-plugin-n@17.10.3(eslint@10.11.0):
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.10.0)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.11.0)
       enhanced-resolve: 5.24.5
-      eslint: 10.10.0
-      eslint-plugin-es-x: 7.8.0(eslint@10.10.0)
+      eslint: 10.11.0
+      eslint-plugin-es-x: 7.8.0(eslint@10.11.0)
       get-tsconfig: 4.14.1
       globals: 15.15.0
       ignore: 5.3.2
       minimatch: 9.0.9
       semver: 7.8.5
 
-  eslint-plugin-no-unsanitized@4.1.5(eslint@10.10.0):
+  eslint-plugin-no-unsanitized@4.1.5(eslint@10.11.0):
     dependencies:
-      eslint: 10.10.0
+      eslint: 10.11.0
 
-  eslint-plugin-promise@7.3.0(eslint@10.10.0):
+  eslint-plugin-promise@7.3.0(eslint@10.11.0):
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.10.0)
-      eslint: 10.10.0
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.11.0)
+      eslint: 10.11.0
 
-  eslint-plugin-react@7.37.3(eslint@10.10.0):
+  eslint-plugin-react@7.37.3(eslint@10.11.0):
     dependencies:
       array-includes: 3.1.9
       array.prototype.findlast: 1.2.5
@@ -2854,7 +2854,7 @@ snapshots:
       array.prototype.tosorted: 1.1.4
       doctrine: 2.1.0
       es-iterator-helpers: 1.4.0
-      eslint: 10.10.0
+      eslint: 10.11.0
       estraverse: 5.3.0
       hasown: 2.0.4
       jsx-ast-utils: 3.3.5
@@ -2894,9 +2894,9 @@ snapshots:
 
   eslint-visitor-keys@5.0.1: {}
 
-  eslint@10.10.0:
+  eslint@10.11.0:
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.10.0)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.11.0)
       '@eslint-community/regexpp': 4.12.2
       '@eslint/config-array': 0.23.5
       '@eslint/config-helpers': 0.7.0
@@ -3908,16 +3908,16 @@ snapshots:
 
   prelude-ls@1.2.1: {}
 
-  prettier-plugin-jsdoc@1.8.1(prettier@3.9.6):
+  prettier-plugin-jsdoc@1.8.1(prettier@3.9.8):
     dependencies:
       binary-searching: 2.0.5
       comment-parser: 1.4.7
       mdast-util-from-markdown: 2.0.3
-      prettier: 3.9.6
+      prettier: 3.9.8
     transitivePeerDependencies:
       - supports-color
 
-  prettier@3.9.6: {}
+  prettier@3.9.8: {}
 
   process-nextick-args@2.0.1: {}
 
@@ -3933,11 +3933,11 @@ snapshots:
 
   punycode@2.3.1: {}
 
-  puppeteer-core@25.10.0:
+  puppeteer-core@25.11.0:
     dependencies:
       '@puppeteer/browsers': 3.2.2
-      chromium-bidi: 17.0.2(devtools-protocol@0.0.1666840)
-      devtools-protocol: 0.0.1666840
+      chromium-bidi: 17.0.2(devtools-protocol@0.0.1680125)
+      devtools-protocol: 0.0.1680125
       typed-query-selector: 2.12.2
       webdriver-bidi-protocol: 0.4.3
       ws: 8.21.3
