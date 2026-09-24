@@ -1815,7 +1815,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
       } catch (err) {
         if (
           attempt >= 3 ||
-          !/TargetCloseError|ProtocolError|Protocol error|timed out/.test(String(err?.message))
+          !/TargetCloseError|ProtocolError|Protocol error|timed out/i.test(String(err?.message))
         )
           throw err;
         console.log(
@@ -2079,7 +2079,7 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
       } catch (err) {
         if (
           attempt >= 3 ||
-          !/TargetCloseError|ProtocolError|Protocol error|timed out/.test(String(err?.message))
+          !/TargetCloseError|ProtocolError|Protocol error|timed out/i.test(String(err?.message))
         )
           throw err;
         console.log(
