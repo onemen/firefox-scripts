@@ -18,14 +18,15 @@ Order matters: installer / updater / tests / CI first, core-file PRs last.
 - **P2-1** `userChrome.js` `createElement`: `toggleAttribute` for Firefox 149+ (bug 2008041).
 - **P2-2** `BootstrapLoader`: release the spin wait on load errors (#25, PR #26).
 - **P1-6** Test restructure: type-first layout under `test/` (PR #52).
-- **Release gate (#4)** — remove README banner, v1.0 tag, milestone close, env protection for prod
-  uploads, zip-the-installer-exe decision, tag move (P0-1).
+- **Release gate (#4)** — v1.0 tag, milestone close, env protection for prod uploads, tag move
+  (P0-1). The README-banner half is done (#242, 2026-09-21 — banner replaced by the SmartScreen note
+  in the install steps).
 
 Phase 4 (installer + updater E2E matrix) is complete on `main`: the browser-matrix legs (#35–#37,
 #53, #54), the portable-Firefox legs (#56), and the snap Firefox leg (#55, merged via PR #142) all
 run in CI. The test-infrastructure gaps that tracked them (profile/process hygiene #130, browser
 download pinning #131, publish zip-verification #133) are resolved — see the resolved list in
-`docs/future-work.md` §6; its one remaining open item is the msys2 setup caching trade-off (#33).
+`docs/future-work.md` §6; the msys2 caching trade-off was settled on the `update: false` pins there.
 
 ## Post v1.0 (umbrella #38, milestone "Post v1.0")
 
@@ -33,9 +34,9 @@ download pinning #131, publish zip-verification #133) are resolved — see the r
 - Utils flavor selection — scripts / extensions / both (#29).
 - Core code test coverage — stub smoke tests + Nightly leg + test-required rule (#30).
 - Browser-matrix expansion — Waterfox / Zen / Nightly (#31).
-- UAC/admin-rights automation (#32), publish-pipeline automation (#33), UI/UX polish (#34).
-- Nightly E2E and nightly publish triggers — publish side needs the staging completion (STAGING
-  banner, guards, `.env-example` keys) first; see `docs/future-work.md` §3 and §6.
+- UAC/admin-rights automation (#32), publish-pipeline leftovers (#38), UI/UX polish (#34).
+- Nightly E2E is in the pre-1.0 matrix; the nightly publish trigger stays post-v1.0 by decision (the
+  staging prerequisites shipped in #164); see `docs/future-work.md` §6.
 - macOS universal installer binary (arm64 + x86_64) — decide; `dist_mac` currently builds
   native-arch only (`docs/future-work.md` §6).
 - Detailed backlog: `docs/future-work.md`.
