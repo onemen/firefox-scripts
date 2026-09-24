@@ -94,6 +94,16 @@ Run before the step-6 summary — every item is a one-command verification:
 
 - **NEVER call sleep** and never idle-wait on CI, tests, or builds — the never-idle-wait rule in the
   `change-workflow` skill applies at all times. End the turn instead.
+- **Long tool calls block the whole turn, and a mid-turn restart loses them.** In this environment
+  the terminal tool is sync-only — `process_type: BACKGROUND` errors ("not implemented"), and
+  same-block terminal calls **dispatch in parallel but execute sequentially** (probed 2026-09-24:
+  call B started only after call A returned). So a `sleep 240; gh pr checks` parks the entire
+  session — no status updates, no other tasks, nothing restartable if the client drops — and no
+  pairing of terminal calls can overlap a server and a probe. Budget long commands honestly (tens of
+  seconds, not minutes), use `--watch`-style waits only when their full runtime fits the timeout,
+  and cover anything longer by _ending the turn_: the next message re-checks CI one-shot. Local
+  review commands (`review:local`, `review:batch`) are minutes-long and network dependent — run them
+  at natural pauses and expect them to hold the turn while they run.
 - **Never merge a PR without the user's explicit approval** (AGENTS.md Critical Rule) — the summary
   reports ready/merged/blocked state and stops there.
 - One worktree per task; never link the parent's node_modules into it.
