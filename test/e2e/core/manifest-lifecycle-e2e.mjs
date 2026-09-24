@@ -42,6 +42,7 @@ import {
   attachProcessLogging,
   check,
   createCounter,
+  pollUntil,
   tempDir,
   rmDir,
   summary,
@@ -382,9 +383,21 @@ async function runSession(firefoxBin, profileDir, prefs, label, sessionNo, opts)
       console.log(`  [${label}] no probe OK within ${PROBE_OK_DEADLINE / 1000}s`);
     }
 
-    // Hold the session up a few more seconds so the probe's repeating timer
-    // keeps sampling — proves the registration stays live, not a one-off.
-    await new Promise(r => setTimeout(r, 5_000));
+    // The probe's repeating timer must keep sampling — one OK could be a
+    // one-off. Wait until a SECOND OK lands (bounded): the "stays live"
+    // assertion below then rests on observed stability, not on a guessed
+    // dwell long enough for another sample (the fixed 5s wait flaked when
+    // the timer's period or the machine's load stretched it — same family
+    // as the daily-recheck timer, #314).
+    await pollUntil(
+      () => {
+        const {chunk} = probeChunk(profileDir, beforeProbe);
+        return chunk.split('\n').filter(l => l.includes('=> OK')).length >= 2 ? true : null;
+      },
+      30_000,
+      500,
+      'second probe OK sample'
+    );
   } catch (err) {
     console.log(`  [${label}] launch/run error: ${err.message}`);
   } finally {
