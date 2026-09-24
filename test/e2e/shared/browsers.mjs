@@ -213,6 +213,34 @@ export function discoverFirefoxBinary() {
 }
 
 /**
+ * The diagnostic for "no browser binary could be resolved".
+ *
+ * It names FIREFOX_BINARY explicitly because that variable is the E2E
+ * workflow's contract: the install step publishes it (setup-browser →
+ * test/e2e/shared/downloads.mjs), so an unset or stale value is a wiring
+ * failure rather than "Firefox is not installed". The two cases are reported
+ * separately — a bare "Firefox not found" sent readers looking for a missing
+ * install when the real fault was an export that never happened.
+ *
+ * @returns {string}
+ */
+export function missingFirefoxMessage() {
+  const configured = process.env.FIREFOX_BINARY;
+  if (!configured) {
+    return (
+      'Firefox not found: FIREFOX_BINARY is unset and no browser was discovered in the ' +
+      'standard install dirs. In CI the E2E install step publishes it (setup-browser → ' +
+      'downloads.mjs); locally, pass --firefox <path> or export FIREFOX_BINARY.'
+    );
+  }
+  return (
+    `Firefox not found: FIREFOX_BINARY=${configured} does not exist, and no browser was ` +
+    'discovered in the standard install dirs — the install step published a stale path, ' +
+    'or pass --firefox <path> to override.'
+  );
+}
+
+/**
  * GreD (the dir Firefox autoconfig reads config.js from) for a binary path.
  * Follows the install docs:
  *
