@@ -112,7 +112,56 @@ try {
     Ci.nsIFileOutputStream
   );
   fos.init(f, 0x02 | 0x08 | 0x10, -1, 0); // write | create | append
-  fos.write('MIRROR-OPEN' + String.fromCharCode(10), 12);
+  // Unicode-safe writes: nsIFileOutputStream.write treats each JS char code as
+  // ONE byte, so any char above U+00FF arrives mangled (em-dash U+2014 became
+  // byte 0x14 on CI, 2026-09-23) and breaks allowlist matching on
+  // assertion-critical lines. Every line goes through UTF-8 first, so non-ASCII
+  // in updater messages survives the mirror and the harness reads back the
+  // exact text. TextEncoder with a manual UTF-8 fallback (the autoconfig
+  // sandbox exposes it on every supported channel — ESR 140 floor — but the
+  // fallback keeps the probe runnable on anything exotic).
+  const utf8Bytes =
+    typeof TextEncoder === 'function' ?
+      s => new TextEncoder().encode(s)
+    : s => {
+        const out = [];
+        for (let i = 0; i < s.length; i++) {
+          let c = s.charCodeAt(i);
+          if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+            const lo = s.charCodeAt(i + 1);
+            if (lo >= 0xdc00 && lo <= 0xdfff) {
+              c = 0x10000 + ((c - 0xd800) << 10) + (lo - 0xdc00);
+              i++;
+            }
+          }
+          if (c < 0x80) out.push(c);
+          else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+          else if (c < 0x10000)
+            out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+          else
+            out.push(
+              0xf0 | (c >> 18),
+              0x80 | ((c >> 12) & 63),
+              0x80 | ((c >> 6) & 63),
+              0x80 | (c & 63)
+            );
+        }
+        return Uint8Array.from(out);
+      };
+  const bos = Cc['@mozilla.org/binaryoutputstream;1'].createInstance(
+    Ci.nsIBinaryOutputStream
+  );
+  bos.setOutputStream(fos);
+  // writeByteArray, NOT writeBytes: writeBytes' IDL takes an opaque string
+  // (one char = one byte — the exact char-code trap this fixes), while
+  // writeByteArray takes [array,size_is] in uint8_t — a plain number Array.
+  // (A Uint8Array through writeBytes throws "String does not have as many
+  // characters" — proven in the autoconfig sandbox, 2026-09-23.)
+  const writeUtf8 = s => {
+    const bytes = utf8Bytes(s);
+    bos.writeByteArray(Array.from(bytes), bytes.length);
+  };
+  writeUtf8('MIRROR-OPEN' + String.fromCharCode(10));
   cs.registerListener({
     observe(aMessage, aTopic, aData) {
       try {
@@ -137,7 +186,7 @@ try {
           line = aData || aMessage.message || '';
         }
         const out = new Date().toISOString() + ' ' + line + '\\n';
-        fos.write(out, out.length);
+        writeUtf8(out);
       } catch (e) {}
     },
   });
@@ -159,7 +208,7 @@ try {
             const spec = tab.linkedBrowser?.currentURI?.spec || '';
             if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
               const line = 'TAB_OPENED ' + new Date().toISOString() + ' ' + spec + '\\n';
-              fos.write(line, line.length);
+              writeUtf8(line);
               watcher.cancel();
               return;
             }
@@ -573,6 +622,67 @@ function mirrorHasMarker(profileDir, marker) {
 /** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
 function mirrorSaysTabOpened(profileDir) {
   return mirrorHasMarker(profileDir, 'TAB_OPENED');
+}
+
+/**
+ * BiDi keeps polling this long after the mirror proves the tab before giving
+ * up.
+ */
+const TAB_OPEN_BIDI_GRACE_MS = 2_000;
+
+/**
+ * Shared tab-open wait for the scenarios that poll BiDi AND the probe's
+ * TAB_OPENED mirror line (install-applies, manual-install,
+ * manual-install-no-ui).
+ *
+ * One iteration is a BiDi pages() enumeration plus a 500 ms tick; the wait ends
+ * the moment the updater page handle is enumerable. When the mirror proves the
+ * tab first, BiDi gets a short grace window (it may enumerate the chrome tab
+ * late on headed local runs) and then the wait returns null — the caller falls
+ * back to its disk/pref activation proof instead of burning the remaining
+ * deadline. This replaces the shape where the sticky TAB_OPENED marker made
+ * every remaining iteration take the 2 s late branch + tick, so the loop always
+ * ran its full 30 s on CI (where BiDi never attaches to a trusted chrome://
+ * tab): ~25 s of dead air per scenario (2026-09-23 leg data).
+ *
+ * @param {import('puppeteer-core').Browser} browser
+ * @param {string} profileDir - seeded profile dir (probe mirror log location)
+ * @param {number} deadlineMs - epoch ms bounding the whole wait
+ * @returns {Promise<import('puppeteer-core').Page | null>} the updater page
+ *   once BiDi enumerates it, or null when only the mirror proved the tab (or
+ *   nothing did) — callers treat null as "use the disk/pref proof"
+ */
+async function waitForUpdaterTabOpen(browser, profileDir, deadlineMs) {
+  let mirrorAt = 0;
+  while (Date.now() < deadlineMs) {
+    try {
+      const page = (await browser.pages()).find(p => {
+        try {
+          return p.url().startsWith(UPDATER_URL);
+        } catch {
+          return false;
+        }
+      });
+      if (page) return page;
+    } catch {
+      /* browser not ready yet */
+    }
+    if (!mirrorAt && mirrorSaysTabOpened(profileDir)) {
+      mirrorAt = Date.now();
+      console.log(
+        '  [diag] mirror recorded TAB_OPENED — polling BiDi for a short grace window only'
+      );
+    }
+    if (mirrorAt && Date.now() - mirrorAt >= TAB_OPEN_BIDI_GRACE_MS) {
+      console.log(
+        `  [diag] BiDi did not attach within ${TAB_OPEN_BIDI_GRACE_MS / 1000}s of the mirror ` +
+          'signal — ending the wait; the scenario falls back to its disk/pref activation proof'
+      );
+      return null;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return null;
 }
 
 /**
@@ -1370,29 +1480,9 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     // Like runStaleScenario: BiDi cannot reliably enumerate trusted chrome://
     // tabs on CI, so ALSO watch the probe's TAB_OPENED mirror line. If the
     // mirror fires but BiDi never surfaces the page, the finally block falls
-    // back to the persisted lastUpdateTabShown pref. The wait is longer than
-    // the other scenarios because it runs last on a cold runner.
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline && !page) {
-      try {
-        page =
-          (await browser.pages()).find(p => {
-            try {
-              return p.url().startsWith(UPDATER_URL);
-            } catch {
-              return false;
-            }
-          }) || null;
-      } catch {
-        /* browser not ready yet */
-      }
-      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-        // The tab is open; keep polling BiDi a little longer — it may
-        // enumerate the chrome tab late.
-        await new Promise(r => setTimeout(r, 2_000));
-      }
-      if (!page) await new Promise(r => setTimeout(r, 500));
-    }
+    // back to the persisted lastUpdateTabShown pref — checked after the clean
+    // close, so the lazy prefs.js flush is covered without extra dead air.
+    page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
     if (page) check(counter, true, `tab opens (${label})`);
     if (!page) {
       await dumpPages(browser);
@@ -1766,7 +1856,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
       } catch (err) {
         if (
           attempt >= 3 ||
-          !/TargetCloseError|ProtocolError|Protocol error|timed out/.test(String(err?.message))
+          !/TargetCloseError|ProtocolError|Protocol error|timed out/i.test(String(err?.message))
         )
           throw err;
         console.log(
@@ -1836,7 +1926,9 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
   fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
 
-  let page = null;
+  // Assigned by waitForUpdaterTabOpen inside the try; read only after the
+  // try/finally completes (an exception skips those reads), so no initializer.
+  let page;
   try {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {
       headless: opts.headless,
@@ -1845,25 +1937,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
     attachProcessLogging(browser, label);
     const browserReady = await waitForFirstPage(browser, 20_000);
     check(counter, browserReady, `upgraded-utils browser ready (${label})`);
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline && !page) {
-      try {
-        page =
-          (await browser.pages()).find(p => {
-            try {
-              return p.url().startsWith(UPDATER_URL);
-            } catch {
-              return false;
-            }
-          }) || null;
-      } catch {
-        /* browser not ready yet */
-      }
-      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-        await new Promise(r => setTimeout(r, 2_000));
-      }
-      if (!page) await new Promise(r => setTimeout(r, 500));
-    }
+    page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
     // BiDi cannot always enumerate the chrome tab on a relaunched profile; the
     // activation proof is the ui-dir check after close (see below).
     if (page) {
@@ -2011,7 +2085,9 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
   const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
   fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
 
-  let page = null;
+  // Assigned by waitForUpdaterTabOpen inside the try; read only after the
+  // try/finally completes (an exception skips those reads), so no initializer.
+  let page;
   let browser;
   try {
     // Same launch-retry loop as scenario 7's phase 1 (Nightly can crash
@@ -2030,7 +2106,7 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
       } catch (err) {
         if (
           attempt >= 3 ||
-          !/TargetCloseError|ProtocolError|Protocol error|timed out/.test(String(err?.message))
+          !/TargetCloseError|ProtocolError|Protocol error|timed out/i.test(String(err?.message))
         )
           throw err;
         console.log(
@@ -2042,25 +2118,7 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
     }
     const browserReady = await waitForFirstPage(browser, 20_000);
     check(counter, browserReady, `browser ready (${label})`);
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline && !page) {
-      try {
-        page =
-          (await browser.pages()).find(p => {
-            try {
-              return p.url().startsWith(UPDATER_URL);
-            } catch {
-              return false;
-            }
-          }) || null;
-      } catch {
-        /* browser not ready yet */
-      }
-      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-        await new Promise(r => setTimeout(r, 2_000));
-      }
-      if (!page) await new Promise(r => setTimeout(r, 500));
-    }
+    page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
     if (page) {
       check(counter, true, `ui tab is visible (${label})`);
       const rendered = await waitForCondition(
