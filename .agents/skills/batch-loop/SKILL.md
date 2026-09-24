@@ -94,6 +94,13 @@ Run before the step-6 summary — every item is a one-command verification:
 
 - **NEVER call sleep** and never idle-wait on CI, tests, or builds — the never-idle-wait rule in the
   `change-workflow` skill applies at all times. End the turn instead.
+- **The terminal tool here is sync-only — this is why never-idle-wait exists.** Probed 2026-09-24:
+  `process_type: BACKGROUND` errors ("not implemented"), and same-block terminal calls dispatch in
+  parallel but **execute sequentially**. A long call (`sleep 240; gh pr checks`, a `--watch`, a
+  minutes-long `review:local`) blocks the whole turn and is lost if the client restarts — and **no
+  `--watch` variant is ever a substitute for ending the turn**. Budget foreground commands in tens
+  of seconds; anything longer is covered by ending the turn and re-checking one-shot on the next
+  message.
 - **Never merge a PR without the user's explicit approval** (AGENTS.md Critical Rule) — the summary
   reports ready/merged/blocked state and stops there.
 - One worktree per task; never link the parent's node_modules into it.
