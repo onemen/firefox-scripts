@@ -1606,7 +1606,17 @@ async function run() {
     process.exit(1);
   }
   console.log('Server ready.');
-  await new Promise(r => setTimeout(r, 500)); // wait for token
+  // Event-driven, bounded: the token arrives on stdout some time after the
+  // server answers /api/ping — a fixed wait here raced that stream event and
+  // failed the whole HTTP layer's token checks whenever the process was slow
+  // to print it (same flake family as the daily-recheck timer, #314).
+  const tokenSeen = await pollUntil(
+    () => (sessionToken ? sessionToken : null),
+    10_000,
+    100,
+    'installer printed SMOKE_TEST_SESSION_TOKEN'
+  );
+  check(counter, Boolean(tokenSeen), 'installer printed a session token within 10s');
 
   // Run HTTP layer — the smoke-test installer must be killed before the UI
   // layer starts its own installer in normal mode, or both fight over port
