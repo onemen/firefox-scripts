@@ -53,6 +53,7 @@ import {
   createCounter,
   findPageByUrl,
   waitForCondition,
+  pollUntil,
   screenshotPrivileged,
   tempDir,
   rmDir,
@@ -2658,11 +2659,25 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
       const browserReady = await waitForFirstPage(browser, 20_000);
       check(counter, browserReady, `browser ready (${label})`);
 
-      // Observation window: startup check lands with the first window; ~9 s
-      // then allows the 4s timer 2 fires beyond it. Generous to scheduler
-      // startup jitter; small enough to keep the leg cheap.
-      await new Promise(r => setTimeout(r, 9_000));
-      const served = server.servedCount();
+      // Observation: WAIT for the third fetch (the startup one plus the 2 the
+      // 4s timer owes us) instead of sleeping a fixed window and sampling once.
+      // The old fixed 9 s was only ~2.25 timer intervals, so a slow launch lost
+      // a fire and the scenario reported the very regression it exists to
+      // detect — zen leg, 2026-09-23: "got 2" while every other updater leg
+      // passed the same scenario. 30 s is ~7 intervals: far past launch jitter,
+      // bounded, and the poll returns as soon as the third fetch lands, so a
+      // healthy leg is not slowed down. A timer that never fires still fails
+      // below, with the final count.
+      const served =
+        (await pollUntil(
+          () => {
+            const count = server.servedCount();
+            return count >= 3 ? count : null;
+          },
+          30_000,
+          500,
+          label
+        )) ?? server.servedCount();
       check(
         counter,
         served >= 3,
