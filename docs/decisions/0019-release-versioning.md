@@ -4,6 +4,8 @@
 - **Date:** 2026-08-27
 - **Amended:** [0029](./0029-status-line-amendments.md) — its own amendment convention; this
   record's two amendment sections are now declared here
+- **Amended:** [0035](./0035-installer-sha256-sidecars.md) — installer sha256 sidecars completed
+  the helper-only sidecar scheme as their own record (2026-09-24)
 - **Amended:** [0036](./0036-git-derived-build-dates.md) — the self-update build date is derived
   from git per binary instead of hand-stamped (issue #322, 2026-09-25)
 
@@ -75,3 +77,24 @@ update detection is therefore defined here, aligned with the same scheme:
 - The former `VERSION=1.0.0` conf key and version-based comparison are removed; the Windows
   VERSIONINFO FileVersion carries the build date. The "no update signal when only the installer
   changed" requirement is preserved: zips and installers hash/date independently.
+
+## Amendment 2026-09-24 — installer sha256 sidecars
+
+The 2026-09-09 helper-sidecar amendment (#174, issue #33) shipped checksum sidecars for the helper
+only; the installer — the artifact that elevates and rewrites the install dir — shipped with no
+verification data at all (issue #324). Completed here, same scheme:
+
+- **Every installer binary gains a `<installer>.sha256` sidecar** (`installer_win.exe.sha256`,
+  `<hex>  <name>` per sha256sum — byte-identical format to the helper's, one shared renderer in
+  `hashUtils.mjs`). Sidecars ride the installer everywhere it goes: `latest` release assets, the
+  `installer-<date>` component releases, the gh-pages mirror, dev-build-* branches, and local
+  snapshots. They are derived from the staged bytes at publish time, never reused, and are not
+  hashed content — `hashes.json` is untouched.
+- **The managed self-update download map stays binary-only.** The C parser resolves its URL by a
+  plain substring search for the asset name, and `installer_win.exe` is a prefix of
+  `installer_win.exe.sha256` — a sidecar entry would shadow the binary's URL.
+- **No consumer change in this amendment.** Verifying the downloaded installer against its sidecar
+  (the #174 mirror for the installer) is a tracked follow-up; until then the sidecars serve manual
+  verification and the future consumer.
+- Nothing is removed: fixed asset names stay fixed, sidecars are purely additive (a partial publish
+  that ships an installer ships its sidecar too).

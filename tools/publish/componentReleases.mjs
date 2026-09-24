@@ -30,8 +30,11 @@
 // parameter surfaced by the CLI's --latest flag), and prereleases can never
 // hold the badge.
 
+import fs from 'fs';
+
 import {REPO_OWNER, REPO_NAME} from './paths.js';
 import {green, dim, warn} from './log.mjs';
+import {installerSha256Sidecar} from './hashUtils.mjs';
 
 /**
  * YYYY-MM-DD (UTC) for the component tags. Run-date convention, matching the
@@ -190,21 +193,29 @@ export function groupBuilt(built) {
 
 /**
  * Build the installer component release's asset map: exactly the installers
- * this run built (helpers are gh-pages-only — never release assets).
+ * this run built (helpers are gh-pages-only — never release assets), each with
+ * its checksum sidecar (issue #324 — same scheme as the helper's since #174).
  *
  * @param {string[]} installer platform keys (groupBuilt's installer bucket)
  * @param {{builtInstallers: string[]}} built what the run rebuilt
  * @param {object} access
  * @param {(p: string) => string} access.installer platform → installer asset
  *   name
+ * @param {(p: string) => string} access.installerSha platform → installer
+ *   sidecar asset name (the map's value is rendered from the staged binary —
+ *   sidecars are derived, never staged files)
  * @param {(p: string) => string} access.installerPath platform → staged path
- * @returns {Map<string, string>} asset name → staged path
+ * @returns {Map<string, string>} asset name → staged path or Buffer (sidecars)
  */
 export function componentAssets(installer, built, access) {
   const assets = new Map();
   for (const p of installer) {
     if (built.builtInstallers.includes(p)) {
       assets.set(access.installer(p), access.installerPath(p));
+      assets.set(
+        access.installerSha(p),
+        installerSha256Sidecar(fs.readFileSync(access.installerPath(p)), access.installer(p))
+      );
     }
   }
   return assets;
@@ -420,7 +431,7 @@ export async function syncComponentReleases(
   }
 ) {
   try {
-    const {installerAssetName} = await import('./platforms.mjs');
+    const {installerAssetName, installerShaAssetName} = await import('./platforms.mjs');
     const date = componentDate();
     // Installer bucket date: the DERIVED installer date (issue #322, passed
     // through by upload.mjs), never the clock.  The binaries this run
@@ -463,7 +474,7 @@ export async function syncComponentReleases(
       const assets = componentAssets(
         installer,
         {builtInstallers},
-        {installer: installerAssetName, installerPath}
+        {installer: installerAssetName, installerSha: installerShaAssetName, installerPath}
       );
       if (assets.size === 0) {
         console.log(dim('  component releases: installer bucket empty — date tag unchanged'));
@@ -473,11 +484,17 @@ export async function syncComponentReleases(
       // points at its permanent `latest`-tag download URL.
       const downloadBase = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download`;
       const selfUpdateUrlByAsset = {};
+
       // The managed URL intentionally targets the `latest` RELEASE download
       // (the user-facing artifact; the banner downloads via an anchor click
       // and needs no CORS).  The gh-pages mirror exists for any future
       // fetch-based flow, not as the banner's target.
+      // Sidecar names are excluded: the C self-update resolves its URL by a
+      // plain substring search for the asset name, and `installer_win.exe` is
+      // a prefix of `installer_win.exe.sha256` — a sidecar entry here would
+      // shadow the binary's URL (issue #324).
       for (const assetName of assets.keys()) {
+        if (assetName.endsWith('.sha256')) continue;
         selfUpdateUrlByAsset[assetName] = `${downloadBase}/latest/${assetName}`;
       }
       await syncComponentRelease(octokit, installerTag(installerDate), installerDate, assets, {

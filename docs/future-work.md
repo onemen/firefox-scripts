@@ -109,6 +109,11 @@ here is the elevation trigger — the self-hosted-runner / VM / human-in-the-loo
   sidecar next to each helper (`hashUtils.mjs::helperSha256Sidecar`), and the updater fetches and
   verifies it before executing the helper, refusing to run a mismatch
   (`tools/publish/remote-ui/updater.js`; `docs/auto-updater.md` §6).
+- **Installer sidecars — publish side shipped (#324):** every installer binary gets the same
+  `<installer>.sha256` sidecar in `latest`, the `installer-<date>` component releases, the gh-pages
+  mirror, dev branches and snapshots. Still open: a consumer — verifying the downloaded installer
+  (banner link, self-update) against its sidecar before the user runs it, the #174 mirror for the
+  installer.
 - **Trigger:** the elevation matrix above still has no automation. The browser legs that do exist
   run from `.github/workflows/e2e.yml` — every PR, every `main` push, the merge queue, plus manual
   dispatch — path-filtered on the subsystems each leg exercises. There is no nightly job.

@@ -20,7 +20,8 @@
 //
 // Roles:
 //   packages  → utils.zip / fx-folder.zip / updater-ui.zip + their hashes
-//   installer → installer_<platform> binaries (release + Pages mirror)
+//   installer → installer_<platform> binaries + .sha256 sidecars (release +
+//               Pages mirror)
 //   helper    → helper_<platform> binaries + .sha256 sidecars (Pages only)
 //
 // Dependency-free on purpose (no paths.js/publishMode argv chain): the parser

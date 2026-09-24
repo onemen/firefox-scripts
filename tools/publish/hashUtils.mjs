@@ -69,6 +69,18 @@ export function helperSha256Sidecar(bytes, filename) {
 }
 
 /**
+ * Render the installer's checksum sidecar: byte-identical format to the
+ * helper's (`<hex> <name>\n`, sha256sum -c compatible — issue #324). One
+ * renderer for both keeps the format from drifting; the name is the caller's
+ * (already includes `.exe` on Windows).
+ *
+ * @param {Buffer | Uint8Array} bytes the installer binary bytes
+ * @param {string} filename the installer's published asset name
+ * @returns {Buffer} sidecar bytes
+ */
+export const installerSha256Sidecar = helperSha256Sidecar;
+
+/**
  * Extract the expected hex sha256 from a sidecar's text. Tolerates a missing
  * filename column, trailing whitespace/CRLF; returns null when the text does
  * not carry a 64-hex-char digest (an HTML error page, a truncated write).
