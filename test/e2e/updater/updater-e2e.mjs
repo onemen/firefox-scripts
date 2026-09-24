@@ -625,6 +625,67 @@ function mirrorSaysTabOpened(profileDir) {
 }
 
 /**
+ * BiDi keeps polling this long after the mirror proves the tab before giving
+ * up.
+ */
+const TAB_OPEN_BIDI_GRACE_MS = 2_000;
+
+/**
+ * Shared tab-open wait for the scenarios that poll BiDi AND the probe's
+ * TAB_OPENED mirror line (install-applies, manual-install,
+ * manual-install-no-ui).
+ *
+ * One iteration is a BiDi pages() enumeration plus a 500 ms tick; the wait ends
+ * the moment the updater page handle is enumerable. When the mirror proves the
+ * tab first, BiDi gets a short grace window (it may enumerate the chrome tab
+ * late on headed local runs) and then the wait returns null — the caller falls
+ * back to its disk/pref activation proof instead of burning the remaining
+ * deadline. This replaces the shape where the sticky TAB_OPENED marker made
+ * every remaining iteration take the 2 s late branch + tick, so the loop always
+ * ran its full 30 s on CI (where BiDi never attaches to a trusted chrome://
+ * tab): ~25 s of dead air per scenario (2026-09-23 leg data).
+ *
+ * @param {import('puppeteer-core').Browser} browser
+ * @param {string} profileDir - seeded profile dir (probe mirror log location)
+ * @param {number} deadlineMs - epoch ms bounding the whole wait
+ * @returns {Promise<import('puppeteer-core').Page | null>} the updater page
+ *   once BiDi enumerates it, or null when only the mirror proved the tab (or
+ *   nothing did) — callers treat null as "use the disk/pref proof"
+ */
+async function waitForUpdaterTabOpen(browser, profileDir, deadlineMs) {
+  let mirrorAt = 0;
+  while (Date.now() < deadlineMs) {
+    try {
+      const page = (await browser.pages()).find(p => {
+        try {
+          return p.url().startsWith(UPDATER_URL);
+        } catch {
+          return false;
+        }
+      });
+      if (page) return page;
+    } catch {
+      /* browser not ready yet */
+    }
+    if (!mirrorAt && mirrorSaysTabOpened(profileDir)) {
+      mirrorAt = Date.now();
+      console.log(
+        '  [diag] mirror recorded TAB_OPENED — polling BiDi for a short grace window only'
+      );
+    }
+    if (mirrorAt && Date.now() - mirrorAt >= TAB_OPEN_BIDI_GRACE_MS) {
+      console.log(
+        `  [diag] BiDi did not attach within ${TAB_OPEN_BIDI_GRACE_MS / 1000}s of the mirror ` +
+          'signal — ending the wait; the scenario falls back to its disk/pref activation proof'
+      );
+      return null;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return null;
+}
+
+/**
  * Severity + source of every console error the mirror recorded (1a's probe
  * format). Returns {line, level, source} per hit.
  *
@@ -1419,29 +1480,9 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     // Like runStaleScenario: BiDi cannot reliably enumerate trusted chrome://
     // tabs on CI, so ALSO watch the probe's TAB_OPENED mirror line. If the
     // mirror fires but BiDi never surfaces the page, the finally block falls
-    // back to the persisted lastUpdateTabShown pref. The wait is longer than
-    // the other scenarios because it runs last on a cold runner.
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline && !page) {
-      try {
-        page =
-          (await browser.pages()).find(p => {
-            try {
-              return p.url().startsWith(UPDATER_URL);
-            } catch {
-              return false;
-            }
-          }) || null;
-      } catch {
-        /* browser not ready yet */
-      }
-      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-        // The tab is open; keep polling BiDi a little longer — it may
-        // enumerate the chrome tab late.
-        await new Promise(r => setTimeout(r, 2_000));
-      }
-      if (!page) await new Promise(r => setTimeout(r, 500));
-    }
+    // back to the persisted lastUpdateTabShown pref — checked after the clean
+    // close, so the lazy prefs.js flush is covered without extra dead air.
+    page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
     if (page) check(counter, true, `tab opens (${label})`);
     if (!page) {
       await dumpPages(browser);
@@ -1885,7 +1926,9 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
   fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
 
-  let page = null;
+  // Assigned by waitForUpdaterTabOpen inside the try; read only after the
+  // try/finally completes (an exception skips those reads), so no initializer.
+  let page;
   try {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {
       headless: opts.headless,
@@ -1894,25 +1937,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
     attachProcessLogging(browser, label);
     const browserReady = await waitForFirstPage(browser, 20_000);
     check(counter, browserReady, `upgraded-utils browser ready (${label})`);
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline && !page) {
-      try {
-        page =
-          (await browser.pages()).find(p => {
-            try {
-              return p.url().startsWith(UPDATER_URL);
-            } catch {
-              return false;
-            }
-          }) || null;
-      } catch {
-        /* browser not ready yet */
-      }
-      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-        await new Promise(r => setTimeout(r, 2_000));
-      }
-      if (!page) await new Promise(r => setTimeout(r, 500));
-    }
+    page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
     // BiDi cannot always enumerate the chrome tab on a relaunched profile; the
     // activation proof is the ui-dir check after close (see below).
     if (page) {
@@ -2060,7 +2085,9 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
   const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
   fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
 
-  let page = null;
+  // Assigned by waitForUpdaterTabOpen inside the try; read only after the
+  // try/finally completes (an exception skips those reads), so no initializer.
+  let page;
   let browser;
   try {
     // Same launch-retry loop as scenario 7's phase 1 (Nightly can crash
@@ -2091,25 +2118,7 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
     }
     const browserReady = await waitForFirstPage(browser, 20_000);
     check(counter, browserReady, `browser ready (${label})`);
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline && !page) {
-      try {
-        page =
-          (await browser.pages()).find(p => {
-            try {
-              return p.url().startsWith(UPDATER_URL);
-            } catch {
-              return false;
-            }
-          }) || null;
-      } catch {
-        /* browser not ready yet */
-      }
-      if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-        await new Promise(r => setTimeout(r, 2_000));
-      }
-      if (!page) await new Promise(r => setTimeout(r, 500));
-    }
+    page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
     if (page) {
       check(counter, true, `ui tab is visible (${label})`);
       const rendered = await waitForCondition(
