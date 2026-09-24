@@ -70,6 +70,7 @@ import {
   extractZip,
   discoverFirefoxBinary,
   findGreDir,
+  missingFirefoxMessage,
 } from '../shared/browsers.mjs';
 import {
   closeBrowser,
@@ -950,7 +951,7 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
   const label = variants.join('+');
   console.log(`\n## Scenario: stale variants (${label}) — one session (#197)`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
-  if (!firefoxBin) throw new Error('Firefox not found');
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
 
   const t0 = Date.now();
   const phases = {};
@@ -1162,7 +1163,7 @@ async function runNoTabScenario(
 ) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
-  if (!firefoxBin) throw new Error('Firefox not found');
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
 
   const t0 = Date.now();
   const phases = {};
@@ -1319,7 +1320,7 @@ async function runNoTabScenario(
 async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
-  if (!firefoxBin) throw new Error('Firefox not found');
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
   // Snap (strict confinement): the config package lives in /etc/firefox and
   // the confined browser can never write it, so the UI hides the config
   // checkbox and shows the manual-install band — Update installs utils only.
@@ -1710,7 +1711,7 @@ async function waitForProfileUnlocked(profileDir, timeoutMs = 10_000) {
 async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
-  if (!firefoxBin) throw new Error('Firefox not found');
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
 
   const seeded = seedProfile(snapshotDir, {});
 
@@ -1955,7 +1956,7 @@ function buildReleaseLayout(snapshotDir) {
 async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, reuseState = null) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
-  if (!firefoxBin) throw new Error('Firefox not found');
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
 
   // Launch-reuse prototype (--scenario 7,8): start from scenario 7's end
   // state instead of a fresh profile. The utils are already real and
@@ -2171,7 +2172,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
     return null;
   }
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
-  if (!firefoxBin) throw new Error('Firefox not found');
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
 
   // ── Real GreD, write-denied; scratch snapshot ──
   // The updater resolves GreD from the RUNNING binary, so the target must be
@@ -2597,7 +2598,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
 async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
-  if (!firefoxBin) throw new Error('Firefox not found');
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
 
   const t0 = Date.now();
   const seeded = seedProfile(snapshotDir, {});
@@ -2720,7 +2721,7 @@ async function run() {
 
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) {
-    console.error('Firefox not found. Set FIREFOX_BINARY or pass --firefox <path>');
+    console.error(missingFirefoxMessage());
     process.exit(1);
   }
   console.log(`  firefox: ${firefoxBin}`);

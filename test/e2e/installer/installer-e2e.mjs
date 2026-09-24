@@ -42,7 +42,13 @@ import {
   rmDir,
   summary,
 } from '../shared/helpers.mjs';
-import {findSnapshot, discoverFirefoxBinary, findZip, isSnapBinary} from '../shared/browsers.mjs';
+import {
+  findSnapshot,
+  discoverFirefoxBinary,
+  findZip,
+  isSnapBinary,
+  missingFirefoxMessage,
+} from '../shared/browsers.mjs';
 import {
   closeBrowser,
   killStrayProcesses,
@@ -858,6 +864,7 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
   const firefoxBin = opts.firefox || process.env.FIREFOX_BINARY || discoverFirefoxBinary();
   if (!firefoxBin || isSnapBinary(firefoxBin)) {
     console.log('  SKIP: no non-snap Firefox binary found (restart-scope layer needs one)');
+    if (!firefoxBin) console.log(`  ${missingFirefoxMessage()}`);
     check(
       counter,
       process.env.FXS_REQUIRE_RESTART_SCOPE !== '1',
@@ -1201,7 +1208,7 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
 async function runUiLayer(counter, opts, snapshotDir) {
   const firefoxBin = opts.firefox || process.env.FIREFOX_BINARY || discoverFirefoxBinary();
   if (!firefoxBin) {
-    console.log('\n  UI layer skipped: no Firefox binary found.');
+    console.log(`\n  UI layer skipped: ${missingFirefoxMessage()}`);
     return;
   }
 

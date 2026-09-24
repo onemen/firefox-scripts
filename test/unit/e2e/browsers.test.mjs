@@ -2,7 +2,8 @@
 //
 // Tests: findGreDir (per-platform path derivation), findSnapshot (discovery
 // with/without branch check), discoverFirefoxBinary (existence fallback),
-// gitBranchAndSha (returns strings).
+// missingFirefoxMessage (unset vs. stale FIREFOX_BINARY), gitBranchAndSha
+// (returns strings).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,6 +20,7 @@ const {
   findGreDir,
   findSnapshot,
   discoverFirefoxBinary,
+  missingFirefoxMessage,
   gitBranchAndSha,
   grePrefsDir,
   isSnapBinary,
@@ -158,4 +160,40 @@ test('discoverFirefoxBinary: invalid FIREFOX_BINARY falls through to platform de
     if (orig === undefined) delete process.env.FIREFOX_BINARY;
     else process.env.FIREFOX_BINARY = orig;
   }
+});
+
+// ── missingFirefoxMessage ─────────────────────────────────────────────────
+
+/** Run `fn` with FIREFOX_BINARY set to `value` (undefined = unset). */
+function withFirefoxBinary(value, fn) {
+  const orig = process.env.FIREFOX_BINARY;
+  try {
+    if (value === undefined) delete process.env.FIREFOX_BINARY;
+    else process.env.FIREFOX_BINARY = value;
+    return fn();
+  } finally {
+    if (orig === undefined) delete process.env.FIREFOX_BINARY;
+    else process.env.FIREFOX_BINARY = orig;
+  }
+}
+
+test('missingFirefoxMessage: an unset variable is named as the wiring failure', () => {
+  const msg = withFirefoxBinary(undefined, missingFirefoxMessage);
+  assert.match(msg, /FIREFOX_BINARY is unset/);
+  // The actionable hint, and the mechanism (the install step publishes it).
+  assert.match(msg, /--firefox <path>/);
+  assert.match(msg, /setup-browser/);
+  // It must NOT read as a missing install — that misdiagnosis is the reason
+  // this helper exists.
+  assert.doesNotMatch(msg, /does not exist/);
+});
+
+test('missingFirefoxMessage: a stale path reports that path, not "unset"', () => {
+  const msg = withFirefoxBinary('/nonexistent/firefox', missingFirefoxMessage);
+  assert.match(msg, /FIREFOX_BINARY=\/nonexistent\/firefox does not exist/);
+  assert.doesNotMatch(msg, /FIREFOX_BINARY is unset/);
+});
+
+test('missingFirefoxMessage: an empty variable counts as unset', () => {
+  assert.match(withFirefoxBinary('', missingFirefoxMessage), /FIREFOX_BINARY is unset/);
 });

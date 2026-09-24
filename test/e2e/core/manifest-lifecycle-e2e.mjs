@@ -52,6 +52,7 @@ import {
   extractZip,
   discoverFirefoxBinary,
   findGreDir,
+  missingFirefoxMessage,
 } from '../shared/browsers.mjs';
 
 const EXT_ID = 'testext@example.com';
@@ -426,7 +427,7 @@ async function main() {
   const counter = createCounter();
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) {
-    console.error('Firefox binary not found — pass --firefox <path>');
+    console.error(missingFirefoxMessage());
     process.exit(1);
   }
   const snapshotDir = opts.snapshot || findSnapshot({branchCheck: false})?.dir;
