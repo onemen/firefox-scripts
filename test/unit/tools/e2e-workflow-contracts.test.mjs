@@ -111,9 +111,14 @@ export function jobSteps(jobBody) {
  * an inline `# vX.Y.Z` comment (`uses: actions/upload-artifact@043f… #
  * v7.0.1`), and anchoring there silently hides those steps from the artifact
  * contract.
+ *
+ * The key may also sit behind a list marker with no `name:` before it — `-
+ * uses: $/.github/actions/setup-repo` is a real form in e2e.yml — so an
+ * optional `- ` before the key is allowed; requiring whitespace directly before
+ * `uses:` would hide such steps from every contract.
  */
 function stepUses(stepText) {
-  const match = stripComments(stepText).match(/^[ \t]+uses:[ \t]*(\S+)/m);
+  const match = stripComments(stepText).match(/^[ \t]+(?:- )?uses:[ \t]*(\S+)/m);
   return match ? match[1] : null;
 }
 
@@ -510,6 +515,30 @@ test('firefox-binary: a provisioning step without the export is a violation', ()
       '          echo "FIREFOX_BINARY=/snap/bin/firefox" >> "$GITHUB_ENV"'
   );
   assert.deepEqual(firefoxBinaryViolations(workflowJobs(fixed)), []);
+});
+
+test('firefox-binary: a step whose first key is uses: is still seen', () => {
+  // `- uses: …` (list marker, no `name:` before the key) is a real step form in
+  // this repo — e2e.yml opens its legs with `- uses: $/.github/actions/setup-repo`.
+  // A parser that requires whitespace directly before `uses:` never sees such a
+  // step, silently vacating every contract for it.
+  const step = [
+    '      - uses: ./.github/actions/setup-browser',
+    '        with:',
+    '          browser: firefox',
+  ].join('\n');
+  assert.equal(provisionsBrowser(step), true);
+  assert.equal(publishesFirefoxBinary(step), true);
+
+  const upload = [
+    '      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0 # v7.0.1',
+    '        with:',
+    '          name: dev-snapshot',
+  ].join('\n');
+  const artifacts = artifactSteps([{name: 'leg', body: upload}]);
+  assert.equal(artifacts.length, 1);
+  assert.equal(artifacts[0].kind, 'upload');
+  assert.equal(artifacts[0].name, 'dev-snapshot');
 });
 
 test('provisionsBrowser: the snap offline install counts, its error message does not', () => {
