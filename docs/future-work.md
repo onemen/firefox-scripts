@@ -115,7 +115,10 @@ here is the elevation trigger — the self-hosted-runner / VM / human-in-the-loo
 
 ## 3. Publish pipeline tasks
 
-> Tracked in [#33](https://github.com/onemen/firefox-scripts/issues/33).
+> Shipped — the issue closed with its checklist done: `build-and-upload.yml` (#203) with the
+> advisory `deterministic` publish-output job, helper sha256 sidecars (#174) + `pnpm release:helper`
+> (#273), the STAGING guard + `.env-example` keys (#164), and date-stamped component releases
+> (#176/#189). Remaining publish-pipeline items are tracked in #38.
 
 - [x] Re-add a `.github/workflows/build-and-upload.yml` action: a Windows/Linux/macOS build matrix
       (each OS runs `upload` for its platform and stages the binaries) + one upload job that
@@ -127,12 +130,11 @@ here is the elevation trigger — the self-hosted-runner / VM / human-in-the-loo
 - [x] Publish a `helper_<platform>.sha256` asset alongside the helper binaries and assert the
       downloaded binary matches it (see §2.2 helper-binary trust). Shipped in #174.
 
-Staging publish target — mostly shipped, remainder folded here: `paths.js` already reads env
-variables over `installer.conf` (`cfg()` precedence) and `--mode=dev` provides the safe dev-build
-channel. Still open from the original plan: a **STAGING banner + guard** when env overrides redirect
-publish targets away from prod (fail or warn loudly), and **`.env-example` documentation of the
-staging keys** (`REPO_OWNER`, `ZIP_PAGES_BRANCH`, `RELEASE_NAME`, `HASHES_URL`, …). Tracked under
-#33 with the pipeline work.
+Staging publish target — shipped (#164): `paths.js` already reads env variables over
+`installer.conf` (`cfg()` precedence) and `--mode=dev` provides the safe dev-build channel.
+`tools/publish/stagingGuard.mjs` aborts with a STAGING banner when env overrides redirect publish
+targets away from prod (`FIREFOX_SCRIPTS_ALLOW_STAGING=1` to proceed), and `.env-example` documents
+the staging keys (`REPO_OWNER`, `ZIP_PAGES_BRANCH`, `RELEASE_NAME`, `HASHES_URL`, …).
 
 Items below shipped in v1.0 and are kept for reference:
 
@@ -185,8 +187,10 @@ as of 2026-09-15. The proposed tracking home is listed per item.
   `pages.yml`, `build-and-upload.yml`): a mid-cycle toolchain upgrade moved gcc 16.1.0 → 16.2.0 and
   the rebuilt `installer_win.exe` was falsely flagged by Defender's ML the next day, so the AV scan
   gate — not `pacman -Syu` — is the enforcement. `cache: true` would trade freshness for minutes per
-  job (same trade the cached `-fanalyzer` leg already made, PRs #105/#106). Home: #33 (pipeline
-  automation) or as CI polish under #4.
+  job (same trade the cached `-fanalyzer` leg already made, PRs #105/#106). Home: ~~#33~~ (closed) —
+  decided: the `update: false` pins are the freshness policy and the AV scan gate enforces it; a
+  `cache: true` reversal would trade freshness for minutes per job and goes to #38 as CI polish if
+  ever wanted.
 
 ### Resolved since the 2026-09-05 pass (kept for reference)
 
