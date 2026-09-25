@@ -1570,6 +1570,41 @@ async function run() {
   }
   console.log(`  binary: ${bin}`);
 
+  // Local-identity marker (2026-09-25 regression): a snapshot installer is
+  // built with LOCAL=1, so _config.h bakes CFG_LOCAL_DIST_PATH (the snapshot
+  // dir, forward-slashed) into the binary. Assert the baked value's basename
+  // matches this snapshot's — OS-independent (only the parent dirs differ
+  // cross-runner). A prod-baked binary has no marker at all: it pointed its
+  // tab at the GitHub release URLs while every leg still passed, because
+  // "installer works" is what a real release build does too. Missing marker →
+  // the build lost its --local flags; fix the Makefile CONFIG_GENERATOR
+  // passthrough, not this assertion.
+  const binaryText = fs.readFileSync(bin, 'latin1');
+  // Linear-time scan (no nested quantifiers — the eslint unsafe-regex gate):
+  // find every 'dist/<dir>/<basename>' chunk in the raw bytes, then trim each
+  // candidate to its path-shaped tail. On a local-baked binary one candidate
+  // ends with this snapshot's basename.
+  const wantBasename = path.basename(snapshotDir);
+  const candidates = binaryText.match(/[\w./-]{8,200}/g) ?? [];
+  const bakedLocal = candidates
+    .filter(c => c.includes('dist/'))
+    .map(c => {
+      const idx = c.lastIndexOf('dist/');
+      // The candidate class already excludes whitespace/control bytes, so the
+      // chunk ends where the path ends; a trailing slash is the only trim.
+      return c.slice(idx).replace(/\/$/, '');
+    })
+    .find(c => path.basename(c) === wantBasename);
+  if (!bakedLocal) {
+    console.error(
+      `Installer binary is NOT baked for this snapshot (no CFG_LOCAL_DIST_PATH marker ` +
+        `ending in '${wantBasename}') — it was built without --local (2026-09-25 ` +
+        `regression class) and would serve GitHub URLs instead of the snapshot.`
+    );
+    process.exit(1);
+  }
+  console.log(`  local identity: baked for ${bakedLocal}`);
+
   // Start installer with --smoke-test for HTTP layer
   const proc = spawn(bin, ['--smoke-test'], {
     stdio: ['ignore', 'pipe', 'pipe'],
