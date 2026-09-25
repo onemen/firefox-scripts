@@ -4,8 +4,8 @@
 - **Date:** 2026-08-27
 - **Amended:** [0029](./0029-status-line-amendments.md) — its own amendment convention; this
   record's two amendment sections are now declared here
-- **Amended:** [0035](./0035-installer-sha256-sidecars.md) — installer sha256 sidecars completed
-  the helper-only sidecar scheme as their own record (2026-09-24)
+- **Amended:** [0035](./0035-installer-sha256-sidecars.md) — installer sha256 sidecars completed the
+  helper-only sidecar scheme as their own record (2026-09-24)
 - **Amended:** [0036](./0036-git-derived-build-dates.md) — the self-update build date is derived
   from git per binary instead of hand-stamped (issue #322, 2026-09-25)
 
@@ -78,7 +78,11 @@ update detection is therefore defined here, aligned with the same scheme:
   VERSIONINFO FileVersion carries the build date. The "no update signal when only the installer
   changed" requirement is preserved: zips and installers hash/date independently.
 
-## Amendment 2026-09-24 — installer sha256 sidecars
+---
+
+Installer checksum publication is its own decision: [0035](./0035-installer-sha256-sidecars.md) —
+completes the helper-only sidecar scheme of 2026-09-09 for the installer (issue
+[#324](https://github.com/onemen/firefox-scripts/issues/324)).
 
 The 2026-09-09 helper-sidecar amendment (#174, issue #33) shipped checksum sidecars for the helper
 only; the installer — the artifact that elevates and rewrites the install dir — shipped with no

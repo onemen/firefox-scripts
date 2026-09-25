@@ -1001,7 +1001,7 @@ function writeSnapshot({merged, platforms, dir, label, scope}) {
       info(`    ${green('+')} ${helperAssetName(p)} (+ .sha256)`);
     }
     const instSrc = installerPath(p);
-    if (fs.existsSync(instSrc)) {
+    if (scope.installer && fs.existsSync(instSrc)) {
       // Sidecar is derived, never reused: regenerated from the staged bytes
       // so it cannot drift from the binary it vouches for (issue #324).
       const bytes = fs.readFileSync(instSrc);

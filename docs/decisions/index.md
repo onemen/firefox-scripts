@@ -110,6 +110,9 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0034](./0034-fork-e2e-legs-pin-to-validated-release.md) — Fork E2E legs (librewolf, zen, floorp)
   pin to the last E2E-validated release, advanced only by the watchdog's per-release dispatch; hard
   gates keep tracking latest ([0023]'s pin semantics carried forward)
+- [0035](./0035-installer-sha256-sidecars.md) — Installer binaries ship sha256 sidecars on every
+  publish surface (extends [0019]'s 2026-09-09 helper-sidecar scheme); self-update map stays
+  binary-only (substring-shadow)
 - [0036](./0036-git-derived-build-dates.md) — Build dates are derived from git per binary (same
   input set as the publish hash); PE epoch scoped to those inputs (extends [0019]'s self-update)
 
