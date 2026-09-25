@@ -19,7 +19,11 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
-const makefile = fs.readFileSync(path.join(REPO_ROOT, 'installer', 'Makefile'), 'utf-8');
+// A local working-tree copy can linger as CRLF (text files are LF in the repo;
+// AGENTS.md → Conventions) — normalize at read.
+const makefile = fs
+  .readFileSync(path.join(REPO_ROOT, 'installer', 'Makefile'), 'utf-8')
+  .replace(/\r\n/g, '\n');
 
 /** Every recipe line that invokes the generated-files sync generator. */
 function generatorInvocations() {
@@ -66,18 +70,42 @@ test('Makefile: config and dates targets exist and drive their generated headers
 
 test('Makefile: _config.h and _builddate.h rules are byte-identical generators apart from the target', () => {
   // The two rules must stay in lockstep: both regenerate the full set through
-  // the same generator with the same flags. Extract each recipe line and
-  // compare the flag-bearing tail so a future edit cannot update one and not
-  // the other (exactly how the 2026-09-25 regression happened).
+  // the same generator with the same flags. Extract each rule's recipe line
+  // and compare the flag-bearing tails so a future edit cannot update one and
+  // not the other (exactly how the 2026-09-25 regression happened).
+  //
+  // Line-scan capture (a multi-line recipe regex trips the unsafe-regex
+  // gate): find each rule header, skip its comment lines, take the first
+  // recipe line — the _config.h rule carries comments between header and
+  // recipe, the _builddate.h rule does not.
   const recipes = {};
-  for (const m of makefile.matchAll(
-    /^\$\(SRC_DIR\)\/(_config\.h|_builddate\.h): [^\n]*FORCE\n\t@node \$\(subst \\,\/,\$\(CONFIG_GENERATOR\)\) (.+)$/gm
-  )) {
-    recipes[m[1]] = m[2];
+  let pending = null;
+  for (const line of makefile.split('\n')) {
+    const header = line.match(/^\$\(SRC_DIR\)\/(_config\.h|_builddate\.h): .*FORCE$/);
+    if (header) {
+      pending = header[1];
+      continue;
+    }
+    if (pending) {
+      if (line.startsWith('#')) continue;
+      const recipe = line.match(/^\t@node \$\(subst \\,\/,\$\(CONFIG_GENERATOR\)\) (.+)$/);
+      if (recipe) {
+        recipes[pending] = recipe[1];
+        pending = null;
+      }
+    }
   }
+  // Bracket notation — the keys contain dots (review:batch finding, PR #329:
+  // `recipes._config_h` is undefined, so a failed capture compared
+  // undefined === undefined and the assertion passed vacuously).
+  assert.ok(recipes['_config.h'], 'rule-recipe capture failed for _config.h — regex out of date');
+  assert.ok(
+    recipes['_builddate.h'],
+    'rule-recipe capture failed for _builddate.h — regex out of date'
+  );
   assert.equal(
-    recipes._config_h,
-    recipes._builddate_h,
-    `the _config.h and _builddate.h generator recipes diverged — they must carry identical MODE/LOCAL passthrough:\n  _config.h:    ${recipes._config_h}\n  _builddate.h: ${recipes._builddate_h}`
+    recipes['_config.h'],
+    recipes['_builddate.h'],
+    `the _config.h and _builddate.h generator recipes diverged — they must carry identical MODE/LOCAL passthrough:\n  _config.h:    ${recipes['_config.h']}\n  _builddate.h: ${recipes['_builddate.h']}`
   );
 });

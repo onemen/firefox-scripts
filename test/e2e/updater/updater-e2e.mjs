@@ -551,10 +551,16 @@ function assertBakedLocalIdentity(snapshotDir) {
     const cfg = fs.readFileSync(cfgPath, 'utf-8');
     const isLocal = /^\s*IS_LOCAL: true,/m.test(cfg);
     const localPath = cfg.match(/LOCAL_DIST_PATH: '([^']*)'/)?.[1] || '';
-    if (!isLocal || !localPath) {
+    // The baked path must name THIS snapshot, not just any local one — a stale
+    // generator run bakes a valid-looking but foreign dist path (review:batch
+    // finding, PR #329). Basename-only: cross-OS legs see a different parent.
+    const bakedBasename = path.basename(localPath.replace(/\/$/, ''));
+    const wantBasename = path.basename(snapshotDir);
+    if (!isLocal || !localPath || bakedBasename !== wantBasename) {
       throw new Error(
-        'snapshot utils.zip carries a NON-local baked updater config ' +
-          `(IS_LOCAL: ${isLocal}, LOCAL_DIST_PATH: '${localPath}') — the build lost its ` +
+        'snapshot utils.zip carries a NON-local or FOREIGN baked updater config ' +
+          `(IS_LOCAL: ${isLocal}, LOCAL_DIST_PATH: '${localPath}', ` +
+          `expected basename '${wantBasename}') — the build lost or mismatched its ` +
           '--local identity (2026-09-25 regression class). Fix the generator flag ' +
           'passthrough (installer/Makefile CONFIG_GENERATOR rules), not this test.'
       );
