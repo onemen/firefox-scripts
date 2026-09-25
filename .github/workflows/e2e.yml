@@ -145,6 +145,13 @@ jobs:
           filters: |
             installer:
               - 'installer/**'
+              # Snapshot-shaping tooling (same rationale as the updater filter):
+              # the installer leg asserts the snapshot binary's baked LOCAL
+              # identity (2026-09-25 regression class).
+              - 'tools/publish/upload.mjs'
+              - 'tools/publish/syncGeneratedFiles.mjs'
+              - 'tools/publish/publishMode.mjs'
+              - 'config/installer.conf'
               - 'test/e2e/installer/**'
               - '.github/workflows/e2e.yml'
               - '.github/actions/**'
@@ -157,6 +164,17 @@ jobs:
               # runtime engine (shipped inside the ui package), so engine
               # changes must run the updater legs (#174 skip audit).
               - 'tools/publish/remote-ui/**'
+              # Snapshot-shaping tooling: the legs build their snapshot with
+              # upload.mjs, whose generator flag passthrough decides the baked
+              # LOCAL identity. The 2026-09-25 regression shipped green legs on
+              # all browsers while every snapshot installer pointed at the
+              # GitHub release URLs — none of these paths were watched.
+              - 'tools/publish/upload.mjs'
+              - 'tools/publish/syncGeneratedFiles.mjs'
+              - 'tools/publish/generateUpdaterConfig.mjs'
+              - 'tools/publish/publishMode.mjs'
+              - 'installer/Makefile'
+              - 'config/installer.conf'
               - 'test/e2e/updater/**'
               - 'test/e2e/shared/**'
               - '.github/workflows/e2e.yml'
