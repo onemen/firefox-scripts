@@ -91,7 +91,7 @@ import {
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
-import {DEV_NOTE, DEV_TAG, REF_NAME, REF_SHA} from './publishMode.mjs';
+import {DEV_NOTE, DEV_TAG, localSnapshotDir, REF_NAME, REF_SHA} from './publishMode.mjs';
 import {
   createOctokit,
   enforcePublishBranch,
@@ -551,6 +551,31 @@ async function buildBinaries(platforms, storedHashes, scope) {
     return fs.existsSync(src) ? src : null;
   };
 
+  // Local-identity guard (2026-09-25 regression): a reused installer must be a
+  // LOCAL build. The publish source hash excludes the generated _config.h (ADR
+  // 0008), so a prod-baked binary — the exact bytes a real prod release ships —
+  // hashes identically to a correct local one and would otherwise be copied
+  // forward across snapshots forever. The marker is CFG_LOCAL_DIST_PATH (baked
+  // only when --local): verify its snapshot-basename tail matches THIS run's
+  // snapshot dir; anything else fails the run with the fix pointer. #local-identity
+  const wantBasename = path.basename(localSnapshotDir());
+  const reuseInstaller = (src, assetName) => {
+    const text = fs.readFileSync(src, 'latin1');
+    const chunks = text.match(/[\w./:-]{8,}/g) ?? [];
+    const ok = chunks.some(
+      c => c.includes('dist/') && path.basename(c.replace(/\/$/, '')) === wantBasename
+    );
+    if (!ok) {
+      throw new Error(
+        `refusing to reuse ${path.basename(prevSnapshot)}/${assetName}: it was not ` +
+          `baked for this snapshot (no CFG_LOCAL_DIST_PATH marker ending in '${wantBasename}') — ` +
+          `a stale prod-baked binary would serve GitHub URLs instead of the snapshot. ` +
+          `Delete the old snapshot dir (or make dist_win LOCAL=1) and rebuild.`
+      );
+    }
+    return src;
+  };
+
   for (const p of platforms) {
     // A held-back role is never built, never reused from a previous snapshot
     // and never staged — nothing of it reaches the gates or the publish step.
@@ -561,6 +586,7 @@ async function buildBinaries(platforms, storedHashes, scope) {
         runMake(PLATFORM[p].makeInstaller);
         builtInstallers.push(p);
       } else if (reusedInst) {
+        reuseInstaller(reusedInst, instAsset);
         fs.mkdirSync(path.dirname(installerPath(p)), {recursive: true});
         fs.copyFileSync(reusedInst, installerPath(p));
       }
