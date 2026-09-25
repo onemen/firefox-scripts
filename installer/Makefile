@@ -63,8 +63,19 @@ BUILD_EPOCH = $(shell node $(subst \,/,$(EPOCH_GENERATOR)))
 # Belt and braces: an empty epoch must never reach a compiler. If the script
 # cannot even run (no node) make stops here instead of linking PEs whose bytes
 # are a function of the clock.
-SOURCE_DATE_EPOCH = $(if $(strip $(BUILD_EPOCH)),$(BUILD_EPOCH),$(error the build-epoch generator printed no SOURCE_DATE_EPOCH ($(EPOCH_GENERATOR)) — refusing to build PE bytes that change on every link (#162/#322)))
+SOURCE_DATE_EPOCH = $(BUILD_EPOCH)
 export SOURCE_DATE_EPOCH
+
+# Belt and braces: an empty epoch must never reach a compiler. If the script
+# cannot even run (no node) make stops here instead of linking PEs whose bytes
+# are a function of the clock. Plain ifeq + error, never an inline
+# `$(if ...,$(error ...))`: make treats an unescaped # inside such a call as a
+# comment, which eats the closing parens and dies with "unterminated call to
+# function `if'" — but only on older makes (macOS ships 3.81; the 4.x builds
+# on Linux/Windows never noticed). Keep this block #-free.
+ifeq ($(strip $(SOURCE_DATE_EPOCH)),)
+  $(error Build epoch missing: tools/publish/buildEpoch.mjs printed no SOURCE_DATE_EPOCH - refusing to link PE bytes that change on every link; see issue 330)
+endif
 
 # miniz trim: the installer only READS zips (never compresses/writes), so the
 # deflate/compression side and the zlib-compat wrappers are dead code.

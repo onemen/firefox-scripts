@@ -22,7 +22,8 @@
 //      never an empty value and never the current time;
 //   5. the CLI prints exactly one integer line (the Makefile captures stdout);
 //   6. installer/Makefile routes the epoch through that script and refuses an
-//      empty result instead of linking a wall-clock PE.
+//      empty result instead of linking a wall-clock PE — using only make
+//      constructs that an old (3.81) make can parse.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -162,10 +163,7 @@ test('an inherited GIT_DIR cannot redirect the epoch at another repository', () 
     process.env.GIT_DIR = git(['rev-parse', '--absolute-git-dir'], REPO_ROOT).trim();
     process.env.GIT_PREFIX = 'installer/';
     const repo = tempRepo();
-    assert.ok(
-      git(['rev-parse', '--is-inside-work-tree'], repo).trim() === 'true',
-      'temp repo sanity'
-    );
+    assert.equal(git(['rev-parse', '--is-inside-work-tree'], repo).trim(), 'true');
     assert.throws(
       () => buildEpoch(repo),
       /git log printed ''/,
@@ -227,8 +225,42 @@ test('Makefile: the epoch comes from the script, with an empty-value guard', () 
   );
   assert.match(
     makefile,
-    /^SOURCE_DATE_EPOCH = \$\(if \$\(strip \$\(BUILD_EPOCH\)\),\$\(BUILD_EPOCH\),\$\(error /m,
+    /^SOURCE_DATE_EPOCH = \$\(BUILD_EPOCH\)$/m,
+    'the epoch must be a plain assignment (see the footgun test below)'
+  );
+  assert.match(
+    makefile,
+    /^ifeq \(\$\(strip \$\(SOURCE_DATE_EPOCH\)\),\)\n {2}\$\(error /m,
     'an empty epoch must fail the build instead of linking a PE stamped with the link time'
   );
   assert.match(makefile, /^export SOURCE_DATE_EPOCH$/m);
+});
+
+test('Makefile: the epoch block stays free of inline-function footguns', () => {
+  // Caught by the macOS legs only (2026-09-25): the guard was a one-liner
+  // `$(if $(strip $(BUILD_EPOCH)),$(BUILD_EPOCH),$(error … (#162/#322)))`.
+  // Make starts a COMMENT at an unescaped # even inside a function call, so the
+  // message swallowed the closing parens and the build died with
+  // "unterminated call to function `if': missing `)'". GNU make 4.x on
+  // Linux/Windows tolerated it; macOS ships 3.81 and refused the whole file.
+  const lines = makefile.split('\n');
+  const start = lines.findIndex(line => line.startsWith('EPOCH_GENERATOR ?='));
+  const end = lines.findIndex((line, i) => i > start && line === 'endif');
+  assert.ok(start !== -1 && end > start, 'EPOCH_GENERATOR…endif block not found');
+  const code = lines.slice(start, end + 1).filter(line => !line.trimStart().startsWith('#'));
+  assert.ok(code.length >= 4, `epoch block looks empty: ${JSON.stringify(code)}`);
+  for (const line of code) {
+    assert.doesNotMatch(
+      line,
+      /#/,
+      `an unescaped # inside a function call truncates the rest of the line (only older makes refuse it): ${line}`
+    );
+    const opens = (line.match(/\(/g) ?? []).length;
+    const closes = (line.match(/\)/g) ?? []).length;
+    assert.equal(
+      opens,
+      closes,
+      `unbalanced parentheses — a truncated line reads as "unterminated call to function": ${line}`
+    );
+  }
 });
