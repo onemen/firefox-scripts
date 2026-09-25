@@ -59,20 +59,22 @@ CFLAGS = -Os -s -ffunction-sections
 # from the repo root (no shell cwd, no quoting layer) and refuses to print
 # nothing; a copy without git history still gets its documented fixed epoch.
 EPOCH_GENERATOR ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../tools/publish/buildEpoch.mjs)
-BUILD_EPOCH = $(shell node $(subst \,/,$(EPOCH_GENERATOR)))
-# Belt and braces: an empty epoch must never reach a compiler. If the script
-# cannot even run (no node) make stops here instead of linking PEs whose bytes
-# are a function of the clock.
-SOURCE_DATE_EPOCH = $(BUILD_EPOCH)
+# Simply expanded assignment (`:=`): the generator runs ONCE, at parse time,
+# and every recipe inherits that single value. A recursive assignment re-ran
+# it for each recipe environment — measured 7 node+git spawns for one
+# `make dist_win helper_win` — which is slower and lets two recipes be handed
+# different epochs.
+BUILD_EPOCH := $(shell node $(subst \,/,$(EPOCH_GENERATOR)))
+SOURCE_DATE_EPOCH := $(BUILD_EPOCH)
 export SOURCE_DATE_EPOCH
 
-# Belt and braces: an empty epoch must never reach a compiler. If the script
-# cannot even run (no node) make stops here instead of linking PEs whose bytes
-# are a function of the clock. Plain ifeq + error, never an inline
-# `$(if ...,$(error ...))`: make treats an unescaped # inside such a call as a
-# comment, which eats the closing parens and dies with "unterminated call to
-# function `if'" — but only on older makes (macOS ships 3.81; the 4.x builds
-# on Linux/Windows never noticed). Keep this block #-free.
+# Belt and braces: an empty epoch must never reach a compiler — the ifeq
+# fails the build instead of linking PEs whose bytes are a function of the
+# clock. Plain ifeq + error, never an inline `$(if ...,$(error ...))`: make
+# treats an unescaped # inside such a call as a comment, which eats the
+# closing parens and dies with "unterminated call to function `if'" — on
+# older makes only (macOS ships 3.81; the 4.x builds on Linux/Windows never
+# noticed). Keep this block #-free.
 ifeq ($(strip $(SOURCE_DATE_EPOCH)),)
   $(error Build epoch missing: tools/publish/buildEpoch.mjs printed no SOURCE_DATE_EPOCH - refusing to link PE bytes that change on every link; see issue 330)
 endif

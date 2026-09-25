@@ -215,7 +215,7 @@ test('Makefile: the epoch comes from the script, with an empty-value guard', () 
   assert.match(makefile, /^EPOCH_GENERATOR \?= .*buildEpoch\.mjs\)$/m, 'EPOCH_GENERATOR missing');
   assert.match(
     makefile,
-    /^BUILD_EPOCH = \$\(shell node /m,
+    /^BUILD_EPOCH := \$\(shell node /m,
     'the epoch must be produced by the script'
   );
   assert.doesNotMatch(
@@ -225,7 +225,7 @@ test('Makefile: the epoch comes from the script, with an empty-value guard', () 
   );
   assert.match(
     makefile,
-    /^SOURCE_DATE_EPOCH = \$\(BUILD_EPOCH\)$/m,
+    /^SOURCE_DATE_EPOCH := \$\(BUILD_EPOCH\)$/m,
     'the epoch must be a plain assignment (see the footgun test below)'
   );
   assert.match(
