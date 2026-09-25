@@ -64,6 +64,19 @@ export function datePathspecs(root = ROOT) {
  * @returns {string}
  */
 export function gitDate(paths, root = ROOT) {
+  // A shallow clone does NOT error on path-limited git log — it silently
+  // returns the grafted boundary commit's date, which would bake a wrong
+  // (stale) date into the binaries. Detect and refuse.
+  const shallow = execSync('git rev-parse --is-shallow-repository', {
+    cwd: root,
+    encoding: 'utf-8',
+  }).trim();
+  if (shallow === 'true') {
+    throw new Error(
+      'shallow clone — input-scoped git log would silently return wrong build dates; ' +
+        'fetch full history (CI: fetch-depth: 0)'
+    );
+  }
   const out = execSync('git log -1 --format=%cs -- ' + paths.map(p => `"${p}"`).join(' '), {
     cwd: root,
     encoding: 'utf-8',

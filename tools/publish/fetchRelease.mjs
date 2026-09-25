@@ -93,6 +93,8 @@ function fetchFromRun(runId, file, dst) {
   // staged-mac); the binary lives under installer/ inside the staging tree.
   const artifact = stagedArtifactForMyOs();
   if (!artifact) fail(`unsupported platform: ${process.platform}`);
+  // dist/ is gitignored — a fresh clone may not have it yet.
+  fs.mkdirSync(path.join(REPO_ROOT, 'dist'), {recursive: true});
   const tmp = fs.mkdtempSync(path.join(REPO_ROOT, 'dist', '.fetch-'));
   try {
     gh(['run', 'download', String(runId), '-n', artifact, '-D', tmp]);

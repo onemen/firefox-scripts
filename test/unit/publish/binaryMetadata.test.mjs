@@ -26,16 +26,21 @@ function readText(rel) {
 /**
  * The `VALUE "Name", "value\0"` pairs of a VERSIONINFO StringFileInfo block.
  * Since #322 the value side may be a generated macro (CFG_BUILD_DATE_*_STR);
- * expand the _builddate.h macros before parsing so the derived dates are what
- * gets asserted, exactly as windres would compile them.
+ * expand those macros before parsing so the derived dates are what gets
+ * asserted, exactly as windres would compile them. The macro maps come from
+ * buildDateHeader() IN MEMORY — no dependency on a generated file on disk.
  */
-function stringValues(rc) {
+function macroMap(pattern) {
   const macros = {};
-  for (const m of readText('installer/src/_builddate.h').matchAll(
-    /^#define (CFG_BUILD_DATE_\w+_STR) "(.*)"$/gm
-  )) {
-    macros[m[1]] = m[2];
-  }
+  for (const m of buildDateHeader(DATES).matchAll(pattern)) macros[m[1]] = m[2];
+  return macros;
+}
+
+const STR_MACROS = () => macroMap(/^#define (CFG_BUILD_DATE_\w+_STR) "(.*)"$/gm);
+const V_MACROS = () => macroMap(/^#define (CFG_BUILD_DATE_\w+_V) ([\d,]+)$/gm);
+
+function stringValues(rc) {
+  const macros = STR_MACROS();
   const values = {};
   for (const m of rc.matchAll(/VALUE\s+"(\w+)",\s*(?:"([^"]*)"|(\w+))/g)) {
     // Quoted literal, or a bare generated-macro reference (CFG_BUILD_DATE_*_STR).
@@ -51,12 +56,7 @@ function stringValues(rc) {
  * macros from _builddate.h first, exactly as windres would.
  */
 function fileVersionTuple(rc) {
-  const macros = {};
-  for (const m of readText('installer/src/_builddate.h').matchAll(
-    /^#define (CFG_BUILD_DATE_\w+_V) ([\d,]+)$/gm
-  )) {
-    macros[m[1]] = m[2];
-  }
+  const macros = V_MACROS();
   const line = rc.match(/FILEVERSION\s+(\S+)/);
   assert.ok(line, 'expected a FILEVERSION line');
   const tuple = macros[line[1]] ?? line[1];
@@ -81,14 +81,17 @@ const BINARY_RESOURCES = [
 const {buildDateHeader, buildDates} = await import('../../../tools/publish/generateBuildDates.mjs');
 const DATES = buildDates();
 
-test('derived build dates are real YYYY-MM-DD dates (regenerated header matches)', () => {
+test('derived build dates are real YYYY-MM-DD dates', () => {
   for (const [k, v] of Object.entries(DATES)) {
     assert.match(v, /^\d{4}-\d{2}-\d{2}$/, `${k} date`);
     assert.ok(!Number.isNaN(Date.parse(v)), `${k}=${v} is not a parseable date`);
   }
-  // The generated header is what the .rc files include — regenerate it and
-  // require it to match the freshly derived dates (no stale header on disk).
-  assert.equal(readText('installer/src/_builddate.h'), buildDateHeader(DATES));
+  // The on-disk header (when present) must match the freshly derived dates —
+  // but a missing one is fine: the Makefile generates it before any compile.
+  const disk = path.join(ROOT, 'installer', 'src', '_builddate.h');
+  if (fs.existsSync(disk)) {
+    assert.equal(readText('installer/src/_builddate.h'), buildDateHeader(DATES));
+  }
 });
 
 const BINARY_DATES = {installer_win: DATES.installer, helper_win: DATES.helper};

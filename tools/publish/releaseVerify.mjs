@@ -66,7 +66,11 @@ function fail(message) {
 function gh(args) {
   const res = spawnSync('gh', args, {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
   if (res.error || res.status !== 0) {
-    fail(`gh ${args.join(' ')} failed — ${res.error?.message || (res.stderr || '').trim()}`);
+    // Throw, don't exit: the per-check try/catch blocks turn this into a
+    // per-check FAIL line so one broken check never hides the others.
+    throw new Error(
+      `gh ${args.join(' ')} failed — ${res.error?.message || (res.stderr || '').trim()}`
+    );
   }
   return res.stdout;
 }
