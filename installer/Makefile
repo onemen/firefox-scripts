@@ -227,7 +227,7 @@ dist_win: resources config $(SRC_DIR)/installer.res
 # overflow, uninit) and propagates gcc hard errors.  Exits 0 only when every
 # gcc run succeeded and no analyzer-class diagnostics are found.
 .PHONY: analyze
-analyze: resources config
+analyze: resources config dates
 	node ../tools/analyze-c.mjs
 
 # Linux build
@@ -269,15 +269,15 @@ helper_win: dates $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.rc $(
 	windres $(SRC_DIR)/helper/version.rc -O coff -o $(SRC_DIR)/helper/version.res
 	$(CC) $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.res -o $(DIST_DIR)/helper_win$(ASSET_SUFFIX).exe $(CFLAGS) -static -static-libgcc -luser32 -lshell32 "-Wl,--gc-sections" "-Wl,--strip-all" "-Wl,--subsystem,windows"
 
-helper_linux: $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c | $(DIST_DIR)
+helper_linux: dates $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c | $(DIST_DIR)
 	$(CC) $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c -o $(DIST_DIR)/helper_linux$(ASSET_SUFFIX) $(CFLAGS) $(GC_FLAGS)
 
 # ARM64 twin of helper_linux (same sources, aarch64 codegen — see the
 # dist_linux_aarch64 note).
-helper_linux_aarch64: $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c | $(DIST_DIR)
+helper_linux_aarch64: dates $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c | $(DIST_DIR)
 	$(AARCH64_CC) $(SRC_DIR)/helper/helper_linux.c $(SRC_DIR)/helper/common_posix.c -o $(DIST_DIR)/helper_linux_aarch64$(ASSET_SUFFIX) $(CFLAGS) $(GC_FLAGS)
 
-helper_mac: $(SRC_DIR)/helper/helper_mac.c $(SRC_DIR)/helper/common_posix.c $(SRC_DIR)/helper/Info.plist | $(DIST_DIR)
+helper_mac: dates $(SRC_DIR)/helper/helper_mac.c $(SRC_DIR)/helper/common_posix.c $(SRC_DIR)/helper/Info.plist | $(DIST_DIR)
 	clang -arch x86_64 -arch arm64 $(SRC_DIR)/helper/helper_mac.c $(SRC_DIR)/helper/common_posix.c -o $(DIST_DIR)/helper_mac$(ASSET_SUFFIX) -Oz -s -flto -Wl,-dead_strip -Wl,-sectcreate,__TEXT,__info_plist,$(SRC_DIR)/helper/Info.plist
 
 # Build all helper platforms (requires cross-compilation toolchain)

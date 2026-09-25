@@ -77,6 +77,15 @@ export const GENERATED_FILES = [
     shipsIn: {},
   },
   {
+    rel: 'installer/src/_builddate.h',
+    generatedBy: 'buildDateHeader() (generateBuildDates.mjs, from input-scoped git history)',
+    // Build product of the installer Makefile (issue #322 / ADR 0036) — never
+    // hashed and never shipped: its true sources are the git commits the date
+    // derives from. Must exist before any C compile/analyze (platform.h
+    // includes it), which the Makefile's `dates` prerequisite guarantees.
+    shipsIn: {},
+  },
+  {
     rel: 'installer/src/script.built.js',
     generatedBy: 'installer/embed.mjs buildScriptJs() (from installer/web/script/*)',
     // Built-script artifact persisted for the eslint/prettier gates (#225
@@ -107,7 +116,12 @@ export const PACKAGE_SCAN_EXCLUDE = {
  * hashed instead). Single source for upload.mjs's collectDirEntries exclude
  * list.
  */
-export const INSTALLER_HASH_EXCLUDE = ['_config.h', 'resources.h', 'script.built.js'];
+export const INSTALLER_HASH_EXCLUDE = [
+  '_config.h',
+  'resources.h',
+  'script.built.js',
+  '_builddate.h',
+];
 
 /**
  * Obsolete files: excluded from zips and from the published hash / manifest
