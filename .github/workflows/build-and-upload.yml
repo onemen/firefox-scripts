@@ -24,8 +24,7 @@
 #      property pages.yml buys with serialization, bought here with
 #      architecture. This job is also where a future SignPath code-signing
 #      step slots in (sign the staged bytes between the artifacts and pass 2).
-#   5. deterministic — advisory: two `upload:local --mode=prod --force` runs on
-#      one runner must produce byte-identical snapshots, and a build from the
+#   5. deterministic — advisory: two `snapshot:prod --force` runs on one runner must produce byte-identical snapshots, and a build from the
 #      pinned toolchain prefix must match the environment build byte for byte
 #      (#33's deterministic
 #      publish check; Windows builds are pinned via SOURCE_DATE_EPOCH, #162).
@@ -296,20 +295,20 @@ jobs:
       # entries carry per-file timestamps derived from the sources, so the
       # full snapshot must match too.
       - name: Snapshot run 1
-        run: pnpm upload:local -- --mode=prod --force --platform=win
+        run: pnpm snapshot:prod --force --platform=win
       - name: Stash first snapshot
         shell: bash # default Windows shell (pwsh) has no ls -d / head pipeline
         run: |
           dir=$(ls -d dist/prod-* | head -1)
           mv "$dir" dist/.run1
       - name: Snapshot run 2
-        run: pnpm upload:local -- --mode=prod --force --platform=win
+        run: pnpm snapshot:prod --force --platform=win
       - name: Compare snapshots
         shell: bash
         run: |
           dir2=$(ls -d dist/prod-* | head -1)
           diff -r dist/.run1 "$dir2" || {
-            echo "::error::two upload:local runs of the same commit produced different snapshots — builds are not deterministic"
+            echo "::error::two snapshot:prod runs of the same commit produced different snapshots — builds are not deterministic"
             exit 1
           }
           echo "snapshots byte-identical"

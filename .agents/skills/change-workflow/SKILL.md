@@ -106,7 +106,7 @@ task worktrees.)
 | Publish helpers / hashing        | `pnpm test` (unit tests in `test/unit/`)                                              |
 | Decision log (`docs/decisions/`) | `pnpm check:decisions` (duplicates, stale links, `Amends:`/`Amended:` reciprocity)    |
 | Generated-file sources           | `node tools/publish/syncGeneratedFiles.mjs`                                           |
-| Packaging / publish scripts      | `pnpm upload:local -- --mode=prod`                                                    |
+| Packaging / publish scripts      | `pnpm snapshot:prod`                                                                  |
 
 This table mirrors AGENTS.md → "Testing & QA" (the source of truth); if the two ever disagree, fix
 AGENTS.md first and this table second.

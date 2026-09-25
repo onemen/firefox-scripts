@@ -9,7 +9,7 @@
 //
 // What it does:
 //   1. Snapshot: reuses the newest dist/ snapshot whose branch matches HEAD;
-//      if there is none, builds one via `pnpm upload:local -- --mode=dev`
+//      if there is none, builds one via `pnpm snapshot:dev`
 //      (requires a CLEAN worktree — commit your changes first).
 //   2. Runs one updater leg with Nightly (the fastest channel that ships the
 //      same privileged-code surfaces CI exercises; override with
@@ -44,7 +44,7 @@ for (let i = 0; i < argv.length; i++) {
     console.log(
       'Usage: pnpm test:e2e:prepush [--firefox <path>]\n' +
         '\n' +
-        'Reuses a branch-matching dev snapshot (or builds one via upload:local —\n' +
+        'Reuses a branch-matching dev snapshot (or builds one via snapshot:dev —\n' +
         'needs a clean worktree), then runs one updater leg on Nightly.\n' +
         'Browser override: --firefox <path> or E2E_PREPUSH_FIREFOX.'
     );
@@ -84,21 +84,21 @@ if (snapshot) {
   if (dirty) {
     fail(
       'no branch-matching snapshot in dist/ and the worktree is dirty.\n' +
-        '  Commit your changes first (upload:local requires a clean worktree),\n' +
-        '  or build a snapshot manually: pnpm upload:local -- --mode=dev'
+        '  Commit your changes first (snapshot:dev requires a clean worktree),\n' +
+        '  or build a snapshot manually: pnpm snapshot:dev'
     );
   }
-  console.log('\n[1/2] snapshot: none for this branch — building via upload:local…');
-  const build = sh('pnpm', ['upload:local', '--', '--mode=dev'], {
+  console.log('\n[1/2] snapshot: none for this branch — building via snapshot:dev…');
+  const build = sh('pnpm', ['snapshot:dev'], {
     stdio: 'inherit',
     shell: process.platform === 'win32',
   });
   if (build.status !== 0) {
-    fail('upload:local --mode=dev failed (see output above).');
+    fail('snapshot:dev failed (see output above).');
   }
   snapshot = branchMatchingSnapshot();
   if (!snapshot) {
-    fail('upload:local reported success but produced no branch-matching snapshot.');
+    fail('snapshot:dev reported success but produced no branch-matching snapshot.');
   }
   console.log(`  built ${path.basename(snapshot)}`);
 }

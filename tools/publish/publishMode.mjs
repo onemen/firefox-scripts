@@ -1,7 +1,7 @@
 // publishMode.mjs — mode + dev-run identity shared by every publish component.
 //
-// `--mode=prod|dev` is REQUIRED for all publish operations (upload /
-// upload:local): there is no silent default, so
+// `--mode=prod|dev` is REQUIRED for all publish operations (the snapshot:* /
+// publish:* scripts): there is no silent default, so
 // an accidental prod publish is impossible without consciously typing
 // --mode=prod.
 //
@@ -31,9 +31,14 @@ export const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 export const MODES = ['prod', 'dev'];
 
-/** --mode=… from argv, or undefined when absent. */
+/**
+ * --mode=… from argv, or undefined when absent. The LAST occurrence wins, so a
+ * pnpm script's baked mode (snapshot:prod/dev, publish:dev) can be overridden
+ * by a flag the caller appends instead of being silently ignored.
+ */
 function rawModeArg() {
-  const arg = process.argv.find(a => a.startsWith('--mode='));
+  let arg;
+  for (const a of process.argv) if (a.startsWith('--mode=')) arg = a;
   return arg ? arg.slice('--mode='.length) : undefined;
 }
 
@@ -50,9 +55,9 @@ function typedModeArg() {
 export const MODE = typedModeArg();
 
 /**
- * --local (upload:local): build a self-contained snapshot whose URLs all point
- * at the installer's own HTTP server (http://localhost:<DEFAULT_PORT>/) instead
- * of GitHub, so the built installer works offline against
+ * --local (snapshot:prod/dev): build a self-contained snapshot whose URLs all
+ * point at the installer's own HTTP server (http://localhost:<DEFAULT_PORT>/)
+ * instead of GitHub, so the built installer works offline against
  * dist/<mode>-<branch>-<hash>/ without pushing anything. Orthogonal to MODE:
  * prod-local keeps plain asset names, dev-local keeps '-dev' names.
  */

@@ -36,5 +36,5 @@ because the hash inputs were reworked to name the sources, not the artifacts. Th
 generated file is added or removed without updating the hash inputs, updates silently stop
 propagating. **Closed 2026-09-16** (see Amended): add the file to
 `tools/publish/generatedRegistry.mjs` and the tests enforce the rest — an unwired generated file
-fails `pnpm test`. Revisit-if: a deterministic-publish CI check (run `upload:local` twice and diff
+fails `pnpm test`. Revisit-if: a deterministic-publish CI check (run `snapshot:prod` twice and diff
 the snapshots) is wanted, or a non-Node consumer appears.

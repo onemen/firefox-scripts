@@ -15,7 +15,7 @@
 //                            copied-from-e2e output name silently never runs
 //                            every gated step built on it.
 //   - canary-build-parity    the ubuntu-26.04 canary runs the SAME
-//                            `upload:local --mode=dev` build as the shipping
+//                            `snapshot:dev` build as the shipping
 //                            publish gate — that identity is what makes a
 //                            green canary mean anything.
 //   - canary-stays-advisory  ADR 0017: the canary warns, never blocks. A
@@ -273,8 +273,8 @@ export function filterOutputViolations(text) {
 // ── contract: canary-build-parity + canary-stays-advisory (ci.yml) ─────────
 
 /**
- * The `pnpm upload:local` invocation of a build-shaped job (there is exactly
- * one per job), or null.
+ * The `pnpm snapshot` invocation of a build-shaped job (there is exactly one
+ * per job), or null.
  *
  * @param {{name: string; body: string}} job
  * @returns {string | null}
@@ -282,7 +282,7 @@ export function filterOutputViolations(text) {
 function buildInvocation(job) {
   const runs = jobSteps(job.body)
     .map(stepRun)
-    .filter(run => run.includes('pnpm upload:local'));
+    .filter(run => run.includes('pnpm snapshot'));
   return runs.length === 1 ? runs[0] : null;
 }
 
@@ -298,9 +298,9 @@ export function canaryBuildParityViolations(jobs) {
   const byName = new Map(jobs.map(job => [job.name, job]));
   const build = buildInvocation(byName.get('build') ?? {name: 'build', body: ''});
   const canary = buildInvocation(byName.get('build-canary') ?? {name: 'build-canary', body: ''});
-  if (build === null) return ['ci.yml: the build job has no single `pnpm upload:local` step'];
+  if (build === null) return ['ci.yml: the build job has no single `pnpm snapshot` step'];
   if (canary === null) {
-    return ['ci.yml: the build-canary job has no single `pnpm upload:local` step'];
+    return ['ci.yml: the build-canary job has no single `pnpm snapshot` step'];
   }
   return build === canary ?
       []
@@ -644,7 +644,7 @@ const CI_CONTRACTS = [
   },
   {
     id: 'canary-build-parity',
-    description: 'the ubuntu-26.04 canary runs the same upload:local build as the publish gate',
+    description: 'the ubuntu-26.04 canary runs the same snapshot build as the publish gate',
     check: text => canaryBuildParityViolations(workflowJobs(text)),
   },
   {
@@ -762,7 +762,7 @@ test('canary-build-parity: a drifted canary build is a violation', () => {
       `  ${name}:`,
       '    steps:',
       '      - name: Build all packages and binaries',
-      `        run: pnpm upload:local --mode=${mode}`,
+      `        run: pnpm snapshot:${mode}`,
     ].join('\n');
   const drifted = ['jobs:', job('build', 'dev'), job('build-canary', 'prod')].join('\n');
   const violations = canaryBuildParityViolations(workflowJobs(drifted));

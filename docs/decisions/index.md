@@ -57,7 +57,7 @@ Open these before proposing a new primitive, surface, or storage home.
   package; no remote page/iframe/postMessage
 - [0008](./0008-generated-files-untracked.md) — Generated files untracked; regenerated on demand;
   hashes cover true sources
-- [0009](./0009-unified-publish-modes.md) — Unified publish `upload`/`upload:local` with required
+- [0009](./0009-unified-publish-modes.md) — Unified publish `publish:*`/`snapshot:*` with required
   `--mode=prod|dev`; prod gated to `main`
 - [0010](./0010-session-token-no-cors.md) — Local installer server gated by a per-run session token;
   no CORS

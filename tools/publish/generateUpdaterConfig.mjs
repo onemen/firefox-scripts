@@ -104,9 +104,9 @@ export function applyDevOverrides(config) {
  * (http://localhost:<DEFAULT_PORT>/). The local snapshot ships zips,
  * hashes.json and helper binaries at the branch root, and the installer serves
  * them from its own directory (http_server.c serve_local_file, enabled by
- * CFG_LOCAL), so upload:local installer builds install and hash-check with zero
- * GitHub traffic. The installer tab is HTTP-served, so it must keep http://
- * URLs.
+ * CFG_LOCAL), so snapshot:prod/dev installer builds install and hash-check with
+ * zero GitHub traffic. The installer tab is HTTP-served, so it must keep
+ * http:// URLs.
  *
  * ASSET_SUFFIX is '' in every mode (#282 suffix drop).
  */

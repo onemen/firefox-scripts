@@ -51,7 +51,7 @@ jobs:
               - 'installer/**'
               - 'tools/publish/**'
               # The publish AV/VT scan tools run inside upload.mjs (the gate's
-              # `upload:local` rehearsal), so edits to them must re-trigger it.
+              # `snapshot:dev` rehearsal), so edits to them must re-trigger it.
               - 'tools/scan-av.mjs'
               - 'tools/scan-vt.mjs'
               # The pinned Windows toolchain: the gate builds with it, so a pin
@@ -84,7 +84,7 @@ jobs:
       - run: pnpm check:decisions
       - run: pnpm check:gates
 
-  # Publish-path gate: `upload:local --mode=dev` rebuilds the zips and the
+  # Publish-path gate: `snapshot:dev` rebuilds the zips and the
   # native binaries for the runner's OS.  This is what catches regressions in
   # the generated files, hashes and Makefile before they reach a release.
   build:
@@ -135,7 +135,7 @@ jobs:
       - name: Build all packages and binaries
         if: needs.changes.outputs.publish == 'true'
         shell: bash
-        run: pnpm upload:local --mode=dev
+        run: pnpm snapshot:dev
 
       # Security regression gate: every state-changing /api route must reject
       # a missing/wrong session token, and no response may carry the wildcard
@@ -200,7 +200,7 @@ jobs:
       - name: Build all packages and binaries
         if: needs.changes.outputs.publish == 'true'
         shell: bash
-        run: pnpm upload:local --mode=dev
+        run: pnpm snapshot:dev
 
   # ── CI gate ──────────────────────────────────────────────────────────────
   # Single branch-protection check — only registers as success when all

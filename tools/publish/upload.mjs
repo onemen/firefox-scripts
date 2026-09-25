@@ -9,10 +9,12 @@
 // branch) or, with --local, to a complete snapshot under
 // dist/<mode>-<branch>-<hash>/.
 //
-// Usage:
-//   pnpm upload -- --mode=prod            # check hashes, build changed, upload to GitHub
-//   pnpm upload -- --mode=dev             # same, but ALWAYS rebuild + upload, branch-only
-//   pnpm upload:local -- --mode=prod      # offline snapshot: dist/prod-<branch>-<hash>/
+// Usage (the pnpm scripts bake the mode; `snapshot:*` stays on disk, `publish:*` goes live):
+//   pnpm snapshot:prod                    # offline snapshot: dist/prod-<branch>-<hash>/
+//   pnpm snapshot:dev                     # offline snapshot: dist/dev-<branch>-<hash>/
+//   pnpm publish:all                      # real publish via CI (gh workflow run pages.yml)
+//   pnpm publish:dev                      # real dev upload: dev-build-<id> branch
+//   node tools/publish/upload.mjs --local --mode=prod   # this script directly
 //
 // Flags:
 //   --mode=prod|dev    REQUIRED. prod = latest release + gh-pages (main only,
@@ -185,7 +187,7 @@ if (BUILD_ONLY && SKIP_BUILD) {
 }
 // Removed flags fail loudly: an old --dry-run / --packages-only /
 // --binaries-only / --skip invocation must never silently turn into a real upload.
-// The offline check is now `--local` (upload:local). --ci was removed with
+// The offline check is now `--local` (the snapshot:* scripts). --ci was removed with
 // the workflow-only prod guard: it only widened the platform set, so a local
 // `--ci` prod run would still have published a partial release.
 const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only', '--ci', '--skip'].filter(
@@ -197,7 +199,7 @@ const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only', '--ci'
 if (REMOVED_FLAGS.length > 0) {
   throw new Error(
     `Unknown flag ${REMOVED_FLAGS.join(', ')} — the offline check is now ` +
-      `'upload:local' (node tools/publish/upload.mjs --local --mode=prod|dev); ` +
+      `'snapshot:prod' / 'snapshot:dev' (node tools/publish/upload.mjs --local --mode=prod|dev); ` +
       `prod publishes are workflow-only (gh workflow run pages.yml -f mode=prod).`
   );
 }

@@ -1,4 +1,4 @@
-// test/unit/publish/release.test.mjs — the pnpm release dispatch alias.
+// test/unit/publish/release.test.mjs — the pnpm publish:* dispatch aliases.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -125,17 +125,23 @@ test('buildDispatchArgs: full set maps onto the pages.yml dispatch', () => {
   );
 });
 
-test('the release: presets pin the documented --include role lists', () => {
+test('the publish: presets pin the documented --include role lists', () => {
   const pkg = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.scripts['release:all'], 'node tools/publish/release.mjs --include=all');
+  assert.equal(pkg.scripts['publish:all'], 'node tools/publish/release.mjs --include=all');
   assert.equal(
-    pkg.scripts['release:packages'],
+    pkg.scripts['publish:packages'],
     'node tools/publish/release.mjs --include=packages'
   );
   assert.equal(
-    pkg.scripts['release:installer'],
+    pkg.scripts['publish:installer'],
     'node tools/publish/release.mjs --include=installer'
   );
-  // The offline rehearsal keeps its implicit full scope via the script itself.
-  assert.match(pkg.scripts['upload:local'], /--include=all$/);
+  // The dev dispatch names its channel in the script itself.
+  assert.equal(
+    pkg.scripts['publish:dev'],
+    'node tools/publish/release.mjs --mode=dev --include=all'
+  );
+  // The offline snapshots keep the full scope baked into the script.
+  assert.match(pkg.scripts['snapshot:prod'], /--local --mode=prod --include=all$/);
+  assert.match(pkg.scripts['snapshot:dev'], /--local --mode=dev --include=all$/);
 });

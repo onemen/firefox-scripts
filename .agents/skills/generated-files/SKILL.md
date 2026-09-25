@@ -63,7 +63,7 @@ skill's table all describe. `test/unit/generatedRegistry.test.mjs` fails `pnpm t
 generated file's hash-input wiring is missing (ADR 0008's old trap — closed mechanically): to add or
 remove a generated file, edit the registry and the tests tell you what must follow.
 
-At the end of every `upload` run the files are **deleted from disk** (`cleanGenerated`) so the
+At the end of every publish run the files are **deleted from disk** (`cleanGenerated`) so the
 working tree matches a fresh clone. `config/installer.conf` is the single source of truth (ADR
 [0013](../../../docs/decisions/0013-installer-conf-source-of-truth.md)) — changing it shifts package
 hashes, which is how updates propagate.

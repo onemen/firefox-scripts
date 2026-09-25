@@ -239,10 +239,11 @@ function readLocalSnapshot() {
  *
  * @param {object} [options]
  * @param {boolean} [options.localOnly=false] - Read only the last local
- *   snapshot and never hit the network (upload:local). A real publish run must
- *   NOT do this: a matching local snapshot would suppress the first publish and
- *   the manifest would never be created on gh-pages. A missing remote manifest
- *   in a real run means "fresh" — publish everything. Default is `false`
+ *   snapshot and never hit the network (snapshot:prod/dev). A real publish run
+ *   must NOT do this: a matching local snapshot would suppress the first
+ *   publish and the manifest would never be created on gh-pages. A missing
+ *   remote manifest in a real run means "fresh" — publish everything. Default
+ *   is `false`
  */
 export async function getStoredHashes({localOnly = false} = {}) {
   let text;

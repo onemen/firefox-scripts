@@ -6,13 +6,13 @@
 // per-OS matrix. This script is a discoverable front door for the dispatch —
 // exactly `gh workflow run pages.yml`, nothing more:
 //
-//   pnpm release:all                   # full prod publish (mode defaults to prod)
-//   pnpm release:packages              # zips + updater-ui only (--include=packages)
-//   pnpm release:installer             # installer + helper only (--include=installer)
-//   pnpm release -- --include=all --mode=dev     # dev-build-<id> branch instead
-//   pnpm release -- --include=installer,helper   # any ADR 0030 role list
-//   pnpm release -- --include=all --ref=<branch> # dispatch another branch's workflow
-//   pnpm release -- --include=all --force        # rebuild + re-upload even when unchanged
+//   pnpm publish:all                   # full prod publish (mode defaults to prod)
+//   pnpm publish:packages              # zips + updater-ui only (--include=packages)
+//   pnpm publish:installer             # installer + helper only (--include=installer)
+//   pnpm publish:dev                   # dev-build-<id> branch instead (--mode=dev)
+//   pnpm publish -- --include=installer,helper   # any ADR 0030 role list
+//   pnpm publish -- --include=all --ref=<branch> # dispatch another branch's workflow
+//   pnpm publish -- --include=all --force        # rebuild + re-upload even when unchanged
 //
 // The publish scope is OPT-IN and REQUIRED: `--include=<roles>` (or a preset
 // above; `all` = full publish). A missing, empty or invalid --include fails
@@ -131,7 +131,7 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
     throw new Error(
       'Missing --include=<roles> — state what this run publishes ' +
         '(packages|installer|helper, comma-separated, or all).\n' +
-        '  Presets: pnpm release:all / release:packages / release:installer'
+        '  Presets: pnpm publish:all / publish:packages / publish:installer / publish:dev'
     );
   }
   return opts;

@@ -445,9 +445,7 @@ async function main() {
   }
   const snapshotDir = opts.snapshot || findSnapshot({branchCheck: false})?.dir;
   if (!snapshotDir) {
-    console.error(
-      'No snapshot found in dist/ — pass --snapshot <dir> or run pnpm upload:local --mode=dev'
-    );
+    console.error('No snapshot found in dist/ — pass --snapshot <dir> or run pnpm snapshot:dev');
     process.exit(1);
   }
   const greDir = findGreDir(firefoxBin);

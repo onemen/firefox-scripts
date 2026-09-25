@@ -11,7 +11,7 @@ v1.0"). This file is updated only when scope changes — see AGENTS.md "Roadmap 
 Order matters: installer / updater / tests / CI first, core-file PRs last.
 
 - **P1-1** Port `docs/e2e-matrix-plan.md` as historical context; retire `feat/e2e-orig`.
-- **P0-1** `upload --mode=prod` moves the `latest` tag to the uploaded commit.
+- **P0-1** `pnpm publish:all` moves the `latest` tag to the uploaded commit.
 - **P0-2** `pnpm dev-clean` removes old `dev-build-*` branches + tags.
 - **P0-3** E2E speed: browser download map (`test/e2e/shared/downloads.mjs`) + shorter waits.
 - **P1-2** Docs restructure (developer/maintainer vs user docs) + `future-work.md` sync.

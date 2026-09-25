@@ -116,7 +116,7 @@ here is the elevation trigger — the self-hosted-runner / VM / human-in-the-loo
 ## 3. Publish pipeline tasks
 
 > Shipped — the issue closed with its checklist done: `build-and-upload.yml` (#203) with the
-> advisory `deterministic` publish-output job, helper sha256 sidecars (#174) + `pnpm release:helper`
+> advisory `deterministic` publish-output job, helper sha256 sidecars (#174) + `pnpm publish:helper`
 > (#273), the STAGING guard + `.env-example` keys (#164), and date-stamped component releases
 > (#176/#189). Remaining publish-pipeline items are tracked in #38.
 
@@ -153,8 +153,8 @@ The generated files (`updater-config.sys.mjs`, `updater.css`, `_config.h`, `reso
 sync problem is gone — there is nothing tracked that can drift (see ADR
 [0008](./decisions/0008-generated-files-untracked.md)). What a future CI job should verify instead:
 
-- **Deterministic publish output:** run `upload:local --mode=prod` (or the generators) and fail if
-  the produced snapshot (hashes, zips, manifest `files` lists) differs between runs.
+- **Deterministic publish output:** run `pnpm snapshot:prod` (or the generators) and fail if the
+  produced snapshot (hashes, zips, manifest `files` lists) differs between runs.
 - **Build matrix:** the §3 multi-platform binary build (each OS compiles its own installer/helper).
 
 ## 4. Installer UI polish

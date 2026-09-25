@@ -1,6 +1,6 @@
 // Library-only module: GitHub release-asset helpers used by upload.mjs.  There
-// is no standalone entry — all publication happens through `upload` /
-// `upload:local` so zips, binaries, Pages and the hash manifest are pushed
+// is no standalone entry — all publication happens through the `publish:*` /
+// `snapshot:*` scripts so zips, binaries, Pages and the hash manifest are pushed
 // together in one consistent flow.
 
 import fs from 'fs';

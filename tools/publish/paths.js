@@ -90,10 +90,10 @@ export {PUBLISH_MODE};
 
 // ---- Unified build-output root (dist/ at the repo top level) ----
 // dist/ is gitignored. The ONLY durable contents are per-run snapshots:
-//   dist/prod-<branch>-<hash>/           (upload:local --mode=prod)
-//   dist/dev-<branch>-<hash>/            (upload:local --mode=dev)
-//   dist/prod-copy-<branch>-<hash>/      (upload --mode=prod --keep-copy)
-//   dist/dev-copy-<branch>-<hash>/       (upload --mode=dev --keep-copy)
+//   dist/prod-<branch>-<hash>/           (snapshot:prod)
+//   dist/dev-<branch>-<hash>/            (snapshot:dev)
+//   dist/prod-copy-<branch>-<hash>/      (upload --local? no: real publish --keep-copy)
+//   dist/dev-copy-<branch>-<hash>/       (real publish --keep-copy)
 // Build products (zips + binaries) are written to a transient dist/.build/
 // staging tree that upload.mjs removes at the end of every run, so a plain
 // GitHub upload leaves nothing behind and dist/ only ever holds snapshots.

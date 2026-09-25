@@ -90,6 +90,6 @@ Run through every item; each maps to code that already exists.
 - `test/e2e/installer/smoke-security.mjs` — CI security smoke test: boots the installer headless
   (`--smoke-test`) and asserts every state-changing `/api` route rejects a missing/wrong session
   token, valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`. Runs in
-  the CI workflow on Windows after `pnpm upload:local --mode=dev`; run it locally the same way.
+  the CI workflow on Windows after `pnpm snapshot:dev`; run it locally the same way.
 - External reviews (e.g. Greptile on PRs) act as a second pair of eyes; treat findings as hypotheses
   to verify against this checklist, not as ground truth.

@@ -9,8 +9,8 @@ description:
 
 # Publishing a release
 
-Publishing requires **explicit user permission** — when in doubt, stop at `upload:local` (the
-token-less offline check). All modes require a **clean worktree**.
+Publishing requires **explicit user permission** — when in doubt, stop at the `snapshot:*` scripts
+(the token-less offline check). All modes require a **clean worktree**.
 
 ## Modes
 
@@ -35,19 +35,19 @@ the same list in the `include` input (`gh workflow run pages.yml -f mode=prod -f
 
 ```bash
 # Offline validation (no token, any branch)
-pnpm upload:local -- --mode=dev     # snapshot to dist/dev-<branch>-<hash>/
-pnpm upload:local -- --mode=prod    # snapshot to dist/prod-<branch>-<hash>/
+pnpm snapshot:dev                   # snapshot to dist/dev-<branch>-<hash>/
+pnpm snapshot:prod                  # snapshot to dist/prod-<branch>-<hash>/
 
 # Real publish (needs GITHUB_TOKEN_VAR in .env; GITHUB_TOKEN_VAR is the fixed name — never rename)
-pnpm upload -- --mode=dev           # dev-build-<id> branch + pre-release
-pnpm upload -- --mode=prod          # latest release + gh-pages (main only)
+pnpm publish:dev                    # dev-build-<id> branch + optional pre-release (-- --tag)
+pnpm publish:all                    # full prod publish — dispatches CI (gh workflow run pages.yml)
 
 # CI dispatch front doors (thin alias for gh workflow run pages.yml; the same
 # gates apply — prod stays main-only):
-pnpm release:all                    # full prod publish (--include=all)
-pnpm release:packages               # zips + updater-ui only (--include=packages)
-pnpm release:installer              # installer + helper only (--include=installer)
-pnpm release -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
+pnpm publish:all                    # full prod publish (--include=all)
+pnpm publish:packages               # zips + updater-ui only (--include=packages)
+pnpm publish:installer              # installer + helper only (--include=installer)
+pnpm publish -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
 ```
 
 Prerequisites: Node ≥ 24 + pnpm; token with `contents:write` in the untracked root `.env` (copied
@@ -77,18 +77,18 @@ Test a feature in a real browser:
 
 ```bash
 # on the feature branch
-pnpm upload:local -- --mode=dev     # optional offline check first
-pnpm upload -- --mode=dev           # publish the dev build (explicit permission!)
+pnpm snapshot:dev                   # optional offline check first
+pnpm publish:dev                    # publish the dev build (explicit permission!)
 # … install/test via the printed dev URLs …
 pnpm dev-clean                      # delete dev-build-<id> branch + release when done
 ```
 
 Production release (from `main`, gates green: `pnpm lint`, `pnpm format`, `pnpm test`,
 `pnpm test:hash` (needs a built snapshot — auto-generates one, hard-fails on stale), then
-`upload:local -- --mode=prod`):
+`pnpm snapshot:prod`):
 
 ```bash
-pnpm upload -- --mode=prod
+pnpm publish:all    # dispatch the CI cross-OS matrix — prod is CI-only (ADR 0026)
 ```
 
 ## Rules

@@ -11,7 +11,7 @@
  * 4. No response carries an Access-Control-Allow-Origin header (the wildcard CORS
  *    that made cross-origin pages able to drive the API is gone).
  *
- * Usage (run from the repo root, after `pnpm upload:local --mode=dev`): node
+ * Usage (run from the repo root, after `pnpm snapshot:dev`): node
  * test/e2e/installer/smoke-security.mjs
  * INSTALLER_BIN=/path/to/installer_win.exe node
  * test/e2e/installer/smoke-security.mjs
@@ -66,7 +66,7 @@ function findInstaller() {
     : process.platform === 'darwin' ? ['installer_mac', 'installer_mac-dev']
     : ['installer_linux', 'installer_linux-dev'];
   const searchDirs = [join(REPO_ROOT, 'dist', '.build', 'installer')];
-  // dist/dev-<branch>-<hash>/ snapshots from `upload:local`.
+  // dist/dev-<branch>-<hash>/ snapshots from `snapshot:dev`.
   const distRoot = join(REPO_ROOT, 'dist');
   if (existsSync(distRoot)) {
     for (const entry of readdirSync(distRoot)) {
@@ -83,7 +83,7 @@ function findInstaller() {
     }
   }
   throw new Error(
-    `installer binary not found in ${searchDirs.join(', ')} — run "pnpm upload:local --mode=dev" first (or set INSTALLER_BIN)`
+    `installer binary not found in ${searchDirs.join(', ')} — run "pnpm snapshot:dev" first (or set INSTALLER_BIN)`
   );
 }
 

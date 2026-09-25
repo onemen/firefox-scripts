@@ -82,7 +82,7 @@ function configHeader(confText) {
   for (const key of orderedKeys) {
     out.push(`#define CFG_${key} "${eff[key] ?? ''}"`);
   }
-  // Local-test builds (upload:local) serve published files from the installer's
+  // Local-test builds (snapshot:prod/dev) serve published files from the installer's
   // own directory and bake localhost URLs; the numeric flag lets the C code
   // enable that server fallback at compile time.  CFG_DEV / CFG_LOCAL_DIST_PATH
   // / CFG_DEV_BRANCH feed the web UI's "test build" banner (via

@@ -12,8 +12,8 @@
  * The canonical `files` list per package comes from the newest snapshot's
  * manifest (dist/prod-<branch>-<hash>/ or dist/dev-<branch>-<hash>/hashes.json,
  * either mode works — the file set is identical). If none exists it is
- * generated via `upload:local --mode=prod` (which writes one without touching
- * GitHub), so the test always reflects the current source set.
+ * generated via `snapshot:prod` (which writes one without touching GitHub), so
+ * the test always reflects the current source set.
  *
  * This test does NOT depend on @octokit/rest (only available in the publish
  * environment). It replicates the core hash algorithm inline.
@@ -82,11 +82,11 @@ function findSnapshot() {
   return best;
 }
 
-/** Resolve a prod snapshot, generating one via upload:local when none exists. */
+/** Resolve a prod snapshot, generating one via snapshot:prod when none exists. */
 function requireSnapshot() {
   let dir = findSnapshot();
   if (!dir) {
-    console.log('No prod snapshot found — generating via upload:local...');
+    console.log('No prod snapshot found — generating via snapshot:prod...');
     execSync('node tools/publish/upload.mjs --local --mode=prod --include=all', {
       cwd: REPO_ROOT,
       stdio: 'inherit',

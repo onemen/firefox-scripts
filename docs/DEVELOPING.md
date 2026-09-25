@@ -20,7 +20,7 @@ one goal: installing and updating Firefox scripts for legacy extension support.
 │   ├── Makefile            Build targets (win, linux, mac)
 │   └── embed.mjs           Embeds web assets into C resources.h
 ├── tools/publish/          Release-publishing scripts (Node.js)
-│   ├── upload.mjs          upload / upload:local: hash diff → rebuild changed zips +
+│   ├── upload.mjs          publish engine: hash diff → rebuild changed zips +
 │   │                       binaries → upload release assets + Pages → update hash
 │   │                       manifest (--mode=prod|dev, --local/--force, --platform=)
 │   ├── createZip.mjs       Zip creation helpers (fx-folder.zip, utils.zip, updater-ui.zip)
@@ -40,7 +40,7 @@ one goal: installing and updating Firefox scripts for legacy extension support.
 │   ├── installer.conf      Single source of truth for URLs/repos (→ _config.h, paths.js,
 │   │                       updater-config.sys.mjs)
 │   └── eslint.config.js, prettier.config.js
-├── package.json            Root config (lint/format + upload/upload:local)
+├── package.json            Root config (lint/format + publish:*/snapshot:*)
 └── pnpm-workspace.yaml     Root-only workspace settings
 ```
 
@@ -218,7 +218,7 @@ pnpm scan:vt -- dist/installer/installer_win.exe
 ```
 
 The publish flow also runs every built binary through VirusTotal when `VT_API_KEY` is present
-(GitHub secret on CI; root `.env` for a local `pnpm upload`). The publish fails when ≥
+(GitHub secret on CI; root `.env` for the local `snapshot:*` scans). The publish fails when ≥
 `VT_FAIL_THRESHOLD` (default 3) engines report a binary as malicious **or** when a veto engine
 (`VT_VETO_ENGINES`, default `Microsoft`) reports it as malicious at any count — a Microsoft/Defender
 verdict must never ship, even alone. Hits below the configured threshold from non-veto engines warn
@@ -268,23 +268,23 @@ evidence usable instead of buried in run logs:
 
 ### Why a clean local scan does not clear a CI build (measured 2026-09-17)
 
-`upload:local` and the CI publish build the same sources but **not the same bytes**. Only the gcc
+`snapshot:*` and the CI publish build the same sources but **not the same bytes**. Only the gcc
 version is effectively pinned (`msys2/setup-msys2` with `update: false` still installs the current
 `mingw-w64-ucrt-x86_64-*` packages); binutils, the mingw-w64 crt and the headers package float.
 Measured on commit `e393191` — the CI build that VirusTotal flagged on 2026-09-15 (issue #157):
 
-| Build                       | gcc      | binutils      | `installer_win.exe` | `helper_win.exe` |
-| --------------------------- | -------- | ------------- | ------------------- | ---------------- |
-| CI (`staged-win` artifact)  | 16.1.0-5 | 2.46-4        | 199,168 B           | 18,944 B         |
-| local (`pnpm upload:local`) | 16.1.0-5 | 2.47.20260726 | 203,264 B           | 19,456 B         |
+| Build                        | gcc      | binutils      | `installer_win.exe` | `helper_win.exe` |
+| ---------------------------- | -------- | ------------- | ------------------- | ---------------- |
+| CI (`staged-win` artifact)   | 16.1.0-5 | 2.46-4        | 199,168 B           | 18,944 B         |
+| local (`pnpm snapshot:prod`) | 16.1.0-5 | 2.47.20260726 | 203,264 B           | 19,456 B         |
 
 Reproducing the CI bytes locally needs CI's whole package set — which is what
 `config/msys2-toolchain.json` now installs on both sides (see the pinned-toolchain section below).
 Two consequences worth keeping in mind:
 
-- **A local `upload:local` run cannot validate or clear the bytes CI will ship.** Its scan is
-  evidence about the local toolchain only; the publish gates (host AV on the runner + the VirusTotal
-  veto) are what cover the ship-bound bytes. To inspect them locally, download what a run staged:
+- **A local `snapshot:*` run cannot validate or clear the bytes CI will ship.** Its scan is evidence
+  about the local toolchain only; the publish gates (host AV on the runner + the VirusTotal veto)
+  are what cover the ship-bound bytes. To inspect them locally, download what a run staged:
   `gh run download <run-id> -n staged-win`.
 - Engine verdicts are as version-dependent as the compiler: local Windows Defender reported the CI
   bytes that VirusTotal's Microsoft engine flagged (`Trojan:Win32/Wacatac.B!ml`) as clean. Treat
@@ -349,14 +349,14 @@ re-derivable: re-scan the current pin's output instead. The pinned prefix itself
 ### Partial publishes — publishing only the roles you name
 
 A flag usually hits one binary, not the packages: the zips are plain JS/text and are what installed
-browsers actually pull. `--include=<roles>` (or the `pnpm release:*` presets) publishes exactly the
+browsers actually pull. `--include=<roles>` (or the `pnpm publish:*` presets) publishes exactly the
 named roles instead of freezing all of them (decision:
 [ADR 0030](./decisions/0030-partial-publishes.md)):
 
 ```bash
-pnpm upload:local -- --mode=prod --include=packages  # offline rehearsal (zips + hashes.json)
-pnpm upload -- --mode=dev --include=packages,helper  # dev build: ship a clean helper,
-                                                     # withhold the installer
+pnpm snapshot:prod --include=packages  # offline rehearsal (zips + hashes.json)
+pnpm publish:dev -- --include=packages,helper  # dev build: ship a clean helper,
+                                             # withhold the installer
 # prod is CI-only: dispatch the publish with the same list
 gh workflow run pages.yml -f mode=prod -f include=packages
 ```
@@ -455,13 +455,13 @@ derivation, snapshot discovery, Firefox binary detection).
 ## Test: E2E tests (`pnpm test:e2e`)
 
 End-to-end tests verify the installer HTTP API, the elevated-copy helper, and the in-browser updater
-tab across multiple scenarios. They require a `upload:local` snapshot first.
+tab across multiple scenarios. They require a `snapshot:dev` snapshot first.
 
 ### Quick start
 
 ```bash
 # Build a dev snapshot (needed once)
-pnpm upload:local -- --mode=dev
+pnpm snapshot:dev
 
 # Run all E2E tests (installer HTTP + updater scenarios)
 pnpm test:e2e
@@ -491,9 +491,9 @@ pnpm test:e2e:prepush -- --firefox "C:/path/to/firefox.exe"   # explicit browser
 ```
 
 Behavior: reuses the newest `dist/` snapshot matching the current branch; if there is none it builds
-one via `pnpm upload:local -- --mode=dev` — which requires a **clean worktree, so commit your
-changes first** (that is the intended flow: you are about to push anyway). The leg runs on
-**Nightly** — resolution order: `--firefox`/`E2E_PREPUSH_FIREFOX`, then the portable nightly from
+one via `pnpm snapshot:dev` — which requires a **clean worktree, so commit your changes first**
+(that is the intended flow: you are about to push anyway). The leg runs on **Nightly** — resolution
+order: `--firefox`/`E2E_PREPUSH_FIREFOX`, then the portable nightly from
 `pnpm e2e:portable nightly`, then the installed Nightly (`C:\Program Files\Firefox Nightly`). Some
 scenarios (e.g. scenario 9's GreD-writability caveat) self-skip when the local environment cannot
 run them, mirroring CI's PR legs.
@@ -571,7 +571,7 @@ pnpm e2e:portable nightly                    # or: firefox, firefox-dev, a fork
 pnpm e2e:portable nightly --dir /c/tmp/portable-nightly   # explicit destination
 
 export FIREFOX_BINARY="/c/Users/you/Documents/FireFox/portable/nightly/firefox.exe"
-pnpm upload:local -- --mode=dev              # build the snapshot for this branch
+pnpm snapshot:dev              # build the snapshot for this branch
 pnpm test:e2e:updater -- --no-branch-check   # one updater leg on that browser
 pnpm test:e2e                                # installer + updater
 ```
@@ -705,11 +705,11 @@ nothing. `pnpm ci:download -- --clean` removes a release that was created but ne
 
 A cross-platform Node.js test verifies that the C installer's hash computation matches the
 JavaScript reference in `tools/publish/hashUtils.mjs`. It uses the newest `prod-` or `dev-` snapshot
-under `dist/` (generating a prod one via `upload:local --mode=prod` when none exists), so it can run
-right after a `--mode=dev` build without a second compile:
+under `dist/` (generating a prod one via `snapshot:prod` when none exists), so it can run right
+after a `--mode=dev` build without a second compile:
 
 ```bash
-pnpm upload:local --mode=dev
+pnpm snapshot:dev
 pnpm test:hash
 ```
 
@@ -746,9 +746,9 @@ stay SHA-pinned (`.github/dependabot.yml`).
   drift from what CI gates. For local iteration, `pnpm lint:all` (npm-run-all2
   `run-s --continue-on-error --print-label`) runs every stage and reports all findings at once; it
   is a developer convenience and never used by CI or hooks.
-- **publish gate** (Windows / Linux / macOS) — `pnpm upload:local --mode=dev` rebuilds every package
-  zip and the native binaries for the runner's OS, so regressions in generated files, hashes or the
-  Makefile fail the PR before they reach a release.
+- **publish gate** (Windows / Linux / macOS) — `pnpm snapshot:dev` rebuilds every package zip and
+  the native binaries for the runner's OS, so regressions in generated files, hashes or the Makefile
+  fail the PR before they reach a release.
 - **Security smoke test** (Windows) — `test/e2e/installer/smoke-security.mjs` launches the built
   installer headless and verifies every state-changing `/api` route rejects a missing/wrong session
   token, valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`.
@@ -851,7 +851,7 @@ queued PRs.
 Run the smoke test locally (Windows, from the repo root):
 
 ```bash
-pnpm upload:local --mode=dev
+pnpm snapshot:dev
 node test/e2e/installer/smoke-security.mjs
 ```
 
@@ -999,29 +999,30 @@ installed test builds auto-update while the branch lives): `git push origin --de
 (CI test runs delete it automatically in a `finally`; `pnpm dev-clean` removes branches and their
 tags).
 
-### `pnpm upload` reference
+### Publish reference (upload.mjs)
 
-Complete flag + environment surface of the publish entry point. **On your machine, `pnpm upload` is
-dev-channel-only** — `--mode=dev` publishes a test build, `--mode=prod` aborts (the `latest` release
-needs the full cross-OS binary set, buildable only in CI). The one local prod exception is
-`upload:local`, the offline snapshot: same command, nothing leaves the machine. Everything here
-applies to `pnpm upload:local` too unless noted (its only differences: `--local` is implied, no
-token needed, nothing leaves the machine).
+Complete flag + environment surface of the publish engine (`tools/publish/upload.mjs`; the pnpm
+scripts bake the mode). **On your machine, only the `snapshot:*` scripts and `publish:dev` run** — a
+real `--mode=prod` run aborts locally (the `latest` release needs the full cross-OS binary set,
+buildable only in CI). The `snapshot:*` scripts are the offline form of the same engine: `--local`
+is baked, no token needed, nothing leaves the machine. Everything in the table below applies to them
+too unless noted.
 
 For the common cases you do not need this table — the role-oriented front doors dispatch CI with the
-right pre-set (`pnpm release` accepts `--mode/--include/--ref/--force` and passes any other
+right pre-set (`pnpm publish` accepts `--mode/--include/--ref/--force` and passes any other
 `-f key=value` to gh verbatim):
 
 ```bash
-pnpm release:all         # full prod publish (all roles)
-pnpm release:packages    # the script zips + updater-ui only — a held-back installer/helper
+pnpm publish:all         # full prod publish (all roles)
+pnpm publish:packages    # the script zips + updater-ui only — a held-back installer/helper
                          # keeps serving its last published bytes (the AV holdback)
-pnpm release:installer   # installer + helper only — a held-back packages role is rarely
+pnpm publish:installer   # installer + helper only — a held-back packages role is rarely
                          # what you want in prod (see the dev-strand warning in ADR 0030)
-pnpm release:helper      # helper + sidecar only — helper-byte rotation (e.g. the post-v1.0
+pnpm publish:helper      # helper + sidecar only — helper-byte rotation (e.g. the post-v1.0
                          # hardening) with zero package changes; the sidecar is fetched live by the
                          # updater, so no utils/updater-ui release is needed
-pnpm release -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
+pnpm publish:dev         # dev-channel upload: the disposable dev-build-<id> branch
+pnpm publish -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
 ```
 
 | Flag                            | Modes         | What it does                                                                                                                                                                                                                                                                                     |
@@ -1033,7 +1034,7 @@ pnpm release -- --include=packages,helper --mode=dev --ref=<branch>   # any comb
 | `--force`                       | prod          | Rebuild + re-upload even when hashes are unchanged (dev always rebuilds everything)                                                                                                                                                                                                              |
 | `--include=<roles>`             | both          | **Required.** Roles this run publishes: `packages`, `installer`, `helper`, or `all` — comma-separated/repeatable. Partial publish (AV holdback): a role left out is not built, scanned or uploaded, and its `hashes.json` entry stays frozen (ADR [0030](./decisions/0030-partial-publishes.md)) |
 | `--platform=win\|linux\|mac`    | binary builds | Platform set, repeatable; `linux` also builds the aarch64 twin. Defaults to the current OS — CI passes one per job; a local prod run cannot widen past its own OS (the guard below)                                                                                                              |
-| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what `upload:local` implies                                                                                                                                                                                          |
+| `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what the `snapshot:*` scripts bake                                                                                                                                                                                   |
 | `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                                                                                                                                      |
 | `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                                                                                                                              |
 | `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the two-pass signing flow (stage-and-exit / publish signed artifacts) — the signing step itself is unwired pending the provider decision (#157)                                                                                                                               |
@@ -1046,15 +1047,15 @@ matrix. The `--ci` flag is gone: it only ever widened the platform set, so a lap
 still have published a partial release. The workflow sets an internal marker env on its upload jobs;
 nothing else passes the guard.
 
-The local front door for the prod publish is the **`pnpm release`** alias — a thin wrapper that runs
+The local front door for the prod publish is the **`pnpm publish`** alias — a thin wrapper that runs
 exactly `gh workflow run pages.yml -f mode=<mode> -f include=<roles>` (no local build, no watch
 mode; follow the run in the Actions tab). Its scope is opt-in like upload.mjs's: `--include=all` (or
-the `release:all` preset) is the full publish, and a bare `pnpm release` fails loudly rather than
+the `publish:all` preset) is the full publish, and a bare `pnpm publish` fails loudly rather than
 guessing:
 
 ```bash
-pnpm release:all              # dispatch the prod publish (full cross-OS matrix in CI)
-pnpm release -- --include=all --force   # rebuild even when hashes are unchanged
+pnpm publish:all              # dispatch the prod publish (full cross-OS matrix in CI)
+pnpm publish -- --include=all --force   # rebuild even when hashes are unchanged
 ```
 
 Prod dispatch never runs from a branch other than `main` (the workflow's own gate), and the run diff
@@ -1085,18 +1086,18 @@ What a run publishes (the hash comparison itself is [status-logic.md](./status-l
 ### Run
 
 ```bash
-pnpm release:all                         # prod publish: dispatch the CI cross-OS matrix (gh)
-pnpm upload -- --mode=dev                # always rebuild + upload, to the dev-build-<id> branch (branch-only, no release)
-pnpm upload -- --mode=dev --tag          # + create the RC-style prerelease page for this dev build
-pnpm upload -- --mode=dev --note="RC 1" --tag   # label: branch dev-build-<branch>-RC-1-<sha>, page title `… — RC 1`
-pnpm upload -- --mode=dev --ref=<ref>    # build <ref> in a temp worktree (your checkout untouched)
-DEV_BUILD_ID=main-450468f pnpm upload -- --mode=dev   # republish into an existing dev-build branch name
-pnpm upload:local -- --mode=prod         # offline snapshot to dist/prod-<branch>-<hash>/ (no token)
-pnpm upload:local -- --mode=dev          # dev snapshot (-dev artifact names), no token
+pnpm publish:all                         # prod publish: dispatch the CI cross-OS matrix (gh)
+pnpm publish:dev                         # dev upload: always rebuild + publish the dev-build-<id> branch (branch-only)
+pnpm publish:dev -- --tag                # + create the RC-style prerelease page for this dev build
+pnpm publish:dev -- --note="RC 1" --tag  # label: branch dev-build-<branch>-RC-1-<sha>, page title `… — RC 1`
+pnpm publish:dev -- --ref=<ref>          # build <ref> in a temp worktree (your checkout untouched)
+DEV_BUILD_ID=main-450468f pnpm publish:dev   # republish into an existing dev-build branch name
+pnpm snapshot:prod                       # offline snapshot to dist/prod-<branch>-<hash>/ (no token)
+pnpm snapshot:dev                        # dev snapshot (-dev artifact names), no token
 ```
 
-`pnpm upload -- --mode=prod` is CI's command, not a local one — from a dev machine it aborts before
-building (see the guard note under the reference above).
+A real `node tools/publish/upload.mjs --mode=prod` is CI's command, not a local one — from a dev
+machine it aborts before building (see the guard note under the reference above).
 
 Both commands accept `--ref=<branch|commit>` to build a specific branch or commit without touching
 the current checkout: the tool creates a temporary detached worktree at that ref, re-runs the same
@@ -1104,7 +1105,7 @@ upload command inside it (so the ref's own publish scripts build its source), th
 worktree. The snapshot directory, dev-build branch and release are named after the ref. Useful for
 building an older commit for testing while keeping local work in place.
 
-The unified flow (`upload`):
+The unified flow (one upload.mjs run):
 
 1. Loads the last published hashes from the hash manifest on the publish branch (`gh-pages` in prod,
    `dev-build-<id>` in dev; the newest `dist/<mode>-*/` snapshot in `--local` mode).
@@ -1127,7 +1128,7 @@ The unified flow (`upload`):
    truth. An idle run (nothing rebuilt) leaves the date tags untouched.
 
 Prod mode refuses to publish unless the current git branch is `main`; dev mode works from any branch
-(dev URLs are baked into the regenerated generated files on purpose). `upload:local` runs on any
+(dev URLs are baked into the regenerated generated files on purpose). `snapshot:*` runs on any
 branch with no token. A missing manifest on the publish branch (first run) is treated as "publish
 everything", so the first run creates it; `--force` also refreshes the manifest even when hashes are
 unchanged.
@@ -1171,11 +1172,11 @@ All build artifacts land in a single gitignored `dist/` tree at the repo root:
 
 | Directory                         | Contents                                                                                                                          |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `dist/.build/`                    | Transient staging (zips + binaries) written and deleted by every `upload`/`upload:local` run                                      |
-| `dist/prod-<branch>-<hash>/`      | Complete local snapshot — `upload:local --mode=prod` (zips, binaries, `hashes.json`)                                              |
-| `dist/dev-<branch>-<hash>/`       | Same, `--mode=dev` (`-dev` artifact names)                                                                                        |
-| `dist/prod-copy-<branch>-<hash>/` | Copy kept by `upload --mode=prod --keep-copy`                                                                                     |
-| `dist/dev-copy-<branch>-<hash>/`  | Copy kept by `upload --mode=dev --keep-copy`                                                                                      |
+| `dist/.build/`                    | Transient staging (zips + binaries) written and deleted by every publish run                                                      |
+| `dist/prod-<branch>-<hash>/`      | Complete local snapshot — `snapshot:prod` (zips, binaries, `hashes.json`)                                                         |
+| `dist/dev-<branch>-<hash>/`       | Same, `snapshot:dev` (`-dev` artifact names)                                                                                      |
+| `dist/prod-copy-<branch>-<hash>/` | Copy kept by a real publish's `--keep-copy`                                                                                       |
+| `dist/dev-copy-<branch>-<hash>/`  | Copy kept by a real publish's `--keep-copy`                                                                                       |
 | `dist/installer/`                 | Manual `make dist_win`/`dist_linux`/`dist_mac` output (Makefile default; `upload.mjs` redirects it into `dist/.build/installer/`) |
 | `dist/tmp/`                       | Ad-hoc debug/scratch leftovers                                                                                                    |
 
@@ -1184,7 +1185,7 @@ The installer Makefile and the `tools/publish/*.mjs` scripts share these paths v
 
 ### Testing the in-browser updater locally
 
-A `upload:local` snapshot is self-contained on disk: it writes every artifact to
+A `snapshot:prod`/`snapshot:dev` snapshot is self-contained on disk: it writes every artifact to
 `dist/<mode>-<branch>-<hash>/`, and the generated `updater-config.sys.mjs` points the updater's
 **download/install URLs** — `HASHES_URL`, `ZIP_BASE_URL`, `UI_BASE_URL`, `HELPER_BASE_URL` — at that
 snapshot directory via `file://` URLs, so hash-checking and installing work straight from disk with
@@ -1193,8 +1194,8 @@ is HTTP-served and fetches from the installer's own local server, `CFG_LOCAL`). 
 is the local `updater-ui.zip` in the same snapshot: `scriptsUpdater.sys.mjs` downloads and extracts
 it into `chrome/utils/updater/ui` before opening the tab.
 
-1. `upload:local --mode=prod` (or `dev`) and run the snapshot's installer — it installs `utils.zip`,
-   `fx-folder.zip` and `updater-ui.zip` from the local server.
+1. `pnpm snapshot:prod` (or `snapshot:dev`) and run the snapshot's installer — it installs
+   `utils.zip`, `fx-folder.zip` and `updater-ui.zip` from the local server.
 2. In another profile (or the same one after the installer finishes), the daily check opens
    `chrome://firefox-scripts/content/ui/updater.html`; you can also open it directly. Zips and
    hashes are read straight from the snapshot directory via `file://`.

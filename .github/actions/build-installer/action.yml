@@ -13,12 +13,12 @@
 # empty in every mode.
 #
 # LOCAL=1 (2026-09-21): a plain MODE=dev build bakes jsDelivr URLs for the
-# per-run dev-build-<id> branch — which only exists after a real `pnpm upload
-# --mode=dev`, never on a PR. The E2E tab's package-zip fetches would all fail
+# per-run dev-build-<id> branch — which only exists after a real
+# `pnpm publish:dev`, never on a PR. The E2E tab's package-zip fetches would all fail
 # against that nonexistent branch (surfaced by UI-12 after #277: the portable
 # and snap legs had been silently skipping ingest on every previous run).
 # LOCAL=1 bakes localhost URLs + enables own-dir serving, the same binary
-# shape the installer job gets from upload:local, and the snapshot's four
+# shape the installer job gets from snapshot:dev, and the snapshot's four
 # published artifacts are copied next to the exe below so serve_local_file
 # finds them — hermetic, no network, same code paths under test.
 

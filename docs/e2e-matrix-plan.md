@@ -105,7 +105,7 @@ Each test run uses a **fresh temporary profile** (created via `mktemp -d`). This
 The test script:
 
 1. Copies a minimal `prefs.js` + `user.js` into the temp profile.
-2. Copies the `chrome/` tree (utils + fx-folder) that `upload:local --mode=dev` produced.
+2. Copies the `chrome/` tree (utils + fx-folder) that `pnpm snapshot:dev` produced.
 3. Launches Firefox with `-profile <temp>`.
 4. Connects puppeteer-core via WebDriver BiDi.
 5. Navigates to the updater xhtml page.

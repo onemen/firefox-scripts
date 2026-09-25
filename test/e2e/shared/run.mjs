@@ -162,7 +162,7 @@ async function main() {
   }
   if (!snapshot) {
     console.error(
-      'No matching snapshot found in dist/. Run `pnpm upload:local --mode=dev` ' +
+      'No matching snapshot found in dist/. Run `pnpm snapshot:dev` ' +
         'on the current branch first, or pass --snapshot <dir> / --no-branch-check.'
     );
     process.exit(1);
