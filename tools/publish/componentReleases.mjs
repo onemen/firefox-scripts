@@ -422,17 +422,18 @@ export async function syncComponentReleases(
   try {
     const {installerAssetName} = await import('./platforms.mjs');
     const date = componentDate();
-    // Installer bucket date: conf BUILD_DATE (passed through by upload.mjs),
-    // never the clock.  The binaries this run publishes bake that exact
-    // string (CFG_BUILD_DATE) and the C self-update compares against it — a
-    // clock date here would publish a tag whose managed installerDate
-    // disagrees with the binaries under it.  Falls back to the manifest's
-    // per-package source-commit date (local/tests), then the release date.
+    // Installer bucket date: the DERIVED installer date (issue #322, passed
+    // through by upload.mjs), never the clock.  The binaries this run
+    // publishes bake that exact string (CFG_BUILD_DATE_INSTALLER) and the C
+    // self-update compares against it — a clock date here would publish a tag
+    // whose managed installerDate disagrees with the binaries under it.
+    // Falls back to the manifest's per-package source-commit date
+    // (local/tests), then the release date.
     const installerDate = installerBuiltDate ?? (manifest.installer?.date || date);
     if (installerBuiltDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(installerBuiltDate)) {
       throw new Error(
-        `config/installer.conf BUILD_DATE '${installerBuiltDate}' is not YYYY-MM-DD — ` +
-          `fix the conf before publishing installers (the self-update date compare depends on it).`
+        `derived installer build date '${installerBuiltDate}' is not YYYY-MM-DD — ` +
+          `fix git history (or the generator) before publishing installers (the self-update date compare depends on it).`
       );
     }
     const {scripts, installer} = groupBuilt({builtZips, builtInstallers, builtHelpers});

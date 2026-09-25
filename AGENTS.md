@@ -71,7 +71,9 @@ facts most often cause bugs:
   the full cross-OS binary matrix); `--mode=dev` → disposable `dev-build-<id>` branch (branch-only;
   `--note` adds an RC-style prerelease page), `-dev` artifact names, served via jsDelivr. Requires a
   clean worktree; real runs need `GITHUB_TOKEN_VAR`.
-- **Gotchas:** Waterfox skips `BootstrapLoader.js` in `config.js`. Per-package skip prefs
+- **Gotchas:** BUILD_DATE is DERIVED, not hand-stamped (ADR 0036): per-binary git dates from the
+  same input set the publish hash uses; `installer.conf` has no `BUILD_DATE` key anymore. Waterfox
+  skips `BootstrapLoader.js` in `config.js`. Per-package skip prefs
   `extensions.firefox-scripts.skippedHash.<pkg>`; daily gate prefs `lastScriptsCheckDate` /
   `lastUpdateTabShown`. `versionInfo.json` is obsolete (excluded from zips; installed copies cleaned
   by `installer/src/obsolete_files.h`).
@@ -154,6 +156,9 @@ pnpm publish:all                         # prod publish: dispatches the CI cross
 pnpm publish:packages                    # partial: zips + updater-ui only (--include=packages)
 pnpm publish:installer                   # partial: installer + helper only (--include=installer)
 pnpm publish:helper                      # partial: helper + sidecar only (--include=helper) — helper-byte rotation with zero package changes
+pnpm release:stage -- --ref=<sha>        # STAGE-ONLY CI build (publish=false) — the WDSI-evidence bytes
+pnpm release:verify                      # re-derive the post-publish facts (assets/gh-pages/tag/AV)
+pnpm fetch:release                       # manual-test download: gh-pages default, --dev <branch>, --run <id>
 ```
 
 Every publish states its scope: `--include=packages|installer|helper|all` (required, validated —
@@ -262,10 +267,11 @@ Before finishing:
 
 ## Generated files
 
-Four files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
+Five files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
 them: `core/chrome/utils/updater/updater-config.sys.mjs`, `tools/publish/remote-ui/updater.css`,
-`installer/src/_config.h`, `installer/src/resources.h`. Edit the source and regenerate (the
-installer Makefile does it on every build, `createZip.mjs` at publish time, or by hand via
+`installer/src/_config.h`, `installer/src/_builddate.h` (git-derived per-binary build dates, issue
+#322), `installer/src/resources.h`. Edit the source and regenerate (the installer Makefile does it
+on every build, `createZip.mjs` at publish time, or by hand via
 `node tools/publish/syncGeneratedFiles.mjs`). Because they are not committed, the publish hashes
 cover their **true sources** instead of the artifacts (see
 `docs/decisions/0008-generated-files-untracked.md`); `installer.conf` is a base value — changing it

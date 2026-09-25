@@ -28,8 +28,6 @@
 //   --local            write a complete snapshot to dist/<mode>-<branch>-<hash>/
 //                      instead of GitHub (offline; no token, no network).
 //                      Unchanged binaries are reused from the newest snapshot.
-//   --keep-copy        (GitHub runs only) also keep a dist/<mode>-copy-<branch>-<hash>/
-//                      copy of what was uploaded, instead of leaving dist/ empty.
 //   --force            rebuild + re-upload even when hashes are unchanged
 //                      (prod only — dev always behaves this way).
 //   --include=<roles>  REQUIRED. Publish exactly the named roles —
@@ -45,9 +43,6 @@
 //   --platform=win|linux|mac (repeatable)  binary platform set (default:
 //                      current OS). CI passes one per job; a local run cannot
 //                      widen it past its own OS in prod (see the guard below).
-//   --no-tag           (prod only) skip moving the 'latest' release tag to the
-//                      uploaded commit (it is force-updated after every
-//                      non-idle prod upload).
 //   --build-only       pass 1 of the SignPath signing flow: build/stage the
 //                      binaries, write dist/.build/build-manifest.json, then
 //                      exit BEFORE the AV/VT gates and publishing. The staging
@@ -57,8 +52,6 @@
 //                      binaries — treat whatever is staged as the final,
 //                      code-signed artifacts — then run the gates + publish.
 //                      Mutually exclusive with --build-only.
-//   --verbose          per-file zip listings and other detail lines.
-//   --quiet            suppress progress output (errors still print).
 //
 // Dev mode never touches the latest release/gh-pages — everything goes to the
 // dev-build-<id> branch, and no release is created without --tag.  The
@@ -107,6 +100,7 @@ import {
   loadSharedPatterns,
   REPO_ROOT,
 } from './publishCommon.mjs';
+import {buildDates} from './generateBuildDates.mjs';
 import {branchExistsOnPages, pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
 import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
 import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
@@ -159,22 +153,18 @@ import {
   scopeFor,
 } from './publishScope.mjs';
 import {createsDevRelease, renderDevRelease} from './devReleasePage.mjs';
-import {readInstallerConf, runStagingGuard} from './stagingGuard.mjs';
+import {runStagingGuard} from './stagingGuard.mjs';
 
 const LOCAL = process.argv.includes('--local');
 const FORCE = process.argv.includes('--force');
 // Prod only: skip moving the 'latest' release tag to the uploaded commit
 // (see the tag-move block in publishToGitHub). Escape hatch for debugging.
-const NO_TAG = process.argv.includes('--no-tag');
 // --ref=<branch|commit>: build a specific ref in a temporary detached
 // worktree (see runRefBuild below) instead of the current checkout.
 const REF = (() => {
   const arg = process.argv.find(a => a.startsWith('--ref='));
   return arg ? arg.slice('--ref='.length) : null;
 })();
-// GitHub runs normally leave nothing in dist/; --keep-copy additionally writes
-// a prod-copy-<branch>-<hash>/ (or dev-copy-…) snapshot before cleanup.
-const KEEP_COPY = process.argv.includes('--keep-copy');
 // SignPath two-pass flow: pass 1 (--build-only) builds + stages the binaries
 // and writes build-manifest.json so the workflow can code-sign each staged
 // file in place; pass 2 (--skip-build) runs the AV/VT gates + publishing on
@@ -186,15 +176,27 @@ if (BUILD_ONLY && SKIP_BUILD) {
   throw new Error('--build-only and --skip-build are mutually exclusive.');
 }
 // Removed flags fail loudly: an old --dry-run / --packages-only /
-// --binaries-only / --skip invocation must never silently turn into a real upload.
-// The offline check is now `--local` (the snapshot:* scripts). --ci was removed with
-// the workflow-only prod guard: it only widened the platform set, so a local
-// `--ci` prod run would still have published a partial release.
-const REMOVED_FLAGS = ['--dry-run', '--packages-only', '--binaries-only', '--ci', '--skip'].filter(
-  f =>
-    f === '--skip' ?
-      process.argv.some(a => a === '--skip' || a.startsWith('--skip='))
-    : process.argv.includes(f)
+// --binaries-only / --skip / --no-tag / --keep-copy / --verbose / --quiet
+// invocation must never silently turn into a real upload. The offline check is
+// now `--local` (the snapshot:* scripts). --ci was removed with the workflow-only
+// prod guard: it only widened the platform set, so a local `--ci` prod run would
+// still have published a partial release. --no-tag / --keep-copy had no caller
+// (--keep-copy was a no-op: it wrote to a runner workspace nothing uploaded);
+// --verbose / --quiet were parsed by no code at all.
+const REMOVED_FLAGS = [
+  '--dry-run',
+  '--packages-only',
+  '--binaries-only',
+  '--ci',
+  '--skip',
+  '--no-tag',
+  '--keep-copy',
+  '--verbose',
+  '--quiet',
+].filter(f =>
+  f === '--skip' ?
+    process.argv.some(a => a === '--skip' || a.startsWith('--skip='))
+  : process.argv.includes(f)
 );
 if (REMOVED_FLAGS.length > 0) {
   throw new Error(
@@ -362,10 +364,10 @@ function gitRef() {
   return {branch, sha};
 }
 
-/** Snapshot dir: dist/<mode>[-copy]-<branch>-<hash>/ (gitignored). */
-function snapshotDir(copy = false) {
+/** Snapshot dir: dist/<mode>-<branch>-<hash>/ (gitignored). */
+function snapshotDir() {
   const {branch, sha} = gitRef();
-  return path.join(DIST_ROOT, snapshotDirName({mode: PUBLISH_MODE, branch, sha, copy}));
+  return path.join(DIST_ROOT, snapshotDirName({mode: PUBLISH_MODE, branch, sha}));
 }
 
 /**
@@ -842,8 +844,9 @@ async function publishToGitHub({
   // The installer/updater fetch everything via
   // .../releases/download/latest, so the tag NAME must stay stable while its
   // target follows each publish; an idle run (nothing rebuilt) leaves it where
-  // it is, since the release assets did not change either. --no-tag skips.
-  if (PUBLISH_MODE === 'prod' && release && !NO_TAG && anythingUploaded) {
+  // it is, since the release assets did not change either. (The old --no-tag
+  // escape hatch was removed: no caller ever used it.)
+  if (PUBLISH_MODE === 'prod' && release && anythingUploaded) {
     const tagRef = `tags/${RELEASE_NAME}`;
     const headSha = execSync('git rev-parse HEAD', {
       cwd: REPO_ROOT,
@@ -897,7 +900,9 @@ async function publishToGitHub({
       manifest: merged,
       zipPath,
       installerPath,
-      installerDate: readInstallerConf().BUILD_DATE,
+      // Issue #322: the component-tag date IS the derived installer date —
+      // the same value the binaries bake (CFG_BUILD_DATE_INSTALLER).
+      installerDate: buildDates().installer,
     });
     await pinLatestRelease(octokit);
   }
@@ -911,8 +916,7 @@ async function publishToGitHub({
  */
 function writeSnapshot({merged, platforms, dir, label, scope}) {
   // Any artifact this run didn't rebuild (an unchanged zip or binary) is
-  // reused from the newest previous snapshot so the folder is complete. Local
-  // mode always rebuilds zips, so this mainly fills in --keep-copy runs.
+  // reused from the newest previous snapshot so the folder is complete.
   const prev = findLatestSnapshot();
   const reuse = (asset, dst) => {
     if (!prev || fs.existsSync(dst)) return;
@@ -1332,7 +1336,7 @@ async function main() {
       writeSnapshot({
         merged,
         platforms,
-        dir: snapshotDir(false),
+        dir: snapshotDir(),
         label: 'Snapshot',
         scope: SCOPE,
       });
@@ -1348,15 +1352,6 @@ async function main() {
         manifestChanged,
         anythingUploaded,
       });
-      if (KEEP_COPY) {
-        writeSnapshot({
-          merged,
-          platforms,
-          dir: snapshotDir(true),
-          label: 'Keep copy',
-          scope: SCOPE,
-        });
-      }
     }
 
     success('\n✓ Done');

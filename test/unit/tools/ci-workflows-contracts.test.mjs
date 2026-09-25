@@ -270,6 +270,33 @@ export function filterOutputViolations(text) {
     );
 }
 
+// ── contract: publish-upload action wiring (pages.yml, build-and-upload.yml) ──
+
+/**
+ * Every upload.mjs invocation inside the two publish workflows must go through
+ * the shared .github/actions/publish-upload composite action — one definition
+ * instead of per-job copies that drift (the ARGS assembly, the FXS_INTERNAL_CI
+ * marker and the baseline export are exactly the lines that must not fork). The
+ * workflows may only mention `upload.mjs` in comments.
+ *
+ * @param {string} workflowText
+ * @returns {string[]}
+ */
+export function publishUploadActionViolations(workflowText) {
+  const violations = [];
+  for (const line of workflowText.split('\n')) {
+    if (!line.includes('node tools/publish/upload.mjs')) continue;
+    const stripped = line.replace(/(^|\s)#.*$/, ''); // a comment mentioning it is fine
+    if (!stripped.includes('node tools/publish/upload.mjs')) continue;
+    violations.push(
+      'publish workflows must invoke upload.mjs via ./.github/actions/publish-upload, ' +
+        'not an inline run step: ' +
+        line.trim().slice(0, 80)
+    );
+  }
+  return violations;
+}
+
 // ── contract: canary-build-parity + canary-stays-advisory (ci.yml) ─────────
 
 /**
@@ -510,7 +537,7 @@ export function uploadInvocations(jobs) {
   for (const job of jobs) {
     for (const step of jobSteps(job.body)) {
       const run = stepRun(step);
-      if (run.includes('node tools/publish/upload.mjs')) {
+      if (stripComments(run).includes('node tools/publish/upload.mjs')) {
         invocations.push({job: job.name, step: stepName(step), stepText: step, run});
       }
     }
@@ -533,6 +560,7 @@ export function uploadInvocations(jobs) {
 export function uploadInvocationViolations(jobs, file) {
   const violations = [];
   for (const invocation of uploadInvocations(jobs)) {
+    if (stripComments(invocation.stepText).length === 0) continue; // pure comment step
     const env = stepEnvKeys(invocation.stepText);
     if (!env.has('FXS_INTERNAL_CI')) {
       violations.push(
@@ -600,6 +628,15 @@ export function publishPlatforms(jobs) {
   const byName = new Map(jobs.map(job => [job.name, job]));
   const publish = byName.get('publish');
   if (!publish) return [];
+  // Post publish-upload-action: the invocation lives in the composite action,
+  // which takes the platform set as `platforms: 'win linux mac'` and expands it
+  // to per-flag --platform arguments — read that input when the step uses it.
+  const usesAction =
+    [...publish.body.matchAll(/uses: \s*\.\/\.github\/actions\/publish-upload/g)].length > 0;
+  if (usesAction) {
+    const platforms = publish.body.match(/^ {10}platforms: '(.+)'$/m);
+    return platforms ? platforms[1].trim().split(/\s+/) : [];
+  }
   return [
     ...uploadInvocations([publish]).flatMap(i => [
       ...i.run.matchAll(/--platform=([A-Za-z0-9_-]+)/g),
@@ -646,6 +683,12 @@ const CI_CONTRACTS = [
     id: 'canary-build-parity',
     description: 'the ubuntu-26.04 canary runs the same snapshot build as the publish gate',
     check: text => canaryBuildParityViolations(workflowJobs(text)),
+  },
+  {
+    id: 'publish-upload-action-wiring',
+    description:
+      'the publish/upload.mjs invocation lives in ONE composite action, not inlined per job',
+    check: text => publishUploadActionViolations(text),
   },
   {
     id: 'canary-stays-advisory',
@@ -725,8 +768,16 @@ test('the shape-sensitive detectors stay populated on the real files', () => {
   // A contract whose detector stops matching anything would pass vacuously
   // (the e2e registry pins the same property).
   assert.ok(filterOutputRefs(readWorkflow('ci.yml')).length > 0, 'expected output references');
-  assert.ok(uploadInvocations(workflowJobs(readWorkflow('pages.yml'))).length > 0);
-  assert.ok(uploadInvocations(workflowJobs(readWorkflow('build-and-upload.yml'))).length > 0);
+  // Post publish-upload-action: the invocation lives in the composite action,
+  // so the workflows carry uses:-steps, not direct upload.mjs invocations.
+  assert.ok(
+    readWorkflow('pages.yml').includes('uses: ./.github/actions/publish-upload'),
+    'pages.yml wires the composite action'
+  );
+  assert.ok(
+    readWorkflow('build-and-upload.yml').includes('uses: ./.github/actions/publish-upload'),
+    'build-and-upload.yml wires the composite action'
+  );
   assert.ok(matrixPlatforms(workflowJobs(readWorkflow('build-and-upload.yml'))).length > 0);
 });
 
@@ -754,6 +805,48 @@ test('filter-outputs-exist: a referenced-but-undeclared output is a violation', 
     '      publish: ${{ steps.filter.outputs.publish }}\n      core: ${{ steps.filter.outputs.core }}'
   );
   assert.deepEqual(filterOutputViolations(fixed), []);
+});
+
+test('publish-upload-action-wiring: an inline upload.mjs run step is a violation', () => {
+  const inline = [
+    'jobs:',
+    '  publish-win:',
+    '    steps:',
+    '      - name: Publish',
+    '        run: node tools/publish/upload.mjs --mode=prod --platform=win',
+  ].join('\n');
+  const violations = publishUploadActionViolations(inline);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /publish-upload/);
+});
+
+test('publish-upload-action-wiring: the composite action users are clean', () => {
+  const wired = [
+    'jobs:',
+    '  publish-win:',
+    '    steps:',
+    '      - uses: ./.github/actions/publish-upload',
+    '        with:',
+    '          mode: prod',
+    '      # node tools/publish/upload.mjs is documented here',
+    '  docs:',
+    '    steps:',
+    '      - run: echo "upload.mjs runs via the composite action"',
+  ].join('\n');
+  assert.deepEqual(publishUploadActionViolations(wired), []);
+});
+
+test('the real publish workflows invoke upload.mjs only through the composite action', async () => {
+  const {readFileSync} = await import('node:fs');
+  for (const wf of ['pages.yml', 'build-and-upload.yml']) {
+    const text = readFileSync(new URL(`../../../.github/workflows/${wf}`, import.meta.url), 'utf8');
+    assert.deepEqual(
+      publishUploadActionViolations(text),
+      [],
+      `${wf} must use ./.github/actions/publish-upload`
+    );
+    assert.match(text, /uses: \.\/\.github\/actions\/publish-upload/);
+  }
 });
 
 test('canary-build-parity: a drifted canary build is a violation', () => {

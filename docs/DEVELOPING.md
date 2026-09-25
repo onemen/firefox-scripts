@@ -1035,10 +1035,8 @@ pnpm publish -- --include=packages,helper --mode=dev --ref=<branch>   # any comb
 | `--include=<roles>`             | both          | **Required.** Roles this run publishes: `packages`, `installer`, `helper`, or `all` — comma-separated/repeatable. Partial publish (AV holdback): a role left out is not built, scanned or uploaded, and its `hashes.json` entry stays frozen (ADR [0030](./decisions/0030-partial-publishes.md)) |
 | `--platform=win\|linux\|mac`    | binary builds | Platform set, repeatable; `linux` also builds the aarch64 twin. Defaults to the current OS — CI passes one per job; a local prod run cannot widen past its own OS (the guard below)                                                                                                              |
 | `--local`                       | both          | Offline snapshot to `dist/<mode>-<branch>-<hash>/` (no token, no network) — what the `snapshot:*` scripts bake                                                                                                                                                                                   |
-| `--keep-copy`                   | GitHub runs   | Also keep a `dist/<mode>-copy-…/` copy of what was uploaded                                                                                                                                                                                                                                      |
-| `--no-tag`                      | prod          | Skip moving the `latest` tag to the uploaded commit                                                                                                                                                                                                                                              |
 | `--build-only` / `--skip-build` | prod          | Pass 1 / pass 2 of the two-pass signing flow (stage-and-exit / publish signed artifacts) — the signing step itself is unwired pending the provider decision (#157)                                                                                                                               |
-| `--verbose` / `--quiet`         | both          | Per-file zip listings / suppress progress (errors still print)                                                                                                                                                                                                                                   |
+| _(removed)_                     | —             | `--no-tag`, `--keep-copy`, `--verbose`, `--quiet` were removed (no caller; `--keep-copy` wrote to a runner workspace nothing uploaded). Use `pnpm fetch:release` for the manual-test download. Old invocations fail loudly in `REMOVED_FLAGS`.                                                   |
 
 A real (non-`--local`) `--mode=prod` run outside the Pages workflow is **aborted before building**
 (`prodCiGuard.mjs`, ADR 0026): a dev machine builds only its own OS's binaries, while the `latest`
@@ -1078,15 +1076,30 @@ What a run publishes (the hash comparison itself is [status-logic.md](./status-l
 - **prod → GitHub** — rebuilt zips and installer binaries are attached to the `latest` release as
   **release assets (the human manual-download surface)**; the zips (for machine fetches), helpers,
   `hashes.json` + `updater-ui.zip` go to `gh-pages`, the single host every installer/updater fetch
-  reads; the `latest` tag moves to the published commit (unless idle or `--no-tag`); the component
-  date tags are synced (#72). A run where nothing changed uploads nothing.
+  reads; the `latest` tag moves to the published commit (unless idle); the component date tags are
+  synced (#72). A run where nothing changed uploads nothing.
 - **dev → GitHub** — the same artifact set (with `-dev` names) to the `dev-build-<id>` branch via
   the git-data API, content-addressed: unchanged files create no commit. No release unless `--tag`.
+
+### Release state: the runbook checklist
+
+A release walks the same steps every time (stage CI bytes → WDSI → publish → verify); the state
+memory is the per-release runbook (`.local/release/runbook-<date>.md`, archived to
+`.local/release/history/` afterwards): a checkbox list whose items ARE the commands. Mechanical
+steps each have exactly one script name — `pnpm release:stage` (CI-built, publish=false bytes for
+the WDSI submission), `pnpm fetch:release` (download the manual-test set: gh-pages by default,
+`-- --dev <branch>` for a dev-build branch, `-- --run <id>` for a staging run),
+`pnpm release:verify` (re-derives the post-publish facts from GitHub, so a stale checkbox cannot
+mislead). Human gates — filing the WDSI form, the explicit publish go — stay MANUAL items in the
+checklist by design.
 
 ### Run
 
 ```bash
 pnpm publish:all                         # prod publish: dispatch the CI cross-OS matrix (gh)
+pnpm release:stage -- --ref=<sha>        # STAGE-ONLY: build-and-upload.yml publish=false (WDSI bytes)
+pnpm release:verify                      # re-derive the post-publish facts (assets/gh-pages/tag/AV)
+pnpm fetch:release                       # manual-test set from gh-pages (or --dev <branch> / --run <id>)
 pnpm publish:dev                         # dev upload: always rebuild + publish the dev-build-<id> branch (branch-only)
 pnpm publish:dev -- --tag                # + create the RC-style prerelease page for this dev build
 pnpm publish:dev -- --note="RC 1" --tag  # label: branch dev-build-<branch>-RC-1-<sha>, page title `… — RC 1`
@@ -1148,17 +1161,18 @@ The same run compiles the installer and helper binaries when their source (`inst
 
 `.github/workflows/pages.yml` publishes via GitHub Actions: a manual `workflow_dispatch` (Actions →
 Pages publish → Run workflow) with a `mode` (prod/dev) and an optional `force` input. It runs the
-**same** `node tools/publish/upload.mjs` as the local commands above — no separate publish logic —
-once per OS (`--platform=win|linux|mac`) in three sequential jobs, so all three installer/helper
-platforms get built on their native toolchains. The jobs are serial so gh-pages commits and
-release-asset uploads can never interleave; change detection is anchored to a shared **pre-run
-baseline**: a first job captures the current `hashes.json` and every publish job diffs against it
-(via `FIREFOX_SCRIPTS_STORED_HASHES_FILE`) instead of the manifest an earlier sibling just pushed —
-the package hashes in the manifest are platform-independent, so without the baseline only the first
-platform would rebuild after a source change. Prod dispatches must target `main` (enforced inside
-`upload.mjs`); dev dispatches work from any branch. Pages serving stays "Deploy from branch:
-`gh-pages`" — the workflow pushes to that branch, it does not switch Pages to the actions deployment
-method.
+**same** `node tools/publish/upload.mjs` as the local commands above — no separate publish logic,
+always through the shared `.github/actions/publish-upload` composite action (one invocation contract
+for both publish workflows) — once per OS (`--platform=win|linux|mac`) in three sequential jobs, so
+all three installer/helper platforms get built on their native toolchains. The jobs are serial so
+gh-pages commits and release-asset uploads can never interleave; change detection is anchored to a
+shared **pre-run baseline**: a first job captures the current `hashes.json` and every publish job
+diffs against it (via `FIREFOX_SCRIPTS_STORED_HASHES_FILE`) instead of the manifest an earlier
+sibling just pushed — the package hashes in the manifest are platform-independent, so without the
+baseline only the first platform would rebuild after a source change. Prod dispatches must target
+`main` (enforced inside `upload.mjs`); dev dispatches work from any branch. Pages serving stays
+"Deploy from branch: `gh-pages`" — the workflow pushes to that branch, it does not switch Pages to
+the actions deployment method.
 
 Every publish also pushes an `index.html` to the branch root: the repository's own `README.md`,
 rendered server-side by GitHub (`pagesIndex()` in `tools/publish/uploadToPages.mjs`) and wrapped in
@@ -1170,15 +1184,13 @@ drift from the README.
 
 All build artifacts land in a single gitignored `dist/` tree at the repo root:
 
-| Directory                         | Contents                                                                                                                          |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `dist/.build/`                    | Transient staging (zips + binaries) written and deleted by every publish run                                                      |
-| `dist/prod-<branch>-<hash>/`      | Complete local snapshot — `snapshot:prod` (zips, binaries, `hashes.json`)                                                         |
-| `dist/dev-<branch>-<hash>/`       | Same, `snapshot:dev` (`-dev` artifact names)                                                                                      |
-| `dist/prod-copy-<branch>-<hash>/` | Copy kept by a real publish's `--keep-copy`                                                                                       |
-| `dist/dev-copy-<branch>-<hash>/`  | Copy kept by a real publish's `--keep-copy`                                                                                       |
-| `dist/installer/`                 | Manual `make dist_win`/`dist_linux`/`dist_mac` output (Makefile default; `upload.mjs` redirects it into `dist/.build/installer/`) |
-| `dist/tmp/`                       | Ad-hoc debug/scratch leftovers                                                                                                    |
+| Directory                    | Contents                                                                                                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `dist/.build/`               | Transient staging (zips + binaries) written and deleted by every publish run                                                      |
+| `dist/prod-<branch>-<hash>/` | Complete local snapshot — `snapshot:prod` (zips, binaries, `hashes.json`)                                                         |
+| `dist/dev-<branch>-<hash>/`  | Same, `snapshot:dev` (`-dev` artifact names)                                                                                      |
+| `dist/installer/`            | Manual `make dist_win`/`dist_linux`/`dist_mac` output (Makefile default; `upload.mjs` redirects it into `dist/.build/installer/`) |
+| `dist/tmp/`                  | Ad-hoc debug/scratch leftovers                                                                                                    |
 
 The installer Makefile and the `tools/publish/*.mjs` scripts share these paths via `DIST_DIR`
 (Makefile) / `tools/publish/paths.js` constants; nothing under `dist/` is tracked.

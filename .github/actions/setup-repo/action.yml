@@ -34,7 +34,11 @@ inputs:
 runs:
   using: composite
   steps:
+    # fetch-depth: 0 — the build derives the inner PE date (and the PE epoch,
+    # issue #322 B1) from input-scoped git log, which needs the full history.
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
 
     # The standalone pnpm binary (~15 MB, bundles its own Node) is cached per
     # OS+arch. First run downloads it from the official pnpm release; later

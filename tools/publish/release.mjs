@@ -10,6 +10,8 @@
 //   pnpm publish:packages              # zips + updater-ui only (--include=packages)
 //   pnpm publish:installer             # installer + helper only (--include=installer)
 //   pnpm publish:dev                   # dev-build-<id> branch instead (--mode=dev)
+//   pnpm release:stage -- --ref=<sha>  # STAGE-ONLY: build-and-upload.yml publish=false —
+//                                      # CI-built bytes for the WDSI submission, publishes nothing
 //   pnpm publish -- --include=installer,helper   # any ADR 0030 role list
 //   pnpm publish -- --include=all --ref=<branch> # dispatch another branch's workflow
 //   pnpm publish -- --include=all --force        # rebuild + re-upload even when unchanged
@@ -40,6 +42,7 @@ const WORKFLOW = 'pages.yml';
  *   mode?: string;
  *   include?: string[];
  *   ref?: string;
+ *   stage?: boolean;
  *   passthrough?: string[];
  * }} opts
  */
@@ -48,13 +51,18 @@ export function buildDispatchArgs({
   mode = 'prod',
   include = [],
   ref = '',
+  stage = false,
   passthrough = [],
 } = {}) {
-  const args = ['workflow', 'run', WORKFLOW];
+  // --stage targets the build-and-upload workflow in its stage-only default:
+  // publish=false builds + stages the ship-bound bytes and uploads them as
+  // run artifacts — no publish target is touched (the WDSI staging run).
+  const args = ['workflow', 'run', stage ? 'build-and-upload.yml' : WORKFLOW];
   // gh dispatches the default branch unless told otherwise — a dev publish
   // from a feature branch needs --ref to point at that branch's workflow.
   if (ref) args.push('--ref', ref);
   args.push('-f', `mode=${mode}`);
+  if (stage) args.push('-f', 'publish=false');
   if (force) args.push('-f', 'force=true');
   if (include.length > 0) args.push('-f', `include=${[...include].join(',')}`);
   args.push(...passthrough);
@@ -76,12 +84,15 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
     mode: 'prod',
     include: [],
     ref: '',
+    stage: false,
     passthrough: [],
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') continue;
-    if (a === '--force') {
+    if (a === '--stage') {
+      opts.stage = true;
+    } else if (a === '--force') {
       opts.force = true;
     } else if (a.startsWith('--mode=')) {
       const mode = a.slice('--mode='.length);
@@ -123,7 +134,7 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
       opts.passthrough.push('-f', pair);
     } else {
       throw new Error(
-        `Unknown flag: ${a} (supported: --force, --mode=prod|dev, --include=<roles>, --ref=<branch>, -f key=value)`
+        `Unknown flag: ${a} (supported: --stage, --force, --mode=prod|dev, --include=<roles>, --ref=<branch>, -f key=value)`
       );
     }
   }
@@ -153,6 +164,17 @@ export function main() {
         '  (is `gh` installed and logged in? `gh auth status`)'
     );
     process.exitCode = 1;
+    return;
+  }
+  if (opts.stage) {
+    console.log(
+      `✓ STAGE-ONLY ${opts.mode.toUpperCase()} dispatch sent to build-and-upload.yml (publish=false).
+` +
+        '  Nothing is published — the staged bytes land in the staged-<os> artifacts.\n' +
+        '  Watch:   gh run list --workflow build-and-upload.yml --limit 1\n' +
+        '  Then:    pnpm fetch:release -- --run <run-id>   # download for the manual test\n' +
+        '  And:     pnpm scan:vt <downloaded installer> <downloaded helper>  # WDSI evidence'
+    );
     return;
   }
   const what =

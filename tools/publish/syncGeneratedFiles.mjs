@@ -40,6 +40,7 @@ import {
   readConfig as readUpdaterConfig,
 } from './generateUpdaterConfig.mjs';
 import {DEV_BRANCH, LOCAL, MODE, localSnapshotDir} from './publishMode.mjs';
+import {buildDateHeader, buildDates} from './generateBuildDates.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -121,6 +122,11 @@ const GENERATORS = {
     generateUpdaterConfig(readUpdaterConfig()),
   'installer/src/_config.h': () =>
     configHeader(fs.readFileSync(path.join(ROOT, 'config', 'installer.conf'), 'utf-8')),
+  'installer/src/_builddate.h': () => {
+    // Issue #322: per-binary git-derived build dates (shared with the publish
+    // hash by construction — see generateBuildDates.mjs).
+    return buildDateHeader(buildDates());
+  },
   'installer/src/resources.h': () => {
     // Node version of embed.py — byte-identical output, no Python needed.
     return execFileSync('node', [path.join(ROOT, 'installer', 'embed.mjs'), '--stdout'], {

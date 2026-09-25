@@ -187,32 +187,19 @@ jobs:
           name: baseline-hashes
           path: ${{ runner.temp }}/baseline/
       - run: pnpm install --frozen-lockfile
-      - shell: bash
-        env:
-          # Marks this as a Pages-workflow upload for prodCiGuard.mjs — the
-          # only real-upload prod entry point (a local run can build only its
-          # own OS's binaries). Not a user-facing flag.
-          FXS_INTERNAL_CI: '1'
-          # Optional: multi-engine VirusTotal scan of the built binaries before
-          # upload (tools/scan-vt.mjs).  Absent ⇒ skipped with a warning.
-          VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030): the roles to publish (--include); 'all' =
-          # full. Passed through verbatim — an explicitly empty value fails
-          # loudly inside upload.mjs, never a silent default scope.
-          UPLOAD_INCLUDE: ${{ inputs.include }}
-        run: |
-          ARGS="--mode=${{ inputs.mode }} --platform=win"
-          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          # Partial publish (ADR 0030): the included roles reach upload.mjs as
-          # one --include=… argument; 'all' = a full publish. The flag is
-          # REQUIRED inside upload.mjs — an empty input aborts the run.
-          ARGS="$ARGS --include=$UPLOAD_INCLUDE"
-          # Prod: diff against the shared pre-run baseline, not whatever an
-          # earlier job already pushed. Dev rebuilds everything anyway.
-          if [ "${{ inputs.mode }}" = "prod" ]; then
-            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
-          fi
-          node tools/publish/upload.mjs $ARGS
+      # The shared upload invocation (.github/actions/publish-upload): env
+      # markers, ARGS assembly and the baseline export live in ONE composite
+      # action so the two publish workflows can never drift apart. Dispatch
+      # inputs reach the shell through env vars, never interpolated into the
+      # run script (script-injection surface).
+      - uses: ./.github/actions/publish-upload
+        with:
+          mode: ${{ inputs.mode }}
+          include: ${{ inputs.include }}
+          platforms: 'win'
+          force: ${{ inputs.force }}
+          baseline-file: ${{ runner.temp }}/baseline/hashes.json
+          vt-api-key: ${{ secrets.VT_API_KEY }}
 
   publish-linux:
     name: publish — linux binaries
@@ -237,23 +224,14 @@ jobs:
           sudo apt-get install -y -qq gcc-aarch64-linux-gnu
           aarch64-linux-gnu-gcc --version | head -1
 
-      - shell: bash
-        env:
-          # Pages-workflow marker for prodCiGuard.mjs (see the win job).
-          FXS_INTERNAL_CI: '1'
-          VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030): the roles to publish (--include); 'all' =
-          # full. Passed through verbatim — an explicitly empty value fails
-          # loudly inside upload.mjs, never a silent default scope.
-          UPLOAD_INCLUDE: ${{ inputs.include }}
-        run: |
-          ARGS="--mode=${{ inputs.mode }} --platform=linux"
-          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          ARGS="$ARGS --include=$UPLOAD_INCLUDE"
-          if [ "${{ inputs.mode }}" = "prod" ]; then
-            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
-          fi
-          node tools/publish/upload.mjs $ARGS
+      - uses: ./.github/actions/publish-upload
+        with:
+          mode: ${{ inputs.mode }}
+          include: ${{ inputs.include }}
+          platforms: 'linux'
+          force: ${{ inputs.force }}
+          baseline-file: ${{ runner.temp }}/baseline/hashes.json
+          vt-api-key: ${{ secrets.VT_API_KEY }}
 
   publish-mac:
     name: publish — mac binaries
@@ -267,20 +245,11 @@ jobs:
         with:
           name: baseline-hashes
           path: ${{ runner.temp }}/baseline/
-      - shell: bash
-        env:
-          # Pages-workflow marker for prodCiGuard.mjs (see the win job).
-          FXS_INTERNAL_CI: '1'
-          VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Partial publish (ADR 0030): the roles to publish (--include); 'all' =
-          # full. Passed through verbatim — an explicitly empty value fails
-          # loudly inside upload.mjs, never a silent default scope.
-          UPLOAD_INCLUDE: ${{ inputs.include }}
-        run: |
-          ARGS="--mode=${{ inputs.mode }} --platform=mac"
-          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
-          ARGS="$ARGS --include=$UPLOAD_INCLUDE"
-          if [ "${{ inputs.mode }}" = "prod" ]; then
-            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
-          fi
-          node tools/publish/upload.mjs $ARGS
+      - uses: ./.github/actions/publish-upload
+        with:
+          mode: ${{ inputs.mode }}
+          include: ${{ inputs.include }}
+          platforms: 'mac'
+          force: ${{ inputs.force }}
+          baseline-file: ${{ runner.temp }}/baseline/hashes.json
+          vt-api-key: ${{ secrets.VT_API_KEY }}

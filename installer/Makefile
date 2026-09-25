@@ -44,9 +44,13 @@ CFLAGS = -Os -s -ffunction-sections
 # Exporting SOURCE_DATE_EPOCH (binutils honors it in the PE backend) pins the
 # stamp to the last commit's timestamp: deterministic per commit, and a
 # realistic-looking date (zeroed stamps read as packer artifacts to some ML).
-# The repo root may be a detached worktree (no HEAD), so fall back to a fixed
-# epoch when git cannot answer.
-BUILD_EPOCH = $(shell git -C .. log -1 --format=%ct 2>/dev/null || echo 1785600000)
+# Issue #322 (B1): the epoch is the last commit touching the BINARIES' input
+# set — the same paths generateBuildDates.mjs uses for the inner date — so
+# docs-only commits no longer re-roll the PE bytes (and with them the sha256,
+# the VT analysis and the release hashes). The repo root may be a detached
+# worktree (no HEAD), so fall back to a fixed epoch when git cannot answer.
+BIN_EPOCH_PATHS = installer/src installer/web config/installer.conf config/msys2-toolchain.json
+BUILD_EPOCH = $(shell git -C .. log -1 --format=%ct -- $(BIN_EPOCH_PATHS) 2>/dev/null || echo 1785600000)
 SOURCE_DATE_EPOCH = $(BUILD_EPOCH)
 export SOURCE_DATE_EPOCH
 
@@ -130,7 +134,7 @@ $(TARGET): $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h $(WIN_RES)
 	$(CC) $(SRC_DIR)/*.c $(MINIZ_SRC) $(WIN_RES) -o $(TARGET) $(CFLAGS) $(MINIZ_TRIM) $(GC_FLAGS) $(WIN_LIBS)
 
 # Compile the Windows version resource + manifest into a COFF object.
-$(SRC_DIR)/installer.res: $(SRC_DIR)/installer.rc $(SRC_DIR)/installer.manifest $(SRC_DIR)/installer.ico
+$(SRC_DIR)/installer.res: $(SRC_DIR)/installer.rc $(SRC_DIR)/_builddate.h $(SRC_DIR)/installer.manifest $(SRC_DIR)/installer.ico
 	$(WINDRES) $(SRC_DIR)/installer.rc -O coff -o $@
 
 # Publish mode for the generated config: see tools/publish/publishMode.mjs.
@@ -159,6 +163,14 @@ ASSET_SUFFIX =
 FORCE:
 
 config: $(SRC_DIR)/_config.h
+
+# Issue #322: regenerate _builddate.h (per-binary git-derived build dates).
+# Same --touch contract as 'config' above: idempotent regeneration, and the
+# mtime stamp guarantees the .res files relink when the derived date changes.
+dates: $(SRC_DIR)/_builddate.h
+
+$(SRC_DIR)/_builddate.h: FORCE
+	@node $(subst \,/,$(CONFIG_GENERATOR)) --touch
 
 # Repo-root generator path. upload.mjs passes CONFIG_GENERATOR as a
 # command-line make variable (deterministic under any spawn shell); this
@@ -253,7 +265,7 @@ dist_all: dist_win dist_linux dist_linux_aarch64 dist_mac
 # The PE manifest is compiled into the binary through version.rc
 # (1 RT_MANIFEST), so a manifest edit must relink the helper — hence the
 # explicit prerequisite.
-helper_win: $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.rc $(SRC_DIR)/helper/helper.manifest $(SRC_DIR)/installer.ico | $(DIST_DIR)
+helper_win: dates $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.rc $(SRC_DIR)/_builddate.h $(SRC_DIR)/helper/helper.manifest $(SRC_DIR)/installer.ico | $(DIST_DIR)
 	windres $(SRC_DIR)/helper/version.rc -O coff -o $(SRC_DIR)/helper/version.res
 	$(CC) $(SRC_DIR)/helper/helper_win.c $(SRC_DIR)/helper/version.res -o $(DIST_DIR)/helper_win$(ASSET_SUFFIX).exe $(CFLAGS) -static -static-libgcc -luser32 -lshell32 "-Wl,--gc-sections" "-Wl,--strip-all" "-Wl,--subsystem,windows"
 
@@ -308,6 +320,6 @@ verify: $(TARGET)
 
 # Clean build artifacts
 clean:
-	rm -f $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h $(SRC_DIR)/installer.res
+	rm -f $(SRC_DIR)/resources.h $(SRC_DIR)/_config.h $(SRC_DIR)/_builddate.h $(SRC_DIR)/installer.res
 	rm -f $(SRC_DIR)/helper/version.res
 	rm -rf $(DIST_DIR)

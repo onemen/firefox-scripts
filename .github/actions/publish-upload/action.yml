@@ -1,0 +1,73 @@
+name: 'Publish/upload invocation'
+description:
+  'The shared upload.mjs invocation block — env markers, ARGS assembly, baseline export — used by
+  every publish/stage job in pages.yml and build-and-upload.yml. One definition instead of five
+  drifting copies; all dispatch inputs reach the shell through env vars, never interpolated into the
+  run script (script-injection surface, the build-and-upload.yml hardening pattern).'
+
+inputs:
+  mode:
+    description: 'prod | dev'
+    required: true
+  include:
+    description: 'Roles this run publishes — packages|installer|helper|all (verbatim to --include)'
+    required: true
+  platforms:
+    description:
+      'Space-separated platform set (win|linux|mac). Empty = current OS default. A word per
+      --platform flag; the publish job passes "win linux mac", build legs pass their
+      matrix.platform.'
+    required: false
+    default: ''
+  force:
+    description: "'true' = rebuild + re-upload even when hashes are unchanged"
+    required: false
+    default: 'false'
+  extra-args:
+    description: 'Extra upload.mjs flags, e.g. --build-only (stage pass 1) or --skip-build (pass 2)'
+    required: false
+    default: ''
+  baseline-file:
+    description:
+      'Path to the pre-run hashes.json to diff against in prod (FIREFOX_SCRIPTS_STORED_HASHES_FILE).
+      Ignored in dev — dev rebuilds everything anyway.'
+    required: false
+    default: ''
+  vt-api-key:
+    description:
+      'VirusTotal API key (secrets.VT_API_KEY at the callsite — composite actions cannot read
+      secrets). Absent ⇒ scan skipped with a warning.'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run upload.mjs (shared publish invocation)
+      shell: bash
+      env:
+        # Marks this as a workflow-run upload for prodCiGuard.mjs — real prod
+        # uploads are workflow-only. Not a user-facing flag.
+        FXS_INTERNAL_CI: '1'
+        VT_API_KEY: ${{ inputs.vt-api-key }}
+        UPLOAD_MODE: ${{ inputs.mode }}
+        UPLOAD_PLATFORMS: ${{ inputs.platforms }}
+        UPLOAD_FORCE: ${{ inputs.force }}
+        # Partial publish (ADR 0030): the included roles reach upload.mjs as one
+        # --include=… argument; 'all' = a full publish. The flag is REQUIRED
+        # inside upload.mjs — an empty value aborts the run, never a silent scope.
+        UPLOAD_INCLUDE: ${{ inputs.include }}
+        UPLOAD_EXTRA_ARGS: ${{ inputs.extra-args }}
+        FIREFOX_SCRIPTS_BASELINE: ${{ inputs.baseline-file }}
+      run: |
+        ARGS="--mode=$UPLOAD_MODE"
+        for p in $UPLOAD_PLATFORMS; do ARGS="$ARGS --platform=$p"; done
+        if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
+        ARGS="$ARGS --include=$UPLOAD_INCLUDE"
+        if [ -n "$UPLOAD_EXTRA_ARGS" ]; then ARGS="$ARGS $UPLOAD_EXTRA_ARGS"; fi
+        # Prod: diff against the shared pre-run baseline, not whatever an earlier
+        # job already pushed. Dev rebuilds everything anyway.
+        if [ "$UPLOAD_MODE" = "prod" ] && [ -n "$FIREFOX_SCRIPTS_BASELINE" ]; then
+          export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$FIREFOX_SCRIPTS_BASELINE"
+        fi
+        node tools/publish/upload.mjs $ARGS

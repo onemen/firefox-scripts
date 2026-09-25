@@ -1,4 +1,5 @@
 #include <windows.h>
+#include "_builddate.h"
 
 // Windows version resource for the installer executable.  The helper binary
 // (src/helper/version.rc) already carries one; without it the installer is a
@@ -6,10 +7,12 @@
 // engines flag as suspicious (Defender: Program:Script/Wacapew.A!ml).
 // The repo ships unversioned date-stamped artifacts (ADR 0019): FileVersion
 // carries the build date as 1,0,<YYYY>,<MMDD> and ProductVersion the date.
+// The date itself is DERIVED (issue #322): _builddate.h is generated from the
+// last commit touching this binary's inputs — CFG_BUILD_DATE_INSTALLER.
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,2026,924
-PRODUCTVERSION  1,0,2026,924
+FILEVERSION     CFG_BUILD_DATE_INSTALLER_V
+PRODUCTVERSION  CFG_BUILD_DATE_INSTALLER_V
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS_NT_WINDOWS32
@@ -22,12 +25,12 @@ BEGIN
             VALUE "Comments",         "Installs and updates the Firefox Scripts helper packages (fx-folder + utils)\0"
             VALUE "CompanyName",      "Tab Mix Plus\0"
             VALUE "FileDescription",  "Firefox Scripts Installer\0"
-            VALUE "FileVersion",      "2026-09-24\0"
+            VALUE "FileVersion",      CFG_BUILD_DATE_INSTALLER_STR
             VALUE "InternalName",     "installer_win.exe\0"
             VALUE "LegalCopyright",   "Copyright 2026 Tab Mix Plus\0"
             VALUE "OriginalFilename", "installer_win.exe\0"
             VALUE "ProductName",      "Firefox Scripts\0"
-            VALUE "ProductVersion",   "2026-09-24\0"
+            VALUE "ProductVersion",   CFG_BUILD_DATE_INSTALLER_STR
         END
     END
     BLOCK "VarFileInfo"
