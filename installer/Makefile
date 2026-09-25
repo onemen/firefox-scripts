@@ -164,13 +164,18 @@ FORCE:
 
 config: $(SRC_DIR)/_config.h
 
+dates: $(SRC_DIR)/_builddate.h
+
 # Issue #322: regenerate _builddate.h (per-binary git-derived build dates).
 # Same --touch contract as 'config' above: idempotent regeneration, and the
 # mtime stamp guarantees the .res files relink when the derived date changes.
-dates: $(SRC_DIR)/_builddate.h
-
+# The regeneration is the FULL set (syncGeneratedFiles.mjs has no per-file
+# scoping), so this rule MUST pass the same MODE/LOCAL flags as 'config' —
+# otherwise it silently re-bakes _config.h as the prod variant mid-build and
+# the installer loses its local/dev identity (snapshot regression 2026-09-25:
+# the tab fetched releases/download/latest/... instead of the snapshot).
 $(SRC_DIR)/_builddate.h: FORCE
-	@node $(subst \,/,$(CONFIG_GENERATOR)) --touch
+	@node $(subst \,/,$(CONFIG_GENERATOR)) $(if $(MODE),--mode=$(MODE),) $(if $(LOCAL),--local,) --touch
 
 # Repo-root generator path. upload.mjs passes CONFIG_GENERATOR as a
 # command-line make variable (deterministic under any spawn shell); this

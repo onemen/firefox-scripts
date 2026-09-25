@@ -529,6 +529,48 @@ function handoffProfileDir(state) {
 
 /** Log the update URLs baked into the snapshot's generated updater config. */
 
+/**
+ * Assert the snapshot's generated identity is a LOCAL build. The snapshot is
+ * produced by `pnpm snapshot:dev` (a --local build), whose entire contract is
+ * self-containment: file:// URLs into the snapshot dir. If the generated
+ * updater-config.sys.mjs instead bakes the GitHub URLs (IS_LOCAL false), the
+ * build pipeline lost its mode flags somewhere — the 2026-09-25 regression,
+ * where the Makefile's dates rule re-baked _config.h as prod after `config` had
+ * written the local variant. Previously log-only ([diag]); a prod-baked
+ * snapshot passed every leg because localConfigOverrides then re-pointed the
+ * updater at this runner's copy, masking the wrong identity.
+ */
+function assertBakedLocalIdentity(snapshotDir) {
+  const staging = tempDir('fxs-ident');
+  try {
+    const utilsZip = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
+    if (!utilsZip) throw new Error('no utils zip in snapshot');
+    extractZip(utilsZip, staging);
+    const cfgPath = path.join(staging, 'updater', 'updater-config.sys.mjs');
+    if (!fs.existsSync(cfgPath)) throw new Error('updater-config.sys.mjs not in utils zip');
+    const cfg = fs.readFileSync(cfgPath, 'utf-8');
+    const isLocal = /^\s*IS_LOCAL: true,/m.test(cfg);
+    const localPath = cfg.match(/LOCAL_DIST_PATH: '([^']*)'/)?.[1] || '';
+    // The baked path must name THIS snapshot, not just any local one — a stale
+    // generator run bakes a valid-looking but foreign dist path (review:batch
+    // finding, PR #329). Basename-only: cross-OS legs see a different parent.
+    const bakedBasename = path.basename(localPath.replace(/\/$/, ''));
+    const wantBasename = path.basename(snapshotDir);
+    if (!isLocal || !localPath || bakedBasename !== wantBasename) {
+      throw new Error(
+        'snapshot utils.zip carries a NON-local or FOREIGN baked updater config ' +
+          `(IS_LOCAL: ${isLocal}, LOCAL_DIST_PATH: '${localPath}', ` +
+          `expected basename '${wantBasename}') — the build lost or mismatched its ` +
+          '--local identity (2026-09-25 regression class). Fix the generator flag ' +
+          'passthrough (installer/Makefile CONFIG_GENERATOR rules), not this test.'
+      );
+    }
+    console.log(`  [ident] baked local identity OK (LOCAL_DIST_PATH=${localPath})`);
+  } finally {
+    rmDir(staging);
+  }
+}
+
 function logBakedConfig(snapshotDir) {
   const staging = tempDir('fxs-cfg');
   try {
@@ -2785,6 +2827,7 @@ async function run() {
     process.exit(1);
   }
   logBakedConfig(snapshotDir);
+  assertBakedLocalIdentity(snapshotDir);
 
   // Process hygiene (issue #130): a cancelled or crashed previous run can
   // leave the detached installer holding port 8777 and BiDi browsers holding
