@@ -298,6 +298,34 @@ jobs:
             exit 1
           }
           echo "snapshots byte-identical"
+      # The compare above only proves the runner repeats itself — two runs of a
+      # *constant* wrong stamp match too. This asserts the pin itself reached
+      # the linker: PE TimeDateStamp == the commit epoch. An empty
+      # SOURCE_DATE_EPOCH (a path-limited `git log` that matched nothing,
+      # silently) stamps the LINK TIME instead — which is exactly how the
+      # 2026-09-25 run produced two different PEs from one commit (#162/#322).
+      - name: Assert the commit epoch reached the linker
+        shell: bash
+        run: |
+          epoch=$(node tools/publish/buildEpoch.mjs)
+          echo "build epoch: $epoch"
+          dir2=$(ls -d dist/prod-* | head -1)
+          node -e '
+            const fs = require("fs");
+            const [epoch, ...files] = process.argv.slice(1);
+            let bad = 0;
+            for (const f of files) {
+              const b = fs.readFileSync(f);
+              const stamp = b.readUInt32LE(b.readUInt32LE(0x3c) + 8);
+              const ok = stamp === Number(epoch);
+              console.log((ok ? "OK   " : "FAIL ") + f + " TimeDateStamp " + stamp + (ok ? "" : " (expected " + epoch + ")"));
+              if (!ok) bad++;
+            }
+            if (bad) {
+              console.log("::error::PE TimeDateStamp is not the commit epoch — SOURCE_DATE_EPOCH did not reach the compiler, so the shipped bytes are a function of the link time, not of the commit");
+              process.exit(1);
+            }
+          ' "$epoch" dist/.run1/installer_win.exe dist/.run1/helper_win.exe "$dir2/installer_win.exe" "$dir2/helper_win.exe"
       - name: The pin, not the runner, decides the bytes
         shell: bash
         # The pair above proves one machine repeats itself. This proves the

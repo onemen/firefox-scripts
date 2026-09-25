@@ -47,11 +47,23 @@ CFLAGS = -Os -s -ffunction-sections
 # Issue #322 (B1): the epoch is the last commit touching the BINARIES' input
 # set — the same paths generateBuildDates.mjs uses for the inner date — so
 # docs-only commits no longer re-roll the PE bytes (and with them the sha256,
-# the VT analysis and the release hashes). The repo root may be a detached
-# worktree (no HEAD), so fall back to a fixed epoch when git cannot answer.
-BIN_EPOCH_PATHS = installer/src installer/web config/installer.conf config/msys2-toolchain.json
-BUILD_EPOCH = $(shell git -C .. log -1 --format=%ct -- $(BIN_EPOCH_PATHS) 2>/dev/null || echo 1785600000)
-SOURCE_DATE_EPOCH = $(BUILD_EPOCH)
+# the VT analysis and the release hashes).
+#
+# The value comes from tools/publish/buildEpoch.mjs, never from an inline
+# `$(shell git …)`. A path-limited `git log` resolves its pathspec against git's
+# working directory and exits 0 with NO output when nothing matches, so an
+# inline command plus the usual `|| echo <fallback>` guard silently produced an
+# EMPTY SOURCE_DATE_EPOCH — which binutils reads as unset, stamping the PE with
+# the LINK TIME: every build of one commit became a new hash and the 2026-09-25
+# CI determinism check failed (run 36177261598). The script resolves the paths
+# from the repo root (no shell cwd, no quoting layer) and refuses to print
+# nothing; a copy without git history still gets its documented fixed epoch.
+EPOCH_GENERATOR ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../tools/publish/buildEpoch.mjs)
+BUILD_EPOCH = $(shell node $(subst \,/,$(EPOCH_GENERATOR)))
+# Belt and braces: an empty epoch must never reach a compiler. If the script
+# cannot even run (no node) make stops here instead of linking PEs whose bytes
+# are a function of the clock.
+SOURCE_DATE_EPOCH = $(if $(strip $(BUILD_EPOCH)),$(BUILD_EPOCH),$(error the build-epoch generator printed no SOURCE_DATE_EPOCH ($(EPOCH_GENERATOR)) — refusing to build PE bytes that change on every link (#162/#322)))
 export SOURCE_DATE_EPOCH
 
 # miniz trim: the installer only READS zips (never compresses/writes), so the
