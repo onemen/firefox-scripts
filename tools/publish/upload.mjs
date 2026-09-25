@@ -73,6 +73,7 @@ import {
   findLatestSnapshot,
   getStoredHashes,
   helperSha256Sidecar,
+  installerSha256Sidecar,
   HASHES_FILE,
 } from './hashUtils.mjs';
 import {
@@ -125,6 +126,7 @@ import {
   getOrCreateRelease,
   getRelease,
   uploadAsset,
+  uploadAssetBuffer,
 } from './uploadUtilsZip.mjs';
 import {assertCleanWorktree} from './gitUtils.mjs';
 import {linkNodeModules, unlinkNodeModules} from './refNodeModules.mjs';
@@ -141,6 +143,7 @@ import {
   helperAssetName,
   helperShaAssetName,
   installerAssetName,
+  installerShaAssetName,
   verifyStagedBinaries,
 } from './platforms.mjs';
 import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
@@ -724,8 +727,16 @@ async function publishToGitHub({
     // suffix drop) — the dev updater requests installer_win.exe /
     // helper_win.exe[.sha256] (updater.js getAssetSuffix() now returns ''
     // everywhere); the per-run dev-build-<id> branch is the namespace.
-    for (const p of builtInstallers)
-      pagesFiles[installerAssetName(p, ASSET_SUFFIX)] = fs.readFileSync(installerPath(p));
+    for (const p of builtInstallers) {
+      const bytes = fs.readFileSync(installerPath(p));
+      pagesFiles[installerAssetName(p, ASSET_SUFFIX)] = bytes;
+      // Checksum sidecar rides its binary (issue #324 — same scheme as the
+      // helper's since #174).
+      pagesFiles[installerShaAssetName(p, ASSET_SUFFIX)] = installerSha256Sidecar(
+        bytes,
+        installerAssetName(p, ASSET_SUFFIX)
+      );
+    }
   } else {
     // Prod: zips go to the release AND Pages (the installer fetches zips from
     // Pages); installers go to the release AND Pages (CORS-enabled branch
@@ -746,11 +757,21 @@ async function publishToGitHub({
       if (release) {
         await deleteExistingAsset(octokit, release.id, installerAssetName(p));
         await uploadAsset(octokit, release.id, installerPath(p), installerAssetName(p));
+        // Sidecar rides the installer everywhere it goes (issue #324).
+        await deleteExistingAsset(octokit, release.id, installerShaAssetName(p));
+        await uploadAssetBuffer(
+          octokit,
+          release.id,
+          installerSha256Sidecar(fs.readFileSync(installerPath(p)), installerAssetName(p)),
+          installerShaAssetName(p)
+        );
       }
       // Pages mirror (ADR 0019 amendment): the release asset stays the
       // user-facing download; the Pages copy exists so the installer tab's
       // banner link can fetch it cross-origin.
-      pagesFiles[installerAssetName(p)] = fs.readFileSync(installerPath(p));
+      const bytes = fs.readFileSync(installerPath(p));
+      pagesFiles[installerAssetName(p)] = bytes;
+      pagesFiles[installerShaAssetName(p)] = installerSha256Sidecar(bytes, installerAssetName(p));
     }
   }
   for (const p of builtHelpers) {
@@ -830,6 +851,14 @@ async function publishToGitHub({
     for (const p of builtInstallers) {
       await deleteExistingAsset(octokit, devRelease.id, installerAssetName(p));
       await uploadAsset(octokit, devRelease.id, installerPath(p), installerAssetName(p));
+      // Sidecar rides the installer (issue #324).
+      await deleteExistingAsset(octokit, devRelease.id, installerShaAssetName(p));
+      await uploadAssetBuffer(
+        octokit,
+        devRelease.id,
+        installerSha256Sidecar(fs.readFileSync(installerPath(p)), installerAssetName(p)),
+        installerShaAssetName(p)
+      );
     }
     for (const p of builtHelpers) {
       await deleteExistingAsset(octokit, devRelease.id, helperAssetName(p));
@@ -940,7 +969,7 @@ function writeSnapshot({merged, platforms, dir, label, scope}) {
   const stale = [];
   if (!scope.packages) for (const {name} of PACKAGES) stale.push(zipFileName(name));
   for (const p of platforms) {
-    if (!scope.installer) stale.push(installerAssetName(p));
+    if (!scope.installer) stale.push(installerAssetName(p), installerShaAssetName(p));
     if (!scope.helper) stale.push(helperAssetName(p), helperShaAssetName(p));
   }
   for (const asset of stale) fs.rmSync(path.join(dir, asset), {force: true});
@@ -972,9 +1001,16 @@ function writeSnapshot({merged, platforms, dir, label, scope}) {
       info(`    ${green('+')} ${helperAssetName(p)} (+ .sha256)`);
     }
     const instSrc = installerPath(p);
-    if (fs.existsSync(instSrc)) {
+    if (scope.installer && fs.existsSync(instSrc)) {
+      // Sidecar is derived, never reused: regenerated from the staged bytes
+      // so it cannot drift from the binary it vouches for (issue #324).
+      const bytes = fs.readFileSync(instSrc);
       fs.copyFileSync(instSrc, path.join(dir, installerAssetName(p)));
-      info(`    ${green('+')} ${installerAssetName(p)}`);
+      fs.writeFileSync(
+        path.join(dir, installerShaAssetName(p)),
+        installerSha256Sidecar(bytes, installerAssetName(p, ASSET_SUFFIX))
+      );
+      info(`    ${green('+')} ${installerAssetName(p)} (+ .sha256)`);
     }
   }
 

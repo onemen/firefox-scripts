@@ -398,6 +398,13 @@ publishing helper bytes (or after an `--include=packages,helper` run that shippe
 
 A missing sidecar only warns (pre-#33 publishes), a **mismatched** one aborts the elevated copy — so
 a partial publish that ships the helper must ship its sidecar too (`upload.mjs` always writes both).
+The installer gets the same scheme (issue #324): every publish ships a
+`<installer asset name>.sha256` sidecar next to each installer — `installer_win.exe.sha256` on
+Windows, `installer_linux.sha256` / `installer_mac.sha256` elsewhere: release assets,
+`installer-<date>` component releases, the gh-pages mirror, dev-build-* branches and snapshots —
+derived from the staged bytes, never reused. The self-update path does not consume them yet (the
+managed download map stays binary-only: the C URL lookup is a substring match a `.sha256` name would
+shadow); manual verification and a future tab-side check are the consumers.
 
 ## Making changes
 

@@ -259,8 +259,12 @@ that executes **outside** the browser sandbox (it self-elevates), every publish 
 `helper_<platform>.sha256` sidecar (`<hex>  <name>` per sha256sum; `upload.mjs`), and the updater
 verifies the freshly downloaded helper's bytes against it **before executing** — a mismatch aborts
 the elevated copy (issue #33). A missing sidecar (publishes older than the scheme) is logged and
-skipped, never treated as a pass. The updater tries a direct `IOUtils` copy first
-(portable/user-owned installs), then the helper; exit code `2` maps to "elevation cancelled".
+skipped, never treated as a pass. The installer binaries get the same sidecar scheme (issue #324):
+every publish ships a `<installer asset name>.sha256` sidecar next to each installer
+(`installer_win.exe.sha256` on Windows), but nothing consumes it yet — verifying the downloaded
+installer before the banner hands it to the user is a tracked follow-up. The updater tries a direct
+`IOUtils` copy first (portable/user-owned installs), then the helper; exit code `2` maps to
+"elevation cancelled".
 
 ## 7. Reuse summary
 

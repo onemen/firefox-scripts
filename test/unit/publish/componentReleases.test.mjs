@@ -7,6 +7,9 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
 process.argv.push('--mode=prod');
@@ -80,21 +83,43 @@ test('renderComponentBody: lists artifacts with per-file dates, points back at l
   assert.match(empty, /no artifacts this date/);
 });
 
-test('componentAssets: exactly the installers built — never helpers', () => {
-  const access = {
-    installer: p => `installer_${p}.exe`,
-    installerPath: p => `staged/installer-${p}`,
-  };
-  const built = {builtInstallers: ['win', 'linux']};
-  const assets = componentAssets(['win', 'linux'], built, access);
-  assert.deepEqual([...assets.keys()].sort(), ['installer_linux.exe', 'installer_win.exe']);
+test('componentAssets: exactly the installers built, each with its sidecar (issue #324)', () => {
+  // Sidecar values are derived from the staged binary bytes, so the staged
+  // files must exist for the map build to read them.
+  const staged = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-compassets-'));
+  try {
+    for (const p of ['win', 'linux']) {
+      fs.writeFileSync(path.join(staged, `installer-${p}`), Buffer.from(`bytes-${p}`));
+    }
+    const access = {
+      installer: p => `installer_${p}.exe`,
+      installerSha: p => `installer_${p}.exe.sha256`,
+      installerPath: p => path.join(staged, `installer-${p}`),
+    };
+    const built = {builtInstallers: ['win', 'linux']};
+    const assets = componentAssets(['win', 'linux'], built, access);
+    assert.deepEqual([...assets.keys()].sort(), [
+      'installer_linux.exe',
+      'installer_linux.exe.sha256',
+      'installer_win.exe',
+      'installer_win.exe.sha256',
+    ]);
+    // Binary values stay staged paths; sidecar values are rendered Buffers.
+    assert.equal(assets.get('installer_win.exe'), access.installerPath('win'));
+    assert.match(
+      assets.get('installer_win.exe.sha256').toString('utf-8'),
+      /^[0-9a-f]{64} {2}installer_win\.exe\n$/
+    );
+  } finally {
+    fs.rmSync(staged, {recursive: true, force: true});
+  }
 });
 
 test('componentAssets: nothing built → empty map', () => {
   const assets = componentAssets(
     [],
     {builtInstallers: []},
-    {installer: p => p, installerPath: p => p}
+    {installer: p => p, installerSha: p => p, installerPath: p => p}
   );
   assert.equal(assets.size, 0);
 });
