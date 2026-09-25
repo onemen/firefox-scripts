@@ -107,7 +107,7 @@ function managedBlock(date, downloads) {
 function main() {
   const snapshotDir = findSnapshot();
   if (!snapshotDir) {
-    console.error('No snapshot found. Run `pnpm upload:local --mode=dev` first.');
+    console.error('No snapshot found. Run `pnpm snapshot:dev` first.');
     process.exit(1);
   }
   const installer = getInstallerPath(snapshotDir);

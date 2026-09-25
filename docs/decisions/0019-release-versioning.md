@@ -4,6 +4,8 @@
 - **Date:** 2026-08-27
 - **Amended:** [0029](./0029-status-line-amendments.md) — its own amendment convention; this
   record's two amendment sections are now declared here
+- **Amended:** [0036](./0036-git-derived-build-dates.md) — the self-update build date is derived
+  from git per binary instead of hand-stamped (issue #322, 2026-09-25)
 
 ## Context
 

@@ -12,7 +12,7 @@
 //
 // Excluded on purpose:
 //   installer/src/vendor/**  - vendored third-party code (miniz)
-//   installer/src/resources.h, _config.h - generated at build time
+//   installer/src/resources.h, _config.h, _builddate.h - generated at build time
 
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
@@ -24,7 +24,7 @@ const require = createRequire(import.meta.url);
 const srcRoot = resolve(fileURLToPath(new URL('..', import.meta.url)), 'installer/src');
 const stylePath = resolve(fileURLToPath(new URL('..', import.meta.url)), 'installer/.clang-format');
 
-const EXCLUDES = new Set(['vendor', 'resources.h', '_config.h']);
+const EXCLUDES = new Set(['vendor', 'resources.h', '_config.h', '_builddate.h']);
 
 function collectC(path, out) {
   for (const entry of readdirSync(path)) {

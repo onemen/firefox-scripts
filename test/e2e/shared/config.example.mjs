@@ -27,8 +27,8 @@ export default {
    * Snapshot policy:
    *
    * - 'strict' (default): the newest dist/dev-* snapshot must match the current
-   *   git branch + HEAD short sha (i.e. it was built by `pnpm upload:local
-   *   --mode=dev` on this branch/commit), otherwise the run fails with a hint.
+   *   git branch + HEAD short sha (i.e. it was built by `pnpm snapshot:dev` on
+   *   this branch/commit), otherwise the run fails with a hint.
    * - 'off': use the newest snapshot regardless of branch.
    */
   branchCheck: 'strict',

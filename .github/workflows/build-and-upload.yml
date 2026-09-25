@@ -24,8 +24,7 @@
 #      property pages.yml buys with serialization, bought here with
 #      architecture. This job is also where a future SignPath code-signing
 #      step slots in (sign the staged bytes between the artifacts and pass 2).
-#   5. deterministic — advisory: two `upload:local --mode=prod --force` runs on
-#      one runner must produce byte-identical snapshots, and a build from the
+#   5. deterministic — advisory: two `snapshot:prod --force` runs on one runner must produce byte-identical snapshots, and a build from the
 #      pinned toolchain prefix must match the environment build byte for byte
 #      (#33's deterministic
 #      publish check; Windows builds are pinned via SOURCE_DATE_EPOCH, #162).
@@ -209,32 +208,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Pass 1: hash-check, rebuild changed, stage. Exits BEFORE the AV/VT
       # gates and any publishing; the staging tree + build-manifest.json stay
-      # on disk. Prod diffs against the shared pre-run baseline.
+      # on disk. Prod diffs against the shared pre-run baseline. The shared
+      # publish-upload composite action owns the invocation (see pages.yml).
       - name: Build and stage binaries
-        shell: bash
-        env:
-          # The prod CI marker is set on EVERY upload.mjs invocation (pages.yml
-          # convention): pass 1 runs the same prodCiGuard as pass 2, and a
-          # guard abort would otherwise kill each prod build leg at startup.
-          FXS_INTERNAL_CI: '1'
-          VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          # Dispatch inputs reach the shell only through env vars — never
-          # interpolated directly into run: (script-injection surface).
-          UPLOAD_MODE: ${{ inputs.mode }}
-          UPLOAD_PLATFORM: ${{ matrix.platform }}
-          UPLOAD_FORCE: ${{ inputs.force }}
-          # Partial publish (ADR 0030): the roles to publish (--include); 'all' =
-          # full. Passed through verbatim — an explicitly empty value fails
-          # loudly inside upload.mjs, never a silent default scope.
-          UPLOAD_INCLUDE: ${{ inputs.include }}
-        run: |
-          ARGS="--mode=$UPLOAD_MODE --build-only --platform=$UPLOAD_PLATFORM"
-          if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
-          ARGS="$ARGS --include=$UPLOAD_INCLUDE"
-          if [ "$UPLOAD_MODE" = "prod" ]; then
-            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
-          fi
-          node tools/publish/upload.mjs $ARGS
+        uses: ./.github/actions/publish-upload
+        with:
+          mode: ${{ inputs.mode }}
+          include: ${{ inputs.include }}
+          platforms: ${{ matrix.platform }}
+          force: ${{ inputs.force }}
+          extra-args: '--build-only'
+          baseline-file: ${{ runner.temp }}/baseline/hashes.json
+          vt-api-key: ${{ secrets.VT_API_KEY }}
       # Native AV pass over exactly the staged bytes (Defender on Windows,
       # ClamAV on Linux/macOS). The publisher re-scans everything as its own
       # gate — this is the per-platform engine coverage pages.yml had.
@@ -296,20 +281,20 @@ jobs:
       # entries carry per-file timestamps derived from the sources, so the
       # full snapshot must match too.
       - name: Snapshot run 1
-        run: pnpm upload:local -- --mode=prod --force --platform=win
+        run: pnpm snapshot:prod --force --platform=win
       - name: Stash first snapshot
         shell: bash # default Windows shell (pwsh) has no ls -d / head pipeline
         run: |
           dir=$(ls -d dist/prod-* | head -1)
           mv "$dir" dist/.run1
       - name: Snapshot run 2
-        run: pnpm upload:local -- --mode=prod --force --platform=win
+        run: pnpm snapshot:prod --force --platform=win
       - name: Compare snapshots
         shell: bash
         run: |
           dir2=$(ls -d dist/prod-* | head -1)
           diff -r dist/.run1 "$dir2" || {
-            echo "::error::two upload:local runs of the same commit produced different snapshots — builds are not deterministic"
+            echo "::error::two snapshot:prod runs of the same commit produced different snapshots — builds are not deterministic"
             exit 1
           }
           echo "snapshots byte-identical"
@@ -387,23 +372,15 @@ jobs:
           "
       # Pass 2: the staged bytes ARE the final artifacts. Re-runs the AV/VT
       # gates over everything in scope, then performs the release + Pages
-      # publish — the only job that writes to any GitHub target.
+      # publish — the only job that writes to any GitHub target. The shared
+      # publish-upload composite action owns the invocation (see pages.yml).
       - name: Publish (pass 2 — gates + upload)
-        shell: bash
-        env:
-          FXS_INTERNAL_CI: '1'
-          VT_API_KEY: ${{ secrets.VT_API_KEY }}
-          UPLOAD_MODE: ${{ inputs.mode }}
-          UPLOAD_FORCE: ${{ inputs.force }}
-          # Partial publish (ADR 0030): the roles to publish (--include); 'all' =
-          # full. Passed through verbatim — an explicitly empty value fails
-          # loudly inside upload.mjs, never a silent default scope.
-          UPLOAD_INCLUDE: ${{ inputs.include }}
-        run: |
-          ARGS="--mode=$UPLOAD_MODE --skip-build --platform=win --platform=linux --platform=mac"
-          if [ "$UPLOAD_FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
-          ARGS="$ARGS --include=$UPLOAD_INCLUDE"
-          if [ "$UPLOAD_MODE" = "prod" ]; then
-            export FIREFOX_SCRIPTS_STORED_HASHES_FILE="$RUNNER_TEMP/baseline/hashes.json"
-          fi
-          node tools/publish/upload.mjs $ARGS
+        uses: ./.github/actions/publish-upload
+        with:
+          mode: ${{ inputs.mode }}
+          include: ${{ inputs.include }}
+          platforms: 'win linux mac'
+          force: ${{ inputs.force }}
+          extra-args: '--skip-build'
+          baseline-file: ${{ runner.temp }}/baseline/hashes.json
+          vt-api-key: ${{ secrets.VT_API_KEY }}

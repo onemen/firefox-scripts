@@ -40,6 +40,7 @@ import {
   readConfig as readUpdaterConfig,
 } from './generateUpdaterConfig.mjs';
 import {DEV_BRANCH, LOCAL, MODE, localSnapshotDir} from './publishMode.mjs';
+import {buildDateHeader, buildDates} from './generateBuildDates.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,7 +83,7 @@ function configHeader(confText) {
   for (const key of orderedKeys) {
     out.push(`#define CFG_${key} "${eff[key] ?? ''}"`);
   }
-  // Local-test builds (upload:local) serve published files from the installer's
+  // Local-test builds (snapshot:prod/dev) serve published files from the installer's
   // own directory and bake localhost URLs; the numeric flag lets the C code
   // enable that server fallback at compile time.  CFG_DEV / CFG_LOCAL_DIST_PATH
   // / CFG_DEV_BRANCH feed the web UI's "test build" banner (via
@@ -121,6 +122,11 @@ const GENERATORS = {
     generateUpdaterConfig(readUpdaterConfig()),
   'installer/src/_config.h': () =>
     configHeader(fs.readFileSync(path.join(ROOT, 'config', 'installer.conf'), 'utf-8')),
+  'installer/src/_builddate.h': () => {
+    // Issue #322: per-binary git-derived build dates (shared with the publish
+    // hash by construction — see generateBuildDates.mjs).
+    return buildDateHeader(buildDates());
+  },
   'installer/src/resources.h': () => {
     // Node version of embed.py — byte-identical output, no Python needed.
     return execFileSync('node', [path.join(ROOT, 'installer', 'embed.mjs'), '--stdout'], {

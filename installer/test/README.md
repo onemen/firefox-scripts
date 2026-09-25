@@ -12,17 +12,16 @@ The two tests here are **binary-in-the-loop**:
 - **`test_hash.mjs`** — hash parity: cross-checks the C installer's `compute_directory_sha256` (in
   `installer/src/detect_browser.c`) against the JS reference (`tools/publish/hashUtils.mjs`). It
   invokes the real installer binary from the newest `dist/prod-*` / `dist/dev-*` snapshot
-  (generating one via `pnpm upload:local -- --mode=prod` when none exists), so it cannot run until
-  the C toolchain has built that binary — which `test/unit/` must never require (it gates every
-  pre-push).
+  (generating one via `pnpm snapshot:prod` when none exists), so it cannot run until the C toolchain
+  has built that binary — which `test/unit/` must never require (it gates every pre-push).
 - **`test_self_update.mjs`** — drives the C `check_self_update()` self-update logic
   (`installer/src/self_update.c`) through the installer's hidden `--test-self-update` CLI mode, with
   fixture JSON files. Also needs the built binary.
 
 Where they run:
 
-- **CI**: `ci.yml`'s publish job runs `pnpm test:hash` on Windows, right after
-  `pnpm upload:local --mode=dev` has built the binaries.
+- **CI**: `ci.yml`'s publish job runs `pnpm test:hash` on Windows, right after `pnpm snapshot:dev`
+  has built the binaries.
 - **Locally**: `pnpm test:hash` (hash / file-list changes — see the Testing & QA matrix in
   `AGENTS.md`).
 

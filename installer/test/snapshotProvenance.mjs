@@ -98,7 +98,7 @@ export function requireFreshSnapshot({
         `  (snapshot installer date: ${stored.installer?.date ?? 'unknown'})\n` +
         `Refusing to run the suite against binary provenance it cannot trust —\n` +
         `failures would misreport as regressions on main.\n` +
-        `Regenerate: pnpm upload:local -- --mode=prod   (or --mode=dev for a local snapshot).`
+        `Regenerate: pnpm snapshot:prod   (or snapshot:dev for a local snapshot).`
     );
     exit(1);
   }

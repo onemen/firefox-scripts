@@ -96,7 +96,7 @@ test('requireFreshSnapshot: exits 1 on a snapshot built from older sources (T1)'
     assert.equal(exitCode, 1);
     const text = errors.join('\n');
     assert.match(text, /STALE SNAPSHOT/);
-    assert.match(text, /Regenerate: pnpm upload:local/);
+    assert.match(text, /Regenerate: pnpm snapshot:prod/);
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
   }

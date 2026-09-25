@@ -69,12 +69,14 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
 
 // ===== Configurable constants =====
 
-/* Date-based self-update (ADR 0019 amendment): the build date baked at
- * generation time (YYYY-MM-DD from config/installer.conf BUILD_DATE).
+/* Date-based self-update (ADR 0019 amendment): the build date is DERIVED
+ * (issue #322) — _builddate.h (generated) carries per-binary dates from the
+ * last commit touching each binary's inputs; the installer consumes its own.
  * Replaces the former INSTALLER_VERSION — the repo ships unversioned,
  * date-stamped artifacts, so a version constant could never converge with
  * the permanently-named `latest` tag. */
-#define INSTALLER_BUILD_DATE CFG_BUILD_DATE
+#include "_builddate.h"
+#define INSTALLER_BUILD_DATE CFG_BUILD_DATE_INSTALLER
 
 /* Local test builds (upload:local snapshots) never offer a self-update: the
  * snapshot exists to test THIS build, the banner would only confuse, and a

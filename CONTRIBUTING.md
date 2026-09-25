@@ -50,9 +50,9 @@ pnpm lint          # the full gate: eslint, check-strncpy, tsc, C format check,
 pnpm format        # prettier + C format check (read-only)
 pnpm test          # unit tests (pure Node, no build needed)
 pnpm test:hash     # C vs JS hash parity (see installer/test/README.md) — needs a
-                   # built snapshot; auto-generates a prod one via upload:local when
+                   # built snapshot; auto-generates a prod one via snapshot:prod when
                    # none exists, and hard-fails on a stale snapshot
-pnpm upload:local -- --mode=dev   # build a dev snapshot (note the `--` before flags)
+pnpm snapshot:dev                 # build a dev snapshot
 pnpm test:e2e      # installer HTTP + updater scenarios (needs that snapshot)
 ```
 
@@ -60,7 +60,7 @@ Uploads are gated to `main` and require a GitHub token (see
 `docs/DEVELOPING.md#publishing-a-release`); the offline check needs no token:
 
 ```bash
-pnpm upload:local -- --mode=prod
+pnpm snapshot:prod
 ```
 
 ## License

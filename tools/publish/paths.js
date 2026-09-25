@@ -90,10 +90,8 @@ export {PUBLISH_MODE};
 
 // ---- Unified build-output root (dist/ at the repo top level) ----
 // dist/ is gitignored. The ONLY durable contents are per-run snapshots:
-//   dist/prod-<branch>-<hash>/           (upload:local --mode=prod)
-//   dist/dev-<branch>-<hash>/            (upload:local --mode=dev)
-//   dist/prod-copy-<branch>-<hash>/      (upload --mode=prod --keep-copy)
-//   dist/dev-copy-<branch>-<hash>/       (upload --mode=dev --keep-copy)
+//   dist/prod-<branch>-<hash>/           (snapshot:prod)
+//   dist/dev-<branch>-<hash>/            (snapshot:dev)
 // Build products (zips + binaries) are written to a transient dist/.build/
 // staging tree that upload.mjs removes at the end of every run, so a plain
 // GitHub upload leaves nothing behind and dist/ only ever holds snapshots.
@@ -102,8 +100,8 @@ export const BUILD_ROOT = path.join(DIST_ROOT, '.build');
 export const INSTALLER_DIST = path.join(BUILD_ROOT, 'installer');
 export const SCRIPTS_DIST = path.join(BUILD_ROOT, 'scripts');
 
-/** dist/<mode>[-copy]-<branch>-<hash>/ folder name for a snapshot. */
-export function snapshotDirName({mode, branch, sha, copy = false}) {
+/** dist/<mode>-<branch>-<hash>/ folder name for a snapshot. */
+export function snapshotDirName({mode, branch, sha}) {
   const safeBranch = branch.replace(/[^\w.-]+/g, '-');
-  return `${mode}${copy ? '-copy' : ''}-${safeBranch}-${sha}`;
+  return `${mode}-${safeBranch}-${sha}`;
 }

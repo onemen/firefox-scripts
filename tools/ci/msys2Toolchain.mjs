@@ -594,7 +594,7 @@ export function prefixInstructions(binDir) {
   const rel = path.relative(REPO_ROOT, binDir).split(path.sep).join('/');
   return [
     `export PATH="$PWD/${rel}:$PATH"`,
-    'make -C installer dist_win   # or: pnpm upload:local -- --mode=dev',
+    'make -C installer dist_win   # or: pnpm snapshot:dev',
   ];
 }
 

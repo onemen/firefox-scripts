@@ -21,7 +21,7 @@ Architecture deep dive: `docs/DEVELOPING.md` (structure, installer/updater flow,
 
 - **Never hand-edit generated files.** They are gitignored build products, regenerated on demand
   from their sources (see the Generated files section).
-- **Do not publish or upload** unless the user explicitly asks. Use `upload:local` for offline
+- **Do not publish or upload** unless the user explicitly asks. Use `snapshot:*` for offline
   validation.
 - **Never merge a PR without the user's explicit approval** — open PRs for review and wait.
 - **Never expose the GitHub token.** It lives only in an untracked root `.env` under the fixed
@@ -71,7 +71,9 @@ facts most often cause bugs:
   the full cross-OS binary matrix); `--mode=dev` → disposable `dev-build-<id>` branch (branch-only;
   `--note` adds an RC-style prerelease page), `-dev` artifact names, served via jsDelivr. Requires a
   clean worktree; real runs need `GITHUB_TOKEN_VAR`.
-- **Gotchas:** Waterfox skips `BootstrapLoader.js` in `config.js`. Per-package skip prefs
+- **Gotchas:** BUILD_DATE is DERIVED, not hand-stamped (ADR 0036): per-binary git dates from the
+  same input set the publish hash uses; `installer.conf` has no `BUILD_DATE` key anymore. Waterfox
+  skips `BootstrapLoader.js` in `config.js`. Per-package skip prefs
   `extensions.firefox-scripts.skippedHash.<pkg>`; daily gate prefs `lastScriptsCheckDate` /
   `lastUpdateTabShown`. `versionInfo.json` is obsolete (excluded from zips; installed copies cleaned
   by `installer/src/obsolete_files.h`).
@@ -114,7 +116,7 @@ detail lives there so this file stays a checklist, not a manual. All skills are 
 | `batch-loop`        | authored    | Working a batch of tasks — one PR per task, never idle-wait            |
 | `change-workflow`   | authored    | Making code changes — subsystem, docs, validation order                |
 | `generated-files`   | authored    | Regenerating or reasoning about the untracked build files              |
-| `publishing`        | authored    | Releasing — `upload` / `upload:local`, prod/dev modes                  |
+| `publishing`        | authored    | Releasing — `publish:*` / `snapshot:*`, prod/dev modes                 |
 | `cavecrew`          | third-party | Delegating locate / small-edit / diff-review subtasks to subagents     |
 | `code-review`       | third-party | Reviewing a diff against the repo's standards and originating spec     |
 | `debugging-firefox` | third-party | Debugging live Firefox via DevTools RDP (`docs/debugging-with-rdp.md`) |
@@ -139,19 +141,24 @@ pnpm format:fix    # apply both
 pnpm test          # unit tests (test/unit/, pure Node, no build)
 pnpm review:local  # local AI review of main...HEAD via tools/ai-review.mjs (ADR 0020)
 
-# hash parity JS vs C (auto-generates a prod snapshot via upload:local if needed;
-# also works against the newest dev- snapshot, so it runs after upload:local --mode=dev)
+# hash parity JS vs C (auto-generates a prod snapshot via snapshot:prod if needed;
+# also works against the newest dev- snapshot, so it runs after snapshot:dev)
 pnpm test:hash
 ```
 
-**Publish — only when the user explicitly asks.** `upload:local` is the token-less offline check:
+**Publish — only when the user explicitly asks.** The `snapshot:*` scripts are the token-less
+offline check; the `publish:*` scripts go live (CI builds and publishes):
 
 ```bash
-pnpm upload:local -- --mode=prod         # full snapshot to dist/prod-<branch>-<hash>/ (no token)
-pnpm release:all                         # prod publish: dispatches the CI cross-OS matrix (gh)
-pnpm release:packages                    # partial: zips + updater-ui only (--include=packages)
-pnpm release:installer                   # partial: installer + helper only (--include=installer)
-pnpm release:helper                      # partial: helper + sidecar only (--include=helper) — helper-byte rotation with zero package changes
+pnpm snapshot:prod                       # full snapshot to dist/prod-<branch>-<hash>/ (no token)
+pnpm snapshot:dev                        # dev snapshot to dist/dev-<branch>-<hash>/ (no token)
+pnpm publish:all                         # prod publish: dispatches the CI cross-OS matrix (gh)
+pnpm publish:packages                    # partial: zips + updater-ui only (--include=packages)
+pnpm publish:installer                   # partial: installer + helper only (--include=installer)
+pnpm publish:helper                      # partial: helper + sidecar only (--include=helper) — helper-byte rotation with zero package changes
+pnpm release:stage -- --ref=<sha>        # STAGE-ONLY CI build (publish=false) — the WDSI-evidence bytes
+pnpm release:verify                      # re-derive the post-publish facts (assets/gh-pages/tag/AV)
+pnpm fetch:release                       # manual-test download: gh-pages default, --dev <branch>, --run <id>
 ```
 
 Every publish states its scope: `--include=packages|installer|helper|all` (required, validated —
@@ -159,7 +166,7 @@ missing/empty/unknown roles fail loudly; ADR 0030).
 
 `--mode=prod|dev` is required; prod publishes the `latest` release + gh-pages from `main` only, dev
 publishes to `dev-build-<id>` **branch-only** — no release unless `--tag` (dev), and `--note` labels
-the branch id. Full flag/env reference: `docs/DEVELOPING.md` → "`pnpm upload` reference".
+the branch id. Full flag/env reference: `docs/DEVELOPING.md` → "`pnpm publish` reference".
 
 Installer build (Windows: MSYS2 UCRT64 `mingw32-make`): `make dist_win` / `dist_linux` / `dist_mac`,
 `helper_*`, `resources`, `config`, `verify`.
@@ -175,7 +182,7 @@ Match the change to its validation:
 | Publish helpers / hashing        | `pnpm test` (unit tests in `test/unit/`)                                |
 | Decision log (`docs/decisions/`) | `pnpm check:decisions` (duplicate numbers + stale links)                |
 | Generated-file sources           | `node tools/publish/syncGeneratedFiles.mjs`                             |
-| Packaging / publish scripts      | `pnpm upload:local -- --mode=prod`                                      |
+| Packaging / publish scripts      | `pnpm snapshot:prod`                                                    |
 
 Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test. **Do not claim tests
 passed if the required toolchain or environment was unavailable.**
@@ -260,10 +267,11 @@ Before finishing:
 
 ## Generated files
 
-Four files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
+Five files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
 them: `core/chrome/utils/updater/updater-config.sys.mjs`, `tools/publish/remote-ui/updater.css`,
-`installer/src/_config.h`, `installer/src/resources.h`. Edit the source and regenerate (the
-installer Makefile does it on every build, `createZip.mjs` at publish time, or by hand via
+`installer/src/_config.h`, `installer/src/_builddate.h` (git-derived per-binary build dates, issue
+#322), `installer/src/resources.h`. Edit the source and regenerate (the installer Makefile does it
+on every build, `createZip.mjs` at publish time, or by hand via
 `node tools/publish/syncGeneratedFiles.mjs`). Because they are not committed, the publish hashes
 cover their **true sources** instead of the artifacts (see
 `docs/decisions/0008-generated-files-untracked.md`); `installer.conf` is a base value — changing it

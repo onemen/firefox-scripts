@@ -2,7 +2,7 @@
 
 // tools/publish/devClean.mjs — remove dev-build-<id> branches and tags.
 //
-// `pnpm upload --mode=dev` publishes to a disposable `dev-build-<id>` branch
+// `pnpm publish:dev` publishes to a disposable `dev-build-<id>` branch
 // (see publishMode.mjs) plus a release of the same name; over time those
 // accumulate on origin and locally. This tool deletes them.
 //

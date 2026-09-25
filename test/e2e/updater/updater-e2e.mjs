@@ -2774,14 +2774,13 @@ async function run() {
 
   const snapshotDir = opts.snapshot || findSnapshot({branchCheck: false})?.dir;
   if (!snapshotDir) {
-    console.error('No snapshot found. Run `pnpm upload:local --mode=dev` first.');
+    console.error('No snapshot found. Run `pnpm snapshot:dev` first.');
     process.exit(1);
   }
   console.log(`Updater E2E\n  snapshot: ${snapshotDir}`);
   if (!fs.existsSync(path.join(snapshotDir, 'hashes.json'))) {
     console.error(
-      `Snapshot ${snapshotDir} has no hashes.json — rebuild it with ` +
-        '`pnpm upload:local --mode=dev`.'
+      `Snapshot ${snapshotDir} has no hashes.json — rebuild it with ` + '`pnpm snapshot:dev`.'
     );
     process.exit(1);
   }

@@ -57,7 +57,7 @@ Open these before proposing a new primitive, surface, or storage home.
   package; no remote page/iframe/postMessage
 - [0008](./0008-generated-files-untracked.md) — Generated files untracked; regenerated on demand;
   hashes cover true sources
-- [0009](./0009-unified-publish-modes.md) — Unified publish `upload`/`upload:local` with required
+- [0009](./0009-unified-publish-modes.md) — Unified publish `publish:*`/`snapshot:*` with required
   `--mode=prod|dev`; prod gated to `main`
 - [0010](./0010-session-token-no-cors.md) — Local installer server gated by a per-run session token;
   no CORS
@@ -110,6 +110,8 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0034](./0034-fork-e2e-legs-pin-to-validated-release.md) — Fork E2E legs (librewolf, zen, floorp)
   pin to the last E2E-validated release, advanced only by the watchdog's per-release dispatch; hard
   gates keep tracking latest ([0023]'s pin semantics carried forward)
+- [0036](./0036-git-derived-build-dates.md) — Build dates are derived from git per binary (same
+  input set as the publish hash); PE epoch scoped to those inputs (extends [0019]'s self-update)
 
 ## Historical
 

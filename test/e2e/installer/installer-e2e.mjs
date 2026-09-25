@@ -330,7 +330,7 @@ async function runHttpLayer(counter, sessionToken) {
         check(
           counter,
           false,
-          'binary predates the assetName/buildDate contract — rebuild the snapshot (pnpm upload:local)'
+          'binary predates the assetName/buildDate contract — rebuild the snapshot (pnpm snapshot:dev)'
         );
         return;
       }
@@ -1556,7 +1556,7 @@ async function run() {
   if (!snapshotDir) {
     const snap = findSnapshot({branchCheck: false});
     if (!snap) {
-      console.error('No snapshot found. Run `pnpm upload:local --mode=dev` first.');
+      console.error('No snapshot found. Run `pnpm snapshot:dev` first.');
       process.exit(1);
     }
     snapshotDir = snap.dir;

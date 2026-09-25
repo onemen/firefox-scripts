@@ -58,6 +58,7 @@ docs/local_plan/
 #     and is added back to the utils zip/hash explicitly (gitignore keeps the
 #     on-disk state deterministic between fresh clones and dev machines).
 installer/src/_config.h
+installer/src/_builddate.h
 installer/src/resources.h
 # Built script.js concat — written by embed.mjs (every build/publish); the
 # eslint/prettier gates run against this artifact (issue #225 concat-gate).
