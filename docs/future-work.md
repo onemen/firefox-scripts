@@ -31,6 +31,9 @@ CI.
 - [x] **Daily gate:** the tab opens at most once per day (`lastUpdateTabShown`); it does NOT open
       when everything is current, and does NOT open when only `updater-ui` changed (self-update is
       silent).
+- [x] **Up-to-date rate limit (ADR 0037, 2026-09-26):** an up-to-date check writes
+      `lastVerifiedDate` so the check runs once per DAY, not once per session; an unreachable
+      manifest never writes it (a network-failure day must not consume the next one).
 - [ ] **Decision pref:** `lastScriptsCheckDate` is set only on install / skip / "Remind me Tomorrow"
       / restart — closing the tab without acting records nothing.
 - [ ] **Skip prefs:** `skippedHash.fx-folder` / `skippedHash.utils` suppress the pending update for

@@ -5,6 +5,9 @@
 - **Amended:** [0026](./0026-publish-channels-and-dead-channel-fallback.md) — scoped test-channel
   exception to the silent-exit invariant
 - **Amended:** [0029](./0029-status-line-amendments.md) — its own amendment convention
+- **Amended:** [0037](./0037-up-to-date-check-rate-limit.md) — an up-to-date check is rate-limited
+  to once per day by a machine-written `lastVerifiedDate`; the user-decision semantics of
+  `lastScriptsCheckDate` are unchanged
 
 ## Context
 
@@ -23,7 +26,7 @@ update resurfaces. Per-package `skippedHash.*` prefs suppress a specific remote 
 when the remote hash changes or local files match (`b5405a8`, 2026-08-01; confirmed in the Aug 2026
 design review).
 
-## Consequences
+## Consequences (amended 2026-09-26 by [0037](./0037-up-to-date-check-rate-limit.md))
 
 No OS notification permissions, no scheduler beyond the daily timer (amended 2026-09-23, #292: the
 original `setInterval` never actually fired — window-bound timer globals don't exist in the ESM's

@@ -178,8 +178,9 @@ initScriptsUpdater(win)                     # idempotent; refreshes gWindow when
   │                                         #   the refresh re-runs the check so an in-flight
   │                                         #   check holding the dead window cannot strand
   │                                         #   the notification; skipped if
-  │                                         #   lastScriptsCheckDate == today or
-  │                                         #   lastUpdateTabShown == today
+  │                                         #   lastScriptsCheckDate == today,
+  │                                         #   lastUpdateTabShown == today, or
+  │                                         #   lastVerifiedDate == today (ADR 0037)
   └─ nsITimer daily re-check (TYPE_REPEATING_SLACK, session lifetime) — window
                                             #   timers don't exist in the ESM scope; same-day
                                             #   re-checks are pref-gated no-ops; the tab opens
@@ -188,7 +189,9 @@ initScriptsUpdater(win)                     # idempotent; refreshes gWindow when
         ▼ (fetch manifest — with the ADR 0026 stable fallback on a dead dev channel,
         │   compute local hashes, apply skippedHash prefs)
 utils OR fx-folder needs an update?
-        │  no → stay silent
+        │  no → lastVerifiedDate = today (only if the manifest was reached, ADR 0037);
+        │       stay silent — the check now re-runs at most once per day,
+        │       not once per session
         │  yes
         ▼
 ensureUpdaterUi(updaterUi)                  # silent self-update of the tab UI

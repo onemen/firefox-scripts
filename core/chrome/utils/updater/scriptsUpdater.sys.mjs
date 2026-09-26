@@ -126,6 +126,10 @@ const MANIFEST_TIMEOUT_MS = 15000; // dead manifest host -> failed check, not a 
 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
 const PREF_LAST_SHOWN = 'extensions.firefox-scripts.lastUpdateTabShown';
+// Verified-today marker, written ONLY on the up-to-date path (see checkForUpdates):
+// it rate-limits the check to once per day when everything already matches, without
+// ever touching the user-decision pref PREF_LAST_CHECK (ADR 0012).
+const PREF_LAST_VERIFIED = 'extensions.firefox-scripts.lastVerifiedDate';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
 
 /* ---------------- publish channels (ADR 0026) ----------------
@@ -303,6 +307,16 @@ function todayStr() {
  *   as "checked".
  * - PREF_LAST_SHOWN is set here when the tab is opened, so an ignored tab does
  *   not re-open every few minutes within the same day.
+ *
+ * A third pref, PREF_LAST_VERIFIED (lastVerifiedDate), is set here when a check
+ * ran and found everything up to date. It rate-limits THAT happy path to once
+ * per day (a new browser session no longer re-fetches the manifest and
+ * re-hashes every package), while a pending update keeps resurfacing exactly as
+ * ADR 0012 specifies — the verified marker says "the check ran and found
+ * nothing", never "the user decided". It is deliberately NOT cleared when an
+ * update appears: a stale verified date only means the check re-runs (and
+ * rewrites it), so a cleared/absent marker is the same state as a fresh
+ * install.
  */
 async function checkForUpdates() {
   // The early gate only needs A live window for the fetch phase; the tab-open
@@ -319,6 +333,9 @@ async function checkForUpdates() {
   if (Services.prefs.getCharPref(PREF_LAST_SHOWN, '') === today) {
     return;
   }
+  if (Services.prefs.getCharPref(PREF_LAST_VERIFIED, '') === today) {
+    return;
+  }
 
   const scriptsInfo = await checkScriptsUpdateNeeded();
 
@@ -326,6 +343,18 @@ async function checkForUpdates() {
   // updater-ui change never disturbs the user.
   const updateNeeded = scriptsInfo.fxFolder.updateNeeded || scriptsInfo.utils.updateNeeded;
   if (!updateNeeded) {
+    // Everything matches the manifest: remember it so the check runs once per
+    // day, not once per session (the pre-#333 gap — this return re-ran the full
+    // fetch+hash on every browser start). Never touches PREF_LAST_CHECK: the
+    // user-decision semantics of ADR 0012 are unchanged.
+    //
+    // ONLY on a verified day: an unreachable manifest also lands here with every
+    // package updateNeeded:false — writing the marker then would rate-limit away
+    // the whole next day's checks. Default true (a stale-logic safeguard, not a
+    // new contract).
+    if (scriptsInfo.manifestReached !== false) {
+      Services.prefs.setCharPref(PREF_LAST_VERIFIED, today);
+    }
     return;
   }
 
@@ -443,8 +472,15 @@ export async function checkScriptsUpdateNeeded() {
 
   const manifestText = await fetchOwnManifestOrFallback();
   if (manifestText === null) {
+    // Unreachable manifest: the daily gate must treat this day as UNVERIFIED (a
+    // network-failure day must never let the up-to-date path write its marker —
+    // see checkForUpdates). Reachability rides on the existing result object so
+    // callers need no new shape: every package stays updateNeeded:false, exactly
+    // the silent exit the failure path always had.
+    result.manifestReached = false;
     return result;
   }
+  result.manifestReached = true;
 
   try {
     const remoteInfo = JSON.parse(manifestText);
