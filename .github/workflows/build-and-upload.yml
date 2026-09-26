@@ -220,9 +220,29 @@ jobs:
           extra-args: '--build-only'
           baseline-file: ${{ runner.temp }}/baseline/hashes.json
           vt-api-key: ${{ secrets.VT_API_KEY }}
-      # Native AV pass over exactly the staged bytes (Defender on Windows,
-      # ClamAV on Linux/macOS). The publisher re-scans everything as its own
-      # gate — this is the per-platform engine coverage pages.yml had.
+      # TEMP DIAGNOSTIC (branch-only, #330 follow-up): where does
+      # SOURCE_DATE_EPOCH die between make and the linker on CI?
+      - name: TEMP diagnose epoch env
+        shell: bash
+        run: |
+          echo "bash sees SOURCE_DATE_EPOCH=[$SOURCE_DATE_EPOCH]"
+          env | grep -i source_date || echo "(not exported to bash env)"
+          echo "--- staged bytes the build above just produced ---"
+          stamp=$(od -A d -t u4 -j 136 -N 4 dist/.build/installer/helper_win.exe | awk '{print $2}')
+          echo "staged helper_win stamp=$stamp"
+          cd installer
+          echo "make-side probe: $(make -s --eval $'print-epoch:\n\t@echo EPOCH_IN_RECIPE=$${SOURCE_DATE_EPOCH}' print-epoch 2>&1 | tail -1)"
+          cd ..
+          echo "--- case A: make without env export ---"
+          cd installer && env -u SOURCE_DATE_EPOCH make -s helper_win DIST_DIR=../dist/.diagA && cd ..
+          stamp=$(od -A d -t u4 -j 136 -N 4 dist/.diagA/helper_win.exe | awk '{print $2}')
+          echo "caseA stamp=$stamp"
+          echo "--- case B: make with SOURCE_DATE_EPOCH=1790349996 ---"
+          cd installer && SOURCE_DATE_EPOCH=1790349996 make -s helper_win DIST_DIR=../dist/.diagB && cd ..
+          stamp=$(od -A d -t u4 -j 136 -N 4 dist/.diagB/helper_win.exe | awk '{print $2}')
+          echo "caseB stamp=$stamp"
+          echo "--- case C: buildEpoch.mjs exit code, env without SOURCE_DATE_EPOCH ---"
+          cd installer && env -u SOURCE_DATE_EPOCH node ../tools/publish/buildEpoch.mjs; echo "exit=$?" && cd ..
       - name: Native AV scan of staged binaries
         shell: bash
         run: |
