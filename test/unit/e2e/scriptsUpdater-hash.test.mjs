@@ -415,7 +415,6 @@ test('computeFilesHash: nested paths compared case-insensitively', () => {
 /* ------------- skip / up-to-date decision (real checkScriptsUpdateNeeded) --- */
 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
-const PREF_LAST_SHOWN = 'extensions.firefox-scripts.lastUpdateTabShown';
 
 /**
  * Install a utils tree into a sandboxed profile layout and fetch a manifest for
@@ -610,9 +609,12 @@ test('manifest entry gating: entries without hash or files array are skipped', a
 
 // Pref names verified against the module source; kept as a canary so a rename
 // upstream fails loudly here instead of silently un-gating the daily check.
-test('pref-name canary: the daily-check prefs keep their names', () => {
+test('pref-name canary: the daily-check pref keeps its name', () => {
   const source = fs.readFileSync(MODULE_PATH, 'utf-8');
   assert.ok(source.includes(`'${PREF_LAST_CHECK}'`));
-  assert.ok(source.includes(`'${PREF_LAST_SHOWN}'`));
   assert.ok(source.includes(`'${PREF_SKIP_PREFIX}`));
+  assert.ok(
+    !source.includes('lastUpdateTabShown') && !source.includes('lastVerifiedDate'),
+    'a retired daily pref name reappeared in the module'
+  );
 });

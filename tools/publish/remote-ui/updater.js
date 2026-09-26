@@ -13,7 +13,7 @@
  * - installing config into the browser dir (GreD), using the standalone
  *   elevated-copy helper when the destination is not writable
  * - manual zip downloads (fetch -> blob URL -> save dialog)
- * - per-package skip prefs and the user-decision date pref
+ * - per-package skip prefs and the daily shown-day pref
  * - restarting the browser (with cache invalidation) once an install completes
  *
  * It exposes window.UpdaterEngine for the UI client (updater-ui.js, same
@@ -23,10 +23,12 @@
  *
  * Discoverability contract (see scriptsUpdater.sys.mjs):
  *
- * - The daily-check date pref (lastScriptsCheckDate) is recorded ONLY when the
- *   user makes a decision (installs, checks a skip box, clicks "Remind me
- *   Tomorrow", or restarts). Closing the tab without acting records nothing, so
- *   the pending update resurfaces later instead of being marked "checked".
+ * - One daily pref (lastScriptsCheckDate) gates the scheduler's check. The tab
+ *   writes it once it is up (engineInit), so the tab is shown at most once per
+ *   day; a tab closed without acting comes back tomorrow — the only ways to
+ *   stop it are to install, or check "Don't show again for this update"
+ *   (per-package skip prefs). Terminal actions (install / skip / restart)
+ *   re-record the day via recordUserDecision.
  * - Every tab re-runs the real hash check on init (the module performs no
  *   tab-data handoff), so a tab restored from a session (manual browser restart
  *   with the tab left open) or a direct chrome:// visit renders the truth
@@ -99,6 +101,9 @@ const INSTALLER_FILENAMES_AARCH64 = () => ({
   linux: `installer_linux_aarch64${getAssetSuffix()}`,
 });
 
+// The single daily-gate pref (ADR 0012). The tab writes it when it is shown
+// (engineInit) and on terminal user actions (recordUserDecision); the
+// scheduler writes it when a check ran and found everything up to date.
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
 
@@ -211,10 +216,10 @@ function readAppDisplayName() {
 /* ---------------- user decisions ---------------- */
 
 /**
- * Record that the user made a decision today (installed / skipped / reminded /
- * restarted). The module's daily check honors this pref, so the tab is never
- * re-opened on a day the user already acted. Closing the tab without any action
- * does NOT record anything: the update stays pending and resurfaces later.
+ * Record the day on a terminal user action (install / per-package skip /
+ * restart). The gate already stopped at the tab-open write in engineInit, so
+ * this only keeps a post-midnight re-check quiet. Closing without acting
+ * records nothing extra — the update resurfaces tomorrow either way.
  */
 function recordUserDecision() {
   Services.prefs.setCharPref(PREF_LAST_CHECK, new Date().toISOString().slice(0, 10));
@@ -402,7 +407,8 @@ function restartFirefox() {
 }
 
 function remindTomorrow() {
-  recordUserDecision();
+  // The shown-day was already recorded at open (engineInit); "Remind me
+  // Tomorrow" only closes the tab — the daily gate does the rest.
   closeUpdateTab();
 }
 
@@ -810,6 +816,16 @@ async function engineInit() {
     logError('re-check on tab open', e);
     scriptsInfo = {fxFolder: {}, utils: {}};
   }
+
+  // The tab is up and rendered: it owns today — the scheduler's check stays
+  // gated off until tomorrow (the module reads the same pref). Written AFTER
+  // the check above: a page whose init failed must not consume the day.
+  try {
+    Services.prefs.setCharPref(PREF_LAST_CHECK, new Date().toISOString().slice(0, 10));
+  } catch (e) {
+    logError('recording the shown day', e);
+  }
+
   sendState();
 }
 
@@ -831,7 +847,7 @@ window.UpdaterEngine = {
     recordUserDecision();
     restartFirefox();
   },
-  /** "Remind me Tomorrow" — records the decision and closes the tab. */
+  /** "Remind me Tomorrow" — closes the tab; the shown-day gate keeps it closed. */
   remind: remindTomorrow,
   /** Close just this tab. */
   close: closeUpdateTab,

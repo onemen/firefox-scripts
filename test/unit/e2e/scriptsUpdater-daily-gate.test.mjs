@@ -9,14 +9,15 @@
 // assertions settle by polling for the observable (marker pref written / tab
 // opened) against a deadline.
 //
-// What is pinned here (the 2026-09-26 daily-gate fix, pre-#333 gap):
-//   - an up-to-date check writes lastVerifiedDate = today (the new marker);
+// What is pinned here (the 2026-09-26 single-pref daily gate):
+//   - an up-to-date check writes lastScriptsCheckDate = today — the one daily
+//     pref (ADR 0012) — so the happy path runs once per DAY, not per session;
 //   - the same-day re-check is then a no-op — the manifest is NOT re-fetched;
-//   - lastScriptsCheckDate (the ADR 0012 USER-DECISION pref) is never written
-//     by the gate, and a decision/tab pref from earlier today still gates;
-//   - an unreachable manifest (network-failure day) writes NO marker, so the
+//   - an unreachable manifest (network-failure day) writes NO pref, so the
 //     next session re-checks instead of being rate-limited away for a day;
-//   - a pending update does not write the marker (tab path gates itself).
+//   - a pending update opens the tab WITHOUT the scheduler writing the pref —
+//     the tab itself records the shown day (updater.js engineInit, source
+//     canary below), and an ignored tab simply resurfaces tomorrow.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,8 +37,11 @@ const MODULE_PATH = path.join(
   'updater',
   'scriptsUpdater.sys.mjs'
 );
+const TAB_ENGINE_PATH = path.join(REPO_ROOT, 'tools', 'publish', 'remote-ui', 'updater.js');
 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
+// Retired pref names — kept only for the negative asserts and the canary:
+// these strings must never come back (see the ADR 0012 amendment).
 const PREF_LAST_SHOWN = 'extensions.firefox-scripts.lastUpdateTabShown';
 const PREF_LAST_VERIFIED = 'extensions.firefox-scripts.lastVerifiedDate';
 const MANIFEST_URL = 'https://manifest.test/hashes.json';
@@ -318,30 +322,30 @@ function writeMatchingUtils(io, layout) {
 
 /* ---------------- the daily gate ---------------- */
 
-test('up-to-date check writes lastVerifiedDate, never the user-decision pref', async () => {
+test('up-to-date check records the day, so new sessions do not re-run it', async () => {
   const store = {};
   const {sandbox} = loadUpdater({store});
   const layout = makeProfileLayout(sandbox);
   writeMatchingUtils(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
-    const settled = await waitFor(() => store[PREF_LAST_VERIFIED] === TODAY);
-    assert.ok(settled, 'the verified marker was not written');
-    assert.equal(store[PREF_LAST_CHECK], undefined, 'ADR 0012: only the tab UI records a decision');
-    assert.equal(store[PREF_LAST_SHOWN], undefined, 'no tab was opened');
+    const settled = await waitFor(() => store[PREF_LAST_CHECK] === TODAY);
+    assert.ok(settled, 'the daily pref was not written on the up-to-date path');
+    assert.equal(store[PREF_LAST_SHOWN], undefined, 'the retired shown pref stays dead');
+    assert.equal(store[PREF_LAST_VERIFIED], undefined, 'the retired verified pref stays dead');
   } finally {
     layout.cleanup();
   }
 });
 
-test('same-day re-check after a verified day is a no-op (manifest not refetched)', async () => {
+test('same-day re-check after a recorded day is a no-op (manifest not refetched)', async () => {
   const store = {};
   const {sandbox} = loadUpdater({store});
   const layout = makeProfileLayout(sandbox);
   writeMatchingUtils(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
-    assert.ok(await waitFor(() => store[PREF_LAST_VERIFIED] === TODAY));
+    assert.ok(await waitFor(() => store[PREF_LAST_CHECK] === TODAY));
     const fetchesAfterFirst = sandbox.Services.io._state.fetches;
     assert.ok(fetchesAfterFirst >= 1, 'the first check fetched the manifest');
 
@@ -359,7 +363,7 @@ test('same-day re-check after a verified day is a no-op (manifest not refetched)
   }
 });
 
-test('a user-decision pref from earlier today skips the check entirely', async () => {
+test('the daily pref from earlier today skips the check entirely', async () => {
   const store = {[PREF_LAST_CHECK]: TODAY};
   const {sandbox} = loadUpdater({store});
   const layout = makeProfileLayout(sandbox);
@@ -367,29 +371,13 @@ test('a user-decision pref from earlier today skips the check entirely', async (
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
     await new Promise(resolve => setTimeout(resolve, 100));
-    assert.equal(store[PREF_LAST_VERIFIED], undefined, 'gate exited before the check');
     assert.equal(sandbox.Services.io._state.fetches, 0, 'no manifest fetch');
   } finally {
     layout.cleanup();
   }
 });
 
-test('tab-shown pref from earlier today still gates (ADR 0012 unchanged)', async () => {
-  const store = {[PREF_LAST_SHOWN]: TODAY};
-  const {sandbox} = loadUpdater({store});
-  const layout = makeProfileLayout(sandbox);
-  writeMatchingUtils(sandbox.Services.io, layout);
-  try {
-    sandbox.initScriptsUpdater(makeFakeWindow());
-    await new Promise(resolve => setTimeout(resolve, 100));
-    assert.equal(store[PREF_LAST_VERIFIED], undefined);
-    assert.equal(sandbox.Services.io._state.fetches, 0);
-  } finally {
-    layout.cleanup();
-  }
-});
-
-test('unreachable manifest: NO verified marker — the next session re-checks', async () => {
+test('unreachable manifest: NO pref written — the next session re-checks', async () => {
   const store = {};
   const {sandbox} = loadUpdater({
     store,
@@ -403,7 +391,7 @@ test('unreachable manifest: NO verified marker — the next session re-checks', 
     // Give the failing check ample time to settle, then assert the negative.
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(
-      store[PREF_LAST_VERIFIED],
+      store[PREF_LAST_CHECK],
       undefined,
       'a network-failure day must not rate-limit away the next day of checks'
     );
@@ -412,7 +400,7 @@ test('unreachable manifest: NO verified marker — the next session re-checks', 
   }
 });
 
-test('pending update: no verified marker, the tab opens (own gating intact)', async () => {
+test('pending update: the scheduler writes NO pref, the tab opens (the tab records the day)', async () => {
   const store = {};
   const {sandbox} = loadUpdater({store});
   const layout = makeProfileLayout(sandbox);
@@ -420,7 +408,7 @@ test('pending update: no verified marker, the tab opens (own gating intact)', as
   fs.writeFileSync(path.join(layout.utilsDir, 'updater.js'), 'real code');
   // Manifest hash ≠ local tree → update pending. ensureUpdaterUi will fetch a
   // UI zip that does not exist here; the tab-open fails silently AFTER the
-  // marker-relevant decisions — the marker must stay unwritten either way.
+  // gate-relevant decisions — the scheduler must stay pref-silent either way.
   const manifest = {
     utils: {
       hash: referenceFilesHash(['updater.js'], layout.utilsDir) + 'stale',
@@ -440,18 +428,31 @@ test('pending update: no verified marker, the tab opens (own gating intact)', as
   try {
     sandbox.initScriptsUpdater(win);
     assert.ok(
-      await waitFor(() => win.openedTabs.length > 0 || store[PREF_LAST_SHOWN] === TODAY, 3000),
+      await waitFor(() => win.openedTabs.length > 0, 3000),
       'the update tab path should have been reached'
     );
-    assert.equal(store[PREF_LAST_VERIFIED], undefined);
+    assert.equal(
+      store[PREF_LAST_CHECK],
+      undefined,
+      'the shown day belongs to the TAB (updater.js engineInit), not the scheduler'
+    );
   } finally {
     layout.cleanup();
   }
 });
 
-test('pref-name canary: lastVerifiedDate exists alongside the daily prefs', () => {
-  const source = fs.readFileSync(MODULE_PATH, 'utf-8');
-  assert.ok(source.includes(`'${PREF_LAST_VERIFIED}'`), 'PREF_LAST_VERIFIED missing');
-  assert.ok(source.includes(`'${PREF_LAST_CHECK}'`));
-  assert.ok(source.includes(`'${PREF_LAST_SHOWN}'`));
+test('pref-name canary: exactly one daily pref, written by the module AND the tab engine', () => {
+  const moduleSrc = fs.readFileSync(MODULE_PATH, 'utf-8');
+  assert.ok(moduleSrc.includes(`'${PREF_LAST_CHECK}'`), 'the daily pref is missing');
+  assert.ok(
+    !moduleSrc.includes('lastUpdateTabShown') && !moduleSrc.includes('lastVerifiedDate'),
+    'a retired daily pref name reappeared in the module'
+  );
+  // The tab-side half of the contract (updater.js is window-context JS, not
+  // vm-loadable here): the engine must write the shown day itself.
+  const tabSrc = fs.readFileSync(TAB_ENGINE_PATH, 'utf-8');
+  assert.ok(
+    tabSrc.includes(`'${PREF_LAST_CHECK}'`),
+    'updater.js no longer writes the daily pref — the shown tab would re-open daily'
+  );
 });

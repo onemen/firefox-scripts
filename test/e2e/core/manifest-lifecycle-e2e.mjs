@@ -306,9 +306,8 @@ function seedProfile(snapshotDir) {
   const prefs = {
     // silence the in-browser updater (not the subject of this test); the
     // probe modifies GreD config.js, which would otherwise look like a stale
-    // fx-folder to the daily check
+    // fx-folder to the daily check — one pref gates it (ADR 0012)
     'extensions.firefox-scripts.lastScriptsCheckDate': today(),
-    'extensions.firefox-scripts.lastUpdateTabShown': today(),
     // keep the session quiet
     'app.update.disabledForTesting': true,
     'app.update.auto': false,

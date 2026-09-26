@@ -74,10 +74,9 @@ facts most often cause bugs:
 - **Gotchas:** BUILD_DATE is DERIVED, not hand-stamped (ADR 0036): per-binary git dates from the
   same input set the publish hash uses; `installer.conf` has no `BUILD_DATE` key anymore. Waterfox
   skips `BootstrapLoader.js` in `config.js`. Per-package skip prefs
-  `extensions.firefox-scripts.skippedHash.<pkg>`; daily gate prefs `lastScriptsCheckDate` /
-  `lastUpdateTabShown` / `lastVerifiedDate` (ADR 0037 — written only by the up-to-date path, never
-  by the tab UI). `versionInfo.json` is obsolete (excluded from zips; installed copies cleaned by
-  `installer/src/obsolete_files.h`).
+  `extensions.firefox-scripts.skippedHash.<pkg>`; one daily gate pref `lastScriptsCheckDate` (ADR
+  0037 — written by the up-to-date check and by the shown updater tab). `versionInfo.json` is
+  obsolete (excluded from zips; installed copies cleaned by `installer/src/obsolete_files.h`).
 
 ## Decision records
 

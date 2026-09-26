@@ -115,8 +115,9 @@ Open these before proposing a new primitive, surface, or storage home.
   binary-only (substring-shadow)
 - [0036](./0036-git-derived-build-dates.md) — Build dates are derived from git per binary (same
   input set as the publish hash); PE epoch scoped to those inputs (extends [0019]'s self-update)
-- [0037](./0037-up-to-date-check-rate-limit.md) — An up-to-date daily check is rate-limited once per
-  day by a machine-written `lastVerifiedDate` (amends [0012]; user-decision prefs untouched)
+- [0037](./0037-up-to-date-check-rate-limit.md) — The daily gate is a single pref
+  (`lastScriptsCheckDate`, two writers: the up-to-date check and the shown tab);
+  `lastUpdateTabShown` is retired (amends [0012])
 
 ## Historical
 

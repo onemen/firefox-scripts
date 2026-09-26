@@ -25,12 +25,13 @@
  * (generated STABLE_* URLs) and auto-migrates; see fetchOwnManifestOrFallback()
  * below. --local snapshots keep the silent exit.
  *
- * Notification = a new tab, shown at most once per day (pref
- * extensions.firefox-scripts.lastUpdateTabShown). The user-decision date
- * (extensions.firefox-scripts.lastScriptsCheckDate) is recorded ONLY by the tab
- * UI on real interaction — installing, skipping, "Remind me Tomorrow", or a
- * restart — never when the tab merely opens. Per-package skips are stored as
- * extensions.firefox-scripts.skippedHash.<package> = remote hash.
+ * Notification = a new tab, shown at most once per day. A single daily pref
+ * gates every check (extensions.firefox-scripts.lastScriptsCheckDate): it is
+ * written by the scheduler when a check ran and found everything up to date,
+ * and by the updater tab itself once shown for a pending update — so a tab the
+ * user closes without acting suppresses only until tomorrow; the update keeps
+ * resurfacing daily until it is installed or skipped. Per-package skips are
+ * stored as extensions.firefox-scripts.skippedHash.<package> = remote hash.
  */
 
 // URL/path configuration — generated from config/installer.conf at publish
@@ -124,12 +125,11 @@ const UPDATER_UI_URI = 'chrome://firefox-scripts/content/ui/updater.html';
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily re-check while the session lives
 const MANIFEST_TIMEOUT_MS = 15000; // dead manifest host -> failed check, not a hang
 
+// The single daily-gate pref (ADR 0012): the last day the updater acted —
+// either a check ran and found everything up to date (written by
+// checkForUpdates) or the updater tab was shown for a pending update (written
+// by the tab's engine, updater.js in updater-ui.zip, right after it opens).
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
-const PREF_LAST_SHOWN = 'extensions.firefox-scripts.lastUpdateTabShown';
-// Verified-today marker, written ONLY on the up-to-date path (see checkForUpdates):
-// it rate-limits the check to once per day when everything already matches, without
-// ever touching the user-decision pref PREF_LAST_CHECK (ADR 0012).
-const PREF_LAST_VERIFIED = 'extensions.firefox-scripts.lastVerifiedDate';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
 
 /* ---------------- publish channels (ADR 0026) ----------------
@@ -274,8 +274,8 @@ export function initScriptsUpdater(win) {
   gWindow = win;
 
   // Check on startup, then re-check daily for as long as the session lives.
-  // The daily prefs (PREF_LAST_CHECK / PREF_LAST_SHOWN vs todayStr()) gate
-  // every invocation, so same-day re-checks are no-ops. The timer must be an
+  // The daily pref (PREF_LAST_CHECK vs todayStr()) gates every invocation, so
+  // same-day re-checks are no-ops. The timer must be an
   // nsITimer: window-bound timer globals (setInterval / win.setInterval) don't
   // exist in, or die with, the ESM's module scope vs the window (the original
   // bare setInterval never actually fired — its ReferenceError was swallowed
@@ -298,25 +298,19 @@ function todayStr() {
  * Daily check: fetch the manifest, compute local hashes, keep the updater UI
  * current, and open the update tab when utils or fx-folder needs an update.
  *
- * Two independent daily prefs gate this:
+ * One daily pref gates this (ADR 0012): PREF_LAST_CHECK (lastScriptsCheckDate)
+ * holds the last day the updater acted, and it has exactly two writers —
  *
- * - PREF_LAST_CHECK (lastScriptsCheckDate) is set ONLY by the tab UI when the
- *   user makes a decision (installs / skips / reminds / restarts). A tab the
- *   user merely closed — or a manual browser restart with the tab left open —
- *   records nothing, so the pending update resurfaces instead of being marked
- *   as "checked".
- * - PREF_LAST_SHOWN is set here when the tab is opened, so an ignored tab does
- *   not re-open every few minutes within the same day.
+ * - here, when a check ran and found everything up to date, so the happy path
+ *   (manifest fetch + hash of every package) runs once per DAY, not once per
+ *   browser session (#333); and
+ * - in the updater tab (updater.js engineInit), once the tab is shown for a
+ *   pending update, so an ignored tab does not re-open the same day.
  *
- * A third pref, PREF_LAST_VERIFIED (lastVerifiedDate), is set here when a check
- * ran and found everything up to date. It rate-limits THAT happy path to once
- * per day (a new browser session no longer re-fetches the manifest and
- * re-hashes every package), while a pending update keeps resurfacing exactly as
- * ADR 0012 specifies — the verified marker says "the check ran and found
- * nothing", never "the user decided". It is deliberately NOT cleared when an
- * update appears: a stale verified date only means the check re-runs (and
- * rewrites it), so a cleared/absent marker is the same state as a fresh
- * install.
+ * The pref therefore means "the updater handled today", never "the update is
+ * done": a pending update that is ignored resurfaces tomorrow, and the only
+ * ways to stop the tab are to install, or check "Don't show again for this
+ * update" (per-package skippedHash prefs).
  */
 async function checkForUpdates() {
   // The early gate only needs A live window for the fetch phase; the tab-open
@@ -330,12 +324,6 @@ async function checkForUpdates() {
   if (Services.prefs.getCharPref(PREF_LAST_CHECK, '') === today) {
     return;
   }
-  if (Services.prefs.getCharPref(PREF_LAST_SHOWN, '') === today) {
-    return;
-  }
-  if (Services.prefs.getCharPref(PREF_LAST_VERIFIED, '') === today) {
-    return;
-  }
 
   const scriptsInfo = await checkScriptsUpdateNeeded();
 
@@ -343,17 +331,16 @@ async function checkForUpdates() {
   // updater-ui change never disturbs the user.
   const updateNeeded = scriptsInfo.fxFolder.updateNeeded || scriptsInfo.utils.updateNeeded;
   if (!updateNeeded) {
-    // Everything matches the manifest: remember it so the check runs once per
-    // day, not once per session (the pre-#333 gap — this return re-ran the full
-    // fetch+hash on every browser start). Never touches PREF_LAST_CHECK: the
-    // user-decision semantics of ADR 0012 are unchanged.
+    // Everything matches the manifest: the updater handled today, so the check
+    // runs once per day, not once per session (the pre-#333 gap — this return
+    // re-ran the full fetch+hash on every browser start).
     //
-    // ONLY on a verified day: an unreachable manifest also lands here with every
-    // package updateNeeded:false — writing the marker then would rate-limit away
-    // the whole next day's checks. Default true (a stale-logic safeguard, not a
-    // new contract).
+    // ONLY when the manifest was actually reached: an unreachable manifest also
+    // lands here with every package updateNeeded:false — writing the pref then
+    // would rate-limit away the whole next day's checks. Default true (a
+    // stale-logic safeguard, not a new contract).
     if (scriptsInfo.manifestReached !== false) {
-      Services.prefs.setCharPref(PREF_LAST_VERIFIED, today);
+      Services.prefs.setCharPref(PREF_LAST_CHECK, today);
     }
     return;
   }
@@ -387,12 +374,10 @@ async function checkForUpdates() {
     }
   }
 
-  // Remember the tab was SHOWN today (not that the user decided).  The check
-  // re-runs on the next browser start after a manual restart with the tab
-  // left open: the restored tab re-checks in updater.js instead of showing a
-  // stale "All packages are up to date.".
-  Services.prefs.setCharPref(PREF_LAST_SHOWN, today);
-
+  // The tab records its own shown-day (updater.js engineInit, right after it
+  // opens): one pref means the shown tab owns the day whether or not the user
+  // acts. A restored tab (manual restart with the tab left open) re-checks in
+  // updater.js instead of showing a stale "All packages are up to date.".
   const tab = liveWin.gBrowser.addTrustedTab(UPDATER_UI_URI);
   tab._scriptsUpdateTab = true;
   tab.loadOnStartup = true;
