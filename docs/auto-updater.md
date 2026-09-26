@@ -177,9 +177,8 @@ initScriptsUpdater(win)                     # idempotent; refreshes gWindow when
   ├─ checkForUpdates()                      #   first window closed (new window = tab target);
   │                                         #   the refresh re-runs the check so an in-flight
   │                                         #   check holding the dead window cannot strand
-  │                                         #   the notification; skipped if
-  │                                         #   lastScriptsCheckDate == today or
-  │                                         #   lastUpdateTabShown == today
+  │                                         #   the notification; skipped when
+  │                                         #   lastScriptsCheckDate == today (ADR 0012)
   └─ nsITimer daily re-check (TYPE_REPEATING_SLACK, session lifetime) — window
                                             #   timers don't exist in the ESM scope; same-day
                                             #   re-checks are pref-gated no-ops; the tab opens
@@ -188,14 +187,18 @@ initScriptsUpdater(win)                     # idempotent; refreshes gWindow when
         ▼ (fetch manifest — with the ADR 0026 stable fallback on a dead dev channel,
         │   compute local hashes, apply skippedHash prefs)
 utils OR fx-folder needs an update?
-        │  no → stay silent
+        │  no → lastScriptsCheckDate = today (only if the check COMPLETED: the
+        │       manifest was reached, parsed, and both user-facing packages
+        │       compared — ADR 0012); stay silent — the check re-runs at most
+        │       once per day, not once per session
         │  yes
         ▼
 ensureUpdaterUi(updaterUi)                  # silent self-update of the tab UI
         │  failed (zip missing/fetch error) → exit silently — nothing useful to open
         ▼
 b.addTrustedTab(chrome://firefox-scripts/content/ui/updater.html)
-  # lastUpdateTabShown = today; NOT lastScriptsCheckDate
+  # the tab writes lastScriptsCheckDate = today once up (engineInit) — the
+  # shown tab owns the day; user actions below re-record it
         │
         ▼ (tab: updater.js engine re-runs checkScriptsUpdateNeeded, updater-ui.js renders)
 *Single card (one process/profile): Update + Restart buttons · APPLICATION BINARY row
@@ -205,7 +208,7 @@ chrome://firefox-scripts/content/ui/logos/; tab favicon = local favicon.svg) · 
 to the display name (from <GreD>/application.ini CodeName/Name)
         │
         ▼ (user acts: Install / skip / Remind me Tomorrow / Restart)
-updater.js → recordUserDecision() → lastScriptsCheckDate = today
+updater.js → recordUserDecision() → lastScriptsCheckDate = today (re-record)
         │
         ▼ (user clicks Install on a section)
 updater.js:

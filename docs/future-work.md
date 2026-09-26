@@ -28,11 +28,14 @@ CI.
       `installer/test/test_hash.mjs`).
 - [x] **Clean install → detection:** a fresh profile reports **Not Installed**; after installing
       utils/fx-folder/updater-ui → **Up To Date**; after touching one file → **Update Available**.
-- [x] **Daily gate:** the tab opens at most once per day (`lastUpdateTabShown`); it does NOT open
-      when everything is current, and does NOT open when only `updater-ui` changed (self-update is
-      silent).
-- [ ] **Decision pref:** `lastScriptsCheckDate` is set only on install / skip / "Remind me Tomorrow"
-      / restart — closing the tab without acting records nothing.
+- [x] **Daily gate:** one pref (`lastScriptsCheckDate`, ADR 0012) gates every check; the tab opens
+      at most once per day and does NOT open when everything is current or when only `updater-ui`
+      changed (self-update is silent).
+- [x] **Up-to-date rate limit (#333, 2026-09-26):** an up-to-date check writes
+      `lastScriptsCheckDate` so the check runs once per DAY, not once per session; an unreachable
+      manifest never writes it (a network-failure day must not consume the next one).
+- [x] **Shown-tab record:** the tab itself writes the daily pref once up (engineInit), so a closed
+      or ignored tab stays closed for the day and resurfaces tomorrow.
 - [ ] **Skip prefs:** `skippedHash.fx-folder` / `skippedHash.utils` suppress the pending update for
       that exact hash and are cleared when the remote hash changes or local files match.
 - [ ] **Session restore:** a tab restored from a session (manual restart with the tab left open)

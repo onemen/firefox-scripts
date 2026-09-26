@@ -291,7 +291,10 @@ function seedProfile(
   // made explicit so an inherited/default pref can never suppress a stale
   // fixture.
   const prefs = {
-    'extensions.firefox-scripts.lastUpdateTabShown': '',
+    // A single empty-string seed clears the daily gate on every launch (the
+    // pref is re-applied from the launch set, overriding anything the profile
+    // persisted) — a reused profile re-runs the check instead of inheriting a
+    // previous session's rate limit.
     'extensions.firefox-scripts.lastScriptsCheckDate': '',
   };
   const chromeUtils = path.join(profileDir, 'chrome', 'utils');
@@ -607,8 +610,9 @@ async function dumpPages(browser) {
 
 /**
  * Post-mortem: which extensions.firefox-scripts prefs did the browser persist?
- * A lastUpdateTabShown=today pref proves the scheduler ran and TRIED to show
- * the tab; an empty dump means the autoconfig/loader never ran at all.
+ * A lastScriptsCheckDate=today pref proves the scheduler ran — it either tried
+ * to show the tab (pending update) or verified everything up to date; an empty
+ * dump means the autoconfig/loader never ran at all.
  */
 function dumpUpdaterPrefs(profileDir) {
   try {
@@ -849,15 +853,17 @@ function logScenarioTime(label, startMs, phases) {
 }
 
 /**
- * True when prefs.js records lastUpdateTabShown = today — the scheduler writes
- * it immediately before addTrustedTab, so it proves the tab was opened even
- * when WebDriver BiDi cannot enumerate trusted chrome:// tabs.
+ * True when prefs.js records lastScriptsCheckDate = today — the single daily
+ * pref (ADR 0012). On a pending-update day the TAB writes it once shown, so it
+ * still proves the tab was opened even when WebDriver BiDi cannot enumerate
+ * trusted chrome:// tabs. (On an up-to-date day the scheduler writes it instead
+ * — the scenario decides which meaning applies.)
  */
 function greShownToday(profileDir) {
   try {
     const prefs = fs.readFileSync(path.join(profileDir, 'prefs.js'), 'utf-8');
     const match = prefs.match(
-      /user_pref\("extensions\.firefox-scripts\.lastUpdateTabShown", "([^"]*)"\)/
+      /user_pref\("extensions\.firefox-scripts\.lastScriptsCheckDate", "([^"]*)"\)/
     );
     return match?.[1] === new Date().toISOString().slice(0, 10);
   } catch {
@@ -1437,14 +1443,16 @@ async function runNoTabScenario(
     if (server) {
       await server.close().catch(() => {});
     }
-    // BiDi cannot reliably enumerate trusted chrome:// tabs; the persisted
-    // lastUpdateTabShown pref is the ground truth that the tab did NOT open.
+    // The up-to-date session MUST have recorded the day (the scheduler's
+    // rate-limit write — the point of #333) while the tab itself stayed closed
+    // (asserted via BiDi above). The persisted pref is the flush-proof that the
+    // up-to-date path ran to its write.
     const shown = greShownToday(seeded.profileDir);
     check(
       counter,
-      !shown,
-      `no tab-open signal (${label})`,
-      shown ? 'lastUpdateTabShown persisted although the tab should stay closed' : ''
+      shown,
+      `up-to-date check recorded the day (${label})`,
+      'lastScriptsCheckDate was not persisted — the up-to-date path never reached its write'
     );
   }
 
@@ -1522,7 +1530,7 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     // Like runStaleScenario: BiDi cannot reliably enumerate trusted chrome://
     // tabs on CI, so ALSO watch the probe's TAB_OPENED mirror line. If the
     // mirror fires but BiDi never surfaces the page, the finally block falls
-    // back to the persisted lastUpdateTabShown pref — checked after the clean
+    // back to the persisted lastScriptsCheckDate pref — checked after the clean
     // close, so the lazy prefs.js flush is covered without extra dead air.
     page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
     if (page) check(counter, true, `tab opens (${label})`);
@@ -1738,7 +1746,7 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
         viaPref,
         `tab opens (${label})`,
         viaPref ?
-          '(verified via lastUpdateTabShown; BiDi could not enumerate the chrome tab)'
+          '(verified via lastScriptsCheckDate; BiDi could not enumerate the chrome tab)'
         : 'scheduler never reached addTrustedTab'
       );
       dumpUpdaterPrefs(seeded.profileDir);
@@ -1801,7 +1809,8 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
  * with an OLD utils.zip (no updater/ dir, no firefox-scripts chrome mapping)
  * and asserts no updater tab and no daily-gate prefs. Phase 2 replaces
  * utils.zip manually with the real one, forces utils stale, and asserts the
- * updater ACTIVATES on the next launch (tab opens, lastUpdateTabShown set).
+ * updater ACTIVATES on the next launch (tab opens, the daily pref set by the
+ * shown tab).
  */
 /**
  * Bounded poll until the profile directory accepts create+delete again (i.e.
@@ -2182,12 +2191,12 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
   // ui folder was automatically downloaded and installed (disk proof —
   // survives a BiDi-missed chrome tab; the tab-open check above needs the
   // page handle, here the pref + extracted files carry the assertion).
-  // ACTIVATION PROOF (not just the pref): PREF_LAST_SHOWN is set in memory
-  // right before addTrustedTab, but its prefs.js flush at close can race the
-  // harness read (greShownToday), which occasionally fails the check even
-  // though the ui WAS extracted by the same call chain. The extracted ui
-  // dir + utils-stale marker are the same-class disk proof the other
-  // scenarios accept, so the OR accepts it too.
+  // ACTIVATION PROOF (not just the pref): the tab writes the shown-day pref in
+  // memory (engineInit) but its prefs.js flush at close can race the harness
+  // read (greShownToday), which occasionally fails the check even though the
+  // ui WAS extracted by the same call chain. The extracted ui dir +
+  // utils-stale marker are the same-class disk proof the other scenarios
+  // accept, so the OR accepts it too.
   const uiExtracted = fs.existsSync(path.join(uiDir, 'updater.html'));
   check(
     counter,
@@ -2200,7 +2209,7 @@ async function runManualInstallNoUiScenario(counter, opts, snapshotDir, label, r
     counter,
     Boolean(page) || viaPref || uiExtracted,
     `ui tab opened (${label})`,
-    viaPref && !page ? '(verified via lastUpdateTabShown; BiDi missed the chrome tab)'
+    viaPref && !page ? '(verified via lastScriptsCheckDate; BiDi missed the chrome tab)'
     : !viaPref && !page && uiExtracted ?
       '(verified via extracted updater-ui; prefs.js flush raced close)'
     : ''
@@ -2395,10 +2404,9 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
       // Like the other tab scenarios: three channels prove the tab, because
       // on CI (1) BiDi cannot enumerate trusted chrome:// tabs and (2) the
       // console mirror never writes (both deterministic there — observed on
-      // every leg of 2026-09-21). The scheduler writes lastUpdateTabShown to
-      // prefs.js immediately before addTrustedTab, so the pref is the
-      // always-available proof; the mirror and the BiDi handle add detail
-      // where the environment allows it.
+      // every leg of 2026-09-21). The tab writes lastScriptsCheckDate to
+      // prefs.js once shown, so the pref is the always-available proof; the
+      // mirror and the BiDi handle add detail where the environment allows it.
       // Wait for the tab-open proof LONGER than the browser-startup cost:
       // prefs.js is flushed lazily, and the poll below measured 20 s as not
       // enough on a cold runner (the pref was on disk seconds after the
@@ -2435,11 +2443,11 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         // documented CI limitation), and prefs.js is flushed only at shutdown,
         // so the in-run poll sees no pref even when the scheduler DID open the
         // tab (verified 2026-09-22: both attempt profiles carried
-        // lastUpdateTabShown=<today> once their browsers had closed, while the
-        // in-run poll had timed out on both). Close the browser and read the
-        // flush: the scheduler sets that pref in its tab-open branch only, so
-        // it is exact proof, and the remaining assertions (ACL deny, no copy)
-        // need no live page.
+        // lastScriptsCheckDate=<today> once their browsers had closed, while
+        // the in-run poll had timed out on both). Close the browser and read
+        // the flush: the tab writes that pref in its init only, so it is exact
+        // proof, and the remaining assertions (ACL deny, no copy) need no live
+        // page.
         await dumpPages(browser);
         await closeBrowser(browser).catch(() => {});
         browser = null;
@@ -2740,12 +2748,29 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
     }
     fs.writeFileSync(schedPath, patched);
 
-    // Serve an UP-TO-DATE manifest built from the PATCHED tree: the check
-    // succeeds, finds nothing to surface, and never opens the tab — leaving
-    // the fetch counter as the only timer observable.
+    // Serve a manifest built from the PATCHED tree with one byte flipped in a
+    // comment marker file: every check finds a pending utils update, so the
+    // up-to-date write can never rate-limit the timer away — the fetch counter
+    // isolates the timer itself, which is the thing scenario 10 exists to prove
+    // (#292). The pending-update day is ALSO pref-silent: the tree manifest
+    // ships an empty updater-ui entry and this profile has no installed UI, so
+    // ensureUpdaterUi returns false on every tick and checkForUpdates exits
+    // before the tab-open — no tab, and under the single daily pref (ADR 0012)
+    // no pref write either (the tab's shown-day write lives behind that exit).
+    // (Pre-#333 this served an UP-TO-DATE manifest: the fetch counter was
+    // then the only observable. Since the up-to-date path now rate-limits
+    // itself to once per day, an up-to-date manifest would make the timer
+    // gate fetchless and this scenario would report the NEW correct behavior
+    // as the old bug.)
+    const staleTreeDir = fs.mkdtempSync(path.join(REPO_ROOT, 'dist', 'fxs-timer-stale-'));
+    const utilsZipPath = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
+    if (!utilsZipPath) throw new Error(`no utils zip found in ${snapshotDir}`);
+    extractZip(utilsZipPath, staleTreeDir);
+    const staleMarker = path.join(staleTreeDir, 'zz-timer-stale-marker.js');
+    fs.writeFileSync(staleMarker, '// makes the local utils hash differ from its manifest\n');
     const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
       multiRequest: true,
-      manifestOverride: buildTreeManifest(seeded.chromeUtils),
+      manifestOverride: buildTreeManifest(staleTreeDir),
     });
     Object.assign(seeded.prefs, serverOverridePrefs(server.url));
 
@@ -2787,11 +2812,9 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
         : ''
       );
 
-      // The re-check must stay pref-gated: an up-to-date tree surfaces
-      // nothing, so no tab may open and the daily gates stay unset.
-      const page = await findPageByUrl(browser, UPDATER_URL, 1_000).catch(() => null);
-      check(counter, !page, `no updater tab when up to date (${label})`);
-      check(counter, !greShownToday(seeded.profileDir), `daily tab gate untouched (${label})`);
+      // The re-check must stay pref-gated. The manifest here is STALE (see
+      // above) and the tab path exits silently before any write, so NO daily
+      // pref is ever set — which is what keeps the timer fetches observable.
       console.log(`  [timing] timer scenario wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     } finally {
       try {

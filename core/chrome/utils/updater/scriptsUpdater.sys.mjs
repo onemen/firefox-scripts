@@ -25,12 +25,13 @@
  * (generated STABLE_* URLs) and auto-migrates; see fetchOwnManifestOrFallback()
  * below. --local snapshots keep the silent exit.
  *
- * Notification = a new tab, shown at most once per day (pref
- * extensions.firefox-scripts.lastUpdateTabShown). The user-decision date
- * (extensions.firefox-scripts.lastScriptsCheckDate) is recorded ONLY by the tab
- * UI on real interaction — installing, skipping, "Remind me Tomorrow", or a
- * restart — never when the tab merely opens. Per-package skips are stored as
- * extensions.firefox-scripts.skippedHash.<package> = remote hash.
+ * Notification = a new tab, shown at most once per day. A single daily pref
+ * gates every check (extensions.firefox-scripts.lastScriptsCheckDate): it is
+ * written by the scheduler when a check ran and found everything up to date,
+ * and by the updater tab itself once shown for a pending update — so a tab the
+ * user closes without acting suppresses only until tomorrow; the update keeps
+ * resurfacing daily until it is installed or skipped. Per-package skips are
+ * stored as extensions.firefox-scripts.skippedHash.<package> = remote hash.
  */
 
 // URL/path configuration — generated from config/installer.conf at publish
@@ -124,8 +125,11 @@ const UPDATER_UI_URI = 'chrome://firefox-scripts/content/ui/updater.html';
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily re-check while the session lives
 const MANIFEST_TIMEOUT_MS = 15000; // dead manifest host -> failed check, not a hang
 
+// The single daily-gate pref (ADR 0012): the last day the updater acted —
+// either a check ran and found everything up to date (written by
+// checkForUpdates) or the updater tab was shown for a pending update (written
+// by the tab's engine, updater.js in updater-ui.zip, right after it opens).
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
-const PREF_LAST_SHOWN = 'extensions.firefox-scripts.lastUpdateTabShown';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
 
 /* ---------------- publish channels (ADR 0026) ----------------
@@ -270,8 +274,8 @@ export function initScriptsUpdater(win) {
   gWindow = win;
 
   // Check on startup, then re-check daily for as long as the session lives.
-  // The daily prefs (PREF_LAST_CHECK / PREF_LAST_SHOWN vs todayStr()) gate
-  // every invocation, so same-day re-checks are no-ops. The timer must be an
+  // The daily pref (PREF_LAST_CHECK vs todayStr()) gates every invocation, so
+  // same-day re-checks are no-ops. The timer must be an
   // nsITimer: window-bound timer globals (setInterval / win.setInterval) don't
   // exist in, or die with, the ESM's module scope vs the window (the original
   // bare setInterval never actually fired — its ReferenceError was swallowed
@@ -294,15 +298,20 @@ function todayStr() {
  * Daily check: fetch the manifest, compute local hashes, keep the updater UI
  * current, and open the update tab when utils or fx-folder needs an update.
  *
- * Two independent daily prefs gate this:
+ * One daily pref gates this (ADR 0012): PREF_LAST_CHECK (lastScriptsCheckDate)
+ * holds the last day the updater acted, and it has exactly two writers —
  *
- * - PREF_LAST_CHECK (lastScriptsCheckDate) is set ONLY by the tab UI when the
- *   user makes a decision (installs / skips / reminds / restarts). A tab the
- *   user merely closed — or a manual browser restart with the tab left open —
- *   records nothing, so the pending update resurfaces instead of being marked
- *   as "checked".
- * - PREF_LAST_SHOWN is set here when the tab is opened, so an ignored tab does
- *   not re-open every few minutes within the same day.
+ * - here, when a check COMPLETED and found everything up to date — the manifest
+ *   was reached and parsed and both user-facing packages (fx-folder, utils)
+ *   were actually compared — so the happy path (manifest fetch + hash of every
+ *   package) runs once per DAY, not once per browser session (#333);
+ * - in the updater tab (updater.js engineInit), once the tab is shown for a
+ *   pending update, so an ignored tab does not re-open the same day.
+ *
+ * The pref therefore means "the updater handled today", never "the update is
+ * done": a pending update that is ignored resurfaces tomorrow, and the only
+ * ways to stop the tab are to install, or check "Don't show again for this
+ * update" (per-package skippedHash prefs).
  */
 async function checkForUpdates() {
   // The early gate only needs A live window for the fetch phase; the tab-open
@@ -316,9 +325,6 @@ async function checkForUpdates() {
   if (Services.prefs.getCharPref(PREF_LAST_CHECK, '') === today) {
     return;
   }
-  if (Services.prefs.getCharPref(PREF_LAST_SHOWN, '') === today) {
-    return;
-  }
 
   const scriptsInfo = await checkScriptsUpdateNeeded();
 
@@ -326,6 +332,22 @@ async function checkForUpdates() {
   // updater-ui change never disturbs the user.
   const updateNeeded = scriptsInfo.fxFolder.updateNeeded || scriptsInfo.utils.updateNeeded;
   if (!updateNeeded) {
+    // Everything matches the manifest: the updater handled today, so the check
+    // runs once per day, not once per session (the pre-#333 gap — this return
+    // re-ran the full fetch+hash on every browser start).
+    //
+    // ONLY on a COMPLETED check: an unreachable manifest also lands here with
+    // every package updateNeeded:false (manifestReached:false below), and so
+    // does a manifest missing a user-facing package entry — a broken or
+    // truncated publish must never consume the day (CodeRabbit retained
+    // concern on #333). A non-empty remoteHash marks an entry that was present
+    // and compared; fx-folder + utils are both required, updater-ui alone is
+    // optional (pre-ADR-0007 manifests legitimately lack it).
+    const userPackagesCompared =
+      Boolean(scriptsInfo.fxFolder.remoteHash) && Boolean(scriptsInfo.utils.remoteHash);
+    if (scriptsInfo.manifestReached !== false && userPackagesCompared) {
+      Services.prefs.setCharPref(PREF_LAST_CHECK, today);
+    }
     return;
   }
 
@@ -358,12 +380,10 @@ async function checkForUpdates() {
     }
   }
 
-  // Remember the tab was SHOWN today (not that the user decided).  The check
-  // re-runs on the next browser start after a manual restart with the tab
-  // left open: the restored tab re-checks in updater.js instead of showing a
-  // stale "All packages are up to date.".
-  Services.prefs.setCharPref(PREF_LAST_SHOWN, today);
-
+  // The tab records its own shown-day (updater.js engineInit, right after it
+  // opens): one pref means the shown tab owns the day whether or not the user
+  // acts. A restored tab (manual restart with the tab left open) re-checks in
+  // updater.js instead of showing a stale "All packages are up to date.".
   const tab = liveWin.gBrowser.addTrustedTab(UPDATER_UI_URI);
   tab._scriptsUpdateTab = true;
   tab.loadOnStartup = true;
@@ -443,11 +463,21 @@ export async function checkScriptsUpdateNeeded() {
 
   const manifestText = await fetchOwnManifestOrFallback();
   if (manifestText === null) {
+    // Unreachable manifest: the daily gate must treat this day as UNVERIFIED (a
+    // network-failure day must never let the up-to-date path write its marker —
+    // see checkForUpdates). Reachability rides on the existing result object so
+    // callers need no new shape: every package stays updateNeeded:false, exactly
+    // the silent exit the failure path always had.
+    result.manifestReached = false;
     return result;
   }
+  result.manifestReached = true;
 
   try {
     const remoteInfo = JSON.parse(manifestText);
+    // NOTE: a malformed manifest (or a throw partway through the loop) is
+    // reset to manifestReached:false in the catch below — only a fully parsed,
+    // fully compared check may count the day as handled.
 
     const profileDir = Services.dirsvc.get('ProfD', Ci.nsIFile).path;
     const dirs = {
@@ -493,6 +523,10 @@ export async function checkScriptsUpdateNeeded() {
     return result;
   } catch (e) {
     console.error('Firefox Scripts: update check failed', e);
+    // Malformed manifest or a throw partway through the comparison: the day is
+    // UNVERIFIED exactly like an unreachable transport — a broken publish must
+    // not consume the next day of checks (local review on #333).
+    result.manifestReached = false;
     return result;
   }
 }

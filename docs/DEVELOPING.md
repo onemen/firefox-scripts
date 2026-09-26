@@ -608,12 +608,12 @@ node test/e2e/updater/updater-e2e.mjs --scenario 9 \
 ```
 
 What it can prove headless: the tab-open decision (proven by the probe mirror, or by the
-`extensions.firefox-scripts.lastUpdateTabShown` pref — read after the browser closes, because
-prefs.js is flushed at shutdown and BiDi cannot enumerate the trusted `chrome://` tab on many
-hosts), the ACL block, and that the GreD config stayed byte-identical. The download → checksum →
-magic-gate → spawn flow itself only runs where BiDi _can_ attach to the trusted tab (elsewhere the
-leg says so in its check labels), and elevation never completes headless. The gate's byte-level
-contract is therefore covered deterministically on every OS by
+`extensions.firefox-scripts.lastScriptsCheckDate` pref — written by the shown tab, read after the
+browser closes, because prefs.js is flushed at shutdown and BiDi cannot enumerate the trusted
+`chrome://` tab on many hosts), the ACL block, and that the GreD config stayed byte-identical. The
+download → checksum → magic-gate → spawn flow itself only runs where BiDi _can_ attach to the
+trusted tab (elsewhere the leg says so in its check labels), and elevation never completes headless.
+The gate's byte-level contract is therefore covered deterministically on every OS by
 `test/unit/publish/branchPagesContract.test.mjs`, which evaluates the shipped gate expression
 against real PE/ELF/Mach-O headers and HTML payloads.
 
