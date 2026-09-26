@@ -23,7 +23,10 @@
 //   5. the CLI prints exactly one integer line (the Makefile captures stdout);
 //   6. installer/Makefile routes the epoch through that script and refuses an
 //      empty result instead of linking a wall-clock PE — using only make
-//      constructs that an old (3.81) make can parse.
+//      constructs that an old (3.81) make can parse;
+//   7. the recipe shell the Makefile pins comes from make's OWN MSYS2 tree —
+//      a cross-tree make→sh pair drops make's exported environment (and with
+//      it SOURCE_DATE_EPOCH) at the recipe boundary, run 36222271581.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -263,4 +266,27 @@ test('Makefile: the epoch block stays free of inline-function footguns', () => {
       `unbalanced parentheses — a truncated line reads as "unterminated call to function": ${line}`
     );
   }
+});
+
+test('Makefile: the recipe-shell pin probes the MSYS2 tree make lives in first', () => {
+  // 2026-09-26, run 36222271581 (the day after #331): the determinism job
+  // failed again with link-time stamps even though the epoch variable held the
+  // right value inside make. CI's pinned make is the bootstrap tree's msys
+  // make (D:/a/_temp/msys64/usr/bin), but the pin handed it the runner image's
+  // preinstalled C:/msys64 sh — and a cross-tree make→sh pair silently drops
+  // make's exported environment at the recipe boundary, so SOURCE_DATE_EPOCH
+  // never reached the linker. Every local build is single-tree, which is why
+  // the local double-build passed while CI failed.
+  const start = makefile.indexOf('ifeq ($(OS),Windows_NT)');
+  const end = makefile.indexOf('SHELL := $(PINNED_SH)');
+  assert.ok(start !== -1 && end > start, 'PINNED_SH probe block not found');
+  const block = makefile.slice(start, end);
+  const pinnedTree = block.indexOf('$(wildcard $(MSYS2_LOCATION)');
+  const imageTree = block.indexOf('$(wildcard C:/msys64');
+  assert.ok(pinnedTree !== -1, 'the MSYS2_LOCATION probe is missing');
+  assert.ok(imageTree !== -1, 'the C:/msys64 fallback is missing');
+  assert.ok(
+    pinnedTree < imageTree,
+    "C:/msys64 must be only the fallback: on CI the pinned make lives in the MSYS2_LOCATION tree, and handing it another tree's sh drops the exported SOURCE_DATE_EPOCH (run 36222271581)"
+  );
 });
