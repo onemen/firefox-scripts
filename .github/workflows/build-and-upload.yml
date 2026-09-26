@@ -225,24 +225,27 @@ jobs:
       - name: TEMP diagnose epoch env
         shell: bash
         run: |
+          set +e
           echo "bash sees SOURCE_DATE_EPOCH=[$SOURCE_DATE_EPOCH]"
-          env | grep -i source_date || echo "(not exported to bash env)"
-          echo "--- staged bytes the build above just produced ---"
-          stamp=$(od -A d -t u4 -j 136 -N 4 dist/.build/installer/helper_win.exe | awk '{print $2}')
-          echo "staged helper_win stamp=$stamp"
+          which make node git sh; make --version | head -1
+          echo "node(root): out=[$(node tools/publish/buildEpoch.mjs 2>&1)] rc=$?"
           cd installer
-          echo "make-side probe: $(make -s --eval $'print-epoch:\n\t@echo EPOCH_IN_RECIPE=$${SOURCE_DATE_EPOCH}' print-epoch 2>&1 | tail -1)"
-          cd ..
-          echo "--- case A: make without env export ---"
-          cd installer && env -u SOURCE_DATE_EPOCH make -s helper_win DIST_DIR=../dist/.diagA && cd ..
-          stamp=$(od -A d -t u4 -j 136 -N 4 dist/.diagA/helper_win.exe | awk '{print $2}')
-          echo "caseA stamp=$stamp"
+          echo "node(installer): out=[$(node ../tools/publish/buildEpoch.mjs 2>&1)] rc=$?"
+          echo "--- probe1: make vars vs recipe env ---"
+          make -s --eval $'probe:\n\t@echo BE=[$(BUILD_EPOCH)] SDE=[$(SOURCE_DATE_EPOCH)] STRIP=[$(strip $(SOURCE_DATE_EPOCH))] ENV=[$${SOURCE_DATE_EPOCH}] GEN=[$(EPOCH_GENERATOR)] SHELL=[$(SHELL)]' probe
+          echo "probe1 rc=$?"
+          echo "--- probe2: fresh generator rerun inside make ---"
+          make -s --eval $'probe2:\n\t@echo RAWGEN=[$(shell node $(subst \,/,$(EPOCH_GENERATOR)))]' probe2
+          echo "probe2 rc=$?"
+          echo "--- case A: make without outer env, mkdir'd dist ---"
+          mkdir -p ../dist/.diagA ../dist/.diagB
+          env -u SOURCE_DATE_EPOCH make -s helper_win DIST_DIR=../dist/.diagA
+          echo "caseA make rc=$?"
+          stamp=$(od -A d -t u4 -j 136 -N 4 ../dist/.diagA/helper_win.exe | awk '{print $2}'); echo "caseA stamp=$stamp"
           echo "--- case B: make with SOURCE_DATE_EPOCH=1790349996 ---"
-          cd installer && SOURCE_DATE_EPOCH=1790349996 make -s helper_win DIST_DIR=../dist/.diagB && cd ..
-          stamp=$(od -A d -t u4 -j 136 -N 4 dist/.diagB/helper_win.exe | awk '{print $2}')
-          echo "caseB stamp=$stamp"
-          echo "--- case C: buildEpoch.mjs exit code, env without SOURCE_DATE_EPOCH ---"
-          cd installer && env -u SOURCE_DATE_EPOCH node ../tools/publish/buildEpoch.mjs; echo "exit=$?" && cd ..
+          SOURCE_DATE_EPOCH=1790349996 make -s helper_win DIST_DIR=../dist/.diagB
+          echo "caseB make rc=$?"
+          stamp=$(od -A d -t u4 -j 136 -N 4 ../dist/.diagB/helper_win.exe | awk '{print $2}'); echo "caseB stamp=$stamp"
       - name: Native AV scan of staged binaries
         shell: bash
         run: |
