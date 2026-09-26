@@ -75,7 +75,7 @@ facts most often cause bugs:
   same input set the publish hash uses; `installer.conf` has no `BUILD_DATE` key anymore. Waterfox
   skips `BootstrapLoader.js` in `config.js`. Per-package skip prefs
   `extensions.firefox-scripts.skippedHash.<pkg>`; one daily gate pref `lastScriptsCheckDate` (ADR
-  0037 — written by the up-to-date check and by the shown updater tab). `versionInfo.json` is
+  0012 — written by the up-to-date check and by the shown updater tab). `versionInfo.json` is
   obsolete (excluded from zips; installed copies cleaned by `installer/src/obsolete_files.h`).
 
 ## Decision records

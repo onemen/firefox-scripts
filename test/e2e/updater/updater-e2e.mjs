@@ -2757,7 +2757,7 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
     // ensureUpdaterUi returns false on every tick and checkForUpdates exits
     // before the tab-open — no tab, and under the single daily pref (ADR 0012)
     // no pref write either (the tab's shown-day write lives behind that exit).
-    // (Pre-ADR 0037 this served an UP-TO-DATE manifest: the fetch counter was
+    // (Pre-#333 this served an UP-TO-DATE manifest: the fetch counter was
     // then the only observable. Since the up-to-date path now rate-limits
     // itself to once per day, an up-to-date manifest would make the timer
     // gate fetchless and this scenario would report the NEW correct behavior

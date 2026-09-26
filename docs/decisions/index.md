@@ -115,9 +115,6 @@ Open these before proposing a new primitive, surface, or storage home.
   binary-only (substring-shadow)
 - [0036](./0036-git-derived-build-dates.md) — Build dates are derived from git per binary (same
   input set as the publish hash); PE epoch scoped to those inputs (extends [0019]'s self-update)
-- [0037](./0037-up-to-date-check-rate-limit.md) — The daily gate is a single pref
-  (`lastScriptsCheckDate`, two writers: the up-to-date check and the shown tab);
-  `lastUpdateTabShown` is retired (amends [0012])
 
 ## Historical
 
@@ -145,5 +142,8 @@ Micro-decisions deliberately left out of the log so nobody re-adds them:
 
 - Browser download map mechanics (winget → direct downloads; vendor version APIs for "latest") —
   test harness, see `test/e2e/shared/downloads.mjs` and ADR 0017.
+- The daily-gate rate limit (#333, 2026-09-26): an up-to-date check recording its day is a revision
+  of [0012]'s own pref model, amended inline on that record — no new primitive, so no new record.
+  The proposed-and-withdrawn ADR 0037 number stays free for the next record.
 - URL watchdog internals (weekly + PR modes, per-release SHA-256 ledger in issues, baseline in the
   Actions cache) — monitoring tooling, see `.github/workflows/url-watchdog.yml` and ADR 0017.

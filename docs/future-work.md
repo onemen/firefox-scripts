@@ -28,10 +28,10 @@ CI.
       `installer/test/test_hash.mjs`).
 - [x] **Clean install → detection:** a fresh profile reports **Not Installed**; after installing
       utils/fx-folder/updater-ui → **Up To Date**; after touching one file → **Update Available**.
-- [x] **Daily gate:** one pref (`lastScriptsCheckDate`, ADR 0037) gates every check; the tab opens
+- [x] **Daily gate:** one pref (`lastScriptsCheckDate`, ADR 0012) gates every check; the tab opens
       at most once per day and does NOT open when everything is current or when only `updater-ui`
       changed (self-update is silent).
-- [x] **Up-to-date rate limit (ADR 0037, 2026-09-26):** an up-to-date check writes
+- [x] **Up-to-date rate limit (#333, 2026-09-26):** an up-to-date check writes
       `lastScriptsCheckDate` so the check runs once per DAY, not once per session; an unreachable
       manifest never writes it (a network-failure day must not consume the next one).
 - [x] **Shown-tab record:** the tab itself writes the daily pref once up (engineInit), so a closed
