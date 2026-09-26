@@ -234,9 +234,15 @@ jobs:
           echo "--- probe1: make vars vs recipe env ---"
           make -s --eval $'probe:\n\t@echo BE=[$(BUILD_EPOCH)] SDE=[$(SOURCE_DATE_EPOCH)] STRIP=[$(strip $(SOURCE_DATE_EPOCH))] ENV=[$${SOURCE_DATE_EPOCH}] GEN=[$(EPOCH_GENERATOR)] SHELL=[$(SHELL)]' probe
           echo "probe1 rc=$?"
-          echo "--- probe2: fresh generator rerun inside make ---"
-          make -s --eval $'probe2:\n\t@echo RAWGEN=[$(shell node $(subst \,/,$(EPOCH_GENERATOR)))]' probe2
-          echo "probe2 rc=$?"
+          echo "--- probe3: SHELL tree hypothesis (env var handed in from outside) ---"
+          SOURCE_DATE_EPOCH=1790349996 make -s --eval $'p1:\n\t@echo plain-make-env=$${SOURCE_DATE_EPOCH:-UNSET}' p1
+          SOURCE_DATE_EPOCH=1790349996 make -s SHELL="${MSYS2_LOCATION}usr/bin/sh.exe" --eval $'p2:\n\t@echo same-tree-env=$${SOURCE_DATE_EPOCH:-UNSET}' p2
+          SOURCE_DATE_EPOCH=1790349996 make -s SHELL=C:/msys64/usr/bin/sh.exe --eval $'p3:\n\t@echo cross-tree-env=$${SOURCE_DATE_EPOCH:-UNSET}' p3
+          echo "--- probe4: does CI ld honor SOURCE_DATE_EPOCH at all (no make) ---"
+          mkdir -p ../dist/.diagC
+          SOURCE_DATE_EPOCH=1790349996 windres src/helper/version.rc -O coff -o src/helper/version.res
+          SOURCE_DATE_EPOCH=1790349996 gcc src/helper/helper_win.c src/helper/version.res -o ../dist/.diagC/helper.exe -Os -s -ffunction-sections -static -static-libgcc -luser32 -lshell32 "-Wl,--gc-sections" "-Wl,--strip-all" "-Wl,--subsystem,windows"
+          echo "direct-gcc rc=$? stamp=$(od -A d -t u4 -j 136 -N 4 ../dist/.diagC/helper.exe | awk '{print $2}')"
           echo "--- case A: make without outer env, mkdir'd dist ---"
           mkdir -p ../dist/.diagA ../dist/.diagB
           env -u SOURCE_DATE_EPOCH make -s helper_win DIST_DIR=../dist/.diagA
