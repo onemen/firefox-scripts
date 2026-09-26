@@ -128,6 +128,13 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
 #define INSTALLER_LOCAL_DIST_PATH ""
 #endif
 
+/* Release identity string. CFG_DEV_BRANCH is baked NON-EMPTY only in dev/local
+ * builds (see syncGeneratedFiles.mjs): its sole consumer is the "test build"
+ * banner via /api/build-info, which early-returns unless isLocal||isDev. In a
+ * prod build it is "" BY DESIGN — an embedded HEAD hash would re-roll the PE
+ * bytes on every commit and invalidate WDSI hash submissions without any
+ * installer-scoped change (2026-09-26 Phase 2R finding; ADR 0036 amendment).
+ * Provenance in prod rides the release tag/manifest, not the binary. */
 #ifdef CFG_DEV_BRANCH
 #define INSTALLER_DEV_BRANCH CFG_DEV_BRANCH
 #else

@@ -1,6 +1,6 @@
 # 0036: Build dates are derived from git per binary — not hand-stamped
 
-- **Status:** accepted
+- **Status:** accepted (amended 2026-09-26 — release-identity embed is dev/local-only)
 - **Amends:** [0019](./0019-release-versioning.md) (its 2026-09-13 self-update amendment — the date
   that feeds the date-based self-update is now derived, not hand-stamped; declared per the ADR 0029
   convention)
@@ -57,3 +57,22 @@ the date⇔hash invariant silently — revisit-if: a test pinning the two lists 
 collectors is wanted), and history rewrites would move derived dates (main is append-only in
 practice). Revisit-if: per-file date granularity is ever needed — split the pathspecs further, never
 hand-stamp again.
+
+## Amendment 2026-09-26 — the release-identity embed is dev/local-only
+
+The 2026-09-26 Phase 2R re-verification (run 36259950245, head `9b6e9ae` after a core-only
+freeze-exception merge) falsified that exception's premise: `installer_win.exe` drifted (`1bf69bba…`
+→ `960628f8…` — 7 ASCII bytes `67cbf1a` → `9b6e9ae` plus 3 recomputed checksum bytes) while the
+helper stayed byte-identical. Root cause: `_config.h` embedded `CFG_DEV_BRANCH` — a HEAD-derived
+identity string (`dev-build-main-<short-sha>`) — in EVERY build mode. The epoch pathspec governs the
+date only, not all embedded bytes: one commit input (the date) was installer-scoped while another
+(the identity) was HEAD-scoped, so "a non-installer commit ⇒ stable PE bytes" never actually held
+for the installer.
+
+**Amendment:** the identity string is baked only in dev/local builds. Its sole consumer is the "test
+build" banner via /api/build-info, which early-returns unless isLocal||isDev; no AV/WDSI tool reads
+it; prod provenance rides the release tag/manifest, not the binary. Prod `_config.h` bakes
+`CFG_DEV_BRANCH ""`. With that, a prod installer's bytes depend only on installer-scoped inputs —
+the SAME set this ADR's epoch derives from — so "date moved ⇔ bytes moved" covers the whole binary,
+and the freeze-exception rule ("a commit touching no installer-scoped path cannot re-roll the PEs")
+is true as written. Pinned by `test/unit/installer/prodIdentityEmbed.test.mjs`.

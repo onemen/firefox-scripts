@@ -55,7 +55,7 @@ const ROOT = path.resolve(__dirname, '..', '..');
  * `.*` in sed captures a trailing CR on CRLF files; JS `(.*)$` behaves the same
  * way, so CRLF is normalized to LF first (below).
  */
-function configHeader(confText) {
+export function configHeader(confText) {
   // Normalize CRLF → LF so a Windows-edited installer.conf cannot bake a
   // trailing `\r` into the generated `#define` values.
   confText = confText.replace(/\r\n/g, '\n');
@@ -89,12 +89,24 @@ function configHeader(confText) {
   // / CFG_DEV_BRANCH feed the web UI's "test build" banner (via
   // /api/build-info): a --local or --mode=dev build says so up front.
   const localDistPath = LOCAL ? localSnapshotDir().replace(/\\/g, '/') : '';
+  // The release identity string is dev/local-ONLY: its sole consumer is that
+  // banner, which early-returns unless isLocal||isDev — in a prod build the
+  // embedded value was dead weight that still re-rolled the PE bytes on every
+  // commit (HEAD-derived), invalidating WDSI hash submissions without any
+  // installer-scoped change (found by the 2026-09-26 Phase 2R re-verification:
+  // installer drifted, helper — which omits _config.h — did not).  With the
+  // identity gated off, a prod installer's bytes depend only on installer-
+  // scoped inputs (installer/src, installer/web, config/*) — the same input
+  // set the build epoch derives from (ADR 0036), so PE-hash stability equals
+  // pathscope stability.  Provenance in prod rides the release tag/manifest,
+  // not the binary.
+  const devBranchValue = MODE === 'dev' || LOCAL ? DEV_BRANCH : '';
   out.push(
     '',
     `#define CFG_LOCAL ${LOCAL ? 1 : 0}`,
     `#define CFG_DEV ${MODE === 'dev' ? 1 : 0}`,
     `#define CFG_LOCAL_DIST_PATH "${localDistPath}"`,
-    `#define CFG_DEV_BRANCH "${DEV_BRANCH}"`,
+    `#define CFG_DEV_BRANCH "${devBranchValue}"`,
     '',
     '#endif /* BUILD_CONFIG_H */'
   );
