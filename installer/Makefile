@@ -9,17 +9,24 @@ CC ?= gcc
 # msys64\ucrt64\bin (for make/gcc) usually lacks usr\bin (for sh.exe).  The
 # commands still ran (exit 0) — pure noise today, broken 2>/dev/null probes
 # tomorrow — so pin a POSIX shell when one can be found at a known absolute
-# location.  Order matters for the WSL trap: bare `bash.exe` on PATH resolves
-# to C:\Windows\System32\bash.exe (the WSL launcher) before Git's, and a
-# space-containing path (Git bash) risks native make's quoting — so prefer
-# MSYS2's own sh, co-located with make (no spaces), then CI's extracted
-# location (the pinned-msys2 action exports MSYS2_LOCATION and warns to never
-# assume C:\msys64).  No match → leave make's default discovery untouched
-# (today's behavior; CI's PATH already finds sh and was always clean).
+# location.  Order matters twice over.  The WSL trap: bare `bash.exe` on PATH
+# resolves to C:\Windows\System32\bash.exe (the WSL launcher) before Git's,
+# and a space-containing path (Git bash) risks native make's quoting — so the
+# candidates are MSYS2 sh's only.  And the TREE must be make's own tree, not
+# just any MSYS2: a cross-tree make→sh pair (CI: pinned make in the bootstrap
+# tree D:/a/_temp/msys64, this pin handing it C:/msys64's sh from the runner
+# image) silently DROPS make's exported environment at the recipe boundary —
+# the recipes never saw SOURCE_DATE_EPOCH, the linker stamped the link time,
+# and the determinism job failed again (run 36222271581) while every local
+# single-tree build passed.  So MSYS2_LOCATION (where CI's pinned make lives)
+# is probed before C:/msys64, which is only correct where the build's make is
+# the C: one — a developer's default install.  No match → leave make's default
+# discovery untouched (today's behavior; CI's PATH already finds sh and was
+# always clean).
 ifeq ($(OS),Windows_NT)
-  PINNED_SH := $(wildcard C:/msys64/usr/bin/sh.exe)
+  PINNED_SH := $(wildcard $(MSYS2_LOCATION)/usr/bin/sh.exe)
   ifeq ($(PINNED_SH),)
-    PINNED_SH := $(wildcard $(MSYS2_LOCATION)/usr/bin/sh.exe)
+    PINNED_SH := $(wildcard C:/msys64/usr/bin/sh.exe)
   endif
   ifneq ($(PINNED_SH),)
     SHELL := $(PINNED_SH)
