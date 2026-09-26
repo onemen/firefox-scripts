@@ -1,7 +1,7 @@
 CC ?= gcc
 
-# Windows: pin the recipe shell before ANY $(shell) runs (BUILD_EPOCH below is
-# the first).  The Windows make (MSYS2 ucrt64) is a native build that probes
+# Windows: pin the recipe shell before ANY $(shell) runs (the BUILD_EPOCH_*
+# shell calls below are the first).  The Windows make (MSYS2 ucrt64) is a native build that probes
 # PATH for sh.exe and silently falls back to cmd.exe when none is found — and
 # every probe prints "The system cannot find the path specified." to stderr:
 # `pnpm lint` through .npmrc's Git-bash script-shell shows three of them for
@@ -51,10 +51,12 @@ CFLAGS = -Os -s -ffunction-sections
 # Exporting SOURCE_DATE_EPOCH (binutils honors it in the PE backend) pins the
 # stamp to the last commit's timestamp: deterministic per commit, and a
 # realistic-looking date (zeroed stamps read as packer artifacts to some ML).
-# Issue #322 (B1): the epoch is the last commit touching the BINARIES' input
-# set — the same paths generateBuildDates.mjs uses for the inner date — so
-# docs-only commits no longer re-roll the PE bytes (and with them the sha256,
-# the VT analysis and the release hashes).
+# Issue #322 (B1), per-binary since ADR 0036's 2026-09-26 amendment: each PE
+# is stamped with the last commit touching ITS OWN input set — the same paths
+# generateBuildDates.mjs uses for that binary's inner date and publish hash —
+# so docs-only commits (and commits scoped to the OTHER binary) no longer
+# re-roll the PE bytes (and with them the sha256, the VT analysis and the
+# release hashes).
 #
 # The value comes from tools/publish/buildEpoch.mjs, never from an inline
 # `$(shell git …)`. A path-limited `git log` resolves its pathspec against git's
@@ -66,13 +68,30 @@ CFLAGS = -Os -s -ffunction-sections
 # from the repo root (no shell cwd, no quoting layer) and refuses to print
 # nothing; a copy without git history still gets its documented fixed epoch.
 EPOCH_GENERATOR ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../tools/publish/buildEpoch.mjs)
-# Simply expanded assignment (`:=`): the generator runs ONCE, at parse time,
-# and every recipe inherits that single value. A recursive assignment re-ran
-# it for each recipe environment — measured 7 node+git spawns for one
+# Simply expanded assignments (`:=`): the generator runs ONCE per binary, at
+# parse time, and every recipe inherits those values. A recursive assignment
+# re-ran it for each recipe environment — measured 7 node+git spawns for one
 # `make dist_win helper_win` — which is slower and lets two recipes be handed
 # different epochs.
-BUILD_EPOCH := $(shell node $(subst \,/,$(EPOCH_GENERATOR)))
-SOURCE_DATE_EPOCH := $(BUILD_EPOCH)
+#
+# PER-BINARY epochs (ADR 0036 amendment, 2026-09-26): each PE is stamped with
+# the epoch of ITS OWN input set — the same list its inner build date and the
+# publish hash derive from. Before the amendment one UNION epoch was exported
+# for both PEs, so an installer-scoped commit re-rolled the helper's bytes too
+# (verified 2026-09-26: helper TimeDateStamp moved with #335 while every helper
+# input was unchanged — the submission for its cleared bytes invalidated for
+# nothing). The union value is still available for non-PE consumers.
+BUILD_EPOCH_INSTALLER := $(shell node $(subst \,/,$(EPOCH_GENERATOR)) installer)
+BUILD_EPOCH_HELPER := $(shell node $(subst \,/,$(EPOCH_GENERATOR)) helper)
+
+# The ambient spelling binutils honors: exported once globally, and each PE
+# target below overrides the VALUE with a plain target-specific assignment —
+# make exports the target-specific value into that recipe's environment. The
+# `target: export VAR = value` spelling is GNU make 3.82+ and the macOS legs
+# run 3.81, where `export` would parse as a nonexistent prerequisite. The
+# default is the installer epoch, which also covers the native `make all`
+# path (its $(TARGET) rule has no target-specific line of its own).
+SOURCE_DATE_EPOCH := $(BUILD_EPOCH_INSTALLER)
 export SOURCE_DATE_EPOCH
 
 # Belt and braces: an empty epoch must never reach a compiler — the ifeq
@@ -82,9 +101,20 @@ export SOURCE_DATE_EPOCH
 # closing parens and dies with "unterminated call to function `if'" — on
 # older makes only (macOS ships 3.81; the 4.x builds on Linux/Windows never
 # noticed). Keep this block #-free.
-ifeq ($(strip $(SOURCE_DATE_EPOCH)),)
-  $(error Build epoch missing: tools/publish/buildEpoch.mjs printed no SOURCE_DATE_EPOCH - refusing to link PE bytes that change on every link; see issue 330)
+ifeq ($(strip $(BUILD_EPOCH_INSTALLER)),)
+  $(error Installer build epoch missing: tools/publish/buildEpoch.mjs printed no epoch for the installer pathspec - refusing to link PE bytes that change on every link; see issue 330)
 endif
+ifeq ($(strip $(BUILD_EPOCH_HELPER)),)
+  $(error Helper build epoch missing: tools/publish/buildEpoch.mjs printed no epoch for the helper pathspec - refusing to link PE bytes that change on every link; see issue 330)
+endif
+
+# Per-target stamping: each PE target runs with ITS binary's epoch — for the
+# target and its prerequisites (the installer .res windres rule included),
+# wherever the target is reached, dist_all/helper_all included. Mach-O
+# targets carry the variable for consistency only: Mach-O has no timestamp
+# field.
+dist_win dist_linux dist_linux_aarch64 dist_mac: SOURCE_DATE_EPOCH = $(BUILD_EPOCH_INSTALLER)
+helper_win helper_linux helper_linux_aarch64 helper_mac: SOURCE_DATE_EPOCH = $(BUILD_EPOCH_HELPER)
 
 # miniz trim: the installer only READS zips (never compresses/writes), so the
 # deflate/compression side and the zlib-compat wrappers are dead code.
