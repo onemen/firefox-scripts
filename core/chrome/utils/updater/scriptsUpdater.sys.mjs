@@ -301,9 +301,10 @@ function todayStr() {
  * One daily pref gates this (ADR 0012): PREF_LAST_CHECK (lastScriptsCheckDate)
  * holds the last day the updater acted, and it has exactly two writers —
  *
- * - here, when a check ran and found everything up to date, so the happy path
- *   (manifest fetch + hash of every package) runs once per DAY, not once per
- *   browser session (#333); and
+ * - here, when a check COMPLETED and found everything up to date — the manifest
+ *   was reached and parsed and both user-facing packages (fx-folder, utils)
+ *   were actually compared — so the happy path (manifest fetch + hash of every
+ *   package) runs once per DAY, not once per browser session (#333);
  * - in the updater tab (updater.js engineInit), once the tab is shown for a
  *   pending update, so an ignored tab does not re-open the same day.
  *
@@ -335,11 +336,16 @@ async function checkForUpdates() {
     // runs once per day, not once per session (the pre-#333 gap — this return
     // re-ran the full fetch+hash on every browser start).
     //
-    // ONLY when the manifest was actually reached: an unreachable manifest also
-    // lands here with every package updateNeeded:false — writing the pref then
-    // would rate-limit away the whole next day's checks. Default true (a
-    // stale-logic safeguard, not a new contract).
-    if (scriptsInfo.manifestReached !== false) {
+    // ONLY on a COMPLETED check: an unreachable manifest also lands here with
+    // every package updateNeeded:false (manifestReached:false below), and so
+    // does a manifest missing a user-facing package entry — a broken or
+    // truncated publish must never consume the day (CodeRabbit retained
+    // concern on #333). A non-empty remoteHash marks an entry that was present
+    // and compared; fx-folder + utils are both required, updater-ui alone is
+    // optional (pre-ADR-0007 manifests legitimately lack it).
+    const userPackagesCompared =
+      Boolean(scriptsInfo.fxFolder.remoteHash) && Boolean(scriptsInfo.utils.remoteHash);
+    if (scriptsInfo.manifestReached !== false && userPackagesCompared) {
       Services.prefs.setCharPref(PREF_LAST_CHECK, today);
     }
     return;

@@ -14,13 +14,14 @@ The updater must tell the user an update is available without OS-level integrati
 ## Decision
 
 Notification is a new tab of the updater UI, never an OS notification, and the check runs on a
-**daily cadence** (startup + an in-session daily re-check) — no "Check for updates now" button. One
+**daily cadence** (startup + an in-session daily re-check) — no "Check for updatesnow" button. One
 daily pref (YYYY-MM-DD) gates the check, with two writers (amended 2026-09-26, #333): the scheduler
-writes it when a check ran and found everything up to date (an unreachable or unparseable manifest
-never counts), and the tab writes it once shown. An ignored tab is suppressed for the day and the
-pending update resurfaces tomorrow; per-package skip prefs suppress a specific remote hash and are
-cleared when the remote hash changes or local files match (`b5405a8`, 2026-08-01; confirmed in the
-Aug 2026 design review).
+writes it when a check ran and found everything up to date (an unreachable, unparseable, or
+incomplete manifest — a user-facing package entry missing — never counts), and the tab writes it
+once shown after its own re-check completed (a failed tab re-check consumes no day). An ignored tab
+is suppressed for the day and the pending update resurfaces tomorrow; per-package skip prefs
+suppress a specific remote hash and are cleared when the remote hash changes or local files match
+(`b5405a8`, 2026-08-01; confirmed in the Aug 2026 design review).
 
 ## Consequences
 

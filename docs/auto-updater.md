@@ -187,8 +187,9 @@ initScriptsUpdater(win)                     # idempotent; refreshes gWindow when
         ▼ (fetch manifest — with the ADR 0026 stable fallback on a dead dev channel,
         │   compute local hashes, apply skippedHash prefs)
 utils OR fx-folder needs an update?
-        │  no → lastScriptsCheckDate = today (only if the manifest was reached
-        │       and parsed, ADR 0012); stay silent — the check re-runs at most
+        │  no → lastScriptsCheckDate = today (only if the check COMPLETED: the
+        │       manifest was reached, parsed, and both user-facing packages
+        │       compared — ADR 0012); stay silent — the check re-runs at most
         │       once per day, not once per session
         │  yes
         ▼

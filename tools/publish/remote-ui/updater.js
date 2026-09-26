@@ -807,23 +807,33 @@ async function engineInit() {
 
   // Fresh check — the module attaches no tab data: restored tabs and direct
   // chrome:// visits must render the truth, never a stale snapshot.
+  let checkCompleted = false;
   try {
     const info = await checkScriptsUpdateNeeded();
     if (info) {
       scriptsInfo = info;
     }
+    // A COMPLETED check only (same bar as the scheduler's write): reached,
+    // parsed, and both user-facing packages compared. A thrown or incomplete
+    // re-check leaves the day unconsumed — the scheduler's next invocation
+    // re-runs its check instead of inheriting this tab's failure (CodeRabbit
+    // retained concern on #333).
+    checkCompleted =
+      Boolean(scriptsInfo.fxFolder?.remoteHash) && Boolean(scriptsInfo.utils?.remoteHash);
   } catch (e) {
     logError('re-check on tab open', e);
     scriptsInfo = {fxFolder: {}, utils: {}};
   }
 
-  // The tab is up and rendered: it owns today — the scheduler's check stays
-  // gated off until tomorrow (the module reads the same pref). Written AFTER
-  // the check above: a page whose init failed must not consume the day.
-  try {
-    Services.prefs.setCharPref(PREF_LAST_CHECK, new Date().toISOString().slice(0, 10));
-  } catch (e) {
-    logError('recording the shown day', e);
+  // The tab is up and rendered: shown days are recorded once the tab's own
+  // check COMPLETED (see above). A failed-check tab still renders and acts —
+  // the user can install right now — it just does not gate the scheduler.
+  if (checkCompleted) {
+    try {
+      Services.prefs.setCharPref(PREF_LAST_CHECK, new Date().toISOString().slice(0, 10));
+    } catch (e) {
+      logError('recording the shown day', e);
+    }
   }
 
   sendState();

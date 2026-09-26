@@ -261,6 +261,7 @@ function makeProfileLayout(sandbox) {
   };
   return {
     utilsDir: path.join(profileDir, 'chrome', 'utils'),
+    greDir,
     cleanup: () => {
       fs.rmSync(profileDir, {recursive: true, force: true});
       fs.rmSync(greDir, {recursive: true, force: true});
@@ -306,14 +307,24 @@ async function waitFor(cond, ms = 2000) {
   return true;
 }
 
-/** utils tree matching its manifest (the up-to-date world). */
-function writeMatchingUtils(io, layout) {
+/**
+ * utils + fx-folder trees matching their manifest (the COMPLETED up-to-date
+ * world).
+ */
+function writeUpToDateWorld(io, layout) {
   fs.mkdirSync(layout.utilsDir, {recursive: true});
   fs.writeFileSync(path.join(layout.utilsDir, 'updater.js'), 'real code');
+  fs.mkdirSync(layout.greDir, {recursive: true});
+  fs.writeFileSync(path.join(layout.greDir, 'config.js'), '// config\n');
   const manifest = {
-    utils: {
+    'utils': {
       hash: referenceFilesHash(['updater.js'], layout.utilsDir),
       files: ['updater.js'],
+      date: '2026-09-26',
+    },
+    'fx-folder': {
+      hash: referenceFilesHash(['config.js'], layout.greDir),
+      files: ['config.js'],
       date: '2026-09-26',
     },
   };
@@ -326,7 +337,7 @@ test('up-to-date check records the day, so new sessions do not re-run it', async
   const store = {};
   const {sandbox} = loadUpdater({store});
   const layout = makeProfileLayout(sandbox);
-  writeMatchingUtils(sandbox.Services.io, layout);
+  writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
     const settled = await waitFor(() => store[PREF_LAST_CHECK] === TODAY);
@@ -342,7 +353,7 @@ test('same-day re-check after a recorded day is a no-op (manifest not refetched)
   const store = {};
   const {sandbox} = loadUpdater({store});
   const layout = makeProfileLayout(sandbox);
-  writeMatchingUtils(sandbox.Services.io, layout);
+  writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
     assert.ok(await waitFor(() => store[PREF_LAST_CHECK] === TODAY));
@@ -367,7 +378,7 @@ test('the daily pref from earlier today skips the check entirely', async () => {
   const store = {[PREF_LAST_CHECK]: TODAY};
   const {sandbox} = loadUpdater({store});
   const layout = makeProfileLayout(sandbox);
-  writeMatchingUtils(sandbox.Services.io, layout);
+  writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -416,6 +427,39 @@ test('malformed manifest: NO pref written — a broken publish must not consume 
       store[PREF_LAST_CHECK],
       undefined,
       'a malformed-manifest day must not rate-limit away the next day of checks'
+    );
+  } finally {
+    layout.cleanup();
+  }
+});
+
+test('incomplete manifest (fx-folder entry missing): NO pref written — skipped entries are not comparisons', async () => {
+  const store = {};
+  const {sandbox} = loadUpdater({store});
+  const layout = makeProfileLayout(sandbox);
+  // utils matches its (present) entry, but the manifest lacks the fx-folder
+  // entry entirely: the user-facing package set is not fully compared, so the
+  // up-to-date path must not record the day (CodeRabbit retained concern on
+  // #333 — a truncated publish must not rate-limit the next day's checks).
+  fs.mkdirSync(layout.utilsDir, {recursive: true});
+  fs.writeFileSync(path.join(layout.utilsDir, 'updater.js'), 'real code');
+  const manifest = {
+    utils: {
+      hash: referenceFilesHash(['updater.js'], layout.utilsDir),
+      files: ['updater.js'],
+      date: '2026-09-26',
+    },
+  };
+  sandbox.Services.io = makeIo({
+    [MANIFEST_URL]: {status: 200, body: JSON.stringify(manifest)},
+  });
+  try {
+    sandbox.initScriptsUpdater(makeFakeWindow());
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(
+      store[PREF_LAST_CHECK],
+      undefined,
+      'a manifest missing a user-facing package must not consume the day'
     );
   } finally {
     layout.cleanup();
@@ -471,10 +515,18 @@ test('pref-name canary: exactly one daily pref, written by the module AND the ta
     'a retired daily pref name reappeared in the module'
   );
   // The tab-side half of the contract (updater.js is window-context JS, not
-  // vm-loadable here): the engine must write the shown day itself.
+  // vm-loadable here): the engine must write the shown day itself, and only
+  // after its own re-check COMPLETED (CodeRabbit retained concern on #333 — a
+  // failed tab re-check must not consume the day on the scheduler's behalf).
   const tabSrc = fs.readFileSync(TAB_ENGINE_PATH, 'utf-8');
   assert.ok(
     tabSrc.includes(`'${PREF_LAST_CHECK}'`),
     'updater.js no longer writes the daily pref — the shown tab would re-open daily'
   );
+  assert.match(
+    tabSrc,
+    /checkCompleted\s*=[\s\S]*?fxFolder\?\.remoteHash[\s\S]*?utils\?\.remoteHash/,
+    'the tab write must be gated on a completed re-check (both packages compared)'
+  );
+  assert.ok(tabSrc.includes('if (checkCompleted) {'), 'the pref write must sit behind the gate');
 });
