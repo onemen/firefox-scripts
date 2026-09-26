@@ -2740,12 +2740,26 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
     }
     fs.writeFileSync(schedPath, patched);
 
-    // Serve an UP-TO-DATE manifest built from the PATCHED tree: the check
-    // succeeds, finds nothing to surface, and never opens the tab — leaving
-    // the fetch counter as the only timer observable.
+    // Serve a manifest built from the PATCHED tree with one byte flipped in a
+    // comment marker file: every check finds a pending utils update, so NO
+    // daily pref (ADR 0037's lastVerifiedDate included) can rate-limit the
+    // timer away — the fetch counter isolates the timer itself, which is the
+    // thing scenario 10 exists to prove (#292). The tab opening is fine here
+    // (update pending); the scenario only counts fetches.
+    // (Pre-ADR 0037 this served an UP-TO-DATE manifest: the fetch counter was
+    // then the only observable. Since the up-to-date path now rate-limits
+    // itself to once per day, an up-to-date manifest would make the timer
+    // gate fetchless and this scenario would report the NEW correct behavior
+    // as the old bug.)
+    const staleTreeDir = fs.mkdtempSync(path.join(REPO_ROOT, 'dist', 'fxs-timer-stale-'));
+    const utilsZipPath = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
+    if (!utilsZipPath) throw new Error(`no utils zip found in ${snapshotDir}`);
+    extractZip(utilsZipPath, staleTreeDir);
+    const staleMarker = path.join(staleTreeDir, 'zz-timer-stale-marker.js');
+    fs.writeFileSync(staleMarker, '// makes the local utils hash differ from its manifest\n');
     const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
       multiRequest: true,
-      manifestOverride: buildTreeManifest(seeded.chromeUtils),
+      manifestOverride: buildTreeManifest(staleTreeDir),
     });
     Object.assign(seeded.prefs, serverOverridePrefs(server.url));
 
@@ -2787,11 +2801,10 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
         : ''
       );
 
-      // The re-check must stay pref-gated: an up-to-date tree surfaces
-      // nothing, so no tab may open and the daily gates stay unset.
-      const page = await findPageByUrl(browser, UPDATER_URL, 1_000).catch(() => null);
-      check(counter, !page, `no updater tab when up to date (${label})`);
-      check(counter, !greShownToday(seeded.profileDir), `daily tab gate untouched (${label})`);
+      // The re-check must stay pref-gated. The manifest here is STALE (see
+      // above), so the tab opening is allowed — the gate that matters for the
+      // timer is lastVerifiedDate, which a pending-update day must not write
+      // (asserted in the unit suite, scriptsUpdater-daily-gate.test.mjs).
       console.log(`  [timing] timer scenario wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     } finally {
       try {
