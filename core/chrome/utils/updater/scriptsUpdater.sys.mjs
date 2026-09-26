@@ -469,6 +469,9 @@ export async function checkScriptsUpdateNeeded() {
 
   try {
     const remoteInfo = JSON.parse(manifestText);
+    // NOTE: a malformed manifest (or a throw partway through the loop) is
+    // reset to manifestReached:false in the catch below — only a fully parsed,
+    // fully compared check may count the day as handled.
 
     const profileDir = Services.dirsvc.get('ProfD', Ci.nsIFile).path;
     const dirs = {
@@ -514,6 +517,10 @@ export async function checkScriptsUpdateNeeded() {
     return result;
   } catch (e) {
     console.error('Firefox Scripts: update check failed', e);
+    // Malformed manifest or a throw partway through the comparison: the day is
+    // UNVERIFIED exactly like an unreachable transport — a broken publish must
+    // not consume the next day of checks (local review on #333).
+    result.manifestReached = false;
     return result;
   }
 }

@@ -400,6 +400,28 @@ test('unreachable manifest: NO pref written — the next session re-checks', asy
   }
 });
 
+test('malformed manifest: NO pref written — a broken publish must not consume the day', async () => {
+  const store = {};
+  const {sandbox} = loadUpdater({
+    store,
+    routes: {[MANIFEST_URL]: {status: 200, body: '{not json at all'}},
+  });
+  const layout = makeProfileLayout(sandbox);
+  fs.mkdirSync(layout.utilsDir, {recursive: true});
+  fs.writeFileSync(path.join(layout.utilsDir, 'updater.js'), 'real code');
+  try {
+    sandbox.initScriptsUpdater(makeFakeWindow());
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(
+      store[PREF_LAST_CHECK],
+      undefined,
+      'a malformed-manifest day must not rate-limit away the next day of checks'
+    );
+  } finally {
+    layout.cleanup();
+  }
+});
+
 test('pending update: the scheduler writes NO pref, the tab opens (the tab records the day)', async () => {
   const store = {};
   const {sandbox} = loadUpdater({store});
