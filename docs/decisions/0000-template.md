@@ -28,6 +28,11 @@ PR.
 What was decided, in one or two sentences. The usual record is a product-shaped **no** (we will not
 build X). Name the existing primitive that covers the need.
 
+Record the decision, not the mechanism: write the invariant and the boundary condition, not the APIs
+that happen to implement it today (`b.addTrustedTab`, pref names, timer types). Implementation
+detail lives in `docs/` (the manual) and code comments; the names change, the decision survives.
+Future readers grep the docs for the mechanism — they come here for the why and the boundary.
+
 ## Consequences
 
 What stays simple, what gets harder, and the **revisit-if** — the concrete condition that would

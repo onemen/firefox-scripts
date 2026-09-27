@@ -62,14 +62,15 @@ The installer's original self-update compared a hardcoded `VERSION` against the 
 moving tag), so the mechanism was dead on arrival once this scheme shipped. The installer's own
 update detection is therefore defined here, aligned with the same scheme:
 
-- **Detection is date-based, not version-based.** The binaries bake `BUILD_DATE` (YYYY-MM-DD) from
-  `config/installer.conf` at generation time; the installer-<date> release body carries a managed
-  JSON block (`{"installerDate": "YYYY-MM-DD", "download": {"<asset>": "<url>"}}`) written by the
-  publish automation. The installer compares the two dates (lexicographic = chronological for ISO
-  dates); the release tag itself is never compared.
+- **Detection is date-based, not version-based.** The binaries bake their build date (YYYY-MM-DD) at
+  generation time; the installer-<date> release body carries a machine-managed block written by the
+  publish automation (the build date plus the download map). The installer compares the two dates
+  (lexicographic = chronological for ISO dates); the release tag itself is never compared.
 - **The installer tab ingests the newest installer-<date> release body** (via the `/releases`
   listing, so a fresh installer publish is never masked by a scripts-only republish of `latest`). A
-  body without the managed block, or a local/dev test build, means no update offer — silent.
+  body without the managed block, or a local/dev test build, means no update offer — silent. (The
+  block's field names and its future home — the release body vs the publish branch — are mechanism:
+  see #341 and `docs/auto-updater.md`.)
 - **Installers are also gh-pages artifacts** (prod publishes mirror them to the Pages branch): the
   release asset remains the user-facing download, but the banner's fetch must go to a CORS-enabled
   host, which release-asset CDNs are not. This supersedes the "installers are release-only" reading
