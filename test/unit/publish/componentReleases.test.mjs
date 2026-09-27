@@ -23,6 +23,7 @@ const {
   installerTag,
   groupBuilt,
   renderComponentBody,
+  WINDOWS_ONLY_INSTALLER_NOTE,
   componentAssets,
   renderSelfUpdateBlock,
   parseSelfUpdateBlock,
@@ -81,6 +82,39 @@ test('renderComponentBody: lists artifacts with per-file dates, points back at l
 
   const empty = renderComponentBody('installer', '2026-09-09', []);
   assert.match(empty, /no artifacts this date/);
+});
+
+test('renderComponentBody: installer bodies carry the Windows-only SmartScreen/UAC note LAST', () => {
+  // Maintainer request (2026-09-27): the README's SmartScreen paragraph belongs
+  // on the installer release pages (#184's user-facing standard). Scripts
+  // bodies stay installer-note-free (zips, not the installer flow).
+  const withBlock = renderComponentBody(
+    'installer',
+    '2026-09-09',
+    ['installer_win.exe'],
+    {},
+    '{"installerDate":"2026-09-09"}'
+  );
+  const noteAt = withBlock.indexOf(WINDOWS_ONLY_INSTALLER_NOTE);
+  const blockAt = withBlock.indexOf('```json');
+  assert.ok(noteAt > -1, 'note present');
+  assert.ok(blockAt > -1, 'managed block present');
+  assert.ok(
+    noteAt > blockAt,
+    'note rides AFTER the managed block — the parser reads the block from the body tail region'
+  );
+  assert.match(withBlock, /Windows only.*SmartScreen.*More info → Run anyway/s);
+  assert.match(withBlock, /checksum-verified elevation/);
+
+  const bare = renderComponentBody('installer', '2026-09-09', ['installer_win.exe']);
+  assert.match(bare, /Windows only/);
+  // The note is the last thing in the body (trailing \n after it).
+  assert.ok(bare.trimEnd().endsWith(WINDOWS_ONLY_INSTALLER_NOTE));
+
+  // Scripts bodies: no installer note.
+  const scripts = renderComponentBody('scripts', '2026-09-09', ['utils.zip']);
+  assert.doesNotMatch(scripts, /SmartScreen/);
+  assert.doesNotMatch(scripts, /Windows only/);
 });
 
 test('componentAssets: exactly the installers built, each with its sidecar (issue #324)', () => {
