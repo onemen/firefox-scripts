@@ -82,27 +82,40 @@ plain second installer defers to the one already serving the default port withou
 The optional `--ui` flag launches a real Firefox instance and verifies the web UI renders browser
 cards with correct status badges, but this is slower and requires a display.
 
-### Updater E2E (6 scenarios)
+### Updater E2E
 
-Each scenario: fresh temp profile → seed `chrome/utils` from the snapshot → optionally delete files
-or modify prefs to force a specific state → launch Firefox via puppeteer-core + WebDriver BiDi →
-wait for the updater tab to auto-open → assert the card renders the expected status, all 8 buttons
-are present, checkbox wiring works, and no page/console errors appeared.
+Each step: fresh temp profile → seed `chrome/utils` from the snapshot → optionally delete files or
+modify prefs to force a specific state → launch Firefox via puppeteer-core + WebDriver BiDi → wait
+for the updater tab to auto-open → assert the card renders the expected status, all 8 buttons are
+present, checkbox wiring works, and no page/console errors appeared.
 
-| Scenario | Seed                                                                                                                                                 | Expected                                                |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| 1        | One session (#197): marker on `RDFDataSource.sys.mjs` + GreD probe; per-variant disk toggling + tab reload — utils stale → config stale → both stale | All three stale combinations, full card assertions each |
-| 4        | Unmodified utils + fx-folder                                                                                                                         | Tab does NOT open (nothing to surface)                  |
-| 5        | Set skip-pref to utils remote hash                                                                                                                   | Tab does NOT open (skip suppresses)                     |
+| Id       | Seed (fixture)                                                                                                                                                                                    | Expected (assertions)                                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 (4, 5) | ONE browser, five variants (#309 driver mode): marker on `RDFDataSource.sys.mjs` + GreD probe, then per variant a disk/pref flip — utils stale → config stale → both stale → up-to-date → skipped | each check's own decision (stale: the tab opens; up-to-date/skipped: no tab AND the day recorded, #333) + the full card set per variant |
+| 6        | utils marker + GreD probe (both stale)                                                                                                                                                            | `btn-install` copies both packages; installed trees re-hash to the manifest; badges/banner flip                                         |
+| 7        | hand-installed pre-updater `utils.zip` (no `updater/`), then the real one                                                                                                                         | no tab with the old utils; tab after the manual replace                                                                                 |
+| 8        | hand-installed `utils.zip` + no `ui/` folder                                                                                                                                                      | scheduler self-installs the UI (`ensureUpdaterUi`) and the tab renders                                                                  |
+| 9        | fx-folder in an ACL-write-denied GreD (Windows)                                                                                                                                                   | tab-open proof, ACL block, and that nothing was copied without elevation                                                                |
+| 10       | stale utils, one launch, timer observed                                                                                                                                                           | the daily in-session re-check timer fires (startup + ≥2 re-fetches)                                                                     |
 
-Scenario 1's merged session is wrapped in a retry-once guard with a fresh profile: a
-browser-internal startup race (observed on waterfox, run 35460461221) would otherwise fail all three
-variants at once. The retry logs its own `[retry]` lines; a second failure fails the leg.
-Card-assertion failures are deterministic and never retried. Full card assertions additionally
-require WebDriver BiDi to attach to the trusted chrome:// tab; on runners where it cannot (observed
-on Windows CI), the leg verifies the tab-open via the probe mirror / persisted pref and says so in
-the check label — the historical contract for these legs. Skip individual scenarios during iteration
-with `--scenario 1,4,5` (scenario 1 always runs all three variants — they share the session).
+Step 1 is one browser for five state-only variants (#309 driver mode): after the startup check opens
+the tab (the wiring under test), the harness opens a privileged in-browser driver page
+(`test/e2e/shared/updaterDriver.mjs`, seeded into the profile's `updater/` dir — never shipped, so
+no package hash changes) and drives the production orchestrator from there: clear the daily gate,
+mutate the disk fixture / skip pref, call the exported `checkForUpdates()`, and assert the decision
+(tab opened or not, the day recorded) plus the card the resulting tab renders. Behind the scenes:
+`checkForUpdates()`, the export added for this, and the daily-gate pref (a user pref, writable
+in-page — ADR 0012).
+
+Step 1 is wrapped in a retry-once guard with a fresh profile: a browser-internal startup race
+(observed on waterfox, run 35460461221) would otherwise fail every variant at once. The retry logs
+its own `[retry]` lines; a second failure fails the leg. Card-assertion failures are deterministic
+and never retried. Full card assertions additionally require WebDriver BiDi to attach to the trusted
+chrome:// tab; on runners where it cannot, the leg verifies the tab-open via the probe mirror /
+persisted pref and says so in the check label — and driver mode is unavailable there, so the session
+falls back to running up-to-date/skipped as their own launches (`runNoTabScenario`) instead of
+dropping their coverage. Skip individual steps during iteration with `--scenario 1,6,9` (step 1
+includes all five variants; `--scenario 4` / `--scenario 5` select the same session).
 
 ### Running the updater E2E locally (e.g. on Nightly, Windows)
 
@@ -131,7 +144,7 @@ The snapshot is the newest `dist/` one (`--snapshot <dir>` picks explicitly, `--
 accepts a snapshot from any branch — the direct script never branch-checks).
 
 `--keep-profile` keeps each scenario's profile for inspection, `--repeat 2` runs the whole selection
-twice (determinism check), `--scenario 1,4,5` narrows the run, and `--no-fail-fast` runs every
+twice (determinism check), `--scenario 1,6,9` narrows the run, and `--no-fail-fast` runs every
 scenario even after a failure.
 
 ### Updater E2E scenario 9 (helper-checksum-win, Windows)

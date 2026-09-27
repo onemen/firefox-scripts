@@ -47,6 +47,14 @@ export const DRIVER_SCRIPT = 'e2e-driver.js';
  * the daily gate cleared first so the call always re-decides. It reports the
  * gate pref AFTER the call (the up-to-date path is its only writer) and how
  * many updater tabs the call added (the scheduler's own addTrustedTab).
+ *
+ * Chrome ES modules are per-GLOBAL: importing scriptsUpdater.sys.mjs here gives
+ * this page its own module instance (fresh gWindow/gInitialized/…), not the one
+ * BootstrapLoader.js initialized in the browser window's global. That is why
+ * the driver initializes "its" scheduler explicitly (initScheduler, the same
+ * entry point the loader uses) instead of assuming the browser's instance is
+ * reachable — every check the driver runs then goes through the production code
+ * path, in the realm that is calling it.
  */
 const DRIVER_SCRIPT_SOURCE = `'use strict';
 
@@ -132,6 +140,24 @@ window.UpdaterE2EDriver = {
   },
 
   /**
+   * Initialize THIS realm's scheduler instance (gWindow = the browser window —
+   * the same call BootstrapLoader.js makes). Idempotent: a second call only
+   * refreshes the tab target, exactly like a new browser window in production.
+   *
+   * initScriptsUpdater() also runs one check immediately; the day is set to
+   * today first (the tab the startup check opened already owns it), so that
+   * first check is a no-op and every variant decision comes from the harness's
+   * own call below.
+   */
+  initScheduler() {
+    Services.prefs.setCharPref(PREF_LAST_CHECK, new Date().toISOString().slice(0, 10));
+    ChromeUtils.importESModule(SCHEDULER_URL).initScriptsUpdater(
+      window.browsingContext?.topChromeWindow
+    );
+    return true;
+  },
+
+  /**
    * The production orchestrator, driven on demand: clear the gate, run the
    * check, report what it observed. The module URI is the same one
    * BootstrapLoader.js and the tab engine import, so this is the same module
@@ -144,6 +170,19 @@ window.UpdaterE2EDriver = {
     const before = updaterTabs().length;
     const scheduler = ChromeUtils.importESModule(SCHEDULER_URL);
     await scheduler.checkForUpdates();
+    // addTrustedTab() returns before the new tab's linkedBrowser has committed
+    // its URI, so a count taken at the instant the promise resolves reads 0 for
+    // a tab that is already opening (observed on Windows, 2026-09-27). Settle
+    // on the first observable outcome of the decision instead — a new updater
+    // tab, or the up-to-date path's day write (the pending path writes nothing:
+    // its tab records the shown day later, in the tab's engineInit).
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      if (updaterTabs().length > before || Services.prefs.getCharPref(PREF_LAST_CHECK, '')) {
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
     return {
       gate: Services.prefs.getCharPref(PREF_LAST_CHECK, ''),
       opened: updaterTabs().length - before,
@@ -203,9 +242,10 @@ export function driverScriptSource() {
  * Open the driver tab FROM an existing privileged page — the harness cannot
  * navigate a content tab to chrome://, so a realm must already exist (the
  * scheduler's own tab, i.e. a stale start). Fire-and-forget: the tab starts
- * loading and the caller waits for it with waitForDriverPage().
+ * loading and the caller collects it with attachDriver().
  *
- * @param {import('puppeteer-core').Page} page - a privileged page (the updater tab)
+ * @param {import('puppeteer-core').Page} page - a privileged page (the updater
+ *   tab)
  * @param {string} driverUrl
  * @returns {Promise<boolean>} whether the request was dispatched
  */
@@ -271,6 +311,46 @@ export async function attachDriver(browser, timeoutMs = 15_000) {
 }
 
 /**
+ * Find the updater tab's page handle by REALM, not by URL.
+ *
+ * BiDi's per-context URL for a chrome tab opened AFTER the session attached can
+ * stay about:blank for the whole run (observed on Windows: the startup tab —
+ * opened while the session was still attaching — reports its chrome:// URL,
+ * every tab opened later enumerates as about:blank while its document is the
+ * real page). Realm identity is what the harness actually needs: the updater
+ * tab is the page that exposes UpdaterEngine and is not the driver page.
+ *
+ * @param {import('puppeteer-core').Browser} browser
+ * @param {number} [timeoutMs]
+ * @returns {Promise<import('puppeteer-core').Page | null>}
+ */
+export async function findUpdaterPage(browser, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let pages = [];
+    try {
+      pages = await browser.pages();
+    } catch {
+      /* browser not ready yet */
+    }
+    for (const candidate of pages) {
+      try {
+        const isUpdaterTab = await candidate.evaluate(
+          () =>
+            typeof window.UpdaterEngine?.init === 'function' &&
+            typeof window.UpdaterE2EDriver === 'undefined'
+        );
+        if (isUpdaterTab) return candidate;
+      } catch {
+        // Not an evaluable context (or a document still loading).
+      }
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return null;
+}
+
+/**
  * The command surface for one driver page. The realm is assumed live (see
  * attachDriver) — every command re-evaluates on it, so a torn-down realm shows
  * up as a rejected promise rather than a stale object.
@@ -296,6 +376,12 @@ function driverCommands(page) {
       page.evaluate((p, h) => window.UpdaterE2EDriver.setSkip(p, h), pkg, hash),
     /** Read it back (the check clears stale skip prefs). */
     readSkip: pkg => page.evaluate(p => window.UpdaterE2EDriver.readSkip(p), pkg),
+    /**
+     * Initialize this realm's scheduler instance (once, right after attach):
+     * per-global module state means the driver's instance needs the same
+     * initialization the browser gives its own.
+     */
+    initScheduler: () => page.evaluate(() => window.UpdaterE2EDriver.initScheduler()),
     /** Run the production orchestrator once, gate cleared. */
     check: () => page.evaluate(() => window.UpdaterE2EDriver.check()),
   };

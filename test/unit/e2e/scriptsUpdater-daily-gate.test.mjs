@@ -219,11 +219,18 @@ const updaterConfig = () => ({
  * `tempRoots` (swept once after the file's tests finish — see the import
  * block).
  */
-function loadUpdater({store = {}, routes = {}} = {}) {
-  const source = fs
+function loadUpdater({store = {}, routes = {}, captureExports = false} = {}) {
+  let source = fs
     .readFileSync(MODULE_PATH, 'utf-8')
     .replace(/\r\n/g, '\n')
     .replace(/^export /gm, '');
+  if (captureExports) {
+    // The E2E driver's view of the module: the exports it imports by name.
+    // (loadUpdater strips `export ` so the vm can run the body; this puts the
+    // namespace back on the sandbox global, exactly as a privileged importer
+    // would see it.)
+    source += '\n;globalThis.__moduleExports = {checkForUpdates, initScriptsUpdater};\n';
+  }
   const dirs = {
     'utils': os.tmpdir(),
     'fx-folder': os.tmpdir(),
@@ -528,6 +535,66 @@ test('pending update: the scheduler writes NO pref, the tab opens (the tab recor
       undefined,
       'the shown day belongs to the TAB (updater.js engineInit), not the scheduler'
     );
+  } finally {
+    layout.cleanup();
+  }
+});
+
+test('driver seam: checkForUpdates is exported and re-decides on demand (#309)', async () => {
+  const store = {};
+  const {sandbox} = loadUpdater({store, captureExports: true});
+  const layout = makeProfileLayout(sandbox);
+  writeUpToDateWorld(sandbox.Services.io, layout);
+  const win = makeFakeWindow();
+  try {
+    sandbox.initScriptsUpdater(win);
+    assert.ok(await waitFor(() => store[PREF_LAST_CHECK] === TODAY));
+    assert.equal(
+      typeof sandbox.__moduleExports?.checkForUpdates,
+      'function',
+      'the orchestrator must be exported — the E2E driver calls it by name'
+    );
+
+    // The driver's loop: same-day call first — the gate makes it a no-op, which
+    // is why driver mode has to be able to clear the gate (a user pref).
+    const fetchesAfterStartup = sandbox.Services.io._state.fetches;
+    await sandbox.__moduleExports.checkForUpdates();
+    assert.equal(
+      sandbox.Services.io._state.fetches,
+      fetchesAfterStartup,
+      "a same-day call stays gated — the daily pref is the driver's input knob"
+    );
+
+    // Clear the gate, flip the world to stale, call again: the exported entry
+    // point re-runs the whole decision and opens the tab, in-session. A current
+    // updater UI is installed first, so ensureUpdaterUi keeps it (no zip fetch)
+    // and the tab-open path is actually reached.
+    const uiDir = path.join(sandbox.PathUtils.profileDir, 'chrome', 'utils', 'updater', 'ui');
+    fs.mkdirSync(uiDir, {recursive: true});
+    fs.writeFileSync(path.join(uiDir, 'updater.html'), '<html></html>');
+    delete store[PREF_LAST_CHECK];
+    const files = ['updater.js'];
+    const manifest = {
+      'utils': {
+        hash: referenceFilesHash(files, layout.utilsDir) + 'stale',
+        files,
+        date: '2026-09-26',
+      },
+      'fx-folder': {
+        hash: referenceFilesHash(['config.js'], layout.greDir),
+        files: ['config.js'],
+        date: '2026-09-26',
+      },
+    };
+    Object.assign(sandbox.Services.io._state.routes, {
+      [MANIFEST_URL]: {status: 200, body: JSON.stringify(manifest)},
+    });
+    await sandbox.__moduleExports.checkForUpdates();
+    assert.ok(
+      sandbox.Services.io._state.fetches > fetchesAfterStartup,
+      'the re-run after clearing the gate must fetch the manifest again'
+    );
+    assert.ok(win.openedTabs.length > 0, 'the pending-update decision opens the tab');
   } finally {
     layout.cleanup();
   }
