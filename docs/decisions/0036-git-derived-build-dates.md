@@ -1,6 +1,7 @@
 # 0036: Build dates are derived from git per binary — not hand-stamped
 
-- **Status:** accepted (amended 2026-09-26 — release-identity embed is dev/local-only)
+- **Status:** accepted (amended 2026-09-26 — release-identity embed is dev/local-only; the PE epoch
+  is per binary)
 - **Amends:** [0019](./0019-release-versioning.md) (its 2026-09-13 self-update amendment — the date
   that feeds the date-based self-update is now derived, not hand-stamped; declared per the ADR 0029
   convention)
@@ -76,3 +77,24 @@ it; prod provenance rides the release tag/manifest, not the binary. Prod `_confi
 the SAME set this ADR's epoch derives from — so "date moved ⇔ bytes moved" covers the whole binary,
 and the freeze-exception rule ("a commit touching no installer-scoped path cannot re-roll the PEs")
 is true as written. Pinned by `test/unit/installer/prodIdentityEmbed.test.mjs`.
+
+## Amendment 2026-09-26 — the PE epoch is per binary
+
+The Phase 2R re-verification after #335 (run 36265954107, head `c774cbd`) falsified the union-epoch
+corollary of B1: `helper_win.exe` re-rolled (`bc30d11f…` → `f3761ca2…`) although
+`git diff 67cbf1a c774cbd` over the helper's entire input set (helper sources, `installer.ico`,
+`msys2-toolchain.json`) is EMPTY. Root cause: the Makefile exported ONE `SOURCE_DATE_EPOCH` — the
+union of both binaries' pathspec lists — so the helper's TimeDateStamp moved with every
+installer-scoped commit (measured: helper stamp = union@c774cbd `1790450111`, helper-only epoch
+`1790349996`). The date and publish hash were already per-binary; only the PE stamp leaked. Net
+effect: a byte-identical-inputs helper shipped new sha256s anyway, invalidating its WDSI submission
+for nothing — the same churn class this ADR was written to end.
+
+**Amendment:** the epoch is resolved **per binary** — each PE is stamped with the last commit
+touching its OWN input set, the same list its inner date and publish hash derive from.
+`tools/publish/buildEpoch.mjs` takes `installer|helper` (union kept only for tree-wide tooling), and
+installer/Makefile assigns `SOURCE_DATE_EPOCH` per PE target group. "Date moved ⇔ bytes moved" now
+holds per binary, and a commit scoped to one binary cannot re-roll the other's bytes. The
+determinism job asserts each PE against its own epoch. Consequence: this very amendment re-rolls the
+helper once more (its stamp returns to its input-set epoch `1790349996`) and then pins it — an
+installer-only commit can no longer move it.

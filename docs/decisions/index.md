@@ -114,7 +114,8 @@ Open these before proposing a new primitive, surface, or storage home.
   publish surface (extends [0019]'s 2026-09-09 helper-sidecar scheme); self-update map stays
   binary-only (substring-shadow)
 - [0036](./0036-git-derived-build-dates.md) — Build dates are derived from git per binary (same
-  input set as the publish hash); PE epoch scoped to those inputs (extends [0019]'s self-update)
+  input set as the publish hash); PE epoch scoped to those inputs, per binary (extends [0019]'s
+  self-update)
 
 ## Historical
 
