@@ -10,10 +10,16 @@
 //   pnpm publish:packages              # zips + updater-ui only (--include=packages)
 //   pnpm publish:installer             # installer + helper only (--include=installer)
 //   pnpm publish:dev                   # dev-build-<id> branch instead (--mode=dev)
-//   pnpm release:stage -- --ref=<branch>  # STAGE-ONLY: build-and-upload.yml publish=false —
-//                                         # CI-built bytes for the WDSI submission, publishes nothing
-//                                      # (--ref accepts branch/tag; a commit SHA resolves to the
-//                                      # branch containing it — the dispatch API takes no SHAs)
+//   pnpm release:stage                    # THE staging command (one local command): resolves the
+//                                         # release commit (origin/main tip or --ref), reuses the existing
+//                                         # successful build-and-upload staging run for it (or dispatches
+//                                         # one, publish=false — never publishes), waits, downloads the full
+//                                         # staged-<os> artifact of this machine's OS (--os=<platform> to
+//                                         # override) into dist/release-stage-<short-commit>/ and writes
+//                                         # SUMMARY.md there — run id + URL, per-file sha256, VT/Microsoft
+//                                         # status (local API; hash lookup first), the WDSI paste block and
+//                                         # Next steps. Interrupt-safe: re-running resumes (the run exists).
+//                                         # (--ref accepts branch/tag/SHA; a SHA is staged exactly.)
 //   pnpm publish -- --include=installer,helper   # any ADR 0030 role list
 //   pnpm publish -- --include=all --ref=<branch> # dispatch another branch's workflow
 //   pnpm publish -- --include=all --force        # rebuild + re-upload even when unchanged
@@ -25,10 +31,12 @@
 // The wrapper owns --force/--mode/--include/--ref (it maps them to the
 // workflow inputs / gh flags); any other `-f key=value` is passed through to
 // gh verbatim — through spawnSync's argv array, never a shell, so nothing is
-// interpolated. No watch mode, no output parsing — follow the run in the
-// Actions tab. The workflow's own gates (main-only for prod, E2E-green commit,
-// browser-version drift) are what the guard requires; this alias cannot
-// bypass them, it merely triggers them.
+// interpolated. No watch mode, no output parsing for the PUBLISH dispatches —
+// follow the run in the Actions tab. (--stage is the exception: it is the full
+// local staging pipeline of tools/publish/stageFlow.mjs, which watches and
+// downloads by design.) The workflow's own gates (main-only for prod,
+// E2E-green commit, browser-version drift) are what the guard requires; this
+// alias cannot bypass them, it merely triggers them.
 
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
@@ -194,14 +202,14 @@ export function resolveDispatchRef(ref, cwd = process.cwd()) {
 }
 
 /**
- * gh argv for the dispatch (exported for the unit tests).
+ * gh argv for the dispatch (exported for the unit tests). The STAGING dispatch
+ * lives in stageFlow.mjs — --stage never reaches this function.
  *
  * @param {{
  *   force?: boolean;
  *   mode?: string;
  *   include?: string[];
  *   ref?: string;
- *   stage?: boolean;
  *   passthrough?: string[];
  * }} opts
  */
@@ -210,18 +218,13 @@ export function buildDispatchArgs({
   mode = 'prod',
   include = [],
   ref = '',
-  stage = false,
   passthrough = [],
 } = {}) {
-  // --stage targets the build-and-upload workflow in its stage-only default:
-  // publish=false builds + stages the ship-bound bytes and uploads them as
-  // run artifacts — no publish target is touched (the WDSI staging run).
-  const args = ['workflow', 'run', stage ? 'build-and-upload.yml' : WORKFLOW];
+  const args = ['workflow', 'run', WORKFLOW];
   // gh dispatches the default branch unless told otherwise — a dev publish
   // from a feature branch needs --ref to point at that branch's workflow.
   if (ref) args.push('--ref', ref);
   args.push('-f', `mode=${mode}`);
-  if (stage) args.push('-f', 'publish=false');
   if (force) args.push('-f', 'force=true');
   if (include.length > 0) args.push('-f', `include=${[...include].join(',')}`);
   args.push(...passthrough);
@@ -244,6 +247,7 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
     include: [],
     ref: '',
     stage: false,
+    os: '',
     passthrough: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -251,6 +255,8 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
     if (a === '--') continue;
     if (a === '--stage') {
       opts.stage = true;
+    } else if (a.startsWith('--os=')) {
+      opts.os = a.slice('--os='.length).trim();
     } else if (a === '--force') {
       opts.force = true;
     } else if (a.startsWith('--mode=')) {
@@ -297,6 +303,18 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
       );
     }
   }
+  // --stage is the full local pipeline (stageFlow.mjs): the scope is always
+  // the full staging run, so --include does not apply; --os is its only knob
+  // besides --ref.
+  if (opts.stage) {
+    if (opts.include.length > 0) {
+      throw new Error('--include does not apply to --stage (the staging run is always full-scope)');
+    }
+    return opts;
+  }
+  if (opts.os) {
+    throw new Error('--os is a --stage option (release:stage)');
+  }
   if (opts.include.length === 0) {
     throw new Error(
       'Missing --include=<roles> — state what this run publishes ' +
@@ -307,13 +325,27 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
   return opts;
 }
 
-export function main() {
+export async function main() {
   let opts;
   try {
     opts = parseReleaseArgs();
   } catch (e) {
     console.error(String(e.message));
     process.exitCode = 1;
+    return;
+  }
+  // --stage never reaches the dispatchers below: it IS the local staging
+  // pipeline (reuse-or-dispatch → watch → download → SUMMARY.md). The raw
+  // --ref goes through untouched — stageFlow stages the exact SHA, it does
+  // not need the dispatch API's branch-name resolution.
+  if (opts.stage) {
+    try {
+      const {runStageFlow} = await import('./stageFlow.mjs');
+      await runStageFlow({ref: opts.ref, os: opts.os || undefined});
+    } catch (e) {
+      console.error(`\u2718 release:stage — ${e.message}`);
+      process.exitCode = 1;
+    }
     return;
   }
   // The dispatch API accepts only branch/tag refs — resolve a SHA --ref to a
@@ -336,17 +368,6 @@ export function main() {
     process.exitCode = 1;
     return;
   }
-  if (opts.stage) {
-    console.log(
-      `✓ STAGE-ONLY ${opts.mode.toUpperCase()} dispatch sent to build-and-upload.yml (publish=false).
-` +
-        '  Nothing is published — the staged bytes land in the staged-<os> artifacts.\n' +
-        '  Watch:   gh run list --workflow build-and-upload.yml --limit 1\n' +
-        '  Then:    pnpm fetch:release -- --run <run-id>   # download for the manual test\n' +
-        '  And:     pnpm scan:vt <downloaded installer> <downloaded helper>  # WDSI evidence'
-    );
-    return;
-  }
   const what =
     opts.include[0] === 'all' || opts.include.length === INCLUDE_ROLES.length ?
       'full publish'
@@ -359,5 +380,8 @@ export function main() {
 
 // Direct invocation only (imported by the unit tests for buildDispatchArgs).
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().catch(e => {
+    console.error(`\u2718 release: ${e.message}`);
+    process.exitCode = 1;
+  });
 }

@@ -156,7 +156,9 @@ pnpm publish:all                         # prod publish: dispatches the CI cross
 pnpm publish:packages                    # partial: zips + updater-ui only (--include=packages)
 pnpm publish:installer                   # partial: installer + helper only (--include=installer)
 pnpm publish:helper                      # partial: helper + sidecar only (--include=helper) — helper-byte rotation with zero package changes
-pnpm release:stage -- --ref=<sha>        # STAGE-ONLY CI build (publish=false) — the WDSI-evidence bytes
+pnpm release:stage                       # ONE staging command: reuse/dispatch CI (publish=false), download
+                                         # to dist/release-stage-<short-commit>/ + SUMMARY.md (hashes, VT/Microsoft
+                                         # status, WDSI paste block) — `-- --ref=<sha>` stages that exact commit
 pnpm release:verify                      # re-derive the post-publish facts (assets/gh-pages/tag/AV)
 pnpm fetch:release                       # manual-test download: gh-pages default, --dev <branch>, --run <id>
 ```

@@ -1093,18 +1093,52 @@ What a run publishes (the hash comparison itself is [status-logic.md](./status-l
 A release walks the same steps every time (stage CI bytes → WDSI → publish → verify); the state
 memory is the per-release runbook (`.local/release/runbook-<date>.md`, archived to
 `.local/release/history/` afterwards): a checkbox list whose items ARE the commands. Mechanical
-steps each have exactly one script name — `pnpm release:stage` (CI-built, publish=false bytes for
-the WDSI submission), `pnpm fetch:release` (download the manual-test set: gh-pages by default,
-`-- --dev <branch>` for a dev-build branch, `-- --run <id>` for a staging run),
-`pnpm release:verify` (re-derives the post-publish facts from GitHub, so a stale checkbox cannot
-mislead). Human gates — filing the WDSI form, the explicit publish go — stay MANUAL items in the
-checklist by design.
+steps each have exactly one script name — `pnpm release:stage` (the ONE local staging command:
+reuse-or-dispatch the CI staging run, wait, download, write the evidence folder — below),
+`pnpm fetch:release` (download the manual-test set: gh-pages by default, `-- --dev <branch>` for a
+dev-build branch, `-- --run <id>` for a staging run), `pnpm release:verify` (re-derives the
+post-publish facts from GitHub, so a stale checkbox cannot mislead). Human gates — filing the WDSI
+form, the explicit publish go — stay MANUAL items in the checklist by design.
+
+### The staging command: `pnpm release:stage`
+
+One local command produces everything the WDSI/AV handoff needs. Per step:
+
+1. **Resolve the release commit** — `origin/main`'s tip after a fetch (`--ref=<branch|tag|sha>` to
+   override). Without `--ref`, the local checkout must BE that commit (pull first, or pass `--ref`),
+   so the folder always matches what the operator has checked out.
+2. **Reuse-or-dispatch** — find the newest _successful_ build-and-upload run (publish=false) whose
+   head commit is exactly that commit; dispatch one only when none exists. Interrupting the command
+   is safe: re-running resumes (the run now exists, nothing re-dispatches). The run bytes are
+   head-sha-verified before download — a moved branch tip cannot leak in.
+3. **Wait** — `gh run watch` streams progress; the determinism job makes the run ~3 min.
+4. **Save** — the full `staged-<os>` artifact of THIS machine's OS (`--os=win32|darwin|linux` to
+   override) lands in `dist/release-stage-<short-commit>/artifact/`, keeping the artifact's own
+   layout (`installer/`, `scripts/`, manifest). The folder name carries the commit; the run id lives
+   in SUMMARY.md inside it. Re-staging the same commit refreshes the same folder; a WDSI submission
+   record already pasted into SUMMARY.md survives the refresh.
+5. **SUMMARY.md** — the single evidence artifact: commit, run id + Actions URL, per-file
+   sha256/size, VT/Microsoft status, the WDSI portal + paste block, and Next steps.
+6. **AV status** — queried locally by `tools/publish/stageFlow.mjs` via the VirusTotal API with
+   `VT_API_KEY` from `.env` (CI never scans — runner AV is passive/degraded). Hash LOOKUP first
+   (seconds, no upload); the full upload runs only when VT has never seen the bytes — that "never
+   seen" fact is the do-I-need-a-fresh-WDSI-filing signal. VT trouble never fails the command; the
+   summary reports it as `unknown`.
+
+Per-OS notes: Windows is the WDSI-relevant OS (the Microsoft ML flag is a Windows binary) — the
+summary's Microsoft column and the filing workflow apply to `installer_win.exe`/`helper_win.exe`.
+macOS/Linux operators get the same folder scheme from `staged-mac`/`staged-linux`; the local engine
+double-check there is ClamAV (`scan:av`) where installed, and no WDSI filing is needed. Filing the
+WDSI form itself stays manual by design — the summary carries the paste block and the submission-id
+slot.
 
 ### Run
 
 ```bash
 pnpm publish:all                         # prod publish: dispatch the CI cross-OS matrix (gh)
-pnpm release:stage -- --ref=<branch>     # STAGE-ONLY: build-and-upload.yml publish=false (WDSI bytes)
+pnpm release:stage                       # ONE staging command: commit → reuse/dispatch CI → download
+                                         # → dist/release-stage-<short-commit>/ + SUMMARY.md (hashes,
+                                         # VT/Microsoft status, WDSI paste block; --ref, --os override)
 pnpm release:verify                      # re-derive the post-publish facts (assets/gh-pages/tag/AV)
 pnpm fetch:release                       # manual-test set from gh-pages (or --dev <branch> / --run <id>)
 pnpm publish:dev                         # dev upload: always rebuild + publish the dev-build-<id> branch (branch-only)
@@ -1126,15 +1160,16 @@ build its source), then removes the worktree. The snapshot directory, dev-build 
 are named after the ref. Useful for building an older commit for testing while keeping local work in
 place.
 
-The CI dispatchers (`release:stage`, the `publish:*` aliases) have a different `--ref`: it names the
-branch or tag whose workflow run to trigger (`gh workflow run --ref`). GitHub's workflow-dispatches
-API accepts only branch/tag names — a commit SHA is rejected with "HTTP 422: No ref found" — so a
-SHA-shaped `--ref` selects, in order, an `origin` branch whose tip is that commit, a tag whose
-target is that commit, or another `origin` branch containing it; the first candidate is dispatched
-and the workflow builds that ref's target commit (a containing branch or descendant-tag builds a
-DIFFERENT commit — the notice says so). Dispatch fails loudly when no candidate exists, and hex-word
-names that exist as tags/remote branches are dispatched as NAMES, never read as hashes — see
-`resolveDispatchRef` in `tools/publish/release.mjs`.
+The CI publish dispatchers (the `publish:*` aliases) have a `--ref` that names the branch or tag
+whose workflow run to trigger (`gh workflow run --ref`). GitHub's workflow-dispatches API accepts
+only branch/tag names — a commit SHA is rejected with "HTTP 422: No ref found" — so a SHA-shaped
+`--ref` selects, in order, an `origin` branch whose tip is that commit, a tag whose target is that
+commit, or another `origin` branch containing it; the first candidate is dispatched and the workflow
+builds that ref's target commit (a containing branch or descendant-tag builds a DIFFERENT commit —
+the notice says so). Dispatch fails loudly when no candidate exists, and hex-word names that exist
+as tags/remote branches are dispatched as NAMES, never read as hashes — see `resolveDispatchRef` in
+`tools/publish/release.mjs`. (`release:stage` takes the raw SHA itself: it stages that exact commit
+and head-sha-verifies the run, so it does not need the branch-name resolution.)
 
 The unified flow (one upload.mjs run):
 
