@@ -129,7 +129,7 @@ export const DOWNLOADS = {
   // store (`snap install firefox --classic` needs no extra flags on the
   // runners' Ubuntu image; sudo is available on hosted runners). GreD of the
   // snap build is DISCOVERED at runtime by the E2E (findGreDir + a
-  // /etc/firefox probe in the workflow), reconciling docs/future-work §2.1.
+  // /etc/firefox probe in the workflow).
   // Note: Firefox Dev Edition has no snap channel, so this covers stable only.
   'firefox-snap': {
     install: {
