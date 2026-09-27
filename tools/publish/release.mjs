@@ -10,8 +10,10 @@
 //   pnpm publish:packages              # zips + updater-ui only (--include=packages)
 //   pnpm publish:installer             # installer + helper only (--include=installer)
 //   pnpm publish:dev                   # dev-build-<id> branch instead (--mode=dev)
-//   pnpm release:stage -- --ref=<sha>  # STAGE-ONLY: build-and-upload.yml publish=false —
-//                                      # CI-built bytes for the WDSI submission, publishes nothing
+//   pnpm release:stage -- --ref=<branch>  # STAGE-ONLY: build-and-upload.yml publish=false —
+//                                         # CI-built bytes for the WDSI submission, publishes nothing
+//                                      # (--ref accepts branch/tag; a commit SHA resolves to the
+//                                      # branch containing it — the dispatch API takes no SHAs)
 //   pnpm publish -- --include=installer,helper   # any ADR 0030 role list
 //   pnpm publish -- --include=all --ref=<branch> # dispatch another branch's workflow
 //   pnpm publish -- --include=all --force        # rebuild + re-upload even when unchanged
@@ -31,8 +33,123 @@
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {INCLUDE_ROLES} from './publishScope.mjs';
+// Canonical scrub of the ambient git overlays (GIT_DIR/GIT_INDEX_FILE/…): git
+// exports them into hooks, and under the pre-push hook they point at the
+// checkout being pushed — an unscrubbed query from a linked worktree would
+// read the wrong repository (proven 2026-09-27: a worktree push's GIT_DIR
+// redirected test-repo git calls at the shared checkout's ref store).
+import {gitEnv} from './generateBuildDates.mjs';
 
 const WORKFLOW = 'pages.yml';
+
+/**
+ * The workflow-dispatches API (`gh workflow run --ref`) dispatches only refs
+ * that exist ON GITHUB — branch or tag names. A commit SHA is rejected with
+ * "HTTP 422: No ref found" (how `release:stage -- --ref=<sha>` failed on
+ * 2026-09-27, run 36298110515's dispatch, short and full SHA), and so is a
+ * LOCAL-ONLY branch: the endpoint looks at the remote repository, not this
+ * checkout (proven the same day — a local feature branch 422'd exactly like the
+ * SHA). Resolve a SHA to a remote-tracked branch or tag containing it:
+ *
+ * 1. `git fetch --quiet` first — a freshly merged main commit is unknown to the
+ *    local remote-tracking refs until then, and the refs are what the
+ *    resolution reads. A failed fetch (offline) only warns.
+ * 2. Candidates: remote-tracked branches whose TIP contains the commit (`git
+ *    branch -r --contains`) and tags containing it (`git tag --contains`). A
+ *    branch that does not contain the commit is never dispatched for it;
+ *    `origin/HEAD` (a symref alias, not a name) is skipped; `<remote>/x` maps
+ *    to the plain `x` the API expects.
+ * 3. Preference: a branch whose remote tip IS the commit (exact identity — the
+ *    fresh-merge case: `origin/main` at the just-merged sha), then tags (also
+ *    exact), then any containing branch — for those the run builds the branch
+ *    TIP, not the requested commit, and the notice says so.
+ *
+ * Non-SHA refs (branch/tag names) pass through untouched: gh already dispatches
+ * them and errors loudly for unknown ones.
+ *
+ * @param {string} ref the --ref value (SHA, branch or tag)
+ * @param {string} [cwd] where git runs (tests pass a throwaway repo)
+ * @returns {string} a branch/tag name gh can dispatch
+ * @throws when the SHA resolves to no commit or no remote-tracked ref contains
+ *   it
+ */
+export function resolveDispatchRef(ref, cwd = process.cwd()) {
+  // Not SHA-shaped (6-40 hex) — pass branches/tags through untouched.
+  if (!/^[0-9a-f]{6,40}$/i.test(ref)) {
+    return ref;
+  }
+  const env = gitEnv();
+  const git = (args, okEmpty = false) => {
+    const res = spawnSync('git', args, {cwd, encoding: 'utf8', env});
+    const out = (res.stdout || '').trim();
+    if (res.status !== 0 || (!okEmpty && out === '')) return '';
+    return out;
+  };
+  // Disambiguate the SHA to a full commit id; empty/failed → not a commit here.
+  const sha = git(['rev-parse', '--quiet', '--verify', `${ref}^{commit}`]);
+  if (!sha) {
+    throw new Error(
+      `--ref '${ref}' looks like a commit SHA but git cannot resolve it in this ` +
+        'repository (unknown or garbage-collected commit). Pass a branch or tag name.'
+    );
+  }
+  const short = sha.slice(0, 12);
+  // A freshly merged commit is invisible to the remote-tracking refs until a
+  // fetch brings it; the resolution below reads exactly those refs.
+  const fetched = spawnSync('git', ['fetch', '--quiet'], {cwd, encoding: 'utf8', env});
+  if (fetched.status !== 0) {
+    console.error(
+      'release: WARNING — git fetch failed; resolving against possibly stale remote-tracking refs.'
+    );
+  }
+  // Remote-tracked branches whose TIP contains the commit — tracked as
+  // {full remote ref, plain branch name}. `<remote>/x` maps to plain `x`:
+  // the dispatch goes to the GitHub repo, where the branch exists without
+  // the remote prefix (and '<remote>/x' itself would 422 like a SHA would).
+  const branches = [];
+  for (const line of git(['branch', '-r', '--format=%(refname)', '--contains', sha], true).split(
+    '\n'
+  )) {
+    const full = line.trim();
+    if (!full.startsWith('refs/remotes/') || full.endsWith('/HEAD')) continue;
+    const plain = full.replace(/^refs\/remotes\/[^/]+\//, '');
+    if (plain) branches.push({full, plain});
+  }
+  // Tags containing the commit — dispatchable AND commit-exact.
+  const tags = git(['tag', '--contains', sha], true)
+    .split('\n')
+    .map(name => name.trim())
+    .filter(Boolean);
+  // Branches whose remote tip IS the commit: exact identity, the fresh-merge
+  // case. Everything else builds the branch tip, never the commit itself.
+  const tipExact = branches
+    .filter(({full}) => git(['rev-parse', '--quiet', '--verify', full]) === sha)
+    .map(({plain}) => plain);
+  const rest = branches
+    .filter(({full}) => git(['rev-parse', '--quiet', '--verify', full]) !== sha)
+    .map(({plain}) => plain);
+  const candidates = [...new Set([...tipExact, ...tags, ...rest])];
+  if (candidates.length === 0) {
+    throw new Error(
+      `--ref '${ref}' (${short}) resolves to a commit that no remote-tracked branch or tag ` +
+        'contains. The workflow-dispatches API dispatches only refs that exist on GitHub ' +
+        '(branch/tag names — never SHAs, never local-only branches). Options: dispatch a ' +
+        'remote branch that contains the commit (e.g. --ref=main), push a branch at it, or ' +
+        'tag it.'
+    );
+  }
+  const exact = tipExact.includes(candidates[0]) || tags.includes(candidates[0]);
+  const caveat =
+    exact ? '' : (
+      ` — the run builds the branch TIP, not ${short} itself (must be an ancestor or the tip)`
+    );
+  const order = candidates.length > 1 ? ` (containing: ${candidates.join(', ')})` : '';
+  console.error(
+    `release: --ref '${ref}' is a commit SHA; dispatching '${candidates[0]}' instead` +
+      `${order}${caveat}.`
+  );
+  return candidates[0];
+}
 
 /**
  * gh argv for the dispatch (exported for the unit tests).
@@ -123,7 +240,7 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
       }
     } else if (a.startsWith('--ref=')) {
       opts.ref = a.slice('--ref='.length).trim();
-      if (!opts.ref) throw new Error('--ref= needs a branch or tag');
+      if (!opts.ref) throw new Error('--ref= needs a branch, tag or commit SHA');
     } else if (a === '-f') {
       const pair = argv[++i];
       if (!pair || !pair.includes('=')) throw new Error('-f needs a key=value pair');
@@ -156,6 +273,17 @@ export function main() {
     console.error(String(e.message));
     process.exitCode = 1;
     return;
+  }
+  // The dispatch API accepts only branch/tag refs — resolve a SHA --ref to a
+  // containing branch before dispatching (loud failure when it cannot be).
+  if (opts.ref) {
+    try {
+      opts.ref = resolveDispatchRef(opts.ref);
+    } catch (e) {
+      console.error(`Dispatch failed: ${e.message}`);
+      process.exitCode = 1;
+      return;
+    }
   }
   const res = spawnSync('gh', buildDispatchArgs(opts), {encoding: 'utf8'});
   if (res.error || res.status !== 0) {
