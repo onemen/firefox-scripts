@@ -12,8 +12,9 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {execSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 process.argv.push('--mode=prod'); // paths.js/publishMode.mjs are argv-coupled
 
@@ -103,11 +104,37 @@ test('the date pathspecs resolve to tracked files under git (git-visible, hash-v
   // must exist and be git-visible (tracked or — for roots — expanding to
   // tracked files). A renamed folder would otherwise silently drop inputs
   // from the date while the hash still saw them through a stale glob.
+  //
+  // The git query runs argv-array with an scrubbed env: git exports
+  // GIT_DIR/GIT_INDEX_FILE into hooks, and under the pre-push hook those
+  // point at the checkout being PUSHED — from a linked worktree the
+  // unscrubbed query would read the wrong repo's index and see nothing.
+  // (Exactly the redirection buildEpoch.test.mjs guards against; this file
+  // itself once failed the push of a worktree PR, 2026-09-27.)
+  const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+  const env = {...process.env};
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_PREFIX',
+    'GIT_COMMON_DIR',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  ]) {
+    delete env[key];
+  }
   const {installer, helper} = datePathspecs();
   for (const p of [...installer, ...helper]) {
     if (p.includes('exclude')) continue;
-    const rel = toPosixSafe(path.relative(process.cwd(), p));
-    const tracked = execSync(`git ls-files -- "${rel}"`, {encoding: 'utf-8'}).trim();
+    const rel = toPosixSafe(path.relative(REPO_ROOT, p));
+    const res = spawnSync('git', ['ls-files', '--', rel], {
+      cwd: REPO_ROOT,
+      encoding: 'utf-8',
+      env,
+    });
+    const tracked = (res.stdout || '').trim();
+    assert.ok(res.status === 0, `git ls-files failed for ${rel}`);
     assert.ok(tracked.length > 0, `${rel} resolves to no tracked files`);
   }
 });

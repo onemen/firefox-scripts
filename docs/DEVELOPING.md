@@ -1104,7 +1104,7 @@ checklist by design.
 
 ```bash
 pnpm publish:all                         # prod publish: dispatch the CI cross-OS matrix (gh)
-pnpm release:stage -- --ref=<sha>        # STAGE-ONLY: build-and-upload.yml publish=false (WDSI bytes)
+pnpm release:stage -- --ref=<branch>     # STAGE-ONLY: build-and-upload.yml publish=false (WDSI bytes)
 pnpm release:verify                      # re-derive the post-publish facts (assets/gh-pages/tag/AV)
 pnpm fetch:release                       # manual-test set from gh-pages (or --dev <branch> / --run <id>)
 pnpm publish:dev                         # dev upload: always rebuild + publish the dev-build-<id> branch (branch-only)
@@ -1119,11 +1119,22 @@ pnpm snapshot:dev                        # dev snapshot (-dev artifact names), n
 A real `node tools/publish/upload.mjs --mode=prod` is CI's command, not a local one — from a dev
 machine it aborts before building (see the guard note under the reference above).
 
-Both commands accept `--ref=<branch|commit>` to build a specific branch or commit without touching
-the current checkout: the tool creates a temporary detached worktree at that ref, re-runs the same
-upload command inside it (so the ref's own publish scripts build its source), then removes the
-worktree. The snapshot directory, dev-build branch and release are named after the ref. Useful for
-building an older commit for testing while keeping local work in place.
+`publish:dev` and any other local upload.mjs run accept `--ref=<branch|commit>` to build a specific
+branch or commit without touching the current checkout: the tool creates a temporary detached
+worktree at that ref, re-runs the same upload command inside it (so the ref's own publish scripts
+build its source), then removes the worktree. The snapshot directory, dev-build branch and release
+are named after the ref. Useful for building an older commit for testing while keeping local work in
+place.
+
+The CI dispatchers (`release:stage`, the `publish:*` aliases) have a different `--ref`: it names the
+branch or tag whose workflow run to trigger (`gh workflow run --ref`). GitHub's workflow-dispatches
+API accepts only branch/tag names — a commit SHA is rejected with "HTTP 422: No ref found" — so a
+SHA-shaped `--ref` selects, in order, an `origin` branch whose tip is that commit, a tag whose
+target is that commit, or another `origin` branch containing it; the first candidate is dispatched
+and the workflow builds that ref's target commit (a containing branch or descendant-tag builds a
+DIFFERENT commit — the notice says so). Dispatch fails loudly when no candidate exists, and hex-word
+names that exist as tags/remote branches are dispatched as NAMES, never read as hashes — see
+`resolveDispatchRef` in `tools/publish/release.mjs`.
 
 The unified flow (one upload.mjs run):
 

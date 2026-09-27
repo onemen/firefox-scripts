@@ -67,7 +67,7 @@ test('parseReleaseArgs: --ref and -f key=value passthrough', () => {
   assert.deepEqual(opts.passthrough, ['-f', 'publish=true', '-f', 'color=blue']);
   assert.throws(
     () => parseReleaseArgs(['--include=all', '--ref=']),
-    /--ref= needs a branch or tag/
+    /--ref= needs a branch, tag or commit SHA/
   );
   assert.throws(() => parseReleaseArgs(['--include=all', '-f']), /-f needs a key=value pair/);
   assert.throws(
