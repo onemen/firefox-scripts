@@ -25,6 +25,11 @@
  * (generated STABLE_* URLs) and auto-migrates; see fetchOwnManifestOrFallback()
  * below. --local snapshots keep the silent exit.
  *
+ * The schedulable entry points are exported (checkForUpdates, the URL getters,
+ * checkScriptsUpdateNeeded, ensureUpdaterUi, the zip/hash helpers) so the tab
+ * engine and the E2E driver (#309) can call them directly; nothing about the
+ * production flow depends on the exports.
+ *
  * Notification = a new tab, shown at most once per day. A single daily pref
  * gates every check (extensions.firefox-scripts.lastScriptsCheckDate): it is
  * written by the scheduler when a check ran and found everything up to date,
@@ -312,8 +317,17 @@ function todayStr() {
  * done": a pending update that is ignored resurfaces tomorrow, and the only
  * ways to stop the tab are to install, or check "Don't show again for this
  * update" (per-package skippedHash prefs).
+ *
+ * EXPORTED for the updater E2E's driver mode (#309): a privileged page can call
+ * it on demand — repeatedly, within one browser — after flipping the inputs the
+ * check reads (marker files on disk, override prefs, skip prefs), which is how
+ * the variant matrix is covered without a relaunch per variant. The daily pref
+ * still gates it, so a driver that wants a fresh decision clears it first (it
+ * is an ordinary user pref, writable in-page). Requires initScriptsUpdater() to
+ * have run (gWindow is the tab target): a check with no live window returns
+ * without doing anything.
  */
-async function checkForUpdates() {
+export async function checkForUpdates() {
   // The early gate only needs A live window for the fetch phase; the tab-open
   // step below re-reads gWindow (window churn mid-check must not attach the
   // tab to a captured, possibly-closed window — review on #310).
