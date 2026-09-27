@@ -1127,11 +1127,14 @@ are named after the ref. Useful for building an older commit for testing while k
 place.
 
 The CI dispatchers (`release:stage`, the `publish:*` aliases) have a different `--ref`: it names the
-branch or tag whose workflow run to trigger (`gh workflow run --ref`). GitHub's workflow- dispatches
+branch or tag whose workflow run to trigger (`gh workflow run --ref`). GitHub's workflow-dispatches
 API accepts only branch/tag names — a commit SHA is rejected with "HTTP 422: No ref found" — so a
-SHA-shaped `--ref` resolves to a branch containing that commit (the checked-out branch preferred;
-loud failure when none does — `resolveDispatchRef` in `tools/publish/release.mjs`). The dispatched
-run then builds that branch's TIP, not the SHA itself.
+SHA-shaped `--ref` selects, in order, an `origin` branch whose tip is that commit, a tag whose
+target is that commit, or another `origin` branch containing it; the first candidate is dispatched
+and the workflow builds that ref's target commit (a containing branch or descendant-tag builds a
+DIFFERENT commit — the notice says so). Dispatch fails loudly when no candidate exists, and hex-word
+names that exist as tags/remote branches are dispatched as NAMES, never read as hashes — see
+`resolveDispatchRef` in `tools/publish/release.mjs`.
 
 The unified flow (one upload.mjs run):
 

@@ -54,15 +54,24 @@ const WORKFLOW = 'pages.yml';
  * 1. `git fetch --quiet` first — a freshly merged main commit is unknown to the
  *    local remote-tracking refs until then, and the refs are what the
  *    resolution reads. A failed fetch (offline) only warns.
- * 2. Candidates: remote-tracked branches whose TIP contains the commit (`git
- *    branch -r --contains`) and tags containing it (`git tag --contains`). A
- *    branch that does not contain the commit is never dispatched for it;
- *    `origin/HEAD` (a symref alias, not a name) is skipped; `<remote>/x` maps
- *    to the plain `x` the API expects.
- * 3. Preference: a branch whose remote tip IS the commit (exact identity — the
- *    fresh-merge case: `origin/main` at the just-merged sha), then tags (also
- *    exact), then any containing branch — for those the run builds the branch
- *    TIP, not the requested commit, and the notice says so.
+ * 2. A hex-WORD that names an existing TAG or remote-tracked branch is a NAME, not
+ *    a SHA — it passes through (named refs win over hash interpretation). A
+ *    hex-WORD naming only a LOCAL branch fails with the local-only error: the
+ *    dispatch API cannot see it.
+ * 3. Candidates: remote-tracked branches ON `origin` — the repository these
+ *    dispatches target — whose TIP contains the commit (`git branch -r
+ *    --contains`) and tags containing it (`git tag --contains`). Candidates
+ *    from other remotes are ignored: their names belong to a different
+ *    repository on GitHub, and dispatching one here could build a branch of the
+ *    wrong repo (CodeRabbit review of this very fix). `origin/HEAD` (a symref
+ *    alias, not a name) is skipped; `<remote>/x` maps to the plain `x` the API
+ *    expects.
+ * 4. Preference: an `origin` branch whose remote tip IS the commit (exact identity
+ *    — the fresh-merge case: `origin/main` at the just-merged sha), then a tag
+ *    whose target is the commit, then any containing branch — for those the run
+ *    builds that ref's target commit, not the requested one, and the notice
+ *    says so (exactness is DECIDED, not assumed: the selected ref's commit is
+ *    resolved and compared).
  *
  * Non-SHA refs (branch/tag names) pass through untouched: gh already dispatches
  * them and errors loudly for unknown ones.
@@ -85,6 +94,26 @@ export function resolveDispatchRef(ref, cwd = process.cwd()) {
     if (res.status !== 0 || (!okEmpty && out === '')) return '';
     return out;
   };
+  // Named dispatchable refs win over SHA interpretation: a hex-WORD branch or
+  // tag name ('deadbeef') must reach gh as the NAME, never be read as a hash.
+  // Only tag/remote-tracked names pass — the set the dispatch API can see.
+  const namedDispatchable = git(
+    ['for-each-ref', '--format=%(refname)', `refs/tags/${ref}`, `refs/remotes/*/${ref}`],
+    true
+  );
+  if (namedDispatchable) {
+    return ref;
+  }
+  // A hex-WORD naming only a LOCAL branch would 422 like a SHA (the API
+  // dispatches only refs that exist on GitHub) — say so instead of silently
+  // resolving the name as if it were a hash of some other commit.
+  if (git(['for-each-ref', '--format=%(refname)', `refs/heads/${ref}`], true)) {
+    throw new Error(
+      `--ref '${ref}' names a local-only branch (no remote-tracking twin). The dispatch ` +
+        'API only sees refs that exist on GitHub — push the branch first, or dispatch the ' +
+        'remote branch or tag that contains that commit.'
+    );
+  }
   // Disambiguate the SHA to a full commit id; empty/failed → not a commit here.
   const sha = git(['rev-parse', '--quiet', '--verify', `${ref}^{commit}`]);
   if (!sha) {
@@ -102,18 +131,25 @@ export function resolveDispatchRef(ref, cwd = process.cwd()) {
       'release: WARNING — git fetch failed; resolving against possibly stale remote-tracking refs.'
     );
   }
-  // Remote-tracked branches whose TIP contains the commit — tracked as
-  // {full remote ref, plain branch name}. `<remote>/x` maps to plain `x`:
-  // the dispatch goes to the GitHub repo, where the branch exists without
-  // the remote prefix (and '<remote>/x' itself would 422 like a SHA would).
+  // Remote-tracked branches on ORIGIN whose TIP contains the commit — origin
+  // is the repository the dispatch targets, so candidates from other remotes
+  // ('upstream', a fork) must not leak in: their plain names belong to a
+  // different GitHub repo, and dispatching one here could build a branch of
+  // the wrong repo. `<remote>/x` maps to plain `x` (the API's spelling);
+  // `*/HEAD` symref aliases are not names.
   const branches = [];
   for (const line of git(['branch', '-r', '--format=%(refname)', '--contains', sha], true).split(
     '\n'
   )) {
     const full = line.trim();
-    if (!full.startsWith('refs/remotes/') || full.endsWith('/HEAD')) continue;
-    const plain = full.replace(/^refs\/remotes\/[^/]+\//, '');
-    if (plain) branches.push({full, plain});
+    if (!full.startsWith('refs/remotes/')) continue;
+    const withoutPrefix = full.slice('refs/remotes/'.length);
+    const slash = withoutPrefix.indexOf('/');
+    if (slash <= 0) continue;
+    const remote = withoutPrefix.slice(0, slash);
+    const plain = withoutPrefix.slice(slash + 1);
+    if (remote !== 'origin' || !plain || plain === 'HEAD') continue;
+    branches.push({full, plain});
   }
   // Tags containing the commit — dispatchable AND commit-exact.
   const tags = git(['tag', '--contains', sha], true)
@@ -132,17 +168,23 @@ export function resolveDispatchRef(ref, cwd = process.cwd()) {
   if (candidates.length === 0) {
     throw new Error(
       `--ref '${ref}' (${short}) resolves to a commit that no remote-tracked branch or tag ` +
-        'contains. The workflow-dispatches API dispatches only refs that exist on GitHub ' +
-        '(branch/tag names — never SHAs, never local-only branches). Options: dispatch a ' +
-        'remote branch that contains the commit (e.g. --ref=main), push a branch at it, or ' +
-        'tag it.'
+        `on 'origin' contains. The workflow-dispatches API dispatches only refs that exist ` +
+        'on GitHub (branch/tag names — never SHAs, never local-only branches). Options: ' +
+        'dispatch a remote branch that contains the commit (e.g. --ref=main), push a branch ' +
+        'at it, or tag it.'
     );
   }
-  const exact = tipExact.includes(candidates[0]) || tags.includes(candidates[0]);
-  const caveat =
-    exact ? '' : (
-      ` — the run builds the branch TIP, not ${short} itself (must be an ancestor or the tip)`
-    );
+  // Exactness is DECIDED, not assumed: `git tag --contains` also lists tags
+  // whose target is a DESCENDANT of the commit, and a non-exact branch builds
+  // its tip — resolve the selected ref's actual commit and compare.
+  const selected = candidates[0];
+  const selectedFull = branches.find(({plain}) => plain === selected)?.full;
+  const selectedTip =
+    tags.includes(selected) ? git(['rev-parse', '--quiet', '--verify', `${selected}^{commit}`])
+    : selectedFull ? git(['rev-parse', '--quiet', '--verify', selectedFull])
+    : '';
+  const exact = selectedTip === sha;
+  const caveat = exact ? '' : ` — the run builds that ref's target commit, not ${short} itself`;
   const order = candidates.length > 1 ? ` (containing: ${candidates.join(', ')})` : '';
   console.error(
     `release: --ref '${ref}' is a commit SHA; dispatching '${candidates[0]}' instead` +

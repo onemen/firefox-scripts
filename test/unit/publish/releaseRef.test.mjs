@@ -102,6 +102,30 @@ test('a hex-WORD ref name (facade) passes through instead of being read as a SHA
   assert.equal(resolveDispatchRef('facade', repo), 'facade');
 });
 
+test('a hex-WORD tag name passes through instead of being read as a SHA', () => {
+  const repo = tempRepo();
+  const sha = commitOn(repo, 'main', 't.txt', 't\n');
+  git(['tag', 'deadc0de', sha], repo); // 7 hex chars, tag only
+  assert.equal(resolveDispatchRef('deadc0de', repo), 'deadc0de');
+});
+
+test('a hex-WORD naming only a LOCAL branch is the local-only error, never SHA-guessed', () => {
+  // CodeRabbit (PR #337 review): a locally-resolvable hex name could otherwise
+  // be read as a hash of some OTHER commit and dispatch a different ref.
+  const repo = tempRepo();
+  commitOn(repo, 'deadbeef', 'd.txt', 'd\n'); // local branch, no remote twin
+  git(['checkout', '-q', 'main'], repo);
+  assert.throws(() => resolveDispatchRef('deadbeef', repo), /names a local-only branch/);
+});
+
+test('a hex-WORD that names no ref at all takes the SHA path (unresolvable → loud error)', () => {
+  const repo = tempRepo();
+  assert.throws(
+    () => resolveDispatchRef('dead00beef', repo),
+    /cannot resolve it in this repository/
+  );
+});
+
 test('a SHA whose remote branch tip IS the commit resolves to that branch (fresh merge)', () => {
   const repo = tempRepo();
   const sha = commitOn(repo, 'main', 'two.txt', 'two\n');
@@ -121,6 +145,18 @@ test('a SHA tracked only on a remote feature branch resolves to the plain branch
 test('a LOCAL-ONLY branch never satisfies the resolution (it would 422 exactly like a SHA)', () => {
   const repo = tempRepo();
   const sha = commitOn(repo, 'solo', 's.txt', 's\n'); // local branch, no remote-tracking twin
+  git(['checkout', '-q', 'main'], repo);
+  assert.throws(() => resolveDispatchRef(sha, repo), /no remote-tracked branch or tag/);
+});
+
+test('candidates come from origin ONLY — another remote never leaks into the dispatch', () => {
+  // CodeRabbit (PR #337 review): buildDispatchArgs runs gh without --repo, so
+  // the dispatch targets the origin repo; a candidate found only on another
+  // remote ('upstream') has a plain name that belongs to a DIFFERENT GitHub
+  // repo — dispatching it here could build the wrong repository's branch.
+  const repo = tempRepo();
+  const sha = commitOn(repo, 'feature', 'feat.txt', 'feat\n');
+  git(['update-ref', 'refs/remotes/upstream/feature', sha], repo);
   git(['checkout', '-q', 'main'], repo);
   assert.throws(() => resolveDispatchRef(sha, repo), /no remote-tracked branch or tag/);
 });
@@ -159,6 +195,27 @@ test('a tag containing the commit is a valid (commit-exact) resolution', () => {
   assert.equal(resolveDispatchRef(sha, repo), 'v1.2.3');
 });
 
+test('a tag on a DESCENDANT commit is non-exact: caveat is printed, never silent', () => {
+  // CodeRabbit (PR #337 review): `git tag --contains` also lists tags whose
+  // target is a descendant — such a tag must not be reported as exact.
+  const repo = tempRepo();
+  const sha = commitOn(repo, 'main', 'one.txt', 'one\n');
+  const descendant = commitOn(repo, 'main', 'two.txt', 'two\n');
+  git(['tag', 'later-tag', descendant], repo); // contains sha, but points PAST it
+  const notices = [];
+  const originalError = console.error;
+  console.error = message => notices.push(String(message));
+  try {
+    assert.equal(resolveDispatchRef(sha.slice(0, 8), repo), 'later-tag');
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(
+    notices.some(message => message.includes("that ref's target commit, not")),
+    `expected the non-exact caveat in the notice, got: ${JSON.stringify(notices)}`
+  );
+});
+
 test('a SHA no remote-tracked ref contains fails LOUDLY with the options', () => {
   const repo = tempRepo();
   const sha = commitOn(repo, 'orphanline', 'o.txt', 'o\n');
@@ -183,7 +240,6 @@ test('a failed fetch only warns — resolution still runs on the local remote-tr
   trackRemote(repo, 'main', sha);
   assert.equal(resolveDispatchRef(sha, repo), 'main');
 });
-
 test('helpers stay isolated when the ambient git overlays are hostile', () => {
   // The self-check buildEpoch.test.mjs uses: with the hook's overlays exported,
   // the throwaway repo must still be a throwaway — its commits must land in
