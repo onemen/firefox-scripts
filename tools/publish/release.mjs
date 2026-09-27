@@ -14,6 +14,12 @@
 //                                         # CI-built bytes for the WDSI submission, publishes nothing
 //                                      # (--ref accepts branch/tag; a commit SHA resolves to the
 //                                      # branch containing it — the dispatch API takes no SHAs)
+//   pnpm release:stage -- --save-branch   # no dispatch — save the FILED prod installer onto a
+//                                         # disposable orphan branch for the pre-release download
+//                                         # test (gh-pages untouched): auto-picks the newest
+//                                         # successful staging run for the intended commit, or
+//                                         # --run=<id>; --expect=<sha256> overrides the filed-hash
+//                                         # default; --save-branch=<name> names the branch
 //   pnpm publish -- --include=installer,helper   # any ADR 0030 role list
 //   pnpm publish -- --include=all --ref=<branch> # dispatch another branch's workflow
 //   pnpm publish -- --include=all --force        # rebuild + re-upload even when unchanged
@@ -25,7 +31,9 @@
 // The wrapper owns --force/--mode/--include/--ref (it maps them to the
 // workflow inputs / gh flags); any other `-f key=value` is passed through to
 // gh verbatim — through spawnSync's argv array, never a shell, so nothing is
-// interpolated. No watch mode, no output parsing — follow the run in the
+// interpolated. The stage-only --save-branch/--run/--expect flags route to
+// stageInstaller.mjs (the gated orphan-branch save) and never dispatch.
+// No watch mode, no output parsing — follow the run in the Actions tab. No watch mode, no output parsing — follow the run in the
 // Actions tab. The workflow's own gates (main-only for prod, E2E-green commit,
 // browser-version drift) are what the guard requires; this alias cannot
 // bypass them, it merely triggers them.
@@ -33,6 +41,7 @@
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {INCLUDE_ROLES} from './publishScope.mjs';
+import {runStageInstaller} from './stageInstaller.mjs';
 // Canonical scrub of the ambient git overlays (GIT_DIR/GIT_INDEX_FILE/…): git
 // exports them into hooks, and under the pre-push hook they point at the
 // checkout being pushed — an unscrubbed query from a linked worktree would
@@ -244,6 +253,14 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
     include: [],
     ref: '',
     stage: false,
+    // --stage --save-branch (tools/publish/stageInstaller.mjs routing): save
+    // the filed prod installer onto a disposable orphan branch instead of
+    // dispatching. --run/--expect/--save-branch=<name> are its knobs.
+    saveBranch: false,
+    saveBranchName: '',
+    run: '',
+    expect: '',
+    push: true,
     passthrough: [],
   };
   for (let i = 0; i < argv.length; i++) {
@@ -251,6 +268,20 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
     if (a === '--') continue;
     if (a === '--stage') {
       opts.stage = true;
+    } else if (a === '--save-branch' || a.startsWith('--save-branch=')) {
+      opts.saveBranch = true;
+      if (a.startsWith('--save-branch=')) {
+        opts.saveBranchName = a.slice('--save-branch='.length).trim();
+      }
+    } else if (a.startsWith('--run=')) {
+      opts.run = a.slice('--run='.length).trim();
+      if (!/^\d+$/.test(opts.run)) throw new Error('--run must be a numeric run id');
+    } else if (a.startsWith('--expect=')) {
+      opts.expect = a.slice('--expect='.length).trim().toLowerCase();
+      if (!opts.expect)
+        throw new Error('--expect= needs a sha256 (omit the flag to use the filed hash default)');
+    } else if (a === '--no-push') {
+      opts.push = false;
     } else if (a === '--force') {
       opts.force = true;
     } else if (a.startsWith('--mode=')) {
@@ -293,15 +324,22 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
       opts.passthrough.push('-f', pair);
     } else {
       throw new Error(
-        `Unknown flag: ${a} (supported: --stage, --force, --mode=prod|dev, --include=<roles>, --ref=<branch>, -f key=value)`
+        `Unknown flag: ${a} (supported: --stage, --save-branch, --run=<id>, --expect=<sha256>, --force, --mode=prod|dev, --include=<roles>, --ref=<branch>, -f key=value)`
       );
     }
   }
-  if (opts.include.length === 0) {
+  if (opts.saveBranch && !opts.stage) {
+    throw new Error('--save-branch is a --stage option: pnpm release:stage -- --save-branch');
+  }
+  if (!opts.saveBranch && (opts.run || opts.expect || !opts.push)) {
+    throw new Error('--run/--expect/--no-push are --save-branch options (stage-installer routing)');
+  }
+  if (opts.include.length === 0 && !opts.saveBranch) {
     throw new Error(
       'Missing --include=<roles> — state what this run publishes ' +
         '(packages|installer|helper, comma-separated, or all).\n' +
-        '  Presets: pnpm publish:all / publish:packages / publish:installer / publish:dev'
+        '  Presets: pnpm publish:all / publish:packages / publish:installer / publish:dev\n' +
+        '  (pnpm release:stage -- --save-branch needs no --include: it saves, it does not publish)'
     );
   }
   return opts;
@@ -314,6 +352,30 @@ export function main() {
   } catch (e) {
     console.error(String(e.message));
     process.exitCode = 1;
+    return;
+  }
+  // --stage --save-branch never dispatches: it saves the already-built staged
+  // bytes (auto-picked run, or --run=<id>) onto the orphan branch. The raw
+  // --ref is the intended commit (SHA or branch name) the save gates on.
+  if (opts.stage && opts.saveBranch) {
+    try {
+      const r = runStageInstaller({
+        run: opts.run,
+        expect: opts.expect,
+        branch: opts.saveBranchName,
+        runRef: opts.ref,
+        push: opts.push,
+        force: opts.force,
+      });
+      if (r.pushed) {
+        console.log(
+          `\nNext: download ${r.url} and hash-verify against ${r.sha} before running the installer.`
+        );
+      }
+    } catch (e) {
+      console.error(`\u2718 save-branch failed: ${e.message}`);
+      process.exitCode = 1;
+    }
     return;
   }
   // The dispatch API accepts only branch/tag refs — resolve a SHA --ref to a
@@ -343,7 +405,8 @@ export function main() {
         '  Nothing is published — the staged bytes land in the staged-<os> artifacts.\n' +
         '  Watch:   gh run list --workflow build-and-upload.yml --limit 1\n' +
         '  Then:    pnpm fetch:release -- --run <run-id>   # download for the manual test\n' +
-        '  And:     pnpm scan:vt <downloaded installer> <downloaded helper>  # WDSI evidence'
+        '  And:     pnpm scan:vt <downloaded installer> <downloaded helper>  # WDSI evidence\n' +
+        '  Later:   pnpm release:stage -- --save-branch   # the filed installer on a test branch'
     );
     return;
   }

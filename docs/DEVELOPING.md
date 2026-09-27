@@ -1105,9 +1105,10 @@ checklist by design.
 ```bash
 pnpm publish:all                         # prod publish: dispatch the CI cross-OS matrix (gh)
 pnpm release:stage -- --ref=<branch>     # STAGE-ONLY: build-and-upload.yml publish=false (WDSI bytes)
-pnpm stage:installer -- --run <id> \     # stage the filed prod installer on a disposable orphan
-  --expect <sha256>                      # branch for the pre-release download test (gh-pages untouched;
-                                         # gated on the run's head + the filed sha256; `--no-push` to preview)
+pnpm release:stage -- --save-branch      # save the FILED prod installer onto a disposable orphan
+                                         # branch for the pre-release download test (gh-pages/release/
+                                         # hashes.json untouched; gated on the filed sha256; auto-picks
+                                         # the run; --run=<id>, --no-push previews, --force re-pushes)
 pnpm release:verify                      # re-derive the post-publish facts (assets/gh-pages/tag/AV)
 pnpm fetch:release                       # manual-test set from gh-pages (or --dev <branch> / --run <id>)
 pnpm publish:dev                         # dev upload: always rebuild + publish the dev-build-<id> branch (branch-only)

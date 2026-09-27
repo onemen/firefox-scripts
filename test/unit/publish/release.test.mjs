@@ -125,6 +125,48 @@ test('buildDispatchArgs: full set maps onto the pages.yml dispatch', () => {
   );
 });
 
+test('release:stage --save-branch routes to the stage-installer save, never dispatches', () => {
+  // The operator decision (2026-09-27): no second pnpm script — the staging
+  // flow keeps ONE front door (release:stage) and the orphan-branch save is a
+  // mode of it. Pin both halves of the routing.
+  const src = readFileSync(new URL('../../../tools/publish/release.mjs', import.meta.url), 'utf8');
+  assert.match(src, /import \{runStageInstaller\} from '\.\/stageInstaller\.mjs'/);
+  assert.match(src, /opts\.stage && opts\.saveBranch/);
+  assert.match(src, /runStageInstaller\(\{[\s\S]*?push: opts\.push/);
+  // --save-branch outside --stage fails loudly; --include is not required for it.
+  assert.throws(
+    () => parseReleaseArgs(['--include=all', '--save-branch']),
+    /--save-branch is a --stage option/
+  );
+  // --run/--expect/--no-push mean nothing outside --save-branch routing.
+  assert.throws(
+    () => parseReleaseArgs(['--stage', '--include=all', '--run=1']),
+    /--run\/--expect\/--no-push are --save-branch options/
+  );
+  // A valid combination: explicit run + branch name + preview.
+  const explicit = parseReleaseArgs([
+    '--stage',
+    '--save-branch=stage-x',
+    '--run=42',
+    '--expect=' + 'a'.repeat(64),
+    '--no-push',
+  ]);
+  assert.equal(explicit.run, '42');
+  assert.equal(explicit.saveBranchName, 'stage-x');
+  assert.equal(explicit.push, false);
+  const opts = parseReleaseArgs(['--stage', '--save-branch']);
+  assert.equal(opts.saveBranch, true);
+  assert.equal(opts.stage, true);
+  assert.equal(opts.saveBranchName, '');
+  assert.equal(parseReleaseArgs(['--stage', '--save-branch=stage-x']).saveBranchName, 'stage-x');
+  assert.equal(parseReleaseArgs(['--stage', '--save-branch', '--run=42']).run, '42');
+  assert.equal(parseReleaseArgs(['--stage', '--save-branch', '--no-push']).push, false);
+  assert.throws(
+    () => parseReleaseArgs(['--stage', '--save-branch', '--expect=']),
+    /--expect= needs a sha256/
+  );
+});
+
 test('the publish: presets pin the documented --include role lists', () => {
   const pkg = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
   assert.equal(pkg.scripts['publish:all'], 'node tools/publish/release.mjs --include=all');

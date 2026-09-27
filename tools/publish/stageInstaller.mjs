@@ -22,12 +22,22 @@
 //
 // Rollback is always one command: git push origin --delete <branch>.
 //
-// Usage:
+// Invoked through the staging front door — tools/publish/release.mjs routes
+// `release:stage -- --save-branch` here, so there is deliberately no second
+// pnpm script (the operator asked for exactly that, 2026-09-27):
+//
+//   pnpm release:stage -- --save-branch                    # auto: newest successful
+//                                                          # staging run for the release commit
+//   pnpm release:stage -- --save-branch --run <id>         # explicit run
+//        [--expect <sha256>] [--save-branch=<name>] [--run-ref <sha>]
+//        [--no-push]     # build and verify locally, print instead of pushing
+//        [--force]       # re-push over an existing staging branch (push --force)
+//
+// and directly for tests / manual use:
+//
 //   node tools/publish/stageInstaller.mjs --run <id> [--expect <sha256>]
 //        [--branch <name>] [--run-ref <sha>] [--binary installer_win.exe]
 //        [--no-push]   # build and verify locally, print instead of pushing
-//
-// pnpm alias: pnpm stage:installer -- --run <id> --expect <sha256>
 
 import {spawnSync} from 'node:child_process';
 import crypto from 'node:crypto';
@@ -40,31 +50,48 @@ import {gitEnv} from './generateBuildDates.mjs';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REPO = 'onemen/firefox-scripts';
 const DEFAULT_EXPECT = '037032aa9b6e87d7dc7ab8e4f600fe3c82a48112098a975acc423c8a91e11c77';
+// GitHub reports the workflow NAME ("Build and upload"), not the file name —
+// match case/separator-insensitively so the yml file and its display name both pass.
+const STAGE_WORKFLOW_RE = /build[-_ ]?and[-_ ]?upload/i;
 
-function parseArgs(argv) {
+/**
+ * Fill defaults and validate a stage-installer option set — shared by the CLI
+ * parser below and by release.mjs's --save-branch routing, so both spellings
+ * run through the same gates. `run` may be empty: runStageInstaller then
+ * auto-resolves the newest successful staging run for the intended commit.
+ *
+ * @param {{
+ *   run?: string;
+ *   expect?: string;
+ *   branch?: string;
+ *   runRef?: string;
+ *   binary?: string;
+ *   push?: boolean;
+ *   force?: boolean;
+ * }} o
+ *   partial options
+ * @returns {{
+ *   run: string;
+ *   expect: string;
+ *   branch: string;
+ *   runRef: string;
+ *   binary: string;
+ *   push: boolean;
+ *   force: boolean;
+ * }}
+ */
+export function normalizeStageOpts(o) {
   const opts = {
-    run: '',
-    expect: DEFAULT_EXPECT,
-    branch: '',
-    runRef: '',
-    binary: 'installer_win.exe',
-    push: true,
+    run: String(o.run || ''),
+    expect: String(o.expect || DEFAULT_EXPECT).toLowerCase(),
+    branch: String(o.branch || ''),
+    runRef: String(o.runRef || ''),
+    binary: String(o.binary || 'installer_win.exe'),
+    push: o.push !== false,
+    force: o.force === true,
   };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--run' && argv[i + 1]) opts.run = argv[++i];
-    else if (a === '--expect' && argv[i + 1]) opts.expect = argv[++i].toLowerCase();
-    else if (a === '--branch' && argv[i + 1]) opts.branch = argv[++i];
-    else if (a === '--run-ref' && argv[i + 1]) opts.runRef = argv[++i];
-    else if (a === '--binary' && argv[i + 1]) opts.binary = argv[++i];
-    else if (a === '--no-push') opts.push = false;
-    else
-      throw new Error(
-        `unknown argument: ${a} (see the header of tools/publish/stageInstaller.mjs)`
-      );
-  }
-  if (!/^\d+$/.test(opts.run)) {
-    throw new Error('--run <id> is required: the build-and-upload staging run to stage from');
+  if (opts.run && !/^\d+$/.test(opts.run)) {
+    throw new Error('--run must be a numeric run id');
   }
   if (!/^[0-9a-f]{64}$/.test(opts.expect)) {
     throw new Error('--expect must be the full 64-hex sha256 of the filed bytes');
@@ -73,6 +100,31 @@ function parseArgs(argv) {
     opts.branch = `stage-installer-${new Date().toISOString().slice(0, 10)}`;
   }
   return opts;
+}
+
+/**
+ * CLI argv → options. Exported for the unit tests (main() catches and
+ * process.exit()s, which would kill the test runner).
+ *
+ * @param {string[]} argv
+ */
+export function parseArgsOrThrow(argv) {
+  const o = {run: '', expect: '', branch: '', runRef: '', binary: '', push: true};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--run' && argv[i + 1]) o.run = argv[++i];
+    else if (a === '--expect' && argv[i + 1]) o.expect = argv[++i].toLowerCase();
+    else if (a === '--branch' && argv[i + 1]) o.branch = argv[++i];
+    else if (a === '--run-ref' && argv[i + 1]) o.runRef = argv[++i];
+    else if (a === '--binary' && argv[i + 1]) o.binary = argv[++i];
+    else if (a === '--no-push') o.push = false;
+    else if (a === '--force') o.force = true;
+    else
+      throw new Error(
+        `unknown argument: ${a} (see the header of tools/publish/stageInstaller.mjs)`
+      );
+  }
+  return normalizeStageOpts(o);
 }
 
 function gh(args, {capture = false} = {}) {
@@ -129,9 +181,7 @@ function assertRunMatchesIntent(run, runRef) {
     {capture: true}
   );
   const info = JSON.parse(raw);
-  // GitHub reports the workflow NAME ("Build and upload"), not the file name —
-  // match case/separator-insensitively so the yml file and its display name both pass.
-  if (!/build[-_ ]?and[-_ ]?upload/i.test(info.name)) {
+  if (!STAGE_WORKFLOW_RE.test(info.name)) {
     throw new Error(
       `run ${run} is "${info.name}", not build-and-upload.yml — stage only publish=false staging runs`
     );
@@ -207,54 +257,115 @@ function assertRemoteTreeHasBinary(branch, size) {
 }
 
 /**
- * Parse + validate argv, throwing on bad input. Exported for the unit tests
- * (main() catches and process.exit()s, which would kill the test runner).
+ * Newest successful build-and-upload run whose head commit is the intended one
+ * (--run-ref, default origin/main's tip) — the zero-arg spelling of
+ * --save-branch. The pick is announced, never silent, and the sha256 gate still
+ * decides whether the bytes may be staged: a wrong pick fails loudly instead of
+ * staging different bytes.
  *
- * @param {string[]} argv
- * @returns {{
- *   run: string;
- *   expect: string;
- *   branch: string;
- *   runRef: string;
- *   binary: string;
- *   push: boolean;
- * }}
+ * @param {string} runRef pinned head sha (short or full), '' for origin/main
+ * @returns {string} the run id
  */
-export function parseArgsOrThrow(argv) {
-  return parseArgs(argv);
+function resolveStageRun(runRef) {
+  const intent =
+    runRef ?
+      git(['rev-parse', '--verify', `${runRef}^{commit}`])
+    : git(['rev-parse', 'origin/main']);
+  const raw = gh(
+    [
+      'run',
+      'list',
+      '-R',
+      REPO,
+      '--workflow',
+      'build-and-upload.yml',
+      '--status',
+      'success',
+      '--limit',
+      '30',
+      '--json',
+      'databaseId,headSha,name',
+    ],
+    {capture: true}
+  );
+  const hit = JSON.parse(raw).find(
+    r => STAGE_WORKFLOW_RE.test(String(r.name)) && String(r.headSha) === intent
+  );
+  if (!hit) {
+    throw new Error(
+      `no successful build-and-upload run found for commit ${intent.slice(0, 12)} — dispatch ` +
+        'one first (pnpm release:stage), or pass --run=<id> / --run-ref=<commit> explicitly.'
+    );
+  }
+  console.log(
+    `--save-branch: no --run; using run ${hit.databaseId} ("${hit.name}" @ ${intent.slice(0, 12)}, success)`
+  );
+  return String(hit.databaseId);
 }
 
-export function main(argv = process.argv.slice(2)) {
-  let opts;
-  try {
-    opts = parseArgs(argv);
-  } catch (e) {
-    fail(e.message);
-    return;
+/**
+ * The gated flow: verify the run → download the staged bytes → hash gate →
+ * orphan branch → optional push → remote tree assertion. Throws on every gate
+ * failure; release.mjs's --save-branch route calls this directly, main() wraps
+ * it in fail().
+ *
+ * @param {{
+ *   run?: string;
+ *   expect?: string;
+ *   branch?: string;
+ *   runRef?: string;
+ *   binary?: string;
+ *   push?: boolean;
+ *   force?: boolean;
+ * }} o
+ *   options (normalizeStageOpts fills the defaults)
+ * @returns {{
+ *   branch: string;
+ *   sha: string;
+ *   headSha: string;
+ *   url: string;
+ *   pushed: boolean;
+ * }}
+ *   what was staged
+ */
+export function runStageInstaller(o) {
+  const opts = normalizeStageOpts(o);
+  // 1. The run must exist and build the intended commit. No --run means the
+  //    newest successful staging run for the intended commit (announced).
+  const run = opts.run || resolveStageRun(opts.runRef);
+  const headSha = assertRunMatchesIntent(run, opts.runRef);
+  console.log(`run ${run}: build-and-upload @ ${headSha.slice(0, 12)} — OK`);
+
+  // 2. Fetch the staged bytes and gate on the filed hash.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-installer-'));
+  const bytes = fetchStagedBinary(run, opts.binary, dir);
+  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+  if (sha !== opts.expect) {
+    throw new Error(
+      `staged ${opts.binary} is ${sha}, expected ${opts.expect} — the bytes moved; ` +
+        'do NOT stage. Re-verify the runbook/WDSI record first.'
+    );
   }
+  console.log(`sha256 gate OK: ${sha}`);
+  fs.rmSync(dir, {recursive: true, force: true}); // bytes are in memory; the temp copy goes  // 3. Build the orphan branch in a throwaway worktree. The global *.exe
+  //    gitignore must not filter the binary — hence `add -f`, and the tree
+  //    assertion after push. The worktree is removed on every exit path (the
+  //    catch below), so a mid-flow failure never leaks a registration.
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-installer-wt-'));
+  git(['worktree', 'add', '--detach', work, 'HEAD']);
+  let orphanCreated = false;
   try {
-    // 1. The run must exist and build the intended commit.
-    const headSha = assertRunMatchesIntent(opts.run, opts.runRef);
-    console.log(`run ${opts.run}: build-and-upload @ ${headSha.slice(0, 12)} — OK`);
-
-    // 2. Fetch the staged bytes and gate on the filed hash.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-installer-'));
-    const bytes = fetchStagedBinary(opts.run, opts.binary, dir);
-    const sha = crypto.createHash('sha256').update(bytes).digest('hex');
-    if (sha !== opts.expect) {
-      throw new Error(
-        `staged ${opts.binary} is ${sha}, expected ${opts.expect} — the bytes moved; ` +
-          'do NOT stage. Re-verify the runbook/WDSI record first.'
-      );
+    if (opts.force) {
+      // A previous run (e.g. --no-push, or a failed push) may have left the
+      // local orphan branch behind; --force means it is disposable.
+      try {
+        git(['branch', '-D', opts.branch]);
+      } catch {
+        // no such branch — nothing to clean
+      }
     }
-    console.log(`sha256 gate OK: ${sha}`);
-
-    // 3. Build the orphan branch in a throwaway worktree. The global *.exe
-    //    gitignore must not filter the binary — hence `add -f`, and the tree
-    //    assertion after push.
-    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-installer-wt-'));
-    git(['worktree', 'add', '--detach', work, 'HEAD']);
     git(['checkout', '-q', '--orphan', opts.branch], {cwd: work});
+    orphanCreated = true;
     git(['rm', '-rqf', '.'], {cwd: work});
     fs.writeFileSync(path.join(work, opts.binary), bytes);
     fs.writeFileSync(path.join(work, `${opts.binary}.sha256`), `${sha}  ${opts.binary}\n`);
@@ -266,7 +377,7 @@ export function main(argv = process.argv.slice(2)) {
         `\`${opts.binary}\` is the byte-exact PROD installer for the current release:`,
         '',
         `- sha256: \`${sha}\``,
-        `- CI staging run: ${opts.run} (head \`${headSha.slice(0, 12)}\`, publish=false)`,
+        `- CI staging run: ${run} (head \`${headSha.slice(0, 12)}\`, publish=false)`,
         `- It fetches packages + hashes.json from the normal gh-pages surface; this branch touches nothing there.`,
         '',
         `Disposable: \`git push origin --delete ${opts.branch}\` removes it.`,
@@ -283,29 +394,99 @@ export function main(argv = process.argv.slice(2)) {
         'commit',
         '-q',
         '-m',
-        `stage: prod ${opts.binary} ${sha.slice(0, 12)} (run ${opts.run})`,
+        `stage: prod ${opts.binary} ${sha.slice(0, 12)} (run ${run})`,
       ],
       {cwd: work}
     );
 
     if (!opts.push) {
-      console.log(`--no-push: branch content prepared in ${work}`);
+      console.log(`--no-push: staged branch verified (sha256 gate + tree):`);
       console.log(
         `tree: ${git(['ls-tree', '-r', '--name-only', 'HEAD'], {cwd: work}).split('\n').join(', ')}`
       );
-      console.log('(local verification only — nothing was pushed)');
-      return;
+      // Verification only: leave NOTHING behind — no worktree registration,
+      // no local branch (the 2026-09-27 --no-push preview leaked both, and
+      // the next run collided with the leftover branch).
+      cleanupWorktree(work);
+      try {
+        git(['branch', '-D', opts.branch]);
+      } catch {
+        // already gone — fine
+      }
+      console.log('(local verification only — worktree and branch cleaned up; nothing was pushed)');
+      return {branch: opts.branch, sha, headSha, url: '', pushed: false};
     }
 
-    // 4. Push and verify the remote tree.
-    git(['push', '-q', 'origin', `HEAD:refs/heads/${opts.branch}`], {cwd: work});
-    git(['worktree', 'remove', '--force', work], {cwd: REPO_ROOT});
+    // 4. Push and verify the remote tree (--force re-pushes over an existing
+    //    staging branch — it is disposable by contract, so a non-FF rejection
+    //    from a previous partial run must not need a manual delete first).
+    git(
+      [
+        'push',
+        '-q',
+        ...(opts.force ? ['--force'] : []),
+        'origin',
+        `HEAD:refs/heads/${opts.branch}`,
+      ],
+      {cwd: work}
+    );
+    cleanupWorktree(work);
     assertRemoteTreeHasBinary(opts.branch, bytes.length);
     console.log(`pushed + tree-verified: ${opts.branch}`);
-    console.log(
-      `download: https://raw.githubusercontent.com/${REPO}/${opts.branch}/${opts.binary}`
-    );
+    const url = `https://raw.githubusercontent.com/${REPO}/${opts.branch}/${opts.binary}`;
+    console.log(`download: ${url}`);
     console.log(`remove:   git push origin --delete ${opts.branch}`);
+    return {branch: opts.branch, sha, headSha, url, pushed: true};
+  } catch (e) {
+    // Every failure after the worktree add: remove the worktree; delete the
+    // branch only when this run created it (or --force declared it disposable)
+    // — a PRE-EXISTING branch the run collided with belongs to its owner.
+    cleanupWorktree(work);
+    if (orphanCreated || opts.force) {
+      try {
+        git(['branch', '-D', opts.branch]);
+      } catch {
+        // already gone — fine
+      }
+    }
+    if (!opts.force && /already exists/.test(e.message)) {
+      throw new Error(
+        `${e.message} — pass --force to overwrite the existing staging branch, ` +
+          'or --save-branch=<name> for a different one.',
+        {cause: e}
+      );
+    }
+    throw e;
+  }
+}
+
+/**
+ * Remove a prepared staging worktree. Called on the success path and on every
+ * failure after `git worktree add` — an early throw must not leak an orphaned
+ * worktree registration into the repository (the change-workflow lesson).
+ *
+ * @param {string} work absolute worktree path
+ */
+function cleanupWorktree(work) {
+  try {
+    git(['worktree', 'remove', '--force', work]);
+  } catch (e) {
+    console.error(
+      `stageInstaller: WARNING — could not remove the staging worktree ${work} (${e.message}); remove it by hand.`
+    );
+  }
+}
+
+export function main(argv = process.argv.slice(2)) {
+  let opts;
+  try {
+    opts = parseArgsOrThrow(argv);
+  } catch (e) {
+    fail(e.message);
+    return;
+  }
+  try {
+    runStageInstaller(opts);
   } catch (e) {
     fail(e.message);
   }

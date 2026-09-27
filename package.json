@@ -40,7 +40,6 @@
     "publish:installer": "node tools/publish/release.mjs --include=installer",
     "publish:helper": "node tools/publish/release.mjs --include=helper",
     "release:stage": "node tools/publish/release.mjs --stage --include=all",
-    "stage:installer": "node tools/publish/stageInstaller.mjs",
     "release:verify": "node tools/publish/releaseVerify.mjs",
     "fetch:release": "node tools/publish/fetchRelease.mjs",
     "dev-clean": "node --env-file-if-exists=.env tools/publish/devClean.mjs",
