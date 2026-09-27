@@ -82,6 +82,25 @@ test('the run bytes must come from the release commit (head-sha gate before down
   assert.match(SRC, /not the release commit/);
 });
 
+test('the dispatch is --ref-pinned to an origin branch whose TIP is the release commit', () => {
+  // gh workflow run without --ref builds the DEFAULT branch tip — a different
+  // commit than the one --ref named (CodeRabbit #339, Major).
+  assert.match(SRC, /export function findDispatchRefForCommit/);
+  assert.match(SRC, /'--ref',\s*\n?\s*dispatchRef/);
+  // No tip-exact branch: fail loudly instead of dispatching the wrong commit.
+  assert.match(SRC, /is not the tip of any origin branch/);
+});
+
+test('the post-dispatch poll matches runs in ANY state (success-only never finds a fresh run)', () => {
+  // A just-dispatched run is queued/in_progress; filtering --status success in
+  // the poll loop made the flow falsely fail after 60s (CodeRabbit #339).
+  assert.match(SRC, /export function findFreshRunForCommit/);
+  assert.match(SRC, /run = findFreshRunForCommit\(commit\.sha\)/);
+  // ...while the REUSE lookup keeps the success filter (only a finished run
+  // can be reused).
+  assert.match(SRC, /'--status',\s*\n?\s*'success'/);
+});
+
 test('the folder is named for the commit, the run id lives in SUMMARY.md', () => {
   assert.match(SRC, /release-stage-\$\{commit\.short\}/);
   assert.match(SRC, /run \$\{p\.run\.id\}/);
@@ -160,7 +179,11 @@ test('readWdsiFacts parses the summary line and survives a missing file', () => 
 
 test('VT status: hash lookup first, upload only for unseen bytes, never throws', () => {
   // The pipeline imports the lookup/exported helpers from scan-vt.mjs — no
-  // second VT client.  assert.match(SRC, /import \{scanVirusTotal, lookupVirusTotalHashes, vtApiKey\} from '\.\.\/scan-vt\.mjs'/);
+  // second VT client.
+  assert.match(
+    SRC,
+    /import \{scanVirusTotal, lookupVirusTotalHashes, vtApiKey\} from '\.\.\/scan-vt\.mjs'/
+  );
   assert.match(SRC, /VT_API_KEY not set/);
   assert.match(SRC, /lookupVirusTotalHashes\(hashes\)/);
   // And the flow never lets VT trouble kill the staging run.

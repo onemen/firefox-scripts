@@ -101,6 +101,14 @@ export function parseStageArgs(argv) {
   return o;
 }
 
+/**
+ * Run the gh CLI (argv array, never a shell) and throw on any failure.
+ *
+ * @param {string[]} args gh arguments
+ * @param {{capture?: boolean}} [opts] capture: return stdout instead of
+ *   undefined
+ * @returns {string | undefined} stdout when capture is set
+ */
 function gh(args, {capture = false} = {}) {
   const res = spawnSync('gh', args, {encoding: 'utf8', maxBuffer: 16 * 1024 * 1024});
   if (res.error || res.status !== 0) {
@@ -111,6 +119,14 @@ function gh(args, {capture = false} = {}) {
   return capture ? res.stdout : undefined;
 }
 
+/**
+ * Run git in this repository (argv array, ambient GIT_DIR overlays scrubbed)
+ * and throw on any failure.
+ *
+ * @param {string[]} args git arguments
+ * @param {{cwd?: string}} [opts] working directory (default: the repo root)
+ * @returns {string} trimmed stdout
+ */
 function git(args, {cwd = REPO_ROOT} = {}) {
   const res = spawnSync('git', args, {cwd, encoding: 'utf8', env: gitEnv()});
   if (res.status !== 0) {
@@ -212,6 +228,59 @@ export function getRun(run) {
     headSha: String(info.headSha || ''),
     url: `https://github.com/${REPO}/actions/runs/${run}`,
   };
+}
+
+/**
+ * An origin branch whose remote tip IS exactly `sha` — the dispatch --ref that
+ * makes `gh workflow run` build THIS commit. The workflow-dispatches API takes
+ * only branch/tag names, so without this a SHA --ref would silently build the
+ * default branch's tip instead (CodeRabbit #339 finding).
+ *
+ * @param {string} sha full commit sha
+ * @returns {string} the plain branch name, or '' when none is tip-exact (the
+ *   caller fails loudly rather than dispatch the wrong commit)
+ */
+export function findDispatchRefForCommit(sha) {
+  const lines = git(['branch', '-r', '--format=%(refname)', '--contains', sha]).split('\n');
+  for (const line of lines) {
+    const full = line.trim();
+    if (!full.startsWith('refs/remotes/origin/')) continue;
+    const plain = full.slice('refs/remotes/origin/'.length);
+    if (!plain || plain === 'HEAD') continue;
+    if (git(['rev-parse', '--quiet', '--verify', full]) === sha) return plain;
+  }
+  return '';
+}
+
+/**
+ * Newest build-and-upload run for `sha` in ANY state — the post-dispatch poll:
+ * a fresh run is queued/in_progress and must not be filtered out by a success
+ * predicate (CodeRabbit #339 finding — the success-only poll never found the
+ * run it had just dispatched).
+ *
+ * @param {string} sha full commit sha
+ * @returns {string} run id or ''
+ */
+export function findFreshRunForCommit(sha) {
+  const raw = gh(
+    [
+      'run',
+      'list',
+      '-R',
+      REPO,
+      '--workflow',
+      STAGE_WORKFLOW,
+      '--limit',
+      '30',
+      '--json',
+      'databaseId,headSha,name',
+    ],
+    {capture: true}
+  );
+  const hit = JSON.parse(raw).find(
+    r => STAGE_WORKFLOW_RE.test(String(r.name)) && String(r.headSha).toLowerCase() === sha
+  );
+  return hit ? String(hit.databaseId) : '';
 }
 
 /**
@@ -426,27 +495,41 @@ export async function runStageFlow(argvOpts = {}) {
     console.log(
       'no successful staging run for this commit yet — dispatching build-and-upload.yml (publish=false)…'
     );
-    const mode = 'prod';
-    const ghArgs = [
+    // The dispatch API takes only branch/tag names: resolve an origin branch
+    // whose remote tip IS the release commit. Dispatching without --ref would
+    // build the default branch's tip — a different commit than the one this
+    // folder documents (CodeRabbit #339, Major).
+    const dispatchRef = findDispatchRefForCommit(commit.sha);
+    if (!dispatchRef) {
+      throw new Error(
+        `${commit.short} is not the tip of any origin branch — the dispatch API would build a ` +
+          'different commit. Push a branch at it, or stage a commit that is an origin tip.'
+      );
+    }
+    console.log(`dispatching at ${dispatchRef} (tip == ${commit.short})…`);
+    gh([
       'workflow',
       'run',
       STAGE_WORKFLOW,
       '-R',
       REPO,
+      '--ref',
+      dispatchRef,
       '-f',
-      `mode=${mode}`,
+      'mode=prod',
       '-f',
       'publish=false',
       '-f',
       'include=all',
-    ];
-    gh(ghArgs);
+    ]);
     console.log('dispatched — finding the run…');
     // The dispatch API is async; poll until the run exists (a few seconds).
+    // Any state matches here — a fresh run is queued/in_progress, so the
+    // success-only filter would never find it (CodeRabbit #339, Critical).
     run = '';
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 2000));
-      run = findStagingRun(commit.sha);
+      run = findFreshRunForCommit(commit.sha);
       if (run) break;
     }
     if (!run) {
@@ -476,6 +559,8 @@ export async function runStageFlow(argvOpts = {}) {
         'dispatch a fresh staging run for the exact commit (re-run this command).'
     );
   }
+  // (the head-sha gate above is the last line of defense; the exact-tip --ref
+  // dispatch and the state-agnostic run lookup are the first two)
 
   // 4. Download the full artifact into the commit-named folder.
   const dst = path.join(dir, 'artifact');
@@ -538,6 +623,11 @@ export async function runStageFlow(argvOpts = {}) {
   return {dir, summary, run: {id: run, url: info.url}, reused, short: commit.short};
 }
 
+/**
+ * CLI entry: parse argv, run the pipeline, map a thrown gate failure to exit 1.
+ *
+ * @param {string[]} [argv] command-line arguments (defaults to process.argv)
+ */
 export function main(argv = process.argv.slice(2)) {
   const opts = parseStageArgs(argv);
   runStageFlow({ref: opts.ref, os: opts.os})
