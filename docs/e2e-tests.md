@@ -112,10 +112,12 @@ Step 1 is wrapped in a retry-once guard with a fresh profile: a browser-internal
 its own `[retry]` lines; a second failure fails the leg. Card-assertion failures are deterministic
 and never retried. Full card assertions additionally require WebDriver BiDi to attach to the trusted
 chrome:// tab; on runners where it cannot, the leg verifies the tab-open via the probe mirror /
-persisted pref and says so in the check label — and driver mode is unavailable there, so the session
-falls back to running up-to-date/skipped as their own launches (`runNoTabScenario`) instead of
-dropping their coverage. Skip individual steps during iteration with `--scenario 1,6,9` (step 1
-includes all five variants; `--scenario 4` / `--scenario 5` select the same session).
+persisted pref and says so in the check label (the pre-#309 session could not assert a card there
+either). Where the tab _is_ attachable but the driver realm never comes up, the stale trio falls
+back to the pre-#309 in-tab re-render loop (`assertStaleTrioInTab`) and up-to-date/skipped fall back
+to their own launches (`runNoTabScenario`) — driver mode degrades by capability, never by coverage.
+Skip individual steps during iteration with `--scenario 1,6,9` (step 1 includes all five variants;
+`--scenario 4` / `--scenario 5` select the same session).
 
 ### Running the updater E2E locally (e.g. on Nightly, Windows)
 

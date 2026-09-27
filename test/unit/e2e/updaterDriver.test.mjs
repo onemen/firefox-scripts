@@ -33,6 +33,7 @@ import {
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const CHROME_MANIFEST = path.join(REPO_ROOT, 'core', 'chrome', 'utils', 'chrome.manifest');
+const UPDATER_E2E = path.join(REPO_ROOT, 'test', 'e2e', 'updater', 'updater-e2e.mjs');
 const SCHEDULER = path.join(
   REPO_ROOT,
   'core',
@@ -107,6 +108,36 @@ test('the driver targets the scheduler/tab-engine updater URI exactly', () => {
     /async check\(\)[\s\S]*?scheduler\.checkForUpdates\(\)/,
     'check() must drive the production orchestrator (the #309 export)'
   );
+});
+
+test('driver mode never trades the stale trio away for the one-browser collapse', () => {
+  const source = fs.readFileSync(UPDATER_E2E, 'utf-8');
+
+  // The trio the session drives in-browser.
+  assert.match(
+    source,
+    /const STALE_VARIANTS = \['utils-stale', 'config-stale', 'both-stale'\]/,
+    'the trio list must exist as one shared constant'
+  );
+
+  // Where the driver realm cannot come up, the trio must still be asserted —
+  // in the tab the startup check opened (the pre-#309 loop). Dropping it there
+  // would pass the leg with three variants silently unchecked.
+  const probeAt = source.indexOf('if (!driver) {');
+  const driverReadyAt = source.indexOf('driverAvailable = true;');
+  assert.ok(probeAt !== -1 && driverReadyAt > probeAt, 'the driver probe branch must exist');
+  assert.match(
+    source.slice(probeAt, driverReadyAt),
+    /assertStaleTrioInTab\(/,
+    'the driver-unavailable branch must fall back to the in-tab trio, not skip it'
+  );
+
+  // ...and the fallback must run the real card assertions, per variant.
+  const trioAt = source.indexOf('async function assertStaleTrioInTab(');
+  assert.ok(trioAt !== -1, 'assertStaleTrioInTab must exist');
+  const trioBody = source.slice(trioAt, source.indexOf('\n}', trioAt));
+  assert.match(trioBody, /for \(const variant of STALE_VARIANTS\)/);
+  assert.match(trioBody, /assertStaleCard\(counter, page, variant, pageErrors\)/);
 });
 
 test('the driver page is a harness artifact, never a shipped package file', () => {

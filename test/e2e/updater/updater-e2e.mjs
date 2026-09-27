@@ -18,24 +18,25 @@
  * daily-gate write on the up-to-date path, and the card the resulting tab
  * renders (identity, all 8 buttons, checkbox wiring, skip checkbox, no
  * page/console errors, screenshot). The ids 4/5 (up-to-date, skipped) are
- * aliases of this session — they are its last two variants now, and where BiDi
- * cannot evaluate inside a privileged page the session falls back to running
- * them as their own launches (runNoTabScenario). Scenario 6 (install-applies):
- * click btn-install and assert the packages are actually copied to disk (issue
- * #37); under Snap the config package is never offered in-tab — the checkbox is
- * hidden and the manual-install band shown, so the run installs utils only and
- * asserts the config files stay untouched Scenario 7 (manual-install-upgrade):
- * a hand-installed utils.zip brings the updater — no tab with a pre-updater
- * utils, tab after replacing it (issue #53) Scenario 8 (manual-install-no-ui):
- * a hand-installed utils.zip ships NO ui folder (the tab UI lives in the
- * separate updater-ui.zip); after a fresh check the scheduler self-installs the
- * ui (ensureUpdaterUi) and the tab is visible (issue #102) Scenario 9
- * (helper-checksum-win, Windows-only): ACL-write-denies GreD so the config
- * install falls through to the elevated-copy helper, and asserts the downloaded
- * helper's checksum verification PASSES before the (headless-doomed) elevation
- * step — the PR #271 mojibake regression net. Requires a user-owned GreD (CI's
- * portable installs; skips on admin-owned dirs like Program Files, which cannot
- * be denied without elevation)
+ * aliases of this session — they are its last two variants now, and where the
+ * driver realm cannot come up the session falls back to the pre-#309 path for
+ * each part: the stale trio re-renders in-tab (assertStaleTrioInTab), while
+ * up-to-date/skipped run as their own launches (runNoTabScenario). Scenario 6
+ * (install-applies): click btn-install and assert the packages are actually
+ * copied to disk (issue #37); under Snap the config package is never offered
+ * in-tab — the checkbox is hidden and the manual-install band shown, so the run
+ * installs utils only and asserts the config files stay untouched Scenario 7
+ * (manual-install-upgrade): a hand-installed utils.zip brings the updater — no
+ * tab with a pre-updater utils, tab after replacing it (issue #53) Scenario 8
+ * (manual-install-no-ui): a hand-installed utils.zip ships NO ui folder (the
+ * tab UI lives in the separate updater-ui.zip); after a fresh check the
+ * scheduler self-installs the ui (ensureUpdaterUi) and the tab is visible
+ * (issue #102) Scenario 9 (helper-checksum-win, Windows-only): ACL-write-denies
+ * GreD so the config install falls through to the elevated-copy helper, and
+ * asserts the downloaded helper's checksum verification PASSES before the
+ * (headless-doomed) elevation step — the PR #271 mojibake regression net.
+ * Requires a user-owned GreD (CI's portable installs; skips on admin-owned dirs
+ * like Program Files, which cannot be denied without elevation)
  *
  * Each remaining scenario: fresh temp profile → seed utils + fx-folder → modify
  * files to force desired state → launch Firefox → wait for tab (or assert none)
@@ -953,6 +954,9 @@ const VARIANT_SPECS = {
   },
 };
 
+/** The three disk-stale variants — the part of the session driver mode drives. */
+const STALE_VARIANTS = ['utils-stale', 'config-stale', 'both-stale'];
+
 /**
  * @param {string} variant
  * @returns {{
@@ -1288,6 +1292,55 @@ async function runOneVariant(
 }
 
 /**
+ * The stale trio as the pre-#309 session asserted it, against the tab the
+ * startup check opened: apply the variant's disk fixture → re-render through
+ * the engine's own re-check entry point → assert the card.
+ *
+ * Fallback for a host where BiDi CAN evaluate the updater tab but the driver
+ * page's realm never came up (the driver tab did not commit, its script did not
+ * run): driver mode cannot drive the orchestrator there, so the trio keeps
+ * exactly the coverage it had before #309 — which is the point. The coverage
+ * collapse is a structure/speed win and must never drop a variant.
+ *
+ * @param {{passed: number; failed: number}} counter
+ * @param {{
+ *   page: import('puppeteer-core').Page;
+ *   firefoxBin: string;
+ *   seeded: object;
+ *   pristineConfig: Buffer;
+ * }} ctx
+ * @returns {Promise<boolean>} false when a variant failed (stop the trio)
+ */
+async function assertStaleTrioInTab(counter, {page, firefoxBin, seeded, pristineConfig}) {
+  for (const variant of STALE_VARIANTS) {
+    // Errors are collected per variant, attached BEFORE the reload that
+    // triggers this variant's render (same net as the driver path).
+    const pageErrors = [];
+    const onErr = err => pageErrors.push(err.message);
+    page.on('pageerror', onErr);
+    try {
+      applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig);
+      // Re-render through the production path: UpdaterEngine.init() re-runs the
+      // fresh hash check (manifest fetch + local re-hash) and pushes state
+      // in-document. A page.reload() was tried first — BiDi cannot observe
+      // chrome:// navigations (its waiter times out and the evaluation channel
+      // wedges), so the engine's own re-check entry point is the reliable
+      // in-document equivalent.
+      await page.evaluate(() => window.UpdaterEngine.init());
+      if (!(await assertStaleCard(counter, page, variant, pageErrors))) return false;
+    } catch (err) {
+      // Disk mutation failed (e.g. GreD became unwritable), or the evaluation
+      // channel died with the page: this variant's failure, not a harness crash.
+      check(counter, false, `card assertions (${variant})`, err.message);
+      return false;
+    } finally {
+      page.off('pageerror', onErr);
+    }
+  }
+  return true;
+}
+
+/**
  * The variant session — driver mode (#309, formerly scenarios 1 + 4 + 5).
  *
  * ONE browser covers five variants that differ only in seed state: the stale
@@ -1309,11 +1362,14 @@ async function runOneVariant(
  *
  * What stays launch-driven: the startup wiring itself (autoconfig →
  * userChrome.js → observer → initScriptsUpdater → the tab the seed asked for)
- * and the startup-race retry, unchanged. Where BiDi cannot evaluate inside a
- * privileged page at all, driver mode cannot run: the session records the
- * startup proof, and the caller falls back to the launch-per-variant path for
- * up-to-date / skipped with the local manifest server (no coverage lost — see
- * run()'s scenarioSteps).
+ * and the startup-race retry, unchanged. Where driver mode cannot run, the
+ * session degrades by capability, never by coverage: BiDi can still evaluate
+ * the updater tab → the stale trio runs the pre-#309 in-tab re-render loop
+ * (assertStaleTrioInTab); BiDi cannot attach to the trusted tab at all → only
+ * the tab-open proof is observable there, which is exactly what the pre-#309
+ * session could assert in that environment too. Either way the caller
+ * additionally runs up-to-date / skipped as their own launches with the local
+ * manifest server (see run()'s scenarioSteps).
  *
  * Wrapped in the same retry-once guard as before: a browser-internal startup
  * race (observed live on waterfox, run 35460461221 — NS_ERROR_NOT_INITIALIZED
@@ -1326,10 +1382,9 @@ async function runOneVariant(
  *   came up in this environment
  */
 async function runVariantSession(counter, opts, snapshotDir) {
-  const staleVariants = ['utils-stale', 'config-stale', 'both-stale'];
   const label = 'variants';
   console.log(
-    `\n## Scenario: variant session (${[...staleVariants, 'up-to-date', 'skipped'].join(', ')})` +
+    `\n## Scenario: variant session (${[...STALE_VARIANTS, 'up-to-date', 'skipped'].join(', ')})` +
       ' — one browser (#309)'
   );
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
@@ -1425,7 +1480,10 @@ async function runVariantSession(counter, opts, snapshotDir) {
         // race, so a retry cannot help. Record the tab-open proof with the
         // limitation spelled out in the label (the historical CI contract for
         // these legs, previously silent); full card assertions run where BiDi
-        // attaches (locally, other runners).
+        // attaches (locally, other runners). Coverage parity with the pre-#309
+        // session: with no tab handle it could not assert a card either — here
+        // the trio's observable is the tab-open proof above, and the caller
+        // still runs the up-to-date / skipped decisions as their own launches.
         check(
           counter,
           true,
@@ -1474,18 +1532,34 @@ async function runVariantSession(counter, opts, snapshotDir) {
       await openDriverTab(page, DRIVER_URL);
       const driver = await attachDriver(browser);
       if (!driver) {
-        // This environment cannot evaluate inside a privileged chrome page at
-        // all — a BiDi limitation, so a retry cannot help. Record the startup
-        // proof and hand back to run(), which runs up-to-date/skipped as their
-        // own launches (their coverage is not silently dropped).
+        // The driver realm never came up (the driver tab did not commit, or its
+        // script did not run) while BiDi CAN evaluate the updater tab. A retry
+        // cannot help — this is a host property. The trio must not lose its
+        // coverage to the #309 collapse, so assert it the pre-#309 way, in the
+        // tab the startup check already opened; only the up-to-date / skipped
+        // DECISIONS need their own launches, which run() then performs.
         check(
           counter,
           true,
-          `driver mode unavailable (${attemptLabel}; startup proof only — BiDi cannot evaluate in a privileged page here)`
+          `driver mode unavailable (${attemptLabel}; stale trio via the pre-#309 in-tab re-render loop)`
         );
         console.log(
-          '  [driver] unavailable — the decision variants fall back to their own launches'
+          '  [driver] unavailable — the stale trio falls back to the in-tab re-render loop;' +
+            ' up-to-date/skipped keep their own launches'
         );
+        const trioOk = await assertStaleTrioInTab(counter, {
+          page,
+          firefoxBin,
+          seeded,
+          pristineConfig,
+        });
+        if (trioOk) {
+          // The trio re-rendered the real card through the engine's init():
+          // close the net — no console errors from the updater scripts.
+          assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
+        } else {
+          console.log('  [driver] the in-tab trio assertions failed — deterministic, not retrying');
+        }
         await dumpPages(browser);
         return {profiles: createdProfiles, driverAvailable: false};
       }
@@ -1516,7 +1590,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
 
       // ── One launch, five variants: flip the inputs → run → assert ──
       const plan = [
-        ...staleVariants.map(variant => ({variant, expectTab: true})),
+        ...STALE_VARIANTS.map(variant => ({variant, expectTab: true})),
         {variant: 'up-to-date', expectTab: false},
         {variant: 'skipped', expectTab: false},
       ];
