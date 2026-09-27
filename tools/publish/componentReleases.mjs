@@ -231,8 +231,19 @@ export function componentAssets(installer, built, access) {
  *
  * For installer releases `selfUpdateBlock` (the managed JSON block from
  * renderSelfUpdateBlock) is appended in a ```json fence — the machine-readable
- * payload the installer's date-based self-update ingests (ADR 0019 amendment).
+ * payload the installer's date-based self-update ingests (ADR 0019 amendment) —
+ * followed by the WINDOWS_ONLY_INSTALLER_NOTE (the README's SmartScreen/UAC
+ * paragraph: user-facing, #184's plain-English standard; maintainers asked for
+ * it on the release pages, 2026-09-27).
  */
+export const WINDOWS_ONLY_INSTALLER_NOTE =
+  '**Windows only:** the installer is currently unsigned, so SmartScreen may show ' +
+  '_"Windows protected your PC"_ on first run — click **More info → Run anyway** to continue, ' +
+  'and approve the single UAC prompt if it appears (one checksum-verified elevation, for the ' +
+  'copy step only). It then connects to a running Firefox-family browser (Firefox, Waterfox, ' +
+  'Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets you ' +
+  'pick which browser to set up.';
+
 export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlock = '') {
   const base = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases`;
   const title = kind === 'scripts' ? 'Package zips (utils, fx-folder)' : 'Installer binaries';
@@ -241,12 +252,16 @@ export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlo
       names.map(n => `- ${n} — updated ${dates[n] || date}`).join('\n')
     : '- (no artifacts this date)';
   const managed = selfUpdateBlock ? `\n\n\`\`\`json\n${selfUpdateBlock}\n\`\`\`\n` : '';
+  // The installer note rides LAST (after the managed block) — the machine
+  // block must stay the body's tail for the parser, humans read after it.
+  const note = kind === 'installer' ? `\n\n${WINDOWS_ONLY_INSTALLER_NOTE}\n` : '';
   return (
     `${title} — ${date}.\n\n` +
     `${list}\n\n` +
     `This release is an archived snapshot: the files above are from that date and will not ` +
     `change. Always download the newest files from the [Latest Scripts release](${base}/latest).` +
-    managed
+    managed +
+    note
   );
 }
 
