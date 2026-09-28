@@ -1,15 +1,22 @@
 // test/unit/publish/devClean.test.mjs — unit tests for tools/publish/devClean.mjs
 //
-// devClean.mjs imports paths.js, which calls requireMode() at import time, so
-// the test pushes --mode=prod into process.argv before the dynamic import
-// (same pattern as hashUtils.test.mjs).
+// #358 regression: the devClean MODULE must load without a --mode flag — the
+// tool imports paths.js for repo constants only, and an import-time
+// requireMode() there crashed every invocation ("Missing required
+// --mode=prod|dev."). Importing the module here with no argv prep IS the
+// regression test; the pin below makes it explicit.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
-process.argv.push('--mode=prod');
+const devClean = await import('../../../tools/publish/devClean.mjs');
+const {normalizeId, parseArgs, selectTargets} = devClean;
 
-const {normalizeId, parseArgs, selectTargets} = await import('../../../tools/publish/devClean.mjs');
+test('#358: the devClean module loads without a --mode flag (paths.js is import-tolerant)', () => {
+  // Reaching this point proves the dynamic import above did not throw.
+  assert.equal(typeof normalizeId, 'function');
+  assert.equal(typeof devClean.run, 'function', 'run stays exported for the CLI');
+});
 
 test('normalizeId: accepts full and partial ids', () => {
   assert.equal(normalizeId('main-abc1234'), 'dev-build-main-abc1234');

@@ -38,7 +38,6 @@ test('upload.mjs: dev pages get DEV_BRANCH, never REF_NAME', () => {
 });
 
 test('branchReadmes: the two dev generators render the branch they are given', async () => {
-  // publishMode requires a mode; branchReadmes.test.mjs does the same.
   process.argv.push('--mode=dev');
   const {devBranchReadme, devIndexHtml} = await import('../../../tools/publish/branchReadmes.mjs');
   const files = ['utils.zip'];
