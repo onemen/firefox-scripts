@@ -122,6 +122,10 @@ The original scripts are governed by the
 - **[Developer guide](docs/DEVELOPING.md)** — building the installer, the publish/release workflow,
   the generated files, and how the installer works under the hood.
 - **[Contributing](CONTRIBUTING.md)** — how to set up the repo, run checks, and submit changes.
+- **Roadmap** — GitHub is the single source of truth: the
+  [v1.0](https://github.com/onemen/firefox-scripts/milestone/1) and
+  [Post v1.0](https://github.com/onemen/firefox-scripts/milestone/2) milestone views plus the
+  phase/umbrella issues they collect.
 
 ---
 

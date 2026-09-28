@@ -201,12 +201,14 @@ Before finishing:
 
 ## Roadmap tracking
 
-- GitHub is the live tracker: the v1.0 milestone, phase issues #3 (Phase 4) / #4 (Phase 5) and the
-  Post-v1.0 roadmap umbrella (#38) hold the checklists; `docs/roadmap.md` is the durable snapshot.
+- GitHub is the only roadmap: the v1.0 milestone, phase issues #3 (Phase 4) / #4 (Phase 5, closed
+  2026-09-28) and the Post-v1.0 umbrella (#38) hold the checklists; milestone views
+  ([v1.0](https://github.com/onemen/firefox-scripts/milestone/1) /
+  [Post v1.0](https://github.com/onemen/firefox-scripts/milestone/2)) are the overview.
 - Every PR links its issue (`Fixes #x` / `Part of #y`); tick the checklist item when the work
   merges.
-- Update `docs/roadmap.md` only in the PR that changes scope — never per-commit.
-- Never duplicate a checklist in both a doc and an issue: the doc links to the issues.
+- Never duplicate a checklist in both a doc and an issue: docs link to the issues, never restate
+  them.
 
 ## Tooling
 
@@ -217,8 +219,8 @@ Before finishing:
 - **CI** runs from `.github/workflows/` (ci.yml, e2e.yml, pages.yml, build-and-upload.yml,
   url-watchdog.yml, skills-watchdog.yml, runner-watchdog.yml, av-watchdog.yml, cache-cleanup.yml).
   The installer + updater E2E jobs and the publish gate are **path-filtered on PRs**: they skip when
-  no changed file can affect them (see `docs/DEVELOPING.md` → Continuous integration). Prod publish
-  stays manual from `main`; all publish scripts require a clean worktree.
+  no changed file can affect them (see `docs/continuous-integration.md`). Prod publish stays manual
+  from `main`; all publish scripts require a clean worktree.
 - **Interactive debugging of core files:** the MIT `debugging-firefox` RDP skill is `gh`-installed
   under `.agents/skills/` — see `docs/debugging-with-rdp.md` (never put it in the lint/format
   gates).
@@ -249,5 +251,4 @@ logic: the `generated-files` skill + `docs/DEVELOPING.md` + ADR
 - **Error handling:** fail-fast with clear messages; elevation failures distinguish cancel (exit 2);
   network failures surface a banner in the UI, not a silent partial install.
 - **Text files are LF**; a local working-tree copy can linger as CRLF, so when a tool parses a
-  tracked text file, normalize `\r\n` → `\n` at read (`docs/DEVELOPING.md` → Continuous
-  integration).
+  tracked text file, normalize `\r\n` → `\n` at read (`docs/continuous-integration.md`).
