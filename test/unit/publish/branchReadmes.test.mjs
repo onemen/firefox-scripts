@@ -11,7 +11,6 @@ import {pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-// branchReadmes.mjs imports paths.js -> publishMode.mjs, which requires a mode.
 process.argv.push('--mode=dev');
 
 const {devBranchReadme, devIndexHtml, ghPagesReadme} = await import(

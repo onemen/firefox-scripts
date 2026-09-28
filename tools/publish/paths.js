@@ -6,15 +6,13 @@
 import fs from 'fs';
 import path from 'path';
 import {fileURLToPath} from 'url';
-// Publish mode (--mode=prod|dev, required) + dev-run identity.  Imported first
-// so the mode requirement fails fast even before the config file is touched.
-import {
-  ASSET_SUFFIX,
-  DEV_BRANCH,
-  DEV_BUILD_ID,
-  MODE as PUBLISH_MODE,
-  requireMode,
-} from './publishMode.mjs';
+// Publish mode (--mode=prod|dev) + dev-run identity. Tolerant: MODE may be
+// undefined here — generators and mode-less tooling rely on undefined=prod
+// (see publishMode.mjs). The HARD requirement lives in the publish CLIs:
+// upload.mjs's main() calls requireMode() (#358 — an import-time check here
+// crashed every mode-less consumer, e.g. pnpm dev-clean, which imports this
+// file for repo constants only).
+import {ASSET_SUFFIX, DEV_BRANCH, DEV_BUILD_ID, MODE as PUBLISH_MODE} from './publishMode.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,9 +37,9 @@ try {
 
 const cfg = (key, fallback) => config[key] || process.env[key] || fallback;
 
-// ---- Publish mode (required, see publishMode.mjs) ----
-// Throws with a usage hint when --mode=prod|dev is missing or invalid.
-requireMode();
+// ---- Publish mode (tolerant, see publishMode.mjs) ----
+// No mode → prod fallbacks, matching publishMode's undefined=prod doctrine.
+// The publish CLI (upload.mjs main()) is where a missing --mode fails fast.
 
 /**
  * Mode-aware config: 'prod' reads the shared installer.conf (fallbacks), 'dev'

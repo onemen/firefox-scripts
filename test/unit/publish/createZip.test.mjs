@@ -1,8 +1,5 @@
 // test/unit/publish/createZip.test.mjs — Unit tests for tools/publish/createZip.mjs
 //
-// createZip.mjs imports paths.js, which calls requireMode() at import time, so
-// the test pushes --mode=prod into process.argv before the dynamic import.
-//
 // Importing createZip.mjs also regenerates the gitignored generated files
 // (updater-config.sys.mjs, updater.css) — a no-op write when they are already
 // in sync, and they are gitignored either way.

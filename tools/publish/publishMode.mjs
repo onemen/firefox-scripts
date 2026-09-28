@@ -18,8 +18,9 @@
 // --mode: the config generators (generateUpdaterConfig.mjs,
 // syncGeneratedFiles.mjs, createZip.mjs) run without a mode — via the
 // installer Makefile or createZip's publish-time regeneration — and must stay
-// prod by default.  Only the publish CLIs (upload.mjs) require the flag, via
-// paths.js (which imports this module) and requireMode().
+// prod by default.  Only the publish CLI (upload.mjs) requires the flag, via
+// requireMode() at the top of its main() (#358 — paths.js is import-tolerant
+// so mode-less tooling like pnpm dev-clean can load it for constants).
 
 import {execSync} from 'child_process';
 import path from 'path';
