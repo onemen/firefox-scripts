@@ -1036,15 +1036,15 @@ The published run's pre-publish gate (`check browser version drift`) compares li
 against the watchdog baseline. On prod drift the wrapper dispatches the watchdog for you and prints
 the chain — wrapper dispatch + gate ≈ 1–2 min → watchdog (46 s in recent runs: vendor version
 lookups, 1 KB endpoint checks, full download + SHA-256 only for new versions) → its E2E dispatches
-(concurrent: one single-browser escape per fork + ONE full matrix for firefox/firefox-dev/waterfox
-whose `record validated browser versions` job writes the record the publish gate reads; ~10–15 min
-wall, runner queue included) → re-run the same command (~4 min: gate ~10 s → pre-run manifest ~3 s →
-win ~2.5 min → linux ~25 s → mac ~35 s). The E2E run shows red on `snap Firefox E2E · ubuntu-24.04`
-while the snap-store outage (#291) lasts — record-validation still records and the gate still
-unblocks. Every `--include` runs the same five pages.yml jobs (the input only scopes what
-`upload.mjs` builds/attaches inside the publish jobs), and `pnpm publish:*` runs no unit or E2E
-tests itself — the tests live in the workflows (the E2E-for-commit gate, the VT scan inside the
-publish jobs).
+(concurrent: one single-browser escape per fork + ONE full matrix for
+firefox/firefox-dev/waterfoxwhose `record validated browser versions` job writes the record the
+publish gate reads; ~10–15 min wall, runner queue included) → re-dispatches the publish itself and
+watches it through (~4 min: gate ~10 s → pre-run manifest ~3 s → win ~2.5 min → linux ~25 s → mac
+~35 s). The E2E run shows red on `snap Firefox E2E · ubuntu-24.04` while the snap-store outage
+(#291) lasts — record-validation still records and the gate still unblocks. Every `--include` runs
+the same five pages.yml jobs (the input only scopes what `upload.mjs` builds/attaches inside the
+publish jobs), and `pnpm publish:*` runs no unit or E2E tests itself — the tests live in the
+workflows (the E2E-for-commit gate, the VT scan inside the publish jobs).
 
 | Flag                            | Modes         | What it does                                                                                                                                                                                                                                                                                     |
 | ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -1064,14 +1064,16 @@ A real (non-`--local`) `--mode=prod` run outside the Pages workflow is **aborted
 release contract is the full cross-OS set (ADR 0024) — buildable only by the workflow's per-OS
 matrix. The `--ci` flag is gone: it only ever widened the platform set, so a laptop `--ci` run would
 still have published a partial release. The workflow sets an internal marker env on its upload jobs;
-nothing else passes the guard.
-
-The local front door for the prod publish is the **`pnpm publish`** alias — a thin wrapper that runs
+nothing else passes the guard.The local front door for the prod publish is the **`pnpm publish`**
+alias — a thin wrapper that runs
 `gh workflow run pages.yml -f mode=<mode> -f include=<roles> --repo onemen/firefox-scripts` (no
-local build; no local tests). After a prod dispatch it watches the run's own pre-publish gate (~1
-min; fail-open — an unobservable run just prints the watch hint, and `--no-wait` skips the wait
-entirely) instead of leaving a red run as the operator's first sign of trouble. Its scope is opt-in
-like upload.mjs's: `--include=all` (or the `publish:all` preset) is the full publish, and a bare
+local build; no local tests) and then carries the prod run to completion — one command, no re-run.
+It watches the pre-publish gate; on drift it dispatches the URL watchdog, waits through the browser
+E2E its dispatches trigger (bounded by a 45-min chain budget), re-dispatches the publish, and
+re-watches. The only stops are real validation failures (a failed watchdog/E2E leg, a gate that
+blocks three times in one chain — needs a human decision) or losing sight of the runs (gh errors,
+budget exhausted — the remediation keeps running server-side either way). Its scope is opt-in like
+upload.mjs's: `--include=all` (or the `publish:all` preset) is the full publish, and a bare
 `pnpm publish` fails loudly rather than guessing:
 
 ```bash

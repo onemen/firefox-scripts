@@ -5,10 +5,14 @@
 // cross-OS installer set is buildable only by the Pages publish workflow's
 // per-OS matrix. This script is a discoverable front door for the dispatch —
 // `gh workflow run pages.yml` with an explicit --repo (works without
-// `gh repo set-default`, #347) — followed, for a prod dispatch, by a watch of
-// that run's own pre-publish gate: green → print the run URL; drift →
-// auto-dispatch the URL watchdog and print the remaining chain (the gates
-// themselves stay in pages.yml; this wrapper only reports and chains them):
+// `gh repo set-default`, #347) — then, for a prod dispatch, it carries the run
+// to completion: watches the pre-publish gate and, when drift (or a missing
+// E2E-for-commit record) blocks it, remediates automatically — dispatch the
+// URL watchdog / the E2E workflow, wait for the browser validations they
+// trigger, re-dispatch the publish — so ONE command finishes the job. The only
+// stops are real validation failures (the gate blocking twice, a failed
+// publish job) or losing sight of the run (the gates themselves stay in
+// pages.yml; this wrapper only chains them):
 //
 //   pnpm publish:all                   # full prod publish (mode defaults to prod)
 //   pnpm publish:packages              # zips + updater-ui only (--include=packages)
@@ -35,9 +39,9 @@
 // The wrapper owns --force/--mode/--include/--ref (it maps them to the
 // workflow inputs / gh flags); any other `-f key=value` is passed through to
 // gh verbatim — through spawnSync's argv array, never a shell, so nothing is
-// interpolated. After a prod dispatch the wrapper reads exactly one thing —
-// the gate verdict of its own run (job list via the API) — to report or chain
-// the drift path; the matrix itself is followed in the Actions tab. (--stage is the exception: it is the full
+// interpolated. After a prod dispatch the wrapper watches its run through the
+// Actions API (job list + run status) to a verdict; everything the remediation
+// chain needs is already in the workflows it dispatches. (--stage is the exception: it is the full
 // local staging pipeline of tools/publish/stageFlow.mjs, which watches and
 // downloads by design.) The workflow's own gates (main-only for prod,
 // E2E-green commit, browser-version drift) are what the guard requires; this
@@ -55,6 +59,7 @@ import {gitEnv} from './generateBuildDates.mjs';
 
 const WORKFLOW = 'pages.yml';
 const WATCHDOG_WORKFLOW = 'url-watchdog.yml';
+const E2E_WORKFLOW = 'e2e.yml';
 /**
  * Every gh call targets the repo explicitly — no `gh repo set-default`
  * dependency (#347).
@@ -69,9 +74,22 @@ const GATE_JOB = 'check browser version drift';
 const DRIFT_STEP = 'Check browser version drift';
 /**
  * The gate's E2E-for-commit step — needs a real E2E run; the wrapper cannot
- * chain it.
+ * needs one; the chain dispatches one.
  */
 const E2E_STEP_PREFIX = 'Require a successful E2E run for this commit';
+/** The E2E job that writes the validated-versions record the publish gate reads. */
+const RECORD_JOB = 'record validated browser versions';
+
+/**
+ * Total budget for one wrapper run's whole remediation chain (watchdog wait +
+ * browser E2E + re-dispatch ×3 attempts). The E2E is the long pole (~10–15 min
+ * in recent runs); 45 min covers a chain that remediates twice and still
+ * catches the normal day in well under an hour.
+ */
+const PUBLISH_CHAIN_BUDGET_MIN = 45;
+
+/** Blocking sleep that never keeps the event loop alive past the wait. */
+const defaultSleep = ms => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /**
  * One Actions job as returned by `gh api repos/<repo>/actions/runs/<id>/jobs`.
@@ -284,7 +302,6 @@ export function buildDispatchArgs({
 export function parseReleaseArgs(argv = process.argv.slice(2)) {
   const opts = {
     force: false,
-    noWait: false,
     mode: 'prod',
     include: [],
     ref: '',
@@ -301,8 +318,6 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
       opts.os = a.slice('--os='.length).trim();
     } else if (a === '--force') {
       opts.force = true;
-    } else if (a === '--no-wait') {
-      opts.noWait = true;
     } else if (a.startsWith('--mode=')) {
       const mode = a.slice('--mode='.length);
       if (mode !== 'prod' && mode !== 'dev') {
@@ -343,7 +358,7 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
       opts.passthrough.push('-f', pair);
     } else {
       throw new Error(
-        `Unknown flag: ${a} (supported: --stage, --force, --no-wait, --mode=prod|dev, --include=<roles>, --ref=<branch>, -f key=value)`
+        `Unknown flag: ${a} (supported: --stage, --force, --mode=prod|dev, --include=<roles>, --ref=<branch>, -f key=value)`
       );
     }
   }
@@ -450,46 +465,204 @@ function gateJobs(runId) {
 }
 
 /**
- * Watch the dispatch's gate to a conclusion: one immediate read plus re-polls
- * ~20 s apart (the gate is the run's first job — vendor version lookups only —
- * and finished inside ~15 s in every recent run). Fail-open: an unobservable
- * run degrades to the old fire-and-forget UX, never to a wrong verdict.
+ * Watch a run's gate job to a conclusion: one immediate read plus re-polls ~20
+ * s apart. `pending` (job not finished / run racing its own creation) keeps the
+ * loop going; the caller's clock (`hasTime`) bounds it — out of budget or an
+ * unobservable run (gh error) return 'unobservable', never a wrong verdict.
  *
- * @param {number} runId the dispatched run's databaseId
- * @param {(ms: number) => void} [sleepFn] injectable sleep (tests)
- * @param {(id: number) => GhJob[] | null} [fetchJobs] injectable job fetch
+ * @param {number} runId the run's databaseId
+ * @param {(ms: number) => void} sleepFn injectable sleep (tests)
+ * @param {(id: number) => GhJob[] | null} fetchJobs injectable job fetch
  *   (tests)
+ * @param {() => boolean} hasTime injectable clock check (tests)
  * @returns {{
- *   outcome:
- *     | 'green'
- *     | 'drift'
- *     | 'e2e-missing'
- *     | 'failed'
- *     | 'pending'
- *     | 'unobservable';
+ *   outcome: 'green' | 'drift' | 'e2e-missing' | 'failed' | 'unobservable';
  *   detail?: string;
  * }}
  */
-export function watchDispatchGate(
-  runId,
-  sleepFn = ms => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
-  fetchJobs = gateJobs
-) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) sleepFn(20000);
+export function watchGateJob(runId, sleepFn, fetchJobs, hasTime) {
+  for (let attempt = 0; ; attempt++) {
+    if (attempt > 0) {
+      if (!hasTime()) return {outcome: 'unobservable'};
+      sleepFn(20000);
+    }
     const jobs = fetchJobs(runId);
     if (jobs === null) return {outcome: 'unobservable'};
-    const verdict = classifyGateJobs(jobs);
-    if (verdict.outcome !== 'pending') return verdict;
+    const {outcome, detail} = classifyGateJobs(jobs);
+    if (outcome === 'pending') continue;
+    return detail === undefined ? {outcome} : {outcome, detail};
   }
-  return {outcome: 'pending'};
 }
 
-/** Dispatch the URL watchdog (the drift path's first remediation step). */
+/**
+ * The API's run status/conclusion (or null when gh fails).
+ *
+ * @param {number} runId
+ * @returns {{status: string; conclusion: string | null} | null}
+ */
+function runStatus(runId) {
+  const res = spawnSync('gh', [...repoFlag(), 'api', `repos/${REPO}/actions/runs/${runId}`], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (res.error || res.status !== 0) return null;
+  try {
+    const j = JSON.parse(res.stdout);
+    return {status: j.status, conclusion: j.conclusion};
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wait a run to completion (re-polls ~20 s apart, bounded by `hasTime`).
+ * Queued-vs-running does not matter here — only the final conclusion does.
+ *
+ * @param {number} runId
+ * @param {(ms: number) => void} sleepFn
+ * @param {(
+ *   id: number
+ * ) => {status: string; conclusion: string | null} | null} statusFn
+ * @param {() => boolean} hasTime
+ * @returns {'success' | 'failure' | 'unobservable'}
+ */
+export function waitForRun(runId, sleepFn, statusFn, hasTime) {
+  for (let attempt = 0; ; attempt++) {
+    if (attempt > 0) {
+      if (!hasTime()) return 'unobservable';
+      sleepFn(20000);
+    }
+    const st = statusFn(runId);
+    if (st === null) return 'unobservable';
+    if (st.status === 'completed') return st.conclusion === 'success' ? 'success' : 'failure';
+  }
+}
+
+/**
+ * Wait one e2e.yml run's `record validated browser versions` job to a
+ * conclusion — the job that writes the validated-versions record the publish
+ * gate reads. It only RUNS in the full-matrix dispatch (browser=all): a
+ * single-browser fork escape skips it (its own record job covers forks only),
+ * which surfaces as 'not-applicable' — the caller moves on to the next run.
+ * Re-polls ~20 s apart, bounded by `hasTime`.
+ *
+ * @param {number} runId an e2e.yml run's databaseId
+ * @param {(ms: number) => void} sleepFn
+ * @param {(id: number) => GhJob[] | null} fetchJobs
+ * @param {() => boolean} hasTime
+ * @returns {'success' | 'failure' | 'not-applicable' | 'unobservable'}
+ */
+export function waitForValidationRecord(runId, sleepFn, fetchJobs, hasTime) {
+  for (let attempt = 0; ; attempt++) {
+    if (attempt > 0) {
+      if (!hasTime()) return 'unobservable';
+      sleepFn(20000);
+    }
+    const jobs = fetchJobs(runId);
+    if (jobs === null) return 'unobservable';
+    const rec = (jobs ?? []).find(j => j.name === RECORD_JOB);
+    if (rec && rec.conclusion === 'success') return 'success';
+    if (rec && rec.conclusion === 'failure') return 'failure';
+    if (rec && rec.conclusion === 'skipped') return 'not-applicable';
+  }
+}
+
+/** Dispatch the URL watchdog on main (the drift path's remediation). */
 function dispatchWatchdog() {
   return spawnSync('gh', [...repoFlag(), 'workflow', 'run', WATCHDOG_WORKFLOW, '--ref', 'main'], {
     encoding: 'utf8',
   });
+}
+
+/**
+ * The workflow_dispatch e2e.yml runs created at/after `afterIso` — the set the
+ * watchdog (or this wrapper) dispatched for the remediation: the fork escapes
+ * plus the one full-matrix run. Empty when gh fails or none yet (the dispatches
+ * lag the watchdog by seconds).
+ *
+ * @param {string} afterIso
+ * @returns {{databaseId: number}[]}
+ */
+function findE2EDispatches(afterIso) {
+  const res = spawnSync(
+    'gh',
+    [
+      ...repoFlag(),
+      'run',
+      'list',
+      '--workflow',
+      E2E_WORKFLOW,
+      '--created',
+      `>=${afterIso.replace(/\.\d+Z$/, 'Z')}`,
+      '--limit',
+      '10',
+      '--json',
+      'databaseId,event',
+    ],
+    {encoding: 'utf8', maxBuffer: 16 * 1024 * 1024}
+  );
+  if (res.error || res.status !== 0) return [];
+  try {
+    return JSON.parse(res.stdout).filter(r => r.event === 'workflow_dispatch');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The drift chain, one command: wait for the freshly dispatched watchdog
+ * (re-baselines the drifted browsers + dispatches their E2E), then wait until
+ * one of those E2E runs records the browser validation the publish gate
+ * requires, then re-dispatch the publish and re-watch its gate. Fork escapes
+ * run concurrently and finish earlier, but their record job is skipped — only
+ * the full-matrix run writes what the gate reads, so 'not-applicable'
+ * candidates are passed over and discovery re-runs (~20 s apart) until the full
+ * run appears and finishes. This loop is bounded ONLY by the chain budget: the
+ * E2E is the long pole (~10–15 min in recent runs, red on the snap leg — #291 —
+ * while record-validation still records).
+ *
+ * @param {(ms: number) => void} sleepFn
+ * @param {() => boolean} hasTime
+ * @param {{databaseId: number} | null} wdRun the already-dispatched watchdog
+ * @returns {'validated' | 'watchdog-failed' | 'validation-failed' | 'unobservable'}
+ */
+export function awaitValidation(sleepFn, hasTime, wdRun, fetchJobs, statusFn, discover) {
+  if (wdRun) {
+    console.log(
+      `  ✓ url-watchdog dispatched — ${runUrl(wdRun.databaseId)}\n` +
+        `    re-baselining the drifted browsers and dispatching their browser E2E…`
+    );
+    const wd = waitForRun(wdRun.databaseId, sleepFn, statusFn, hasTime);
+    if (wd !== 'success') {
+      console.error(
+        wd === 'failure' ?
+          '  ✗ the url-watchdog run failed — see it before re-publishing.'
+        : '  ✗ lost sight of the url-watchdog run (gh error or out of time).'
+      );
+      return wd === 'failure' ? 'watchdog-failed' : 'unobservable';
+    }
+    console.log('  ✓ watchdog green — browser versions re-baselined, browser E2E dispatched.');
+  }
+  for (;;) {
+    const runs = discover();
+    for (const run of runs) {
+      const rec = waitForValidationRecord(run.databaseId, sleepFn, fetchJobs, hasTime);
+      if (rec === 'success') return 'validated';
+      if (rec === 'failure') {
+        console.error(
+          `  ✗ the browser E2E did NOT record a validation — an E2E leg failed:\n` +
+            `    ${runUrl(run.databaseId)}\n` +
+            `    (the snap leg failing is #291 and does not block recording — a real\n` +
+            `    firefox/firefox-dev/waterfox leg failure does. See the run.)`
+        );
+        return 'validation-failed';
+      }
+      if (rec === 'unobservable') return 'unobservable';
+      // 'not-applicable': a fork escape — the full-matrix run is elsewhere.
+    }
+    if (!hasTime()) return 'unobservable';
+    sleepFn(20000);
+  }
 }
 
 export async function main() {
@@ -540,87 +713,180 @@ export async function main() {
       'full publish'
     : `PARTIAL publish — publishing: ${opts.include.join(', ')}`;
   const watchHint = `gh run list --workflow pages.yml --limit 1 --repo ${REPO}`;
-  // Dev publishes are disposable and skip the gates; --no-wait restores pure
-  // fire-and-forget. Prod is watched: this wrapper dispatched the run, so it
-  // reports (and chains) its own gate instead of leaving a red run as the
-  // operator's first sign of trouble (#347).
-  if (opts.mode !== 'prod' || opts.noWait) {
+  // Dev publishes are disposable and skip the gates — no chain, no watch.
+  if (opts.mode !== 'prod') {
     console.log(
       `✓ ${opts.mode.toUpperCase()} ${what} dispatched — the cross-OS matrix builds in CI.\n` +
         `  Watch: ${watchHint} (or the Actions tab).`
     );
     return;
   }
-  console.log('✓ dispatched — watching the pre-publish gate (~1 min; the matrix follows it)…');
-  const dispatchedAt = new Date(Date.now() - 5000).toISOString();
-  const run = findNewestDispatch(WORKFLOW, dispatchedAt);
-  if (!run) {
-    console.log(
-      `✓ ${opts.mode.toUpperCase()} ${what} dispatched — could not identify the run to watch it:\n` +
-        `  ${watchHint}`
+  // Prod carries the run to completion: watch the gate; on a block, remediate
+  // automatically (watchdog / E2E), wait for the browser validations, and
+  // re-dispatch — ONE command, no re-run (#347). The only stops are real
+  // validation failures, a gate that blocks twice in one chain (needs a human
+  // decision), or losing sight of the run; the chain budget bounds the total
+  // wait (the E2E is the long pole: ~10–15 min in recent runs).
+  const deadline = Date.now() + PUBLISH_CHAIN_BUDGET_MIN * 60_000;
+  const hasTime = () => Date.now() < deadline;
+  let dispatchedAt = new Date(Date.now() - 5000).toISOString();
+  let verdict = null;
+  for (let chainAttempt = 1; chainAttempt <= 3; chainAttempt++) {
+    const run = findNewestDispatch(WORKFLOW, dispatchedAt);
+    if (!run) {
+      console.log(
+        `✓ ${opts.mode.toUpperCase()} ${what} dispatched — could not identify the run to watch it:\n` +
+          `  ${watchHint}`
+      );
+      return;
+    }
+    console.log(`✓ dispatched — watching the pre-publish gate (${runUrl(run.databaseId)})…`);
+    const watched = watchGateJob(run.databaseId, defaultSleep, gateJobs, hasTime);
+    if (watched.outcome === 'green') {
+      verdict = {kind: 'green', runId: run.databaseId};
+      break;
+    }
+    if (watched.outcome === 'unobservable') {
+      verdict = {kind: 'unobservable', runId: run.databaseId};
+      break;
+    }
+    if (watched.outcome === 'failed') {
+      verdict = {kind: 'failed', detail: watched.detail, runId: run.databaseId};
+      break;
+    }
+    // Blocked: remediate. Drift → the watchdog (covers every drifted browser
+    // AND the full-matrix E2E whose record job writes what the gate reads);
+    // e2e-missing → the E2E workflow directly.
+    let wdRun = null;
+    if (watched.outcome === 'drift') {
+      console.error(
+        `✗ pre-publish gate: new browser version(s) since the last watchdog run —\n` +
+          `  remediating automatically (no re-run needed; #347).\n` +
+          `  ${runUrl(run.databaseId)}`
+      );
+      const wdRes = dispatchWatchdog();
+      if (wdRes.error || wdRes.status !== 0) {
+        verdict = {kind: 'watchdog-dispatch-failed'};
+        break;
+      }
+      wdRun = findNewestDispatch(WATCHDOG_WORKFLOW, dispatchedAt);
+    } else {
+      console.error(
+        `✗ pre-publish gate: no successful E2E workflow run for this commit yet —\n` +
+          `  dispatching it automatically (no re-run needed; #347).\n` +
+          `  ${runUrl(run.databaseId)}`
+      );
+      const e2eRes = spawnSync(
+        'gh',
+        [...repoFlag(), 'workflow', 'run', E2E_WORKFLOW, '--ref', 'main', '-f', 'browser=all'],
+        {encoding: 'utf8'}
+      );
+      if (e2eRes.error || e2eRes.status !== 0) {
+        verdict = {kind: 'e2e-dispatch-failed'};
+        break;
+      }
+    }
+    const outcome = awaitValidation(
+      defaultSleep,
+      hasTime,
+      wdRun && wdRun.databaseId ? wdRun : null,
+      gateJobs,
+      runStatus,
+      () => findE2EDispatches(dispatchedAt)
     );
-    return;
+    if (outcome === 'watchdog-failed') {
+      verdict = {kind: 'watchdog-failed'};
+      break;
+    }
+    if (outcome === 'validation-failed') {
+      verdict = {kind: 'validation-failed'};
+      break;
+    }
+    if (outcome === 'unobservable') {
+      verdict = {kind: 'unobservable-chain'};
+      break;
+    }
+    console.log('  ✓ browser validations recorded — re-dispatching the publish…');
+    const redispatchRes = spawnSync('gh', buildDispatchArgs(opts), {encoding: 'utf8'});
+    if (redispatchRes.error || redispatchRes.status !== 0) {
+      verdict = {kind: 'redispatch-failed'};
+      break;
+    }
+    // Discovery bounds runs by creation time: move the marker forward so the
+    // next iteration watches the run we JUST dispatched, never the completed
+    // one the loop already remediated.
+    dispatchedAt = new Date(Date.now() - 5000).toISOString();
   }
-  const verdict = watchDispatchGate(run.databaseId);
-  switch (verdict.outcome) {
+  if (!verdict) verdict = {kind: 'blocked-three-times'};
+  switch (verdict.kind) {
     case 'green':
       console.log(
         `✓ pre-publish gate green — ${opts.mode.toUpperCase()} ${what} is building in CI.\n` +
           `  Watch: ${watchHint}\n` +
-          `  ${runUrl(run.databaseId)}`
+          `  ${runUrl(verdict.runId)}`
       );
       return;
-    case 'drift': {
+    case 'unobservable':
       console.error(
-        `✗ pre-publish gate: new browser version(s) since the last watchdog run —\n` +
-          `  publishing would ship to a browser version no E2E has validated.\n` +
-          `  ${runUrl(run.databaseId)}`
-      );
-      const wd = dispatchWatchdog();
-      if (wd.error || wd.status !== 0) {
-        console.error(
-          `  auto-dispatch of the URL watchdog failed — run it manually, then re-run this\n` +
-            `  command when it and its browser E2E are green:\n` +
-            `    gh workflow run url-watchdog.yml --ref main --repo ${REPO}`
-        );
-        process.exitCode = 1;
-        return;
-      }
-      const wdRun = findNewestDispatch(WATCHDOG_WORKFLOW, dispatchedAt);
-      console.error(
-        `  → url-watchdog dispatched${wdRun ? ` — ${runUrl(wdRun.databaseId)}` : ''}. It re-baselines\n` +
-          `  the drifted browsers and dispatches their browser E2E (all runs concurrent).\n` +
-          `  When the watchdog AND its E2E runs are done (~10–15 min; the E2E run shows red on\n` +
-          `  'snap Firefox E2E · ubuntu-24.04' — the known snap-store outage, #291 — while\n` +
-          `  record-validation still records and unblocks the publish): re-run this command.\n` +
-          `  A publish then takes ~4 min (gate ~10 s → pre-run manifest ~3 s → win ~2.5 min →\n` +
-          `  linux ~25 s → mac ~35 s).`
+        `✗ lost sight of the run (gh error) — the publish may still be running; follow it:\n` +
+          `  ${watchHint}\n` +
+          `  ${runUrl(verdict.runId)}`
       );
       process.exitCode = 1;
       return;
-    }
-    case 'e2e-missing':
+    case 'unobservable-chain':
       console.error(
-        `✗ pre-publish gate: no successful E2E workflow run for this commit yet —\n` +
-          `  let the E2E run on main finish (or re-run it), then re-dispatch.\n` +
-          `  ${runUrl(run.databaseId)}`
+        `✗ lost sight of the remediation chain (gh error or the ${PUBLISH_CHAIN_BUDGET_MIN}-min\n` +
+          `  budget ran out) — the runs may still be going; follow them, then re-run this command:\n` +
+          `  ${watchHint}`
       );
       process.exitCode = 1;
       return;
     case 'failed':
       console.error(
         `✗ pre-publish gate failed (${verdict.detail}) — see the run before re-dispatching.\n` +
-          `  ${runUrl(run.databaseId)}`
+          `  ${runUrl(verdict.runId)}`
+      );
+      process.exitCode = 1;
+      return;
+    case 'watchdog-dispatch-failed':
+      console.error(
+        `  the url-watchdog auto-dispatch failed — run it manually, then re-run this command:\n` +
+          `    gh workflow run url-watchdog.yml --ref main --repo ${REPO}`
+      );
+      process.exitCode = 1;
+      return;
+    case 'e2e-dispatch-failed':
+      console.error(
+        `  the E2E auto-dispatch failed — run it manually, then re-run this command:\n` +
+          `    gh workflow run e2e.yml --ref main -f browser=all --repo ${REPO}`
+      );
+      process.exitCode = 1;
+      return;
+    case 'watchdog-failed':
+      console.error('  ✗ the url-watchdog run failed — resolve it, then re-run this command.');
+      process.exitCode = 1;
+      return;
+    case 'validation-failed':
+      console.error(
+        '  ✗ browser E2E validation failed — resolve the failing leg, then re-run this command.'
+      );
+      process.exitCode = 1;
+      return;
+    case 'redispatch-failed':
+      console.error(
+        '  ✗ the automatic re-dispatch failed — the validations are done; just re-run this command.'
       );
       process.exitCode = 1;
       return;
     default:
-      // pending / unobservable: fail open to the fire-and-forget UX.
-      console.log(
-        `✓ ${opts.mode.toUpperCase()} ${what} dispatched — gate still pending, follow the run:\n` +
-          `  ${watchHint}\n` +
-          `  ${runUrl(run.databaseId)}`
+      console.error(
+        `✗ the pre-publish gate blocked three times in one chain (a browser kept releasing,\n` +
+          `  or something is oscillating) — this needs a human decision; inspect the runs,\n` +
+          `  then re-run this command:\n` +
+          `  ${watchHint}`
       );
+      process.exitCode = 1;
       return;
   }
 }
