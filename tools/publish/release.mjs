@@ -3,8 +3,15 @@
 //
 // Prod publishes are CI-only (ADR 0026, prodCiGuard.mjs): the complete
 // cross-OS installer set is buildable only by the Pages publish workflow's
-// per-OS matrix. This script is a discoverable front door for the dispatch —
-// exactly `gh workflow run pages.yml`, nothing more:
+// per-OS matrix. This script is a discoverable front door for the dispatch:
+// a PROD publish first runs the ~30 s drift-check probe (the same shared gate
+// pages.yml enforces in-run), so a drift morning never burns a publish
+// dispatch on a run the probe could have predicted would fail; on drift the
+// URL watchdog is dispatched FOR the operator with the measured re-run timing
+// (#347). Every step announces its expected duration before it starts — the
+// terminal never blocks silently — and the re-run after remediation is
+// explicit. The commands are repo-scoped (`--repo`), so no `gh repo
+// set-default` is needed:
 //
 //   pnpm publish:all                   # full prod publish (mode defaults to prod)
 //   pnpm publish:packages              # zips + updater-ui only (--include=packages)
@@ -31,12 +38,13 @@
 // The wrapper owns --force/--mode/--include/--ref (it maps them to the
 // workflow inputs / gh flags); any other `-f key=value` is passed through to
 // gh verbatim — through spawnSync's argv array, never a shell, so nothing is
-// interpolated. No watch mode, no output parsing for the PUBLISH dispatches —
-// follow the run in the Actions tab. (--stage is the exception: it is the full
-// local staging pipeline of tools/publish/stageFlow.mjs, which watches and
-// downloads by design.) The workflow's own gates (main-only for prod,
-// E2E-green commit, browser-version drift) are what the guard requires; this
-// alias cannot bypass them, it merely triggers them.
+// interpolated. The only thing the wrapper waits on is the pre-flight probe
+// (~30 s) and, on drift, the watchdog dispatch announcement — never the
+// publish matrix or any E2E. (--stage is the exception: it is the full local
+// staging pipeline of tools/publish/stageFlow.mjs, which watches and downloads
+// by design.) The workflow's own gates (main-only for prod, E2E-green commit,
+// browser-version drift) are what the guard requires; this alias cannot
+// bypass them, it merely pre-flights and triggers them.
 
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
@@ -49,6 +57,40 @@ import {INCLUDE_ROLES} from './publishScope.mjs';
 import {gitEnv} from './generateBuildDates.mjs';
 
 const WORKFLOW = 'pages.yml';
+/** The publish pre-flight probe: the shared drift gate, dispatchable (#347). */
+const PROBE_WORKFLOW = 'drift-check.yml';
+/** Dispatched for the operator when the probe reports drift. */
+const WATCHDOG_WORKFLOW = 'url-watchdog.yml';
+/**
+ * Every gh call targets the repo explicitly — no `gh repo set-default`
+ * dependency (#347).
+ */
+const REPO = 'onemen/firefox-scripts';
+
+/**
+ * gh argv prefix addressing REPO explicitly (the first two tokens of every gh
+ * call).
+ */
+export function repoFlag() {
+  return ['-R', REPO];
+}
+
+/** GitHub Actions run URL for a run id. */
+export function runUrl(id) {
+  return `https://github.com/${REPO}/actions/runs/${id}`;
+}
+
+/** ISO timestamp `deltaMs` from now — the dispatch-discovery window marker. */
+export function nowIso(deltaMs = 0) {
+  return new Date(Date.now() + deltaMs).toISOString();
+}
+
+/**
+ * Hard cap on probe re-polls (~5 s apart → ~5 min): the probe finishes in ~30 s
+ * in every measured run; the cap is the fail-open boundary, never the expected
+ * wait.
+ */
+const PROBE_MAX_POLLS = 60;
 
 /**
  * The workflow-dispatches API (`gh workflow run --ref`) dispatches only refs
@@ -220,7 +262,7 @@ export function buildDispatchArgs({
   ref = '',
   passthrough = [],
 } = {}) {
-  const args = ['workflow', 'run', WORKFLOW];
+  const args = [...repoFlag(), 'workflow', 'run', WORKFLOW];
   // gh dispatches the default branch unless told otherwise — a dev publish
   // from a feature branch needs --ref to point at that branch's workflow.
   if (ref) args.push('--ref', ref);
@@ -325,6 +367,247 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
   return opts;
 }
 
+/*
+ * ── Pre-flight (the #347 probe-first design) ─────────────────────────────
+ * A PROD publish first dispatches drift-check.yml — the same shared
+ * .github/actions/drift-gate composite pages.yml enforces in-run — and waits
+ * for its verdict (~30 s; the probe IS fast on purpose). Every wait is
+ * announced with its expected duration; on drift the URL watchdog is
+ * dispatched FOR the operator and the command exits with the measured re-run
+ * timing. The re-run after remediation is explicit by design.
+ */
+
+/**
+ * gh argv for the PROBE dispatch (main: the probe covers the commit a prod
+ * publish will build).
+ */
+export function buildProbeArgs() {
+  return [...repoFlag(), 'workflow', 'run', PROBE_WORKFLOW, '--ref', 'main'];
+}
+
+/**
+ * The newest workflow_dispatch run of `workflow` created at/after `afterIso`
+ * (null when gh errors — callers fail open). Event-filtered so a human's manual
+ * dispatch seconds earlier cannot be mistaken for ours.
+ *
+ * @param {string} workflow
+ * @param {string} afterIso
+ * @returns {{databaseId: number} | null}
+ */
+export function findNewestDispatch(workflow, afterIso) {
+  const res = spawnSync(
+    'gh',
+    [
+      ...repoFlag(),
+      'run',
+      'list',
+      '--workflow',
+      workflow,
+      '--created',
+      `>=${afterIso.replace(/\.\d+Z$/, 'Z')}`,
+      '--limit',
+      '5',
+      '--json',
+      'databaseId,event',
+    ],
+    {encoding: 'utf8', maxBuffer: 16 * 1024 * 1024}
+  );
+  if (res.error || res.status !== 0) return null;
+  try {
+    const runs = JSON.parse(res.stdout).filter(r => r.event === 'workflow_dispatch');
+    return runs[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A run's {status, conclusion} (null when gh errors).
+ *
+ * @param {number} runId
+ * @returns {{status: string; conclusion: string | null} | null}
+ */
+export function getRunStatus(runId) {
+  const res = spawnSync('gh', [...repoFlag(), 'api', `repos/${REPO}/actions/runs/${runId}`], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (res.error || res.status !== 0) return null;
+  try {
+    const j = JSON.parse(res.stdout);
+    return {status: j.status, conclusion: j.conclusion};
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wait the probe run to completion (re-polls ~5 s apart; the probe is ~30 s
+ * end-to-end, so a coarse poll and a hard round cap are enough). The cap is the
+ * fail-open: a stuck/unobservable probe degrades to fire-and-forget with a
+ * pointer, never to a wrong verdict.
+ *
+ * @param {number} runId
+ * @param {(ms: number) => void} [sleepFn] injectable sleep (tests)
+ * @param {(
+ *   id: number
+ * ) => {status: string; conclusion: string | null} | null} [statusFn]
+ * @returns {'success' | 'failure' | 'unobservable'}
+ */
+export function waitForProbeRun(
+  runId,
+  sleepFn = ms => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  statusFn = getRunStatus
+) {
+  for (let attempt = 0; attempt < PROBE_MAX_POLLS; attempt++) {
+    if (attempt > 0) sleepFn(5000);
+    const st = statusFn(runId);
+    if (st === null) return 'unobservable';
+    if (st.status === 'completed') return st.conclusion === 'success' ? 'success' : 'failure';
+  }
+  return 'unobservable';
+}
+
+/**
+ * Pull the verdict + drift listing out of the probe run's LOG. The probe's
+ * Report step renders the blocked browsers as error annotations
+ * (`##[error]firefox-dev: 157.0b4 → 157.0b5`) plus one fixed remedy line —
+ * exactly what `gh run view --log` shows once the run completed. The drift
+ * lines are surfaced to the operator verbatim; the remedy line's shape picks
+ * drift vs e2e-missing. Unparseable/gh-error → 'unobservable' (the caller fails
+ * open; pages.yml re-checks in-run).
+ *
+ * @param {number} runId
+ * @param {(argv: string[]) => {status: number; stdout: string} | null} [ghFn]
+ * @returns {{
+ *   verdict: 'green' | 'drift' | 'e2e-missing' | 'unobservable';
+ *   drift: string[];
+ * }}
+ */
+export function probeVerdict(runId, ghFn) {
+  const run =
+    ghFn ?? (argv => spawnSync('gh', argv, {encoding: 'utf8', maxBuffer: 16 * 1024 * 1024}));
+  const res = run([...repoFlag(), 'run', 'view', String(runId), '--log']);
+  if (!res || res.status !== 0) return {verdict: 'unobservable', drift: []};
+  const lines = (res.stdout || '')
+    .split(/\r?\n/)
+    .filter(line => line.includes('##[error]'))
+    .map(line => line.replace(/^.*?##\[error\]/, '').trim())
+    .filter(Boolean);
+  const drift = lines.filter(l => /^[a-z-]+: \S.+ → /.test(l));
+  const e2eMissing = lines.some(l => l.startsWith('no successful E2E workflow run'));
+  if (e2eMissing && drift.length === 0) return {verdict: 'e2e-missing', drift};
+  if (drift.length > 0) return {verdict: 'drift', drift};
+  return {verdict: 'unobservable', drift: []};
+}
+
+/**
+ * The PROD pre-flight, with the operator informed at every step: 'pre-flight:
+ * checking browser versions + E2E coverage (~30 s)…' green → '✓ pre-flight
+ * green — publishing.' drift → the listing + the watchdog dispatched FOR them +
+ * measured re-run timing, then exit 1 (the re-run is explicit, #347).
+ * e2e-missing → the E2E-for-commit remedy with its timing, exit 1. unobservable
+ * → fail-open: name it, point at the run, and publish anyway — pages.yml's
+ * in-run gate remains the moment of truth.
+ *
+ * @param {{
+ *   dispatch?: (argv: string[]) => {status: number; stderr?: string} | null;
+ *   find?: (workflow: string, afterIso: string) => {databaseId: number} | null;
+ *   status?: (
+ *     id: number
+ *   ) => {status: string; conclusion: string | null} | null;
+ *   verdict?: (id: number) => {verdict: string; drift: string[]};
+ *   sleep?: (ms: number) => void;
+ * }} [seams]
+ *   injectable for the unit tests
+ * @returns {{
+ *   verdict: 'green' | 'drift' | 'e2e-missing' | 'unobservable';
+ *   drift: string[];
+ * }}
+ */
+export function runPreflight(seams = {}) {
+  const dispatch = seams.dispatch ?? (argv => spawnSync('gh', argv, {encoding: 'utf8'}));
+  const find = seams.find ?? findNewestDispatch;
+  const status = seams.status ?? getRunStatus;
+  const verdictOf = seams.verdict ?? probeVerdict;
+  const sleep =
+    seams.sleep ?? (ms => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
+
+  console.log('pre-flight: checking browser versions + E2E coverage (~30 s)…');
+  const afterIso = nowIso(-5000);
+  const res = dispatch(buildProbeArgs());
+  if (!res || res.status !== 0) {
+    console.error(
+      `  ✗ could not dispatch ${PROBE_WORKFLOW}${res?.stderr ? ` — ${(res.stderr || '').trim()}` : ''}.\n` +
+        '  Continuing WITHOUT pre-flight — pages.yml checks the same gates in-run.\n' +
+        '  (is `gh` installed and logged in? `gh auth status`)'
+    );
+    return {verdict: 'green', drift: []};
+  }
+  const probe = find(PROBE_WORKFLOW, afterIso);
+  if (!probe) {
+    console.log(
+      `  (could not identify the probe run to read its verdict — continuing;\n` +
+        `  the dispatch went through: https://github.com/${REPO}/actions)`
+    );
+    return {verdict: 'green', drift: []};
+  }
+  const outcome = waitForProbeRun(probe.databaseId, sleep, status);
+  if (outcome === 'unobservable') {
+    console.log(
+      `  (probe run lost — continuing; pages.yml checks the same gates in-run)\n` +
+        `  ${runUrl(probe.databaseId)}`
+    );
+    return {verdict: 'green', drift: []};
+  }
+  if (outcome === 'success') {
+    return {verdict: 'green', drift: []};
+  }
+  const {verdict, drift} = verdictOf(probe.databaseId);
+  if (verdict === 'green') {
+    // The run failed but the verdict says green (e.g. the report step only):
+    // surface it and continue — the in-run gate re-checks anyway.
+    console.log(
+      `  (probe run reported failure without a drift verdict — continuing)\n  ${runUrl(probe.databaseId)}`
+    );
+    return {verdict: 'green', drift: []};
+  }
+  if (verdict === 'drift') {
+    console.error(
+      `✗ pre-flight: browser version drift — publishing would ship to a browser version no E2E has validated:\n` +
+        drift.map(d => `    - ${d}`).join('\n') +
+        `\n  → dispatching the URL watchdog for you now (re-baselines the browsers +\n` +
+        `    dispatches their browser E2E; measured chain: watchdog ~1 min, E2E ~10–15 min —\n` +
+        `    the E2E page shows RED on 'snap Firefox E2E · ubuntu-24.04' while the snap-store\n` +
+        `    outage (#291) lasts; it still records and unblocks the publish).\n` +
+        `  → re-run this command in ~15 min; the publish itself takes ~4 min.`
+    );
+    const wdRes = dispatch([...repoFlag(), 'workflow', 'run', WATCHDOG_WORKFLOW, '--ref', 'main']);
+    if (!wdRes || wdRes.status !== 0) {
+      console.error(
+        `  ✗ the watchdog auto-dispatch failed — run it manually:\n` +
+          `    gh workflow run url-watchdog.yml --ref main --repo ${REPO}`
+      );
+      return {verdict: 'drift', drift};
+    }
+    const wdRun = find(WATCHDOG_WORKFLOW, afterIso);
+    console.error(
+      `  ✓ url-watchdog dispatched${wdRun ? ` — ${runUrl(wdRun.databaseId)}` : ''}.\n` +
+        `  Re-run THIS command when the chain is done — it pre-flights again and publishes.`
+    );
+    return {verdict: 'drift', drift};
+  }
+  // e2e-missing: the E2E run for this commit has not finished (or never ran).
+  console.error(
+    `✗ pre-flight: no successful E2E workflow run for this commit yet —\n` +
+      `  the publish would be blocked in-run. Let the E2E run on main finish\n` +
+      `  (typically ~10–15 min including queue; watch:\n` +
+      `    gh run list --workflow e2e.yml --commit <sha> --repo ${REPO}\n` +
+      `  or re-dispatch it manually), then re-run this command.`
+  );
+  return {verdict: 'e2e-missing', drift};
+}
+
 export async function main() {
   let opts;
   try {
@@ -359,6 +642,17 @@ export async function main() {
       return;
     }
   }
+  // The pre-flight probe runs before a PROD dispatch only: dev publishes are
+  // disposable, skip the gates, and keep the plain fire-and-forget UX.
+  if (opts.mode === 'prod') {
+    const preflight = runPreflight();
+    if (preflight.verdict === 'green') {
+      console.log('✓ pre-flight green — publishing.');
+    } else {
+      process.exitCode = 1;
+      return;
+    }
+  }
   const res = spawnSync('gh', buildDispatchArgs(opts), {encoding: 'utf8'});
   if (res.error || res.status !== 0) {
     console.error(
@@ -372,9 +666,10 @@ export async function main() {
     opts.include[0] === 'all' || opts.include.length === INCLUDE_ROLES.length ?
       'full publish'
     : `PARTIAL publish — publishing: ${opts.include.join(', ')}`;
+  const watchHint = `gh run list --workflow pages.yml --limit 1 --repo ${REPO}`;
   console.log(
     `✓ ${opts.mode.toUpperCase()} ${what} dispatched — the cross-OS matrix builds in CI.\n` +
-      '  Watch: gh run list --workflow pages.yml --limit 1 (or the Actions tab).'
+      `  Watch: ${watchHint} (or the Actions tab).`
   );
 }
 

@@ -60,11 +60,13 @@ env:
 
 jobs:
   # Pre-publish gate: a browser released since the last weekly watchdog run
-  # would ship unvalidated against the new version. Re-resolve every browser's
-  # current version and diff it against the watchdog baseline (restored from the
-  # same Actions cache the watchdog uses). Prod publishes are BLOCKED on drift:
-  # run the URL watchdog workflow first (it refreshes the baseline and triggers
-  # the browser-specific E2E), then re-dispatch. Dev publishes warn only.
+  # would ship unvalidated against the new version. The gate itself is the
+  # shared `.github/actions/drift-gate` composite — ONE implementation, also
+  # called by build-and-upload.yml and the drift-check.yml probe the
+  # `pnpm publish:*` wrapper dispatches before this run (#347). This in-run
+  # call stays the moment-of-truth enforcement: minutes pass between a green
+  # probe and the real publish, so the verdict is re-checked here. Prod
+  # publishes are BLOCKED on drift; dev publishes warn only.
   pre-publish:
     name: check browser version drift
     runs-on: ubuntu-24.04
@@ -74,57 +76,40 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-      # Restore the watchdog baseline (keys rotate per run; the prefix picks the
-      # newest). No save here — this job does not modify the baseline.
-      - name: Restore watchdog baseline
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Drift gate
+        id: gate
+        uses: ./.github/actions/drift-gate
         with:
-          path: .watchdog
-          key: url-watchdog-baseline-${{ github.run_id }}
-          restore-keys: url-watchdog-baseline-
-      # Validated-versions record (#4): written only by the E2E workflow's
-      # record-validation job after all browser legs passed. Restored to its
-      # own dir so the watchdog baseline restore above can never clobber it.
-      - name: Restore validated-versions record
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .watchdog-validated
-          key: browser-validated-${{ github.run_id }}
-          restore-keys: browser-validated-
-      - name: Check browser version drift
+          mode: ${{ inputs.mode }}
+          github-token: ${{ github.token }}
+      - name: Act on the gate verdict
         env:
+          VERDICT: ${{ steps.gate.outputs.verdict }}
           MODE: ${{ inputs.mode }}
-          VALIDATED_DIR: ${{ github.workspace }}/.watchdog-validated
-          # ADR 0021: a fork whose version lookup still fails after the
-          # resolver's retries + mirrors warns (annotation + notification
-          # issue) instead of blocking the publish — issues: write above.
-          GITHUB_TOKEN: ${{ github.token }}
+          DRIFT: ${{ steps.gate.outputs.drift }}
         run: |
-          if node tools/check-browser-downloads.mjs --drift --require-validated; then
+          if [ "$VERDICT" = 'green' ]; then
             echo "no browser version drift since the last watchdog run"
-          elif [ "$MODE" = "prod" ]; then
-            echo "::error::new browser version(s) since the last watchdog run — run the URL watchdog workflow (refreshes the baseline + triggers browser-specific E2E), then re-dispatch publish."
+            exit 0
+          fi
+          if [ -z "$VERDICT" ]; then
+            echo "::error::the drift gate failed to run — see the Drift gate step above."
             exit 1
-          else
+          fi
+          if [ "$MODE" != 'prod' ]; then
             echo "::warning::browser version drift detected (dev mode — not blocking)"
+            exit 0
           fi
-      # Prod publishes ship to every installed browser, so the exact commit
-      # being published must have passed the E2E workflow first (every merge to
-      # main triggers it; docs-only commits run the gates as fast no-ops). A
-      # dispatch against a commit whose E2E is still running — or that never
-      # ran — is blocked with a re-dispatch hint. Dev publishes are disposable
-      # and skip this gate.
-      - name: Require a successful E2E run for this commit (prod)
-        if: inputs.mode == 'prod'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          count="$(gh api "repos/${{ github.repository }}/actions/workflows/e2e.yml/runs?head_sha=${{ github.sha }}&status=success" --jq '.total_count')"
-          echo "successful E2E runs for ${{ github.sha }}: $count"
-          if [ "$count" -eq 0 ]; then
+          if [ "$VERDICT" = 'drift' ]; then
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              echo "::error::$line"
+            done <<< "$DRIFT"
+            echo "::error::new browser version(s) since the last watchdog run — run the URL watchdog workflow (refreshes the baseline + triggers browser-specific E2E), then re-dispatch publish."
+          else
             echo "::error::no successful E2E workflow run for commit ${{ github.sha }} — let the E2E run on main finish (or re-run it), then re-dispatch the publish."
-            exit 1
           fi
+          exit 1
       # Release-gate cache hygiene (#47): the same prune the weekly workflow
       # runs, executed once more before any publish so a prod upload always
       # starts from a lean cache (stale firefox-dl-*/node-cache-* keys would

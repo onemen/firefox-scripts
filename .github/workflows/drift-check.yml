@@ -1,0 +1,73 @@
+# Publish pre-flight probe (#347): the prod-publish browser gate, dispatchable.
+#
+# ONE ~30 s run the `pnpm publish:*` wrapper dispatches BEFORE the real publish,
+# so a drift morning never burns a publish dispatch on a run the probe could
+# have predicted would fail. It runs the same shared `.github/actions/drift-gate`
+# composite as pages.yml's in-run gate — no second copy of the logic — and must
+# run in CI: the watchdog baseline and validated-versions record exist only in
+# Actions caches (a local `--drift` run is a proven cache miss).
+#
+# Dispatched with --ref main (the wrapper's only ref; the e2e-for-commit check
+# therefore covers exactly the commit a prod publish will build). The verdict
+# is both the run's conclusion (exit 1) and, via the annotations, the drift
+# listing the wrapper forwards to the operator. NOT a required check anywhere:
+# this is a probe, and its failure is the signal.
+#
+# The in-run gate in pages.yml stays the moment-of-truth enforcement: minutes
+# can pass between a green probe and the real run.
+
+name: Drift check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read # the E2E-for-commit run count
+  issues: write # ADR 0021: fork lookup-failure notification issue
+
+concurrency:
+  group: drift-check
+  # A newer probe supersedes an older one — only the newest verdict matters.
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: check browser version drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      verdict: ${{ steps.gate.outputs.verdict }}
+      drift: ${{ steps.gate.outputs.drift }}
+      e2e-runs: ${{ steps.gate.outputs.e2e-runs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Drift gate
+        id: gate
+        uses: ./.github/actions/drift-gate
+        with:
+          mode: prod
+          github-token: ${{ github.token }}
+      - name: Report
+        env:
+          VERDICT: ${{ steps.gate.outputs.verdict }}
+          DRIFT: ${{ steps.gate.outputs.drift }}
+        shell: bash
+        run: |
+          if [ "$VERDICT" = 'green' ]; then
+            echo '✓ no drift — publish gates would pass'
+            exit 0
+          fi
+          if [ "$VERDICT" = 'drift' ]; then
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              echo "::error::$line"
+            done <<< "$DRIFT"
+            echo "::error::run the URL watchdog workflow (refreshes the baseline + triggers browser-specific E2E), then re-dispatch publish."
+          else
+            echo "::error::no successful E2E workflow run for commit ${{ github.sha }} — let the E2E run on main finish (or re-run it), then re-dispatch publish."
+          fi
+          exit 1

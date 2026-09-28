@@ -1032,6 +1032,21 @@ pnpm publish:dev         # dev-channel upload: the disposable dev-build-<id> bra
 pnpm publish -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
 ```
 
+A PROD publish first runs the **pre-flight probe** (`drift-check.yml`, ~30 s): the same shared
+`.github/actions/drift-gate` composite that pages.yml enforces in-run, dispatched standalone so a
+drift morning never burns a publish dispatch on a run the probe could have predicted would fail.
+Every wait is announced with its expected duration — the terminal never blocks silently. On drift
+the wrapper dispatches the URL watchdog for you (measured chain: watchdog ~1 min → its browser E2E
+~10–15 min; the E2E page shows red on `snap Firefox E2E · ubuntu-24.04` while the snap-store outage
+#291 lasts — record-validation still records and unblocks the publish) and exits: **re-run the same
+command when the chain is done** — the explicit re-run is by design, and it pre-flights again before
+publishing. The probe checks both gate conditions (drift + validated coverage, and the
+E2E-for-commit count for main HEAD); a probe that cannot be observed (gh error) fails **open** —
+pages.yml's in-run gate remains the moment of truth. Dev publishes skip the pre-flight (they skip
+the gates), and every `--include` runs the same five pages.yml jobs (the input only scopes what
+`upload.mjs` builds/attaches inside the publish jobs). `pnpm publish:*` runs no unit or E2E tests
+itself — the tests live in the workflows.
+
 | Flag                            | Modes         | What it does                                                                                                                                                                                                                                                                                     |
 | ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--mode=prod\|dev`              | both          | **Required.** `prod` → `latest` release + `gh-pages` (CI-only, ADR 0026); `dev` → the disposable `dev-build-<id>` branch                                                                                                                                                                         |
@@ -1053,10 +1068,11 @@ still have published a partial release. The workflow sets an internal marker env
 nothing else passes the guard.
 
 The local front door for the prod publish is the **`pnpm publish`** alias — a thin wrapper that runs
-exactly `gh workflow run pages.yml -f mode=<mode> -f include=<roles>` (no local build, no watch
-mode; follow the run in the Actions tab). Its scope is opt-in like upload.mjs's: `--include=all` (or
-the `publish:all` preset) is the full publish, and a bare `pnpm publish` fails loudly rather than
-guessing:
+the pre-flight probe (~30 s, announced), then
+`gh workflow run pages.yml -f mode=<mode> -f include=<roles> --repo onemen/firefox-scripts` (no
+local build, no watch mode; follow the run in the Actions tab). Its scope is opt-in like
+upload.mjs's: `--include=all` (or the `publish:all` preset) is the full publish, and a bare
+`pnpm publish` fails loudly rather than guessing:
 
 ```bash
 pnpm publish:all              # dispatch the prod publish (full cross-OS matrix in CI)
