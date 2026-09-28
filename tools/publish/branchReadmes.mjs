@@ -95,8 +95,6 @@ export function ghPagesReadme() {
       `**Download the [latest release](https://github.com/${REPO_OWNER}/${ZIP_PAGES_REPO}/releases/latest)**`,
       '— it bundles the same packages with release notes and install instructions.',
       '',
-      'The rendered page (index.html) mirrors the repository README.',
-      '',
     ].join('\n'),
     'utf-8'
   );

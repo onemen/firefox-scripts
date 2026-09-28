@@ -1096,11 +1096,13 @@ What a run publishes (the hash comparison itself is [status-logic.md](./status-l
   installer + helper binaries for the selected platforms, and `hashes.json`. Unchanged binaries are
   reused from the newest previous snapshot instead of recompiled; the untracked generated files are
   regenerated for the run and removed afterwards.
-- **prod → GitHub** — rebuilt zips and installer binaries are attached to the `latest` release as
-  **release assets (the human manual-download surface)**; the zips (for machine fetches), helpers,
-  `hashes.json` + `updater-ui.zip` go to `gh-pages`, the single host every installer/updater fetch
-  reads; the `latest` tag moves to the published commit (unless idle); the component date tags are
-  synced (#72). A run where nothing changed uploads nothing.
+- **prod → GitHub** — the complete package-zip set and rebuilt installer binaries are attached to
+  the `latest` release as **release assets (the human manual-download surface)** — both zips
+  re-upload every packages run even when unchanged, so the release never loses a file to
+  change-detection (issue #354, ADR 0019's complete-asset-set rule); the zips (for machine fetches),
+  helpers, `hashes.json` + `updater-ui.zip` go to `gh-pages`, the single host every
+  installer/updater fetch reads; the `latest` tag moves to the published commit (unless idle); the
+  component date tags are synced (#72). A run where nothing changed uploads nothing.
 - **dev → GitHub** — the same artifact set (with `-dev` names) to the `dev-build-<id>` branch via
   the git-data API, content-addressed: unchanged files create no commit. No release unless `--tag`.
 
@@ -1193,21 +1195,30 @@ The unified flow (one upload.mjs run):
    `dev-build-<id>` in dev; the newest `dist/<mode>-*/` snapshot in `--local` mode).
 2. Computes SHA-256 hashes for each package source tree and each binary source tree, and rebuilds
    only what changed (everything in `--mode=dev`/`--force`).
-3. In prod, uploads the changed artifacts (`utils.zip`, `installer_win.exe`, …) as release assets —
-   the human manual-download surface; no machine consumer reads them.
-4. Pushes the **changed** artifacts to the publish branch — this is the host every machine fetch
+3. In prod, uploads the release assets — the human manual-download surface; no machine consumer
+   reads them. A packages run attaches the **complete** package-zip set (both zips ride along even
+   when only one was rebuilt — issue #354) plus the rebuilt installers + `.sha256` sidecars.
+4. Pushes artifacts to the publish branch content-addressed — this is the host every machine fetch
+   reads (installer tab and in-browser updater alike: `ZIP_BASE_URL` = `ZIP_PAGES_URL`), because
+   GitHub Pages sends `Access-Control-Allow-Origin: *` (in dev mode the same branch is read through
+   jsDelivr, which is also CORS-enabled). The branch is created automatically on first run. A file
+   whose bytes are unchanged creates no commit, so an unchanged package keeps its live artifact.
+5. Pushes the **changed** artifacts to the publish branch — this is the host every machine fetch
    reads (installer tab and in-browser updater alike: `ZIP_BASE_URL` = `ZIP_PAGES_URL`), because
    GitHub Pages sends `Access-Control-Allow-Origin: *` (in dev mode the same branch is read through
    jsDelivr, which is also CORS-enabled). The branch is created automatically on first run. Only the
    artifacts rebuilt this run are pushed, so an unchanged package keeps its live artifact.
-5. Publishes the hash manifest (`hashes.json`) to the same branch.
-6. Prod only, when something was rebuilt: syncs the date-stamped **component releases**
-   (`scripts-<date>` for rebuilt package zips, `installer-<date>` for rebuilt installers + helpers,
-   incl. the helper `.sha256` sidecars) alongside `latest` — created with `prerelease: true` so they
-   can never take GitHub's "Latest" badge, which stays on `latest` (issue #72, ADR 0019). The tags
-   are frozen per-component snapshots for humans to browse; artifacts are always fetched by the
-   permanent unversioned names from `latest`/gh-pages, and `hashes.json` stays the machine source of
-   truth. An idle run (nothing rebuilt) leaves the date tags untouched.
+6. Publishes the hash manifest (`hashes.json`) to the same branch.
+7. Prod only, when something was rebuilt: syncs the date-stamped **component releases**
+   (`scripts-<date>` for the complete package-zip set — both zips ride along even when only one was
+   rebuilt, issue #354 — and `installer-<date>` for rebuilt installers) alongside `latest`, then
+   refreshes the **`latest` downloads table**: a managed section of the `latest` body (HTML-comment
+   markers) regenerated on every publish with one row per release asset, dated by that asset's own
+   upload date; manual prose outside the markers survives. The `latest` badge is re-pinned onto
+   `latest` with `make_latest` (issue #72, ADR 0019). The tags are frozen per-component snapshots
+   for humans to browse; artifacts are always fetched by the permanent unversioned names from
+   `latest`/gh-pages, and `hashes.json` stays the machine source of truth. An idle run (nothing
+   rebuilt) leaves the date tags untouched.
 
 Prod mode refuses to publish unless the current git branch is `main`; dev mode works from any branch
 (dev URLs are baked into the regenerated generated files on purpose). `snapshot:*` runs on any

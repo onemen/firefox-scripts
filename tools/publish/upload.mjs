@@ -104,7 +104,7 @@ import {
 import {buildDates} from './generateBuildDates.mjs';
 import {branchExistsOnPages, pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
 import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
-import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
+import {pinLatestRelease, refreshLatestBody, syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {ledgerEntry, ledgerStats, ledgerTable, mergeLedger} from '../ci/avLedger.mjs';
@@ -377,11 +377,29 @@ function snapshotDir() {
  * Hash both package sources, rebuild changed zips, return updated manifest
  * entries.
  */
+/**
+ * Package names staged for release/Pages upload: the packages scope always
+ * builds every zip (issue #354), so this is the full set. Any other scope
+ * stages no zips at all — falling back to `builtZips` (always empty there)
+ * keeps an installer/helper-only run from readFileSync-ing files that were
+ * never staged (CodeRabbit on #355).
+ */
+function stagedZipNames(builtZips) {
+  return SCOPE.packages ? PACKAGES.map(p => p.name) : builtZips;
+}
+
 async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns) {
   const updated = {};
   const built = [];
 
   for (const {name, dir} of PACKAGES) {
+    // NOTE: the zip is created for EVERY package in scope, changed or not
+    // (issue #354): the release surfaces must always carry the complete set
+    // (ADR 0019), so a run that rebuilds only one zip still stages the other
+    // for its re-upload. `built` stays change-driven — it decides the
+    // manifest, the Pages commit (content-addressed: unchanged bytes are
+    // skipped there) and the component-date tags, none of which should churn
+    // on an idle run.
     // Generated files that ship inside the zip but are gitignored on disk are
     // re-added here so the zip content, hash and canonical `files` list all
     // include them explicitly. Package-name-keyed: arrays are already the
@@ -410,19 +428,19 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
         `${dim(shortHash(hash))}${reason ? `  ${dim(reason)}` : ''}`
     );
 
-    if (needsZip) {
-      await createZip.createZip(
-        dir,
-        zipPath(name),
-        zipPatterns,
-        createZip.zipPrefixFor(name),
-        extraFiles.map(f => f.rel),
-        // Every file inside the zip carries the package's release date (the
-        // same manifest `date` users see) — not each source file's mtime.
-        zipEntryDate(date)
-      );
-      built.push(name);
-    }
+    // Always stage the zip (issue #354 — the release surfaces re-upload the
+    // complete set); `built` above stays the change signal.
+    await createZip.createZip(
+      dir,
+      zipPath(name),
+      zipPatterns,
+      createZip.zipPrefixFor(name),
+      extraFiles.map(f => f.rel),
+      // Every file inside the zip carries the package's release date (the
+      // same manifest `date` users see) — not each source file's mtime.
+      zipEntryDate(date)
+    );
+    if (needsZip) built.push(name);
 
     updated[name] = {hash, files, date};
   }
@@ -769,7 +787,11 @@ async function publishToGitHub({
     // serving — the self-update banner's download link needs a host the
     // installer tab can fetch; release-asset CDNs send no CORS headers);
     // helpers are Pages-only.
-    for (const name of builtZips) {
+    // The packages scope always stages the FULL zip set (issue #354), so the
+    // release surfaces re-upload every package — a run that rebuilds only one
+    // zip still leaves both on `latest` (the complete ADR 0019 set, no #157
+    // purge leftovers) and on the scripts-<date> tag.
+    for (const name of stagedZipNames(builtZips)) {
       pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
       // updater-ui is internal: the updater downloads and updates it from the
       // Pages branch itself — never a release asset (mirrors the dev path).
@@ -894,6 +916,15 @@ async function publishToGitHub({
     }
   }
 
+  // Prod: the `latest` downloads table rides EVERY prod run that had a
+  // release to touch — including an idle packages run, whose byte-identical
+  // re-uploads still bump the assets' upload dates (CodeRabbit on #355).
+  // Component date tags above stay gated on actual rebuilds; this refresh
+  // only restates what is on the release right now. Fails soft inside.
+  if (PUBLISH_MODE === 'prod' && release) {
+    await refreshLatestBody(octokit, release);
+  }
+
   // Prod: keep the 'latest' release tag pointing at the commit this upload was
   // built from (the current HEAD — prod is main-only with a clean worktree).
   // The installer/updater fetch everything via
@@ -950,6 +981,10 @@ async function publishToGitHub({
   if (PUBLISH_MODE === 'prod' && anythingUploaded) {
     await syncComponentReleases(octokit, {
       builtZips,
+      // Issue #354: the scripts tag carries the complete package set. The
+      // `latest` downloads table is refreshed separately below, on every prod
+      // run (not gated on rebuilds).
+      stagedZips: stagedZipNames(builtZips),
       builtInstallers,
       builtHelpers,
       manifest: merged,
