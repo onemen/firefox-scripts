@@ -5,8 +5,15 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
-const {buildDispatchArgs, buildProbeArgs, repoFlag, waitForProbeRun, probeVerdict, runPreflight} =
-  await import('../../../tools/publish/release.mjs');
+const {
+  buildDispatchArgs,
+  buildProbeArgs,
+  repoFlag,
+  waitForProbeRun,
+  probeVerdict,
+  runPreflight,
+  DispatchNotFoundError,
+} = await import('../../../tools/publish/release.mjs');
 
 test('every gh argv is repo-scoped — no gh repo set-default dependency (#347)', () => {
   assert.deepEqual(repoFlag(), ['-R', 'onemen/firefox-scripts']);
@@ -172,6 +179,54 @@ test('runPreflight: drift with a failed watchdog dispatch still reports the drif
     sleep: () => {},
   });
   assert.deepEqual(out, {verdict: 'drift', drift: ['zen: 1.22.3b → 1.23.0b']});
+});
+
+test('runPreflight: probe run not listed YET → retries discovery, then reads the verdict (the 2026-09-28 race)', () => {
+  const log = [];
+  let attempts = 0;
+  const out = runPreflight({
+    dispatch: () => ({status: 0, stdout: ''}),
+    find: () => {
+      attempts++;
+      if (attempts < 3) throw new DispatchNotFoundError('not listed yet');
+      return {databaseId: 7};
+    },
+    status: () => ({status: 'completed', conclusion: 'success'}),
+    sleep: ms => log.push(`sleep${ms}`),
+  });
+  assert.deepEqual(out, {verdict: 'green', drift: []});
+  assert.equal(attempts, 3);
+  assert.deepEqual(log, ['sleep2000', 'sleep2000']);
+});
+
+test('runPreflight: discovery never finds the run → STOP as unobservable — never publish unread', () => {
+  const log = [];
+  let attempts = 0;
+  const out = runPreflight({
+    dispatch: () => ({status: 0, stdout: ''}),
+    find: () => {
+      attempts++;
+      throw new DispatchNotFoundError('not listed yet');
+    },
+    sleep: () => log.push('sleep'),
+  });
+  assert.deepEqual(out, {verdict: 'unobservable', drift: []});
+  assert.equal(attempts, 10); // PROBE_DISCOVERY_RETRIES — bounded, not infinite
+  assert.equal(log.length, 9); // no sleep after the final attempt
+});
+
+test('runPreflight: a non-discovery error from find propagates (not swallowed as a race)', () => {
+  assert.throws(
+    () =>
+      runPreflight({
+        dispatch: () => ({status: 0, stdout: ''}),
+        find: () => {
+          throw new Error('boom');
+        },
+        sleep: () => {},
+      }),
+    /boom/
+  );
 });
 
 test('runPreflight: e2e-missing → reported with its remedy, no watchdog dispatched', () => {

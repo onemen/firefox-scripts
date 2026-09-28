@@ -93,6 +93,14 @@ export function nowIso(deltaMs = 0) {
 const PROBE_MAX_POLLS = 60;
 
 /**
+ * Discovery retries after a probe dispatch (2 s apart, ~20 s total): the run
+ * record lags the dispatch API's 200 by seconds. A first-query miss must retry
+ * here — fail-open on this race was the 2026-09-28 bug (a real drift verdict
+ * went unread and the wrapper published into the in-run gate).
+ */
+const PROBE_DISCOVERY_RETRIES = 10;
+
+/**
  * The workflow-dispatches API (`gh workflow run --ref`) dispatches only refs
  * that exist ON GITHUB — branch or tag names. A commit SHA is rejected with
  * "HTTP 422: No ref found" (how `release:stage -- --ref=<sha>` failed on
@@ -386,9 +394,19 @@ export function buildProbeArgs() {
 }
 
 /**
- * The newest workflow_dispatch run of `workflow` created at/after `afterIso`
- * (null when gh errors — callers fail open). Event-filtered so a human's manual
- * dispatch seconds earlier cannot be mistaken for ours.
+ * A dispatch of `workflow` is not visible in the Actions list yet — the run
+ * record lags the dispatch API's 200 by seconds (observed ~3 s on 2026-09-28: a
+ * single discovery query fired too early, the wrapper failed open and
+ * dispatched the real publish straight into the in-run gate, #347 follow-up).
+ * Callers RETRY on this error; only a gh error (null) is fail-open.
+ */
+export class DispatchNotFoundError extends Error {}
+
+/**
+ * The newest workflow_dispatch run of `workflow` created at/after `afterIso`.
+ * Event-filtered so a human's manual dispatch seconds earlier cannot be
+ * mistaken for ours. Throws DispatchNotFoundError when gh answered but no run
+ * is listed yet; returns null when gh itself failed (callers fail open).
  *
  * @param {string} workflow
  * @param {string} afterIso
@@ -413,12 +431,16 @@ export function findNewestDispatch(workflow, afterIso) {
     {encoding: 'utf8', maxBuffer: 16 * 1024 * 1024}
   );
   if (res.error || res.status !== 0) return null;
+  let runs;
   try {
-    const runs = JSON.parse(res.stdout).filter(r => r.event === 'workflow_dispatch');
-    return runs[0] ?? null;
+    runs = JSON.parse(res.stdout).filter(r => r.event === 'workflow_dispatch');
   } catch {
     return null;
   }
+  if (runs.length === 0) {
+    throw new DispatchNotFoundError(`${workflow}: no dispatch run listed since ${afterIso} yet`);
+  }
+  return runs[0];
 }
 
 /**
@@ -544,13 +566,29 @@ export function runPreflight(seams = {}) {
     );
     return {verdict: 'green', drift: []};
   }
-  const probe = find(PROBE_WORKFLOW, afterIso);
+  // Discovery retries: the run record lags the dispatch API by seconds, and
+  // publishing past an unread probe is exactly the bug this loop prevents —
+  // "not listed YET" is a race to retry, never a fail-open.
+  let probe = null;
+  for (let attempt = 1; attempt <= PROBE_DISCOVERY_RETRIES; attempt++) {
+    try {
+      probe = find(PROBE_WORKFLOW, afterIso);
+      break;
+    } catch (e) {
+      if (!(e instanceof DispatchNotFoundError)) throw e;
+      if (attempt === PROBE_DISCOVERY_RETRIES) break;
+      console.log('  (probe run not listed yet — retrying discovery…)');
+      sleep(2000);
+    }
+  }
   if (!probe) {
-    console.log(
-      `  (could not identify the probe run to read its verdict — continuing;\n` +
-        `  the dispatch went through: https://github.com/${REPO}/actions)`
+    console.error(
+      `  ✗ the probe dispatch went through but its run never appeared in the\n` +
+        `  Actions list (${PROBE_DISCOVERY_RETRIES} attempts over ~${PROBE_DISCOVERY_RETRIES * 2} s) — STOPPING, not\n` +
+        `  publishing unread: check ${PROBE_WORKFLOW} manually, then re-run this command.\n` +
+        `  https://github.com/${REPO}/actions`
     );
-    return {verdict: 'green', drift: []};
+    return {verdict: 'unobservable', drift: []};
   }
   const outcome = waitForProbeRun(probe.databaseId, sleep, status);
   if (outcome === 'unobservable') {
