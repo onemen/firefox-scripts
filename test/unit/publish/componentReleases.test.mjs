@@ -28,6 +28,11 @@ const {
   renderSelfUpdateBlock,
   parseSelfUpdateBlock,
   mergeSelfUpdateBlock,
+  scriptsAssetNames,
+  renderLatestDownloads,
+  updateLatestDownloads,
+  LATEST_MANAGED_START,
+  LATEST_MANAGED_END,
 } = await import(moduleUrl);
 
 test('componentDate: YYYY-MM-DD UTC, injectable clock', () => {
@@ -211,6 +216,90 @@ test('mergeSelfUpdateBlock: prior entries from a DIFFERENT date are dropped', ()
 
 test('mergeSelfUpdateBlock: no prior → just this run', () => {
   assert.deepEqual(mergeSelfUpdateBlock('2026-09-13', {a: 'u'}), {a: 'u'});
+});
+
+// ── complete package set on the scripts tag (issue #354) ──
+
+test('scriptsAssetNames: the FULL staged set rides along, updater-ui never does', () => {
+  // A run that rebuilt only utils must still publish fx-folder.zip — the
+  // missing-asset shape the #157 purge left on `latest` and scripts-<date>.
+  assert.deepEqual(scriptsAssetNames(['utils'], ['utils', 'fx-folder', 'updater-ui']), [
+    'utils',
+    'fx-folder',
+  ]);
+  // Union keeps first-seen order and dedupes.
+  assert.deepEqual(scriptsAssetNames(['fx-folder'], ['utils']), ['fx-folder', 'utils']);
+  // Empty staged list (legacy callers) → just the rebuilt set.
+  assert.deepEqual(scriptsAssetNames(['utils']), ['utils']);
+  assert.deepEqual(scriptsAssetNames([], []), []);
+});
+
+// ── the `latest` downloads table (issue #354, maintainer rule 2026-09-28) ──
+
+test('renderLatestDownloads: one row per downloadable asset, dated by its own upload', () => {
+  const section = renderLatestDownloads([
+    {name: 'fx-folder.zip', updatedAt: '2026-09-28T11:52:03Z'},
+    {name: 'utils.zip', updatedAt: '2026-09-28T11:36:55Z'},
+    {name: 'installer_win.exe', updatedAt: '2026-09-28T12:20:00Z'},
+    {name: 'installer_win.exe.sha256', updatedAt: '2026-09-28T12:20:00Z'},
+  ]);
+  assert.match(
+    section,
+    /\| \[`utils\.zip`\]\(https:\/\/github\.com\/onemen\/firefox-scripts\/releases\/latest\/download\/utils\.zip\) \| User scripts \(the main package\) \| 2026-09-28 \|/
+  );
+  assert.match(section, /\| \[`fx-folder\.zip`\].*\| The `fx-folder` core loader \| 2026-09-28 \|/);
+  assert.match(
+    section,
+    /\| \[`installer_win\.exe`\].*\| Windows installer \(`\.exe`\) \| 2026-09-28 \|/
+  );
+  // Sidecars are NOT rows — the verify line covers them.
+  assert.doesNotMatch(section, /sha256`\]/);
+  // The verify line rides under the table, inside the managed section.
+  assert.match(
+    section,
+    /Verify before use: each file has a `\.sha256` sidecar; the installer itself hash-verifies every package it fetches\./
+  );
+  // The managed markers wrap the section.
+  assert.ok(section.startsWith(LATEST_MANAGED_START));
+  assert.ok(section.trimEnd().endsWith(LATEST_MANAGED_END));
+});
+
+test('updateLatestDownloads: replaces the managed region, keeps manual prose', () => {
+  const manual = 'SmartScreen note and AV prose that must survive.';
+  const old = renderLatestDownloads([{name: 'utils.zip', updatedAt: '2026-09-01T00:00:00Z'}]);
+  const body = `${manual}\n\n${old}\n\nMore manual text after.`;
+  const fresh = renderLatestDownloads([
+    {name: 'utils.zip', updatedAt: '2026-09-28T11:36:55Z'},
+    {name: 'fx-folder.zip', updatedAt: '2026-09-28T11:52:03Z'},
+  ]);
+  const out = updateLatestDownloads(body, fresh);
+  // Manual prose untouched, old table gone, new table present.
+  assert.ok(out.includes(manual));
+  assert.ok(out.includes('More manual text after.'));
+  assert.ok(!out.includes('2026-09-01'));
+  // Exactly one managed region: the splice replaced the old one (a stray
+  // second START marker would mean the old section was appended, not replaced).
+  let starts = 0;
+  for (
+    let i = out.indexOf(LATEST_MANAGED_START);
+    i !== -1;
+    i = out.indexOf(LATEST_MANAGED_START, i + 1)
+  )
+    starts++;
+  assert.equal(starts, 1);
+});
+
+test('updateLatestDownloads: appends the managed section when the body has none', () => {
+  const section = renderLatestDownloads([{name: 'utils.zip', updatedAt: '2026-09-28T11:36:55Z'}]);
+  const out = updateLatestDownloads('manual prose only', section);
+  assert.match(out, /^manual prose only/);
+  assert.ok(out.includes(LATEST_MANAGED_START));
+  // Unterminated managed region (crashed earlier edit): treated as absent —
+  // append, never mangle the manual text.
+  const broken = `prose\n\n${LATEST_MANAGED_START}\n\njunk`;
+  const out2 = updateLatestDownloads(broken, section);
+  assert.ok(out2.includes('prose'));
+  assert.ok(out2.includes('junk'));
 });
 
 test('parseSelfUpdateBlock: bare (unfenced) block keeps the nested download map', () => {

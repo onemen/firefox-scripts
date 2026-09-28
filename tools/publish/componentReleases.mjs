@@ -266,6 +266,91 @@ export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlo
 }
 
 /**
+ * Package zips that belong on the scripts component tag and the `latest`
+ * release (issue #354): BOTH manual downloads, even when only one was rebuilt —
+ * a snapshot missing fx-folder.zip (or utils.zip) is the exact gap the #157
+ * purge left behind. updater-ui stays Pages-only: the updater downloads it
+ * itself, it is never a release asset (ADR 0019).
+ *
+ * @param {string[]} builtZips rebuilt package names
+ * @param {string[]} [stagedZips] every package zip staged this run — the
+ *   scripts tag carries the complete set even when only one was rebuilt (issue
+ *   #354)
+ * @returns {string[]} package names for the scripts release, first-seen order
+ */
+export function scriptsAssetNames(builtZips, stagedZips = []) {
+  return [...new Set([...builtZips, ...stagedZips])].filter(n => n && n !== 'updater-ui');
+}
+
+/**
+ * Managed region of the `latest` body: the downloads table. The publish
+ * rewrites ONLY the text between these markers (issue #354, maintainer rule
+ * 2026-09-28: the table of files is updated on every release with the date of
+ * the file that was released) — manual prose outside the markers (the
+ * SmartScreen note, AV/WDSI notes) survives every publish.
+ */
+export const LATEST_MANAGED_START =
+  '<!-- downloads:managed (rewritten by every prod publish; keep manual text outside) -->';
+export const LATEST_MANAGED_END = '<!-- /downloads:managed -->';
+
+/** Human descriptions for the known release assets (ADR 0024 names). */
+const LATEST_ASSET_DESCRIPTIONS = {
+  'utils.zip': 'User scripts (the main package)',
+  'fx-folder.zip': 'The `fx-folder` core loader',
+  'installer_win.exe': 'Windows installer (`.exe`)',
+  'installer_mac': 'macOS installer',
+  'installer_linux': 'Linux installer',
+  'installer_linux_aarch64': 'Linux installer (ARM64)',
+};
+
+const describeAsset = name => LATEST_ASSET_DESCRIPTIONS[name] ?? '';
+
+/**
+ * Render the managed downloads table for the `latest` body. One row per
+ * downloadable asset (sidecars are NOT rows — the verify line below the table
+ * covers them), with the date that asset was last uploaded — "the date of the
+ * file that was released".
+ *
+ * @param {{name: string; updatedAt?: string | null}[]} assets release assets
+ * @returns {string} the full managed section, markers included
+ */
+export function renderLatestDownloads(assets) {
+  const base = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`;
+  const rows = assets
+    .filter(a => !a.name.endsWith('.sha256'))
+    .map(a => {
+      const date = (a.updatedAt || '').slice(0, 10);
+      return `| [\`${a.name}\`](${base}/${a.name}) | ${describeAsset(a.name)} | ${date} |`;
+    })
+    .join('\n');
+  // Mock-faithful shape (releases-mock): a bold Downloads line, the table, the
+  // verify sentence — no H2 sections in the release body.
+  return (
+    `${LATEST_MANAGED_START}\n\n**Downloads**\n\n` +
+    `| File | What it is | Updated |\n|---|---|---|\n${rows}\n\n` +
+    `Verify before use: each file has a \`.sha256\` sidecar; the installer itself ` +
+    `hash-verifies every package it fetches.\n\n${LATEST_MANAGED_END}`
+  );
+}
+
+/**
+ * Splice a freshly rendered managed section into a `latest` body: replace the
+ * region between the markers when present, otherwise append. Everything outside
+ * the markers is returned untouched.
+ *
+ * @param {string} body current release body
+ * @param {string} section renderLatestDownloads() output
+ * @returns {string} updated body
+ */
+export function updateLatestDownloads(body, section) {
+  const at = body.indexOf(LATEST_MANAGED_START);
+  if (at === -1) return `${body.trimEnd()}\n\n${section}\n`;
+  const end = body.indexOf(LATEST_MANAGED_END, at);
+  if (end === -1) return `${body.trimEnd()}\n\n${section}\n`;
+  return body.slice(0, at) + section + body.slice(end + LATEST_MANAGED_END.length);
+}
+
+/**
  * Asset list for a component release's body: this run's files first, then any
  * assets an earlier same-day run left on the tag that this run did not rebuild
  * (same-day tags are reused, so assets accumulate across runs). Each name once,
@@ -290,17 +375,20 @@ export function bodyAssetNames(currentNames, priorNames) {
  * Sync one component release: get-or-create the tagged release as a FULL
  * release (no prerelease flag — the maintainer's Latest Scripts scheme,
  * 2026-09-12: date tags are first-class releases), then delete+reupload the
- * given assets (each labelled with its updated-date) and refresh the body. The
- * body lists the union of this run's assets and everything an earlier same-day
- * run left on the tag (assets are replaced, never swept). The caller re-pins
- * the Latest badge onto `latest` via make_latest afterwards — a newly created
- * full release briefly holds the badge otherwise. Idempotent: same-day
- * republishes replace assets and rewrite the body.
+ * given assets (no labels — GitHub renders a label instead of the file name)
+ * and refresh the body. The body lists the union of this run's assets and
+ * everything an earlier same-day run left on the tag (assets are replaced,
+ * never swept). The caller re-pins the Latest badge onto `latest` via
+ * make_latest afterwards — a newly created full release briefly holds the badge
+ * otherwise. Idempotent: same-day republishes replace assets and rewrite the
+ * body.
  *
  * @param {object} [opts]
  * @param {'scripts' | 'installer'} [opts.kind] which component (labels the
  *   body)
- * @param {Record<string, string>} [opts.dates] per-asset updated-date labels
+ * @param {Record<string, string>} [opts.dates] per-asset body-date override
+ *   (defaults to the tag date for every row; no asset labels — GitHub renders a
+ *   label instead of the file name, issue #354)
  * @param {Record<string, string> | null} [opts.selfUpdateUrlByAsset] asset →
  *   self-update URL map (scripts body only)
  * @returns {Promise<{created: boolean}>} whether the release was newly created
@@ -358,11 +446,13 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
   for (const [assetName, src] of assets) {
     await deleteExistingAsset(octokit, release.id, assetName);
     if (!src) continue;
-    const label = `Updated ${dates[assetName] || date}`.slice(0, 50);
+    // No asset label (issue #354): GitHub renders the label INSTEAD of the
+    // file name — "utils.zip" showed up as "Updated 2026-09-26" and the
+    // manual-download table lost its file names. The dates live in the body.
     if (Buffer.isBuffer(src)) {
-      await uploadAssetBuffer(octokit, release.id, src, assetName, label);
+      await uploadAssetBuffer(octokit, release.id, src, assetName);
     } else {
-      await uploadAsset(octokit, release.id, src, assetName, label);
+      await uploadAsset(octokit, release.id, src, assetName);
     }
   }
   await octokit.repos.updateRelease({
@@ -379,6 +469,44 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
   });
   console.log(green(`  ✓ component release ${tagName} synced`));
   return {created: !existed};
+}
+
+/**
+ * Rewrite the `latest` body's managed downloads section from the release's
+ * current assets (each dated by its own upload time). Fails soft: a GitHub
+ * error warns, never fails the publish.
+ *
+ * @param {import('@octokit/rest').Octokit} octokit authenticated client
+ * @param {{
+ *   id: number;
+ *   body?: string;
+ *   assets: {name: string; updated_at?: string}[];
+ * }} latestRelease
+ *   the release object as fetched by the caller (upload.mjs already has it)
+ */
+async function refreshLatestBody(octokit, latestRelease) {
+  try {
+    // Re-list the assets: the caller's snapshot may predate the uploads this
+    // run just did, and every row must carry its true upload date.
+    const {data: assets} = await octokit.repos.listReleaseAssets({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      release_id: latestRelease.id,
+    });
+    const section = renderLatestDownloads(
+      assets.map(a => ({name: a.name, updatedAt: a.updated_at}))
+    );
+    const body = updateLatestDownloads(latestRelease.body || '', section);
+    await octokit.repos.updateRelease({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      release_id: latestRelease.id,
+      body,
+    });
+    console.log(green('  ✓ latest downloads table refreshed (managed section)'));
+  } catch (err) {
+    warn(`latest downloads-table refresh failed (non-fatal): ${err.message}`);
+  }
 }
 
 /**
@@ -422,14 +550,25 @@ export async function pinLatestRelease(octokit) {
  * @param {import('@octokit/rest').Octokit} octokit authenticated client
  * @param {object} p
  * @param {string[]} p.builtZips rebuilt package names
+ * @param {string[]} [p.stagedZips] every package zip staged this run — the
+ *   scripts tag carries the complete set even when only one zip was rebuilt
+ *   (issue #354)
  * @param {string[]} p.builtInstallers rebuilt platform keys
  * @param {string[]} p.builtHelpers rebuilt platform keys (informed the
  *   installer/helper rebuild decisions upstream; helpers never join a release)
  * @param {Record<string, {hash: string; date?: string}>} p.manifest the merged
- *   hash manifest — per-package `date` labels the assets and bodies
+ *   hash manifest — per-package `date` stays a lookup aid in hashes.json
  * @param {(name: string) => string} p.zipPath staged zip path by package name
  * @param {(p: string) => string} p.installerPath staged installer path by
  *   platform
+ * @param {{
+ *   id: number;
+ *   assets: {name: string; updated_at?: string}[];
+ *   body?: string;
+ * } | null} [p.latestRelease]
+ *   the `latest` release (id + asset list) — when given, its downloads table is
+ *   refreshed with every asset's upload date (issue #354, maintainer rule
+ *   2026-09-28)
  * @param {string} [p.installerDate] this run's installer build date
  *   (YYYY-MM-DD) — labels the installer component release
  */
@@ -437,11 +576,13 @@ export async function syncComponentReleases(
   octokit,
   {
     builtZips,
+    stagedZips = [],
     builtInstallers,
     builtHelpers,
     manifest,
     zipPath,
     installerPath,
+    latestRelease = null,
     installerDate: installerBuiltDate,
   }
 ) {
@@ -463,25 +604,26 @@ export async function syncComponentReleases(
       );
     }
     const {scripts, installer} = groupBuilt({builtZips, builtInstallers, builtHelpers});
+    // scriptsTagNames (issue #354): the complete staged package set — the tag
+    // is synced whenever ANY zip was rebuilt (or the latest refresh runs), so
+    // an unchanged zip still lands on the tag when its sibling changed.
+    const scriptsTagNames = scriptsAssetNames(scripts, stagedZips);
     if (scripts.length === 0 && installer.length === 0) {
       console.log(dim('  component releases: nothing rebuilt — date tags unchanged'));
       return;
     }
-    // Per-file dates for bodies + asset labels: the manifest's per-package
-    // source-commit date (falls back to the release date when absent).
-    const dates = {};
-    for (const n of scripts) {
-      if (manifest[n]?.date) dates[`${n}.zip`] = manifest[n].date;
-    }
-    for (const p of installer) {
-      if (manifest.installer?.date) dates[installerAssetName(p)] = manifest.installer.date;
-    }
+    // Body rows all carry the TAG date (the snapshot's own date, per the
+    // approved releases-mock) — not each package's source-commit date. The
+    // manifest's per-package dates remain a lookup aid in hashes.json only.
 
     if (scripts.length > 0) {
-      const assets = new Map(scripts.map(n => [`${n}.zip`, zipPath(n)]));
+      // The tag carries the COMPLETE package set even when only one zip was
+      // rebuilt (issue #354) — stagedZips is the full packages scope. Body
+      // rows carry the TAG date (the snapshot's date, per the approved
+      // releases-mock), not each package's source-commit date.
+      const assets = new Map(scriptsTagNames.map(n => [`${n}.zip`, zipPath(n)]));
       await syncComponentRelease(octokit, scriptsTag(date), date, assets, {
         kind: 'scripts',
-        dates,
       });
     }
 
@@ -514,9 +656,16 @@ export async function syncComponentReleases(
       }
       await syncComponentRelease(octokit, installerTag(installerDate), installerDate, assets, {
         kind: 'installer',
-        dates,
         selfUpdateUrlByAsset,
       });
+    }
+
+    // The `latest` downloads table (issue #354, maintainer rule 2026-09-28):
+    // refreshed on every publish that syncs a component release — one row per
+    // asset actually on the release, dated by that asset's own upload date.
+    // Manual prose outside the managed markers is never touched.
+    if (latestRelease) {
+      await refreshLatestBody(octokit, latestRelease);
     }
   } catch (err) {
     warn(`component releases sync failed (non-fatal): ${err.message}`);
