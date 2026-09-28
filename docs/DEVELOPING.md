@@ -1195,15 +1195,21 @@ The unified flow (one upload.mjs run):
    `dev-build-<id>` in dev; the newest `dist/<mode>-*/` snapshot in `--local` mode).
 2. Computes SHA-256 hashes for each package source tree and each binary source tree, and rebuilds
    only what changed (everything in `--mode=dev`/`--force`).
-3. In prod, uploads the changed artifacts (`utils.zip`, `installer_win.exe`, …) as release assets —
-   the human manual-download surface; no machine consumer reads them.
-4. Pushes the **changed** artifacts to the publish branch — this is the host every machine fetch
+3. In prod, uploads the release assets — the human manual-download surface; no machine consumer
+   reads them. A packages run attaches the **complete** package-zip set (both zips ride along even
+   when only one was rebuilt — issue #354) plus the rebuilt installers + `.sha256` sidecars.
+4. Pushes artifacts to the publish branch content-addressed — this is the host every machine fetch
+   reads (installer tab and in-browser updater alike: `ZIP_BASE_URL` = `ZIP_PAGES_URL`), because
+   GitHub Pages sends `Access-Control-Allow-Origin: *` (in dev mode the same branch is read through
+   jsDelivr, which is also CORS-enabled). The branch is created automatically on first run. A file
+   whose bytes are unchanged creates no commit, so an unchanged package keeps its live artifact.
+5. Pushes the **changed** artifacts to the publish branch — this is the host every machine fetch
    reads (installer tab and in-browser updater alike: `ZIP_BASE_URL` = `ZIP_PAGES_URL`), because
    GitHub Pages sends `Access-Control-Allow-Origin: *` (in dev mode the same branch is read through
    jsDelivr, which is also CORS-enabled). The branch is created automatically on first run. Only the
    artifacts rebuilt this run are pushed, so an unchanged package keeps its live artifact.
-5. Publishes the hash manifest (`hashes.json`) to the same branch.
-6. Prod only, when something was rebuilt: syncs the date-stamped **component releases**
+6. Publishes the hash manifest (`hashes.json`) to the same branch.
+7. Prod only, when something was rebuilt: syncs the date-stamped **component releases**
    (`scripts-<date>` for the complete package-zip set — both zips ride along even when only one was
    rebuilt, issue #354 — and `installer-<date>` for rebuilt installers) alongside `latest`, then
    refreshes the **`latest` downloads table**: a managed section of the `latest` body (HTML-comment

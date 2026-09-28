@@ -104,7 +104,7 @@ import {
 import {buildDates} from './generateBuildDates.mjs';
 import {branchExistsOnPages, pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
 import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
-import {pinLatestRelease, syncComponentReleases} from './componentReleases.mjs';
+import {pinLatestRelease, refreshLatestBody, syncComponentReleases} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {ledgerEntry, ledgerStats, ledgerTable, mergeLedger} from '../ci/avLedger.mjs';
@@ -379,12 +379,13 @@ function snapshotDir() {
  */
 /**
  * Package names staged for release/Pages upload: the packages scope always
- * builds every zip (issue #354), so this is normally the full set; it falls
- * back to the rebuilt names for any caller that skipped the stage.
+ * builds every zip (issue #354), so this is the full set. Any other scope
+ * stages no zips at all — falling back to `builtZips` (always empty there)
+ * keeps an installer/helper-only run from readFileSync-ing files that were
+ * never staged (CodeRabbit on #355).
  */
 function stagedZipNames(builtZips) {
-  const names = PACKAGES.map(p => p.name);
-  return names.length > 0 ? names : builtZips;
+  return SCOPE.packages ? PACKAGES.map(p => p.name) : builtZips;
 }
 
 async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns) {
@@ -915,6 +916,15 @@ async function publishToGitHub({
     }
   }
 
+  // Prod: the `latest` downloads table rides EVERY prod run that had a
+  // release to touch — including an idle packages run, whose byte-identical
+  // re-uploads still bump the assets' upload dates (CodeRabbit on #355).
+  // Component date tags above stay gated on actual rebuilds; this refresh
+  // only restates what is on the release right now. Fails soft inside.
+  if (PUBLISH_MODE === 'prod' && release) {
+    await refreshLatestBody(octokit, release);
+  }
+
   // Prod: keep the 'latest' release tag pointing at the commit this upload was
   // built from (the current HEAD — prod is main-only with a clean worktree).
   // The installer/updater fetch everything via
@@ -971,15 +981,15 @@ async function publishToGitHub({
   if (PUBLISH_MODE === 'prod' && anythingUploaded) {
     await syncComponentReleases(octokit, {
       builtZips,
-      // Issue #354: the scripts tag carries the complete package set, and the
-      // `latest` downloads table is refreshed with per-asset upload dates.
+      // Issue #354: the scripts tag carries the complete package set. The
+      // `latest` downloads table is refreshed separately below, on every prod
+      // run (not gated on rebuilds).
       stagedZips: stagedZipNames(builtZips),
       builtInstallers,
       builtHelpers,
       manifest: merged,
       zipPath,
       installerPath,
-      latestRelease: release,
       // Issue #322: the component-tag date IS the derived installer date —
       // the same value the binaries bake (CFG_BUILD_DATE_INSTALLER).
       installerDate: buildDates().installer,

@@ -477,26 +477,29 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
  * error warns, never fails the publish.
  *
  * @param {import('@octokit/rest').Octokit} octokit authenticated client
- * @param {{
- *   id: number;
- *   body?: string;
- *   assets: {name: string; updated_at?: string}[];
- * }} latestRelease
- *   the release object as fetched by the caller (upload.mjs already has it)
+ * @param {{id: number}} latestRelease the `latest` release — only the id is
+ *   used: body and assets are re-fetched fresh below, so the refresh can never
+ *   overwrite a manual edit made while this run was uploading and every row
+ *   carries its true upload date (CodeRabbit on #355)
  */
-async function refreshLatestBody(octokit, latestRelease) {
+export async function refreshLatestBody(octokit, latestRelease) {
   try {
-    // Re-list the assets: the caller's snapshot may predate the uploads this
-    // run just did, and every row must carry its true upload date.
-    const {data: assets} = await octokit.repos.listReleaseAssets({
-      owner: REPO_OWNER,
-      repo: REPO_NAME,
-      release_id: latestRelease.id,
-    });
+    const [{data: release}, {data: assets}] = await Promise.all([
+      octokit.repos.getRelease({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        release_id: latestRelease.id,
+      }),
+      octokit.repos.listReleaseAssets({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        release_id: latestRelease.id,
+      }),
+    ]);
     const section = renderLatestDownloads(
       assets.map(a => ({name: a.name, updatedAt: a.updated_at}))
     );
-    const body = updateLatestDownloads(latestRelease.body || '', section);
+    const body = updateLatestDownloads(release.body || '', section);
     await octokit.repos.updateRelease({
       owner: REPO_OWNER,
       repo: REPO_NAME,
@@ -561,14 +564,6 @@ export async function pinLatestRelease(octokit) {
  * @param {(name: string) => string} p.zipPath staged zip path by package name
  * @param {(p: string) => string} p.installerPath staged installer path by
  *   platform
- * @param {{
- *   id: number;
- *   assets: {name: string; updated_at?: string}[];
- *   body?: string;
- * } | null} [p.latestRelease]
- *   the `latest` release (id + asset list) — when given, its downloads table is
- *   refreshed with every asset's upload date (issue #354, maintainer rule
- *   2026-09-28)
  * @param {string} [p.installerDate] this run's installer build date
  *   (YYYY-MM-DD) — labels the installer component release
  */
@@ -582,7 +577,6 @@ export async function syncComponentReleases(
     manifest,
     zipPath,
     installerPath,
-    latestRelease = null,
     installerDate: installerBuiltDate,
   }
 ) {
@@ -605,8 +599,9 @@ export async function syncComponentReleases(
     }
     const {scripts, installer} = groupBuilt({builtZips, builtInstallers, builtHelpers});
     // scriptsTagNames (issue #354): the complete staged package set — the tag
-    // is synced whenever ANY zip was rebuilt (or the latest refresh runs), so
-    // an unchanged zip still lands on the tag when its sibling changed.
+    // is synced whenever ANY zip was rebuilt, so an unchanged zip still lands
+    // on the tag when its sibling changed. (The `latest` table refresh is NOT
+    // gated on rebuilds — upload.mjs calls it on every prod run.)
     const scriptsTagNames = scriptsAssetNames(scripts, stagedZips);
     if (scripts.length === 0 && installer.length === 0) {
       console.log(dim('  component releases: nothing rebuilt — date tags unchanged'));
@@ -658,14 +653,6 @@ export async function syncComponentReleases(
         kind: 'installer',
         selfUpdateUrlByAsset,
       });
-    }
-
-    // The `latest` downloads table (issue #354, maintainer rule 2026-09-28):
-    // refreshed on every publish that syncs a component release — one row per
-    // asset actually on the release, dated by that asset's own upload date.
-    // Manual prose outside the managed markers is never touched.
-    if (latestRelease) {
-      await refreshLatestBody(octokit, latestRelease);
     }
   } catch (err) {
     warn(`component releases sync failed (non-fatal): ${err.message}`);
