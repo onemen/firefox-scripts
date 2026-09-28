@@ -4,7 +4,11 @@
 // Prod publishes are CI-only (ADR 0026, prodCiGuard.mjs): the complete
 // cross-OS installer set is buildable only by the Pages publish workflow's
 // per-OS matrix. This script is a discoverable front door for the dispatch —
-// exactly `gh workflow run pages.yml`, nothing more:
+// `gh workflow run pages.yml` with an explicit --repo (works without
+// `gh repo set-default`, #347) — followed, for a prod dispatch, by a watch of
+// that run's own pre-publish gate: green → print the run URL; drift →
+// auto-dispatch the URL watchdog and print the remaining chain (the gates
+// themselves stay in pages.yml; this wrapper only reports and chains them):
 //
 //   pnpm publish:all                   # full prod publish (mode defaults to prod)
 //   pnpm publish:packages              # zips + updater-ui only (--include=packages)
@@ -31,8 +35,9 @@
 // The wrapper owns --force/--mode/--include/--ref (it maps them to the
 // workflow inputs / gh flags); any other `-f key=value` is passed through to
 // gh verbatim — through spawnSync's argv array, never a shell, so nothing is
-// interpolated. No watch mode, no output parsing for the PUBLISH dispatches —
-// follow the run in the Actions tab. (--stage is the exception: it is the full
+// interpolated. After a prod dispatch the wrapper reads exactly one thing —
+// the gate verdict of its own run (job list via the API) — to report or chain
+// the drift path; the matrix itself is followed in the Actions tab. (--stage is the exception: it is the full
 // local staging pipeline of tools/publish/stageFlow.mjs, which watches and
 // downloads by design.) The workflow's own gates (main-only for prod,
 // E2E-green commit, browser-version drift) are what the guard requires; this
@@ -49,6 +54,42 @@ import {INCLUDE_ROLES} from './publishScope.mjs';
 import {gitEnv} from './generateBuildDates.mjs';
 
 const WORKFLOW = 'pages.yml';
+const WATCHDOG_WORKFLOW = 'url-watchdog.yml';
+/**
+ * Every gh call targets the repo explicitly — no `gh repo set-default`
+ * dependency (#347).
+ */
+const REPO = 'onemen/firefox-scripts';
+/** pages.yml's first job; the publish matrix never starts while it is red. */
+const GATE_JOB = 'check browser version drift';
+/**
+ * The gate's drift step (the "Check browser version drift" run block in
+ * pages.yml).
+ */
+const DRIFT_STEP = 'Check browser version drift';
+/**
+ * The gate's E2E-for-commit step — needs a real E2E run; the wrapper cannot
+ * chain it.
+ */
+const E2E_STEP_PREFIX = 'Require a successful E2E run for this commit';
+
+/**
+ * One Actions job as returned by `gh api repos/<repo>/actions/runs/<id>/jobs`.
+ *
+ * @typedef {{
+ *   name: string;
+ *   conclusion: string | null;
+ *   steps?: {name: string; conclusion: string | null}[];
+ * }} GhJob
+ */
+
+/**
+ * gh argv prefix addressing REPO explicitly (first two tokens of every gh
+ * call).
+ */
+export function repoFlag() {
+  return ['-R', REPO];
+}
 
 /**
  * The workflow-dispatches API (`gh workflow run --ref`) dispatches only refs
@@ -220,7 +261,7 @@ export function buildDispatchArgs({
   ref = '',
   passthrough = [],
 } = {}) {
-  const args = ['workflow', 'run', WORKFLOW];
+  const args = [...repoFlag(), 'workflow', 'run', WORKFLOW];
   // gh dispatches the default branch unless told otherwise — a dev publish
   // from a feature branch needs --ref to point at that branch's workflow.
   if (ref) args.push('--ref', ref);
@@ -243,6 +284,7 @@ export function buildDispatchArgs({
 export function parseReleaseArgs(argv = process.argv.slice(2)) {
   const opts = {
     force: false,
+    noWait: false,
     mode: 'prod',
     include: [],
     ref: '',
@@ -259,6 +301,8 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
       opts.os = a.slice('--os='.length).trim();
     } else if (a === '--force') {
       opts.force = true;
+    } else if (a === '--no-wait') {
+      opts.noWait = true;
     } else if (a.startsWith('--mode=')) {
       const mode = a.slice('--mode='.length);
       if (mode !== 'prod' && mode !== 'dev') {
@@ -299,7 +343,7 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
       opts.passthrough.push('-f', pair);
     } else {
       throw new Error(
-        `Unknown flag: ${a} (supported: --stage, --force, --mode=prod|dev, --include=<roles>, --ref=<branch>, -f key=value)`
+        `Unknown flag: ${a} (supported: --stage, --force, --no-wait, --mode=prod|dev, --include=<roles>, --ref=<branch>, -f key=value)`
       );
     }
   }
@@ -323,6 +367,129 @@ export function parseReleaseArgs(argv = process.argv.slice(2)) {
     );
   }
   return opts;
+}
+
+/** GitHub Actions run URL for a run id. */
+function runUrl(id) {
+  return `https://github.com/${REPO}/actions/runs/${id}`;
+}
+
+/**
+ * Newest workflow_dispatch run of `workflow` created at/after `afterIso` — the
+ * run this wrapper (or its watchdog chain) just dispatched. Event-filtered so a
+ * human's manual dispatch seconds earlier cannot be mistaken for ours, and
+ * repo-scoped so no gh default-repo is needed (#347). Returns null when gh
+ * errors — every caller fails open to the fire-and-forget UX.
+ *
+ * @param {string} workflow workflow file name
+ * @param {string} afterIso ISO timestamp from just before the dispatch
+ * @returns {{databaseId: number} | null}
+ */
+export function findNewestDispatch(workflow, afterIso) {
+  const res = spawnSync(
+    'gh',
+    [
+      ...repoFlag(),
+      'run',
+      'list',
+      '--workflow',
+      workflow,
+      '--created',
+      `>=${afterIso.replace(/\.\d+Z$/, 'Z')}`,
+      '--limit',
+      '5',
+      '--json',
+      'databaseId,event',
+    ],
+    {encoding: 'utf8', maxBuffer: 16 * 1024 * 1024}
+  );
+  if (res.error || res.status !== 0) return null;
+  try {
+    const runs = JSON.parse(res.stdout).filter(r => r.event === 'workflow_dispatch');
+    return runs[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Classify the dispatched run's gate job from the API's job list (pure — the
+ * unit tests drive it). `pending` covers queued/in-progress AND a job list that
+ * raced the run creation (no gate job yet): the caller re-polls.
+ *
+ * @param {GhJob[]} jobs
+ * @returns {{
+ *   outcome: 'green' | 'drift' | 'e2e-missing' | 'failed' | 'pending';
+ *   detail?: string;
+ * }}
+ */
+export function classifyGateJobs(jobs) {
+  const gate = (jobs ?? []).find(j => j.name === GATE_JOB);
+  if (!gate || gate.conclusion === null || gate.conclusion === 'skipped') {
+    return {outcome: 'pending'};
+  }
+  if (gate.conclusion === 'success') return {outcome: 'green'};
+  const failedSteps = (gate.steps ?? []).filter(s => s.conclusion === 'failure').map(s => s.name);
+  if (failedSteps.includes(DRIFT_STEP)) return {outcome: 'drift'};
+  if (failedSteps.some(n => n.startsWith(E2E_STEP_PREFIX))) return {outcome: 'e2e-missing'};
+  return {outcome: 'failed', detail: failedSteps.join(', ') || gate.conclusion};
+}
+
+function gateJobs(runId) {
+  const res = spawnSync(
+    'gh',
+    [...repoFlag(), 'api', `repos/${REPO}/actions/runs/${runId}/jobs?per_page=10`],
+    {encoding: 'utf8', maxBuffer: 16 * 1024 * 1024}
+  );
+  if (res.error || res.status !== 0) return null;
+  try {
+    return JSON.parse(res.stdout).jobs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Watch the dispatch's gate to a conclusion: one immediate read plus re-polls
+ * ~20 s apart (the gate is the run's first job — vendor version lookups only —
+ * and finished inside ~15 s in every recent run). Fail-open: an unobservable
+ * run degrades to the old fire-and-forget UX, never to a wrong verdict.
+ *
+ * @param {number} runId the dispatched run's databaseId
+ * @param {(ms: number) => void} [sleepFn] injectable sleep (tests)
+ * @param {(id: number) => GhJob[] | null} [fetchJobs] injectable job fetch
+ *   (tests)
+ * @returns {{
+ *   outcome:
+ *     | 'green'
+ *     | 'drift'
+ *     | 'e2e-missing'
+ *     | 'failed'
+ *     | 'pending'
+ *     | 'unobservable';
+ *   detail?: string;
+ * }}
+ */
+export function watchDispatchGate(
+  runId,
+  sleepFn = ms => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  fetchJobs = gateJobs
+) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) sleepFn(20000);
+    const jobs = fetchJobs(runId);
+    if (jobs === null) return {outcome: 'unobservable'};
+    const verdict = classifyGateJobs(jobs);
+    if (verdict.outcome !== 'pending') return verdict;
+  }
+  return {outcome: 'pending'};
+}
+
+/** Dispatch the URL watchdog (the drift path's first remediation step). */
+function dispatchWatchdog() {
+  return spawnSync('gh', [...repoFlag(), 'workflow', 'run', WATCHDOG_WORKFLOW, '--ref', 'main'], {
+    encoding: 'utf8',
+  });
 }
 
 export async function main() {
@@ -372,10 +539,90 @@ export async function main() {
     opts.include[0] === 'all' || opts.include.length === INCLUDE_ROLES.length ?
       'full publish'
     : `PARTIAL publish — publishing: ${opts.include.join(', ')}`;
-  console.log(
-    `✓ ${opts.mode.toUpperCase()} ${what} dispatched — the cross-OS matrix builds in CI.\n` +
-      '  Watch: gh run list --workflow pages.yml --limit 1 (or the Actions tab).'
-  );
+  const watchHint = `gh run list --workflow pages.yml --limit 1 --repo ${REPO}`;
+  // Dev publishes are disposable and skip the gates; --no-wait restores pure
+  // fire-and-forget. Prod is watched: this wrapper dispatched the run, so it
+  // reports (and chains) its own gate instead of leaving a red run as the
+  // operator's first sign of trouble (#347).
+  if (opts.mode !== 'prod' || opts.noWait) {
+    console.log(
+      `✓ ${opts.mode.toUpperCase()} ${what} dispatched — the cross-OS matrix builds in CI.\n` +
+        `  Watch: ${watchHint} (or the Actions tab).`
+    );
+    return;
+  }
+  console.log('✓ dispatched — watching the pre-publish gate (~1 min; the matrix follows it)…');
+  const dispatchedAt = new Date(Date.now() - 5000).toISOString();
+  const run = findNewestDispatch(WORKFLOW, dispatchedAt);
+  if (!run) {
+    console.log(
+      `✓ ${opts.mode.toUpperCase()} ${what} dispatched — could not identify the run to watch it:\n` +
+        `  ${watchHint}`
+    );
+    return;
+  }
+  const verdict = watchDispatchGate(run.databaseId);
+  switch (verdict.outcome) {
+    case 'green':
+      console.log(
+        `✓ pre-publish gate green — ${opts.mode.toUpperCase()} ${what} is building in CI.\n` +
+          `  Watch: ${watchHint}\n` +
+          `  ${runUrl(run.databaseId)}`
+      );
+      return;
+    case 'drift': {
+      console.error(
+        `✗ pre-publish gate: new browser version(s) since the last watchdog run —\n` +
+          `  publishing would ship to a browser version no E2E has validated.\n` +
+          `  ${runUrl(run.databaseId)}`
+      );
+      const wd = dispatchWatchdog();
+      if (wd.error || wd.status !== 0) {
+        console.error(
+          `  auto-dispatch of the URL watchdog failed — run it manually, then re-run this\n` +
+            `  command when it and its browser E2E are green:\n` +
+            `    gh workflow run url-watchdog.yml --ref main --repo ${REPO}`
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const wdRun = findNewestDispatch(WATCHDOG_WORKFLOW, dispatchedAt);
+      console.error(
+        `  → url-watchdog dispatched${wdRun ? ` — ${runUrl(wdRun.databaseId)}` : ''}. It re-baselines\n` +
+          `  the drifted browsers and dispatches their browser E2E (all runs concurrent).\n` +
+          `  When the watchdog AND its E2E runs are done (~10–15 min; the E2E run shows red on\n` +
+          `  'snap Firefox E2E · ubuntu-24.04' — the known snap-store outage, #291 — while\n` +
+          `  record-validation still records and unblocks the publish): re-run this command.\n` +
+          `  A publish then takes ~4 min (gate ~10 s → pre-run manifest ~3 s → win ~2.5 min →\n` +
+          `  linux ~25 s → mac ~35 s).`
+      );
+      process.exitCode = 1;
+      return;
+    }
+    case 'e2e-missing':
+      console.error(
+        `✗ pre-publish gate: no successful E2E workflow run for this commit yet —\n` +
+          `  let the E2E run on main finish (or re-run it), then re-dispatch.\n` +
+          `  ${runUrl(run.databaseId)}`
+      );
+      process.exitCode = 1;
+      return;
+    case 'failed':
+      console.error(
+        `✗ pre-publish gate failed (${verdict.detail}) — see the run before re-dispatching.\n` +
+          `  ${runUrl(run.databaseId)}`
+      );
+      process.exitCode = 1;
+      return;
+    default:
+      // pending / unobservable: fail open to the fire-and-forget UX.
+      console.log(
+        `✓ ${opts.mode.toUpperCase()} ${what} dispatched — gate still pending, follow the run:\n` +
+          `  ${watchHint}\n` +
+          `  ${runUrl(run.databaseId)}`
+      );
+      return;
+  }
 }
 
 // Direct invocation only (imported by the unit tests for buildDispatchArgs).

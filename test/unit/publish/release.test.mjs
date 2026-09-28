@@ -76,8 +76,10 @@ test('parseReleaseArgs: --ref and -f key=value passthrough', () => {
   );
 });
 
-test('buildDispatchArgs: full set maps onto the pages.yml dispatch', () => {
+test('buildDispatchArgs: full set maps onto the pages.yml dispatch (repo-scoped, #347)', () => {
   assert.deepEqual(buildDispatchArgs({include: ['all']}), [
+    '-R',
+    'onemen/firefox-scripts',
     'workflow',
     'run',
     'pages.yml',
@@ -87,6 +89,8 @@ test('buildDispatchArgs: full set maps onto the pages.yml dispatch', () => {
     'include=all',
   ]);
   assert.deepEqual(buildDispatchArgs({include: ['all'], force: true}), [
+    '-R',
+    'onemen/firefox-scripts',
     'workflow',
     'run',
     'pages.yml',
@@ -105,6 +109,8 @@ test('buildDispatchArgs: full set maps onto the pages.yml dispatch', () => {
       ref: 'pr-branch',
     }),
     [
+      '-R',
+      'onemen/firefox-scripts',
       'workflow',
       'run',
       'pages.yml',
@@ -121,7 +127,19 @@ test('buildDispatchArgs: full set maps onto the pages.yml dispatch', () => {
       include: ['all'],
       passthrough: ['-f', 'publish=true'],
     }),
-    ['workflow', 'run', 'pages.yml', '-f', 'mode=prod', '-f', 'include=all', '-f', 'publish=true']
+    [
+      '-R',
+      'onemen/firefox-scripts',
+      'workflow',
+      'run',
+      'pages.yml',
+      '-f',
+      'mode=prod',
+      '-f',
+      'include=all',
+      '-f',
+      'publish=true',
+    ]
   );
 });
 
