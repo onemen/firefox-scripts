@@ -1,0 +1,120 @@
+name: 'drift-gate'
+description:
+  'The prod-publish browser gate: watchdog-baseline drift + validated-versions coverage
+  +\n  E2E-for-commit. ONE implementation — pages.yml and build-and-upload.yml call it in-run, and
+  the\n  drift-check.yml probe dispatches it (#347).'
+author: 'onemen/firefox-scripts'
+
+# Preconditions: the calling job has CHECKED OUT THE REPO (the gate scripts are repo files) and
+# holds `issues: write` (ADR 0021: a fork whose version lookup fails after retries + mirrors gets
+# a deduped notification issue instead of blocking). The gate itself never fails the run: it
+# reports a verdict via outputs, and the CONSUMER decides what the verdict means for it —
+#   pages.yml / build-and-upload.yml: drift|e2e-missing → fail the job with the remedy text;
+#   drift-check.yml (the publish wrapper's probe): forward the verdict to its outputs.
+#
+# Outputs:
+#   verdict   — 'green' | 'drift' | 'e2e-missing'
+#               drift: baseline drift, a validated-versions record that does not cover the
+#               current versions, or a hard-gate lookup failure (all remediated by the URL
+#               watchdog + its browser E2E);
+#               e2e-missing: no successful E2E workflow run for this commit (remediated by
+#               letting the E2E run on main finish — or dispatching it).
+#   drift     — the drift lines ("firefox-dev: 157.0b4 → 157.0b5"), one per line; empty when the
+#               block came from the validated-records side without a baseline entry.
+#   e2e-runs  — successful E2E run count for the commit (empty outside prod mode).
+
+inputs:
+  mode:
+    description: 'prod checks the E2E-for-commit condition; dev skips it (pages.yml dev publishes)'
+    required: false
+    default: 'prod'
+  require-validated:
+    description: 'also require the validated-versions record to cover the current versions'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'token for the lookups (defaults to the calling workflow token)'
+    required: false
+    default: ''
+
+outputs:
+  verdict:
+    description: "'green' | 'drift' | 'e2e-missing'"
+    value: ${{ steps.verdict.outputs.verdict }}
+  drift:
+    description: 'drift lines, one per browser (empty when none)'
+    value: ${{ steps.drift.outputs.drift }}
+  e2e-runs:
+    description: 'successful E2E runs recorded for the commit'
+    value: ${{ steps.e2e.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    # Restore the watchdog baseline (keys rotate per run; the prefix picks the
+    # newest). No save here — the gate never modifies the baseline.
+    - name: Restore watchdog baseline
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .watchdog
+        key: url-watchdog-baseline-${{ github.run_id }}
+        restore-keys: url-watchdog-baseline-
+    # Validated-versions record (#4): written only by the E2E workflow's
+    # record-validation job after every hard-gate leg passed. Restored to its
+    # own dir so the watchdog baseline restore above can never clobber it.
+    - name: Restore validated-versions record
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .watchdog-validated
+        key: browser-validated-${{ github.run_id }}
+        restore-keys: browser-validated-
+    - name: Check browser version drift
+      id: drift
+      env:
+        VALIDATED_DIR: ${{ github.workspace }}/.watchdog-validated
+        GITHUB_TOKEN: ${{ inputs['github-token'] || github.token }}
+      shell: bash
+      run: |
+        args="--drift"
+        if [ "${{ inputs['require-validated'] }}" != 'false' ]; then
+          args="$args --require-validated"
+        fi
+        set +e
+        out="$(node tools/check-browser-downloads.mjs $args 2>&1)"
+        status=$?
+        set -e
+        # The drift listing ("  - firefox-dev: 157.0b4 → 157.0b5") is what the
+        # wrapper surfaces verbatim; strip the two-space list indent.
+        {
+          echo "status=$status"
+          echo 'drift<<DRIFT_EOF'
+          printf '%s\n' "$out" | sed -n 's/^  - //p'
+          echo 'DRIFT_EOF'
+        } >> "$GITHUB_OUTPUT"
+    # The moment-of-truth E2E-for-commit check (prod only): one API call. Dev
+    # publishes are disposable and skip it — same as pages.yml's own gate did.
+    - name: Require a successful E2E run for this commit
+      id: e2e
+      if: inputs.mode == 'prod'
+      env:
+        GH_TOKEN: ${{ inputs['github-token'] || github.token }}
+      shell: bash
+      run: |
+        count="$(gh api "repos/${{ github.repository }}/actions/workflows/e2e.yml/runs?head_sha=${{ github.sha }}&status=success" --jq '.total_count')"
+        echo "successful E2E runs for ${{ github.sha }}: $count"
+        echo "count=$count" >> "$GITHUB_OUTPUT"
+    - name: Compute verdict
+      id: verdict
+      shell: bash
+      env:
+        DRIFT_STATUS: ${{ steps.drift.outputs.status }}
+        E2E_COUNT: ${{ steps.e2e.outputs.count }}
+        MODE: ${{ inputs.mode }}
+      run: |
+        if [ "$DRIFT_STATUS" != '0' ]; then
+          echo 'verdict=drift' >> "$GITHUB_OUTPUT"
+        elif [ "$MODE" = 'prod' ] && [ "${E2E_COUNT:-0}" -eq 0 ]; then
+          echo 'verdict=e2e-missing' >> "$GITHUB_OUTPUT"
+        else
+          echo 'verdict=green' >> "$GITHUB_OUTPUT"
+        fi
