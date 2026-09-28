@@ -680,11 +680,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exitCode = 1;
   });
 }
-
-// Direct invocation only (imported by the unit tests for buildDispatchArgs).
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(e => {
-    console.error(`\u2718 release: ${e.message}`);
-    process.exitCode = 1;
-  });
-}
