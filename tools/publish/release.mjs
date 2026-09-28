@@ -568,20 +568,26 @@ export function runPreflight(seams = {}) {
   }
   // Discovery retries: the run record lags the dispatch API by seconds, and
   // publishing past an unread probe is exactly the bug this loop prevents —
-  // "not listed YET" is a race to retry, never a fail-open.
+  // "not listed YET" is a race to retry. Exhausted discovery STOPS the
+  // publish; a gh ERROR stays fail-open (documented contract; CodeRabbit PR
+  // #350) — pages.yml re-checks the gates in-run either way.
   let probe = null;
+  let discoveryExhausted = false;
   for (let attempt = 1; attempt <= PROBE_DISCOVERY_RETRIES; attempt++) {
     try {
       probe = find(PROBE_WORKFLOW, afterIso);
       break;
     } catch (e) {
       if (!(e instanceof DispatchNotFoundError)) throw e;
-      if (attempt === PROBE_DISCOVERY_RETRIES) break;
+      if (attempt === PROBE_DISCOVERY_RETRIES) {
+        discoveryExhausted = true;
+        break;
+      }
       console.log('  (probe run not listed yet — retrying discovery…)');
       sleep(2000);
     }
   }
-  if (!probe) {
+  if (discoveryExhausted) {
     console.error(
       `  ✗ the probe dispatch went through but its run never appeared in the\n` +
         `  Actions list (${PROBE_DISCOVERY_RETRIES} attempts over ~${PROBE_DISCOVERY_RETRIES * 2} s) — STOPPING, not\n` +
@@ -589,6 +595,14 @@ export function runPreflight(seams = {}) {
         `  https://github.com/${REPO}/actions`
     );
     return {verdict: 'unobservable', drift: []};
+  }
+  if (!probe) {
+    // gh error (null), not a race: the documented fail-open.
+    console.log(
+      `  (could not read the probe run — continuing; pages.yml checks the\n` +
+        `  same gates in-run)\n  https://github.com/${REPO}/actions`
+    );
+    return {verdict: 'green', drift: []};
   }
   const outcome = waitForProbeRun(probe.databaseId, sleep, status);
   if (outcome === 'unobservable') {
@@ -628,7 +642,20 @@ export function runPreflight(seams = {}) {
       );
       return {verdict: 'drift', drift};
     }
-    const wdRun = find(WATCHDOG_WORKFLOW, afterIso);
+    // The watchdog run URL is cosmetic — the dispatch IS the remediation. A
+    // discovery miss here must not escape runPreflight (CodeRabbit PR #350):
+    // retry briefly, then degrade to printing the notice without a URL.
+    let wdRun = null;
+    for (let attempt = 1; attempt <= PROBE_DISCOVERY_RETRIES; attempt++) {
+      try {
+        wdRun = find(WATCHDOG_WORKFLOW, afterIso);
+        break;
+      } catch (e) {
+        if (!(e instanceof DispatchNotFoundError)) throw e;
+        if (attempt === PROBE_DISCOVERY_RETRIES) break;
+        sleep(2000);
+      }
+    }
     console.error(
       `  ✓ url-watchdog dispatched${wdRun ? ` — ${runUrl(wdRun.databaseId)}` : ''}.\n` +
         `  Re-run THIS command when the chain is done — it pre-flights again and publishes.`

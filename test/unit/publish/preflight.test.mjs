@@ -215,6 +215,36 @@ test('runPreflight: discovery never finds the run → STOP as unobservable — n
   assert.equal(log.length, 9); // no sleep after the final attempt
 });
 
+test('runPreflight: find returns null (gh error) → fail-open green, NOT a stop (CodeRabbit #350)', () => {
+  const out = runPreflight({
+    dispatch: () => ({status: 0, stdout: ''}),
+    find: () => null, // gh failed — never throws, just reports nothing
+    sleep: () => {
+      throw new Error('must not retry a gh error');
+    },
+  });
+  assert.deepEqual(out, {verdict: 'green', drift: []});
+});
+
+test('runPreflight: watchdog run not listed yet → drift verdict kept, no escape (CodeRabbit #350)', () => {
+  let watchdogLookups = 0;
+  const out = runPreflight({
+    dispatch: () => ({status: 0, stdout: ''}),
+    find: workflow => {
+      if (workflow === 'url-watchdog.yml') {
+        watchdogLookups++;
+        throw new DispatchNotFoundError('not listed yet');
+      }
+      return {databaseId: 7};
+    },
+    status: () => ({status: 'completed', conclusion: 'failure'}),
+    verdict: () => ({verdict: 'drift', drift: ['firefox-dev: 157.0b4 → 157.0b5']}),
+    sleep: () => {},
+  });
+  assert.deepEqual(out, {verdict: 'drift', drift: ['firefox-dev: 157.0b4 → 157.0b5']});
+  assert.equal(watchdogLookups, 10); // retried, then degraded to no URL — never thrown
+});
+
 test('runPreflight: a non-discovery error from find propagates (not swallowed as a race)', () => {
   assert.throws(
     () =>
