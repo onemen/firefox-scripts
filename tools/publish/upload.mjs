@@ -91,7 +91,14 @@ import {
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
-import {DEV_NOTE, DEV_TAG, localSnapshotDir, REF_NAME, REF_SHA} from './publishMode.mjs';
+import {
+  DEV_NOTE,
+  DEV_TAG,
+  localSnapshotDir,
+  REF_NAME,
+  REF_SHA,
+  requireMode,
+} from './publishMode.mjs';
 import {
   createOctokit,
   enforcePublishBranch,
@@ -1177,6 +1184,13 @@ function runRefBuild(ref) {
 }
 
 async function main() {
+  // Fail fast on a missing --mode: paths.js is deliberately tolerant at import
+  // (#358 — mode-less tooling imports it for constants), so the publish CLI is
+  // the one place the requirement is enforced. --mode=prod|dev is REQUIRED for
+  // every publish/snapshot run; there is no silent default, so an accidental
+  // prod publish is impossible without consciously typing --mode=prod.
+  requireMode();
+
   // Pass 1 of the SignPath flow (--build-only) hands its staging tree to the
   // workflow signing step + pass 2, so the finally block below must leave
   // dist/.build in place on that path.

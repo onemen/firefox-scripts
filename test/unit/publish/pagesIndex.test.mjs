@@ -1,9 +1,5 @@
 // test/unit/publish/pagesIndex.test.mjs — Tests for the generated Pages-site
 // landing page (tools/publish/uploadToPages.mjs).
-//
-// uploadToPages.mjs imports paths.js, which calls requireMode() at import
-// time, so the test pushes --mode=prod into process.argv before the dynamic
-// import.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

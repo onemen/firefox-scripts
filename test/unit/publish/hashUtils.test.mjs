@@ -1,7 +1,4 @@
 // test/unit/publish/hashUtils.test.mjs — Unit tests for tools/publish/hashUtils.mjs
-//
-// hashUtils.mjs imports paths.js, which calls requireMode() at import time, so
-// the test pushes --mode=prod into process.argv before the dynamic import.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

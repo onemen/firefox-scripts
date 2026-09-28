@@ -23,7 +23,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// paths.js calls requireMode() at import time — same arrangement as
 // createZip.test.mjs. Importing createZip.mjs also regenerates the gitignored
 // generated files (updater-config.sys.mjs, updater.css) — a no-op write when
 // they are already in sync.
