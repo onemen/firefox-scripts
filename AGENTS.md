@@ -57,23 +57,19 @@ facts most often cause bugs:
   `installer/test/test_hash.mjs`.
 - **The C installer does zero network I/O** — the browser tab fetches the zips, manifest and release
   lists from CORS-enabled hosts and POSTs the bytes to the local server.
-- **Updater flow:** `scriptsUpdater.sys.mjs` does a daily check of utils + fx-folder → if either
-  needs an update it keeps `updater-ui.zip` current (silent download+verify+extract into
-  `chrome/utils/updater/ui`) → opens one
-  `b.addTrustedTab(chrome://firefox-scripts/content/ui/updater.html)` → `updater.js` (same package)
-  downloads, verifies, extracts and copies; admin-protected dirs use a freshly downloaded standalone
-  helper binary (single UAC prompt, exit 2 = cancelled). If a package cannot be downloaded the check
-  exits silently — except a **remote test/dev build** (`--mode=dev`, non-`--local`) whose own
-  manifest is unreachable (its dev-build branch was deleted): it falls back to the stable channel's
-  manifest (generated `STABLE_*` URLs, ADR 0026) and auto-migrates to stable. Local snapshots keep
-  the silent exit (ephemeral by design).
+- **Updater flow:** daily check of utils + fx-folder → keep `updater-ui.zip` current → open one
+  trusted tab → verify, extract, copy; admin-protected dirs use a freshly downloaded standalone
+  helper binary (one elevation prompt; cancel is a distinct exit code). A **remote test/dev build**
+  whose own manifest is unreachable falls back to the stable channel's manifest and auto-migrates;
+  local snapshots keep the silent exit. Full flow: `docs/auto-updater.md`; status semantics:
+  `docs/status-logic.md`; the dead-channel decision: ADR 0026.
 - **Publishing:** `--mode=prod` → `latest` release + `gh-pages` (branch `main` only, CI-only — runs
   the full cross-OS binary matrix); `--mode=dev` → disposable `dev-build-<id>` branch (branch-only;
   `--note` adds an RC-style prerelease page), `-dev` artifact names, served via jsDelivr. Requires a
   clean worktree; real runs need `GITHUB_TOKEN_VAR`.
-- **Gotchas:** BUILD_DATE is DERIVED, not hand-stamped (ADR 0036): per-binary git dates from the
-  same input set the publish hash uses; `installer.conf` has no `BUILD_DATE` key anymore. Waterfox
-  skips `BootstrapLoader.js` in `config.js`. Per-package skip prefs
+- **Gotchas:** the build date is DERIVED, not hand-stamped (ADR 0036): per-binary git dates from the
+  same input set the publish hash uses; the conf has no date key anymore. Waterfox skips
+  `BootstrapLoader.js` in `config.js`. Per-package skip prefs
   `extensions.firefox-scripts.skippedHash.<pkg>`; one daily gate pref `lastScriptsCheckDate` (ADR
   0012 — written by the up-to-date check and by the shown updater tab). `versionInfo.json` is
   obsolete (excluded from zips; installed copies cleaned by `installer/src/obsolete_files.h`).
@@ -131,67 +127,27 @@ Package manager is **pnpm** (root-only workspace, `"type": "module"`). Git hooks
 (`pnpm hooks:install`: pre-push gate + worktree post-checkout) and never generate files — generated
 files are produced on demand by the build/publish tooling.
 
-```bash
-pnpm install
-pnpm lint          # strict fail-fast aggregate (what CI + the pre-push hook enforce): eslint + strncpy gate (installer/src is snprintf-only) + tsc + C format check + gcc -fanalyzer + markdownlint (MD056 table integrity) + check-skills (frontmatter + vendored skill tests)
-pnpm lint:all      # report-all view — every stage runs even after a failure, output prefixed with the stage label (npm-run-all2); dev convenience, never used by CI/hooks
-# granular stages (single source of truth — `pnpm lint` composes these): lint:js lint:ncpy lint:types lint:c lint:analyze lint:md lint:skills
-pnpm format        # check: C + prettier
-pnpm format:fix    # apply both
-pnpm test          # unit tests (test/unit/, pure Node, no build)
-pnpm review:local  # local AI review of main...HEAD via tools/ai-review.mjs (ADR 0020)
+Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**. The checklist:
 
-# hash parity JS vs C (auto-generates a prod snapshot via snapshot:prod if needed;
-# also works against the newest dev- snapshot, so it runs after snapshot:dev)
-pnpm test:hash
-```
-
-**Publish — only when the user explicitly asks.** The `snapshot:*` scripts are the token-less
-offline check; the `publish:*` scripts go live (CI builds and publishes):
-
-```bash
-pnpm snapshot:prod                       # full snapshot to dist/prod-<branch>-<hash>/ (no token)
-pnpm snapshot:dev                        # dev snapshot to dist/dev-<branch>-<hash>/ (no token)
-pnpm publish:all                         # prod publish: dispatches the CI cross-OS matrix (gh)
-pnpm publish:packages                    # partial: zips + updater-ui only (--include=packages)
-pnpm publish:installer                   # partial: installer + helper only (--include=installer)
-pnpm publish:helper                      # partial: helper + sidecar only (--include=helper) — helper-byte rotation with zero package changes
-pnpm release:stage                       # ONE staging command: reuse/dispatch CI (publish=false), download
-                                         # to dist/release-stage-<short-commit>/ + SUMMARY.md (hashes, VT/Microsoft
-                                         # status, WDSI paste block) — `-- --ref=<sha>` stages that exact commit
-pnpm release:verify                      # re-derive the post-publish facts (assets/gh-pages/tag/AV)
-pnpm fetch:release                       # manual-test download: gh-pages default, --dev <branch>, --run <id>
-```
-
-Every publish states its scope: `--include=packages|installer|helper|all` (required, validated —
-missing/empty/unknown roles fail loudly; ADR 0030).
-
-`--mode=prod|dev` is required; prod publishes the `latest` release + gh-pages from `main` only, dev
-publishes to `dev-build-<id>` **branch-only** — no release unless `--tag` (dev), and `--note` labels
-the branch id. Full flag/env reference: `docs/DEVELOPING.md` → "`pnpm publish` reference".
-
-Installer build (Windows: MSYS2 UCRT64 `mingw32-make`): `make dist_win` / `dist_linux` / `dist_mac`,
-`helper_*`, `resources`, `config`, `verify`.
+- **Gates:** `pnpm lint` (strict fail-fast aggregate = what CI + the pre-push hook enforce),
+  `pnpm format`, `pnpm test`, `pnpm test:hash`. Granular stages: see package.json (`pnpm lint`
+  composes them); `pnpm lint:all` is the dev-only report-all view.
+- **Publish (only when the user explicitly asks):** `pnpm publish:all|packages|installer|helper`,
+  `pnpm release:stage`, `pnpm release:verify`, `pnpm fetch:release`; offline:
+  `pnpm snapshot:prod|dev`. Scope (`--include=…`, ADR 0030) and `--mode=prod|dev` semantics:
+  `docs/DEVELOPING.md` → "`pnpm publish` reference".
+- **Installer build:** `make dist_win|dist_linux|dist_mac`, `helper_*`, `resources`, `config`,
+  `verify` (Windows: MSYS2 UCRT64 `mingw32-make`).
 
 ## Testing & QA
 
-Match the change to its validation:
+Match the change to its validation — the full matrix is the `change-workflow` skill; the rules:
 
-| Change                           | Validate with                                                           |
-| -------------------------------- | ----------------------------------------------------------------------- |
-| C (`installer/src/`)             | build the affected target (`make dist_win` / `dist_linux` / `dist_mac`) |
-| Hash / file list                 | `pnpm test:hash`                                                        |
-| Publish helpers / hashing        | `pnpm test` (unit tests in `test/unit/`)                                |
-| Decision log (`docs/decisions/`) | `pnpm check:decisions` (duplicate numbers + stale links)                |
-| Generated-file sources           | `node tools/publish/syncGeneratedFiles.mjs`                             |
-| Packaging / publish scripts      | `pnpm snapshot:prod`                                                    |
-
-Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test. **Do not claim tests
-passed if the required toolchain or environment was unavailable.**
-
-PRs that modify `core/**` must add or extend a test where feasible; if not, the PR description must
-explain why. (The mechanical "core changed && no test changed → fail" CI gate lands together with
-the core smoke tests — see issue #30.)
+- Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test (`pnpm test:hash`).
+- **Do not claim tests passed if the required toolchain or environment was unavailable.**
+- PRs that modify `core/**` must add or extend a test where feasible; if not, the PR description
+  must explain why. (The mechanical "core changed && no test changed → fail" CI gate lands together
+  with the core smoke tests — see issue #30.)
 
 ## AI review of PRs
 
@@ -245,12 +201,14 @@ Before finishing:
 
 ## Roadmap tracking
 
-- GitHub is the live tracker: the v1.0 milestone, phase issues #3 (Phase 4) / #4 (Phase 5) and the
-  Post-v1.0 roadmap umbrella (#38) hold the checklists; `docs/roadmap.md` is the durable snapshot.
+- GitHub is the only roadmap: the v1.0 milestone, phase issues #3 (Phase 4) / #4 (Phase 5, closed
+  2026-09-28) and the Post-v1.0 umbrella (#38) hold the checklists; milestone views
+  ([v1.0](https://github.com/onemen/firefox-scripts/milestone/1) /
+  [Post v1.0](https://github.com/onemen/firefox-scripts/milestone/2)) are the overview.
 - Every PR links its issue (`Fixes #x` / `Part of #y`); tick the checklist item when the work
   merges.
-- Update `docs/roadmap.md` only in the PR that changes scope — never per-commit.
-- Never duplicate a checklist in both a doc and an issue: the doc links to the issues.
+- Never duplicate a checklist in both a doc and an issue: docs link to the issues, never restate
+  them.
 
 ## Tooling
 
@@ -261,8 +219,8 @@ Before finishing:
 - **CI** runs from `.github/workflows/` (ci.yml, e2e.yml, pages.yml, build-and-upload.yml,
   url-watchdog.yml, skills-watchdog.yml, runner-watchdog.yml, av-watchdog.yml, cache-cleanup.yml).
   The installer + updater E2E jobs and the publish gate are **path-filtered on PRs**: they skip when
-  no changed file can affect them (see `docs/DEVELOPING.md` → Continuous integration). Prod publish
-  stays manual from `main`; all publish scripts require a clean worktree.
+  no changed file can affect them (see `docs/continuous-integration.md`). Prod publish stays manual
+  from `main`; all publish scripts require a clean worktree.
 - **Interactive debugging of core files:** the MIT `debugging-firefox` RDP skill is `gh`-installed
   under `.agents/skills/` — see `docs/debugging-with-rdp.md` (never put it in the lint/format
   gates).
@@ -270,15 +228,9 @@ Before finishing:
 ## Generated files
 
 Five files are generated from sources, **gitignored and regenerated on demand** — never hand-edit
-them: `core/chrome/utils/updater/updater-config.sys.mjs`, `tools/publish/remote-ui/updater.css`,
-`installer/src/_config.h`, `installer/src/_builddate.h` (git-derived per-binary build dates, issue
-#322), `installer/src/resources.h`. Edit the source and regenerate (the installer Makefile does it
-on every build, `createZip.mjs` at publish time, or by hand via
-`node tools/publish/syncGeneratedFiles.mjs`). Because they are not committed, the publish hashes
-cover their **true sources** instead of the artifacts (see
-`docs/decisions/0008-generated-files-untracked.md`); `installer.conf` is a base value — changing it
-shifts package hashes, which is how updates propagate. Full sources→artifact table and the three
-regeneration moments: the `generated-files` skill.
+them. The full sources→artifact table, the three regeneration moments, and the hash-propagation
+logic: the `generated-files` skill + `docs/DEVELOPING.md` + ADR
+[0008](./docs/decisions/0008-generated-files-untracked.md).
 
 ## Conventions
 
@@ -299,5 +251,4 @@ regeneration moments: the `generated-files` skill.
 - **Error handling:** fail-fast with clear messages; elevation failures distinguish cancel (exit 2);
   network failures surface a banner in the UI, not a silent partial install.
 - **Text files are LF**; a local working-tree copy can linger as CRLF, so when a tool parses a
-  tracked text file, normalize `\r\n` → `\n` at read (`docs/DEVELOPING.md` → Continuous
-  integration).
+  tracked text file, normalize `\r\n` → `\n` at read (`docs/continuous-integration.md`).

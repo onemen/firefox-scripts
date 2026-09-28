@@ -12,13 +12,12 @@ be a cacheable stale binary.
 
 ## Decision
 
-Admin copies use a small standalone C binary (`helper_win.exe` / `helper_linux` / `helper_mac`,
-sources at `installer/src/helper/`), downloaded fresh into the per-run temp dir (never cached in the
-profile), unblocked (Zone.Identifier / chmod +x), and invoked via argv arrays
-(`Subprocess.call(helper <src> <dst> …)`). It self-elevates once (Windows `runas`, Linux `pkexec` →
-`sudo`, macOS `osascript`) and exits `2` on cancelled elevation, which the tab maps to "elevation
-cancelled". The updater tries a direct `IOUtils` copy first for user-owned installs (`a251313`,
-`60845ed`).
+Admin copies use a small standalone C binary per OS (sources at `installer/src/helper/`), downloaded
+fresh into the per-run temp dir (never cached in the profile), unblocked, and invoked with exact
+arguments (no shell). It self-elevates once per invocation and reports cancellation with a distinct
+exit code, which the tab maps to "elevation cancelled". The updater tries a direct in-process copy
+first for user-owned installs. The invocation, unblocking and exit-code specifics are mechanism:
+they live in `docs/auto-updater.md` and the helper source.
 
 ## Consequences
 

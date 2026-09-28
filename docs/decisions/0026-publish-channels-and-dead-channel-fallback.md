@@ -30,16 +30,16 @@ Two channels. **Stable** = `--mode=prod` (`latest` release + gh-pages). **Test**
    `dev-build-<id> — <label>`, body: the note, a test-build warning, and provenance — source commit
    and date) for RC-style announcements. The existing `dev-build-main-450468f` release stays as a
    historical artifact; it is not deleted and not re-created.
-2. **Test-channel configs carry the stable channel's URLs.** The generators emit `STABLE_HASHES_URL`
-   / `STABLE_ZIP_BASE_URL` / `STABLE_UI_BASE_URL` / `STABLE_HELPER_BASE_URL` (derived from
-   `config/installer.conf` per [0013] — no hardcoded URLs) into dev builds only; stable builds get
-   empty values, the channel being their own.
+2. **Test-channel configs carry the stable channel's URLs.** Dev builds bake a set of stable-channel
+   fallback URLs, generated from `config/installer.conf` per [0013] (no hardcoded URLs); stable
+   builds get empty values, the channel being their own. (The generated-config key names are owned
+   by `tools/publish/generateUpdaterConfig.mjs`, which generates `updater-config.sys.mjs`.)
 3. **Dead-test-channel fallback.** When a test-channel daily check cannot fetch its own manifest
-   (branch deleted or expired), it fetches the **stable** manifest from the `STABLE_*` URLs and runs
-   the same hash comparison ([0002] unchanged). A difference is auto-installed through the existing
-   updater flow (the updater is always auto-install within reachability); installing stable rewrites
-   the installed `updater-config.sys.mjs` with prod URLs, so the channel migrates itself. What
-   happened is recorded through the updater tab's existing banner surface ([0012] — no new
+   (branch deleted or expired), it fetches the **stable** manifest from the baked fallback URLs and
+   runs the same hash comparison ([0002] unchanged). A difference is auto-installed through the
+   existing updater flow (the updater is always auto-install within reachability); installing stable
+   rewrites the installed `updater-config.sys.mjs` with prod URLs, so the channel migrates itself.
+   What happened is recorded through the updater tab's existing banner surface ([0012] — no new
    notification mechanism, daily-gate prefs pattern applies). If stable is also unreachable, the
    existing silent exit stands.
 4. **Prod is CI-only.** A real (non-`--local`) `--mode=prod` run outside the Pages publish workflow
