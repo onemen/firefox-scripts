@@ -8,8 +8,8 @@
 //
 // Checks:
 //   1. `latest` release carries the full asset set (2 zips + 4 installers;
-//      extra assets are tolerated — e.g. the installer .sha256 sidecars once
-//      #325 lands — only a MISSING expected asset fails)
+//      extra assets are tolerated — e.g. the installer .sha256 sidecars — only
+//      a MISSING expected asset fails)
 //   2. gh-pages serves the machine surface: hashes.json, helper_win.exe, index.html
 //   3. the `latest` tag points at main HEAD (or --sha <commit>)
 //   4. an installer-<date> component release exists
@@ -17,6 +17,10 @@
 //      tools/check-published-av.mjs; VT_API_KEY-aware, best-effort there)
 //
 // Usage: pnpm release:verify [-- --sha <commit>]
+//
+// jq note: `gh --jq` runs gojq, whose regex dialect rejects `\d` (invalid
+// escape sequence) — character classes like [0-9] must be used instead (#359,
+// verified against gh's embedded gojq on 2026-09-28).
 
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
@@ -32,6 +36,50 @@ export const EXPECTED_RELEASE_ASSETS = [
   'installer_linux_aarch64',
   'installer_mac',
 ];
+
+/**
+ * gh's embedded jq is gojq, whose regex dialect rejects `\d` — character
+ * classes are the portable spelling (#359: the `\d` filter crashed the
+ * component-release count with "invalid escape sequence"). Exported so the unit
+ * tests can pin both the dialect and the match shape.
+ */
+export const INSTALLER_TAG_JQ_FILTER =
+  '[.[] | select(.tag_name | test("^installer-[0-9]{4}-[0-9]{2}-[0-9]{2}$"))] | length';
+
+/**
+ * Pure: the exact argv for the published-binary AV check. check-published-av
+ * requires --repo and --ref (a bare spawn prints usage and exits non-zero,
+ * which read as an AV failure — #359); the ref is the one the gh-pages checks
+ * verify.
+ *
+ * @param {string} repo
+ * @param {string} [ref]
+ * @returns {string[]}
+ */
+export function avCheckArgs(repo, ref = 'gh-pages') {
+  return [
+    '--env-file-if-exists=.env',
+    'tools/check-published-av.mjs',
+    '--repo',
+    repo,
+    '--ref',
+    ref,
+  ];
+}
+
+/**
+ * Pure: a git blob SHA as the contents API's `.sha` returns it — 40 lowercase
+ * hex. Used to VALIDATE the gh-pages file checks instead of JSON.parsing the
+ * `--jq` output: gh prints a bare unquoted string there, which JSON.parse can
+ * never accept (#359 — that was the real "fails in-script, works standalone"
+ * bug; numbers parsed, strings never did).
+ *
+ * @param {string} s
+ * @returns {boolean}
+ */
+export function isBlobSha(s) {
+  return /^[0-9a-f]{40}$/.test(String(s).trim());
+}
 
 /**
  * Pure: diff the release's asset names against the expected set. Extra assets
@@ -119,16 +167,24 @@ export function main(argv = process.argv.slice(2)) {
     check('latest release asset set', false, 'no `latest` release');
   }
 
-  // 2. gh-pages machine surface.
+  // 2. gh-pages machine surface. NOTE: no JSON.parse here — `--jq '.sha'`
+  // emits a bare unquoted string and ghJson would throw on it (#359 root
+  // cause). The output is validated as a blob SHA instead, and a gh failure
+  // names its cause instead of a bare FAIL.
   for (const file of ['hashes.json', 'helper_win.exe', 'index.html']) {
     let ok;
+    let detail = '';
     try {
-      ghJson(['api', `repos/${REPO}/contents/${file}?ref=gh-pages`, '--jq', '.sha']);
-      ok = true;
-    } catch {
+      const out = gh(['api', `repos/${REPO}/contents/${file}?ref=gh-pages`, '--jq', '.sha']);
+      ok = isBlobSha(out);
+      if (!ok) detail = `unexpected .sha output: ${out.trim().slice(0, 60)}`;
+    } catch (e) {
       ok = false;
+      detail = String(e.message)
+        .replace(/^gh api failed — /, '')
+        .slice(0, 160);
     }
-    check(`gh-pages: ${file}`, ok);
+    check(`gh-pages: ${file}`, ok, ok ? undefined : detail);
   }
 
   // 3. latest tag → main HEAD (or --sha).
@@ -154,25 +210,23 @@ export function main(argv = process.argv.slice(2)) {
     check('`latest` tag points at the released commit', false, String(e.message));
   }
 
-  // 4. an installer-<date> component release exists.
+  // 4. an installer-<date> component release exists ([0-9] classes — gh's
+  // gojq rejects \d, #359).
   try {
     const count = ghJson([
       'api',
       `repos/${REPO}/releases?per_page=100`,
       '--jq',
-      '[.[] | select(.tag_name | test("^installer-\\d{4}-\\d{2}-\\d{2}$"))] | length',
+      INSTALLER_TAG_JQ_FILTER,
     ]);
     check('installer-<date> component release', count > 0, `${count} found`);
   } catch (e) {
     check('installer-<date> component release', false, String(e.message));
   }
 
-  // 5. published-binary AV verdicts (the existing lookup-only tool).
-  const av = spawnSync(
-    process.execPath,
-    ['--env-file-if-exists=.env', 'tools/check-published-av.mjs'],
-    {encoding: 'utf8'}
-  );
+  // 5. published-binary AV verdicts (the existing lookup-only tool), spawned
+  // with its required arguments (avCheckArgs — #359).
+  const av = spawnSync(process.execPath, avCheckArgs(REPO), {encoding: 'utf8'});
   const avOk = av.status === 0;
   if (!avOk && av.stderr) console.error(av.stderr.trim());
   check(
