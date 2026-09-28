@@ -18,14 +18,6 @@
 <div id="readme" class="md" data-path="README.md"><article class="markdown-body entry-content container-lg" itemprop="text"><div class="markdown-heading" dir="auto"><h1 class="heading-element" dir="auto">Firefox Scripts</h1><a id="user-content-firefox-scripts" class="anchor" aria-label="Permalink: Firefox Scripts" href="#firefox-scripts"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
 <p dir="auto"><a href="https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml"><img src="https://github.com/onemen/firefox-scripts/actions/workflows/ci.yml/badge.svg" alt="CI" style="max-width: 100%;"></a>
 <a href="https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml"><img src="https://github.com/onemen/firefox-scripts/actions/workflows/e2e.yml/badge.svg" alt="E2E" style="max-width: 100%;"></a></p>
-<blockquote>
-<p dir="auto"><strong>🚧 Under active development.</strong> The <strong>installer</strong> and <strong>in-browser updater</strong> are new and being
-validated. The core scripts they install are long-standing and stable, but because the updater
-ships inside <code>utils.zip</code>, installing a fresh <code>utils.zip</code> starts the update checks — so the
-repository as a whole is under active development for now. Found a problem?
-<a href="https://github.com/onemen/firefox-scripts/issues">Open an issue</a> and include your browser version
-and OS.</p>
-</blockquote>
 <p dir="auto">Install and keep Firefox-family browser scripts up to date.</p>
 <p dir="auto"><strong>firefox-scripts</strong> installs and keeps up to date the helper scripts that let Firefox-family
 browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Floorp) run legacy
@@ -44,25 +36,34 @@ released.</p>
 inspection).</p>
 <div class="markdown-heading" dir="auto"><h2 class="heading-element" dir="auto">How to use the installer</h2><a id="user-content-how-to-use-the-installer" class="anchor" aria-label="Permalink: How to use the installer" href="#how-to-use-the-installer"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
 <ol dir="auto">
-<li><strong>Download</strong> the installer for your OS from the
-<a href="https://github.com/onemen/firefox-scripts/releases">releases page</a>:
+<li>
+<p dir="auto"><strong>Download</strong> the installer for your OS from the
+<a href="https://github.com/onemen/firefox-scripts/releases">releases page</a>:</p>
 <ul dir="auto">
 <li><code>installer_win.exe</code> — Windows</li>
-<li><code>installer_linux</code> — Linux</li>
-<li><code>installer_mac</code> — macOS</li>
+<li><code>installer_linux</code> — Linux (x86_64) · <code>installer_linux_aarch64</code> — Linux (ARM64)</li>
+<li><code>installer_mac</code> — macOS (universal: Intel + Apple Silicon)</li>
 </ul>
 </li>
-<li><strong>Run</strong> the downloaded installer. It connects to a running Firefox-family browser (Firefox,
-Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets
-you pick which browser to set up.</li>
-<li><strong>Choose the components</strong> to install:
+<li>
+<p dir="auto"><strong>Run</strong> the downloaded installer. The installer is currently <strong>unsigned</strong>, so on Windows
+SmartScreen may show <em>"Windows protected your PC"</em> on first run — click <strong>More info → Run
+anyway</strong> to continue, and approve the single <strong>UAC prompt</strong> if it appears (one checksum-verified
+elevation, for the copy step only). It then connects to a running Firefox-family browser
+(Firefox, Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab,
+and lets you pick which browser to set up.</p>
+</li>
+<li>
+<p dir="auto"><strong>Choose the components</strong> to install:</p>
 <ul dir="auto">
 <li><strong>Configuration files</strong> (<code>config.js</code>, <code>config-prefs.js</code>) — copied to the browser's installation
 directory</li>
 <li><strong>Utils</strong> (the chrome scripts) — copied to your profile's <code>chrome/utils/</code> directory</li>
 </ul>
 </li>
-<li>Click <strong>Install</strong>, wait for completion, then <strong>Restart the browser</strong> when prompted.</li>
+<li>
+<p dir="auto">Click <strong>Install</strong>, wait for completion, then <strong>Restart the browser</strong> when prompted.</p>
+</li>
 </ol>
 <blockquote>
 <p dir="auto">The install tab always opens. It is the piece that downloads the packages from the network; if
@@ -108,6 +109,25 @@ browser's installation directory.</li>
 by hand. After your first install from this repository, the browser will notify you when a new
 version is available (see
 <a href="#how-the-updater-keeps-your-scripts-up-to-date">How the updater keeps your scripts up to date</a>).</p>
+<div class="markdown-heading" dir="auto"><h3 class="heading-element" dir="auto">Finding your version and reverting</h3><a id="user-content-finding-your-version-and-reverting" class="anchor" aria-label="Permalink: Finding your version and reverting" href="#finding-your-version-and-reverting"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
+<p dir="auto">The packages are dated, not version-numbered: every publish stamps each package with the date its
+content last changed (<code>YYYY-MM-DD</code>, UTC). To find what you have:</p>
+<ul dir="auto">
+<li><strong>Updater tab</strong> — open the updater from the browser menu. Next to each package's manual-download
+link it shows the date of the current published package; "Up to Date" means your installed copy
+matches it.</li>
+<li><strong>Installer</strong> — re-running the installer shows the same per-package dates next to the
+manual-download links, plus each browser's Up to Date / Update Available status.</li>
+</ul>
+<p dir="auto">To <strong>revert</strong> a package to an earlier build, open the
+<a href="https://github.com/onemen/firefox-scripts/releases">releases page</a>: the <code>latest</code> release always
+holds the newest build of every file, and the frozen <code>scripts-&lt;date&gt;</code> (package zips) and
+<code>installer-&lt;date&gt;</code> (installer binaries + helpers) releases hold each past publish. Download the
+package zip from the dated release you want and install it by hand (updater tab → manual download
+link, or unpack into your profile's <code>chrome/utils/</code> — see the
+<a href="#original-scripts-and-core-folders">original scripts</a> section for the layout). The next daily check
+will offer the newer version again; use the tab's skip option if you want to stay on the older build
+for that update.</p>
 <p dir="auto">The original scripts are governed by the
 <a href="https://www.mozilla.org/en-US/MPL/2.0/" rel="nofollow">Mozilla Public License 2.0</a>; the in-browser updater
 (<code>core/chrome/utils/updater/</code>) is custom to this project and licensed under the
@@ -128,7 +148,13 @@ publish scripts under <code>tools/publish/</code>.</p>
 <p dir="auto">File an <strong>issue</strong> on <a href="https://github.com/onemen/firefox-scripts/issues">the GitHub repository</a>.
 Please search existing issues first — your problem may already be reported.</p>
 <div class="markdown-heading" dir="auto"><h3 class="heading-element" dir="auto">License</h3><a id="user-content-license" class="anchor" aria-label="Permalink: License" href="#license"><svg data-component="Octicon" class="octicon octicon-link" viewBox="0 0 16 16" version="1.1" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"></path></svg></a></div>
-<p dir="auto"><a href="LICENSE.md">MIT</a> © 2026 ONEMEN <a href="mailto:tabmix.onemen@gmail.com">tabmix.onemen@gmail.com</a></p>
+<p dir="auto"><a href="LICENSE.md">MIT</a> © 2026 ONEMEN <a href="mailto:tabmix.onemen@gmail.com">tabmix.onemen@gmail.com</a> — <code>SPDX-License-Identifier: MIT</code></p>
+<p dir="auto">Applies to the whole repository <strong>except</strong> the upstream-derived <code>core/</code> tree (files outside
+<code>core/chrome/utils/updater/</code>), which is
+<a href="https://www.mozilla.org/en-US/MPL/2.0/" rel="nofollow">Mozilla Public License 2.0</a> per
+<a href="core/LICENSE"><code>core/LICENSE</code></a> — <code>SPDX-License-Identifier: MPL-2.0</code>. The custom in-browser updater
+(<code>core/chrome/utils/updater/</code>) is MIT like the rest of the repo. See
+<a href="#original-scripts-and-core-folders">Original Scripts and Core Folders</a>.</p>
 </article></div>
   </body>
 </html>
