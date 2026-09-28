@@ -101,6 +101,14 @@ const PROBE_MAX_POLLS = 60;
 const PROBE_DISCOVERY_RETRIES = 10;
 
 /**
+ * Consecutive gh errors tolerated while polling the probe's status before the
+ * wait degrades to 'unobservable' (3 × 5 s ≈ 10 s of sustained failure). One
+ * blip must not abandon a healthy probe (#361); a real gh outage should still
+ * fail fast into the documented fail-open instead of burning the poll cap.
+ */
+const PROBE_ERROR_STREAK = 3;
+
+/**
  * The workflow-dispatches API (`gh workflow run --ref`) dispatches only refs
  * that exist ON GITHUB — branch or tag names. A commit SHA is rejected with
  * "HTTP 422: No ref found" (how `release:stage -- --ref=<sha>` failed on
@@ -465,9 +473,10 @@ export function getRunStatus(runId) {
 
 /**
  * Wait the probe run to completion (re-polls ~5 s apart; the probe is ~30 s
- * end-to-end, so a coarse poll and a hard round cap are enough). The cap is the
- * fail-open: a stuck/unobservable probe degrades to fire-and-forget with a
- * pointer, never to a wrong verdict.
+ * end-to-end, so a coarse poll and a hard round cap are enough). A single gh
+ * error is a transient to retry (#361); 'unobservable' — the fail-open — is
+ * reserved for SUSTAINED failure (PROBE_ERROR_STREAK consecutive errors) or the
+ * poll cap, never one strike.
  *
  * @param {number} runId
  * @param {(ms: number) => void} [sleepFn] injectable sleep (tests)
@@ -481,10 +490,22 @@ export function waitForProbeRun(
   sleepFn = ms => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   statusFn = getRunStatus
 ) {
+  // A null status is a gh/network blip, not evidence about the run — a single
+  // miss abandoned healthy probes on release day (issue #361: every 2026-09-28
+  // drift-check run completed, yet "probe run lost" fired twice). Same lesson
+  // as #350 for discovery: a transient is a race to retry. The fail-open
+  // boundary is SUSTAINED failure (PROBE_ERROR_STREAK consecutive gh errors,
+  // ~10 s) or the poll cap — never one strike.
+  let errorStreak = 0;
   for (let attempt = 0; attempt < PROBE_MAX_POLLS; attempt++) {
     if (attempt > 0) sleepFn(5000);
     const st = statusFn(runId);
-    if (st === null) return 'unobservable';
+    if (st === null) {
+      errorStreak += 1;
+      if (errorStreak >= PROBE_ERROR_STREAK) return 'unobservable';
+      continue;
+    }
+    errorStreak = 0;
     if (st.status === 'completed') return st.conclusion === 'success' ? 'success' : 'failure';
   }
   return 'unobservable';

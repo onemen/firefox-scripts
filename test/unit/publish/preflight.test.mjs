@@ -30,7 +30,7 @@ test('every gh argv is repo-scoped — no gh repo set-default dependency (#347)'
   ]);
 });
 
-test('waitForProbeRun: maps conclusions; unobservable on gh error and on the poll cap', () => {
+test('waitForProbeRun: maps conclusions; unobservable on sustained gh errors or the poll cap', () => {
   assert.equal(
     waitForProbeRun(
       1,
@@ -47,14 +47,21 @@ test('waitForProbeRun: maps conclusions; unobservable on gh error and on the pol
     ),
     'failure'
   );
+  // A single gh error is a transient (#361); PROBE_ERROR_STREAK consecutive
+  // errors are sustained failure — the fail-open fires, after exactly 3 polls.
+  let calls = 0;
   assert.equal(
     waitForProbeRun(
       1,
       () => {},
-      () => null
+      () => {
+        calls += 1;
+        return null;
+      }
     ),
     'unobservable'
   );
+  assert.equal(calls, 3);
   assert.equal(
     waitForProbeRun(
       1,
@@ -62,6 +69,30 @@ test('waitForProbeRun: maps conclusions; unobservable on gh error and on the pol
       () => ({status: 'in_progress', conclusion: null})
     ),
     'unobservable'
+  );
+});
+
+test('waitForProbeRun: transient gh errors and in-progress polls never abandon a healthy run (#361)', () => {
+  const script = (...results) => {
+    let i = 0;
+    return () => results[Math.min(i++, results.length - 1)];
+  };
+  // Two blips, then completion — the verdict is read, not lost.
+  assert.equal(
+    waitForProbeRun(1, () => {}, script(null, null, {status: 'completed', conclusion: 'success'})),
+    'success'
+  );
+  // A blip streak resets on any successful poll.
+  assert.equal(
+    waitForProbeRun(
+      1,
+      () => {},
+      script(null, null, {status: 'in_progress', conclusion: null}, null, null, {
+        status: 'completed',
+        conclusion: 'failure',
+      })
+    ),
+    'failure'
   );
 });
 
