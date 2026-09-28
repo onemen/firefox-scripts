@@ -6,5 +6,3 @@ per-commit artifacts are not a supported download surface.
 
 **Download the [latest release](https://github.com/onemen/firefox-scripts/releases/latest)**
 — it bundles the same packages with release notes and install instructions.
-
-The rendered page (index.html) mirrors the repository README.
