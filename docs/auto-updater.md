@@ -295,7 +295,8 @@ installer before the banner hands it to the user is a tracked follow-up. The upd
 
 ## 9. Testing plan
 
-The automated matrix lives in `test/e2e/` (`pnpm test:e2e`: installer, updater, core lifecycle,
-portable and fork legs — the suite is the source of truth for what is covered); the remaining gaps
-are tracked in #30 (core test coverage) and #34 (updater UX follow-ups). Manual steps that cannot
-run on hosted runners (Windows UAC elevation) are on the per-release runbook checklist.
+The automated matrix lives in `test/e2e/` — the suite is the source of truth for what is covered.
+Locally, `pnpm test:e2e` runs the installer and updater tests; the core lifecycle, portable and fork
+legs run in CI (the full matrix is described in `docs/e2e-tests.md`). The remaining gaps are tracked
+in #30 (core test coverage) and #34 (updater UX follow-ups). Manual steps that cannot run on hosted
+runners (Windows UAC elevation) are on the per-release runbook checklist.

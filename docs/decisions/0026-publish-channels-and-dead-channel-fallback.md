@@ -32,8 +32,8 @@ Two channels. **Stable** = `--mode=prod` (`latest` release + gh-pages). **Test**
    historical artifact; it is not deleted and not re-created.
 2. **Test-channel configs carry the stable channel's URLs.** Dev builds bake a set of stable-channel
    fallback URLs, generated from `config/installer.conf` per [0013] (no hardcoded URLs); stable
-   builds get empty values, the channel being their own. (The generated-config key names live in
-   `docs/DEVELOPING.md` → publishing and the updater docs.)
+   builds get empty values, the channel being their own. (The generated-config key names are owned
+   by `tools/publish/generateUpdaterConfig.mjs`, which generates `updater-config.sys.mjs`.)
 3. **Dead-test-channel fallback.** When a test-channel daily check cannot fetch its own manifest
    (branch deleted or expired), it fetches the **stable** manifest from the baked fallback URLs and
    runs the same hash comparison ([0002] unchanged). A difference is auto-installed through the
