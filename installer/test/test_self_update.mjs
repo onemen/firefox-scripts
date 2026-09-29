@@ -256,6 +256,33 @@ function main() {
       build: '2026-09-01',
       expect: {status: 1, latest: '2026-09-14', url: 'https://x/collapsed'},
     },
+    {
+      // Issue #341: the POST-cutover ingest surface is the Pages payload —
+      // self-update.json, a PURE bare object (no release envelope, no body
+      // fence, no assets decoys) with the mechanismSince marker on top. The
+      // same bare-key parser must handle it: this is what post-cutover
+      // installs actually POST to /api/self-update.
+      name: 'bare Pages payload (self-update.json, #341) parses with mechanismSince',
+      json: JSON.stringify({
+        mechanismSince: '2026-09-29',
+        installerDate: '2026-09-14',
+        download: {[asset]: 'https://x/pages'},
+      }),
+      build: '2026-09-01',
+      expect: {status: 1, latest: '2026-09-14', url: 'https://x/pages'},
+    },
+    {
+      // Same Pages shape but no URL for this platform (a publish that did not
+      // rebuild it): still flags the newer build — UI falls back to releases.
+      name: 'bare Pages payload without this platform URL → flags, empty url',
+      json: JSON.stringify({
+        mechanismSince: '2026-09-29',
+        installerDate: '2026-09-14',
+        download: {[otherAsset]: 'https://x/other'},
+      }),
+      build: '2026-09-01',
+      expect: {status: 1, latest: '2026-09-14', url: ''},
+    },
     // ── graceful degradation ────────────────────────────────────────────────
     {
       name: 'body without a managed block → silently no update',

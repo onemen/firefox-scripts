@@ -1,15 +1,21 @@
   /* ========================================================================
      Self-Update Banner — date-based (ADR 0019 amendment)
 
-     The tab ingests two payloads before asking the server for a verdict:
-       • /api/package-urls.releasesUrl — the releases listing (newest first);
-         the newest managed installer-<date> body wins (a fresh installer
-         publish is never masked by a scripts-only republish of `latest`)
-       • /api/package-urls.selfUpdateUrl — the latest release (fallback,
-         covers a repo where no installer-<date> release exists yet)
-     The C side parses the managed installerDate/download block and compares
-     it with the binary's baked build date.  Local/dev test builds never
-     check: the snapshot exists to test THIS build.
+     The tab ingests the self-update payload before asking the server for a
+     verdict, choosing the surface by build date (issue #341):
+       • build >= payload's mechanismSince → the Pages payload
+         (/api/package-urls.selfUpdateUrl — self-update.json next to
+         hashes.json, CORS-enabled host); the release body is not fetched.
+       • older build (pre-cutover binary) → the release-body flow:
+         /api/package-urls.releasesUrl (newest managed installer-<date> body
+         wins) with /api/package-urls.selfUpdateUrl (the latest release) as
+         fallback — the transition window; publishes stop appending the body
+         block once the cutover passes, and these binaries age out.
+     A payload without mechanismSince is treated as pre-cutover (legacy body
+     flow). The C side parses the managed installerDate/download block in
+     whichever payload was POSTed and compares it with the binary's baked
+     build date.  Local/dev test builds never check: the snapshot exists to
+     test THIS build.
      ======================================================================== */
   let selfUpdateIngested = false;
 
@@ -21,9 +27,9 @@
       })
       .then(function (res) {
         // Return the actual success so ingestSelfUpdateSources falls through
-        // to the selfUpdateUrl fallback when the releases POST is rejected
-        // (CodeRabbit review:batch, PR #238); selfUpdateIngested still only
-        // sticks on a successful ingest.
+        // to the next source when a POST is rejected (CodeRabbit
+        // review:batch, PR #238); selfUpdateIngested still only sticks on a
+        // successful ingest.
         const ok = Boolean(res && res.ok);
         if (ok) selfUpdateIngested = true;
         return ok;
@@ -34,14 +40,59 @@
       });
   }
 
+  /* Is THIS binary at/after the payload's mechanism cutover? Build info
+   * comes from the server (/api/build-info bakes buildDate).  A missing or
+   * invalid date on either side means "not post-cutover": the legacy body
+   * flow, which every published binary to date parses fine.  (A plain
+   * comment, not JSDoc: the built-artifact prettier gate must reflow these
+   * lines identically in the fragment and the concat — see embed.mjs.) */
+  function atMechanismSince(buildDate, payloadText) {
+    if (!buildDate || !payloadText) return false;
+    let since;
+    try {
+      const parsed = JSON.parse(payloadText);
+      since = parsed && parsed.mechanismSince;
+    } catch (_) {
+      return false;
+    }
+    if (typeof since !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(since)) return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(buildDate)) return false;
+    // ISO dates: lexicographic == chronological.
+    return buildDate >= since;
+  }
+
   function ingestSelfUpdateSources(pkg) {
     if (selfUpdateIngested) return Promise.resolve();
-    // Newest managed installer-<date> body first; the latest release as
-    // fallback.  Harmless duplicate ingests: the server just overwrites.
-    return ingestSelfUpdateSource(pkg && pkg.releasesUrl).then(function (managed) {
-      if (!managed) return ingestSelfUpdateSource(pkg && pkg.selfUpdateUrl);
-      return null;
-    });
+    // Post-cutover binaries trust the Pages payload only — the release body
+    // is a legacy fallback that publishes may have stopped appending.
+    return fetchJSON('/api/build-info')
+      .then(function (info) {
+        const pagesUrl = pkg && pkg.selfUpdatePagesUrl;
+        if (!pagesUrl || !info || !info.buildDate) return null;
+        return fetchRaw(pagesUrl)
+          .then(function (buf) {
+            const text = buf;
+            if (!atMechanismSince(info.buildDate, text)) return false;
+            return postRaw('/api/self-update', buf).then(function (res) {
+              const ok = Boolean(res && res.ok);
+              if (ok) selfUpdateIngested = true;
+              return ok;
+            });
+          })
+          .catch(function (err) {
+            console.error('[ingest] self-update pages payload failed: ' + (err && err.message));
+            return false;
+          });
+      })
+      .then(function (pagesOk) {
+        if (selfUpdateIngested || pagesOk) return null;
+        // Newest managed installer-<date> body first; the latest release as
+        // fallback.  Harmless duplicate ingests: the server just overwrites.
+        return ingestSelfUpdateSource(pkg && pkg.releasesUrl).then(function (managed) {
+          if (!managed) return ingestSelfUpdateSource(pkg && pkg.selfUpdateUrl);
+          return null;
+        });
+      });
   }
 
   function checkSelfUpdate() {

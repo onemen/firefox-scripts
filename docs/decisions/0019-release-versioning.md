@@ -79,3 +79,20 @@ update detection is therefore defined here, aligned with the same scheme:
 - The former `VERSION=1.0.0` conf key and version-based comparison are removed; the Windows
   VERSIONINFO FileVersion carries the build date. The "no update signal when only the installer
   changed" requirement is preserved: zips and installers hash/date independently.
+
+## Amendment 2026-09-29 — the managed block's home is the Pages branch (#341)
+
+(Amends the 2026-09-13 amendment above, per [0029](./0029-status-line-amendments.md): the ingest
+surface moves; date-based detection, the field names and the silent-no-block behavior survive.)
+
+The managed self-update block — machine-read, never for humans (#356 collapsed it in a `<details>`)
+— moves from the installer-<date> release body to the artifact branch: every installer rebuild
+writes `self-update.json` next to `hashes.json` (`{mechanismSince, installerDate, download}`, the
+same CORS-enabled host every other machine fetch uses). The release body block survives only as the
+transition fallback for binaries baked before the cutover (`SELF_UPDATE_MECHANISM_SINCE` in
+installer.conf; the payload carries the same `mechanismSince` so a binary decides its surface from
+one fetch); publishes stop appending it once a post-cutover installer-<date> release has shipped —
+fail-safe (unknown prior tag → append) so a pre-cutover install can never be stranded on a
+block-less newest tag. The C parser is unchanged: its bare-key scan over the whole ingested payload
+parses the pure Pages shape, the `<details>`-wrapped body and the extra `mechanismSince` key alike.
+`docs/auto-updater.md` describes the flow; #341 tracks the fallback window's end.

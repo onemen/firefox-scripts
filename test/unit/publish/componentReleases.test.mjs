@@ -25,7 +25,8 @@ const {
   renderComponentBody,
   WINDOWS_ONLY_INSTALLER_NOTE,
   componentAssets,
-  renderSelfUpdateBlock,
+  renderSelfUpdatePayload,
+  shouldAppendManagedBlock,
   parseSelfUpdateBlock,
   mergeSelfUpdateBlock,
   scriptsAssetNames,
@@ -177,19 +178,47 @@ test('componentAssets: nothing built → empty map', () => {
 
 // ── managed self-update block (ADR 0019 amendment, date-based self-update) ──
 
-test('renderSelfUpdateBlock: JSON with installerDate + download map', () => {
-  const block = renderSelfUpdateBlock('2026-09-13', {
+test('renderSelfUpdatePayload: mechanismSince + installerDate + download map (#341)', () => {
+  const block = renderSelfUpdatePayload('2026-09-13', {
     'installer_win.exe': 'https://x/win',
     'installer_linux': 'https://x/linux',
   });
   const parsed = JSON.parse(block);
+  // The cutover rides in the payload so a binary can decide its ingest
+  // surface without a second fetch; the conf value is real, assert the shape.
+  assert.ok(
+    parsed.mechanismSince === undefined || /^\d{4}-\d{2}-\d{2}$/.test(parsed.mechanismSince)
+  );
   assert.equal(parsed.installerDate, '2026-09-13');
   assert.equal(parsed.download['installer_win.exe'], 'https://x/win');
   assert.equal(parsed.download.installer_linux, 'https://x/linux');
+  // Extra key is transparent to the body parser (same-day merge path).
+  const body = `Installer binaries — 2026-09-13.\n\n\`\`\`json\n${block}\n\`\`\`\n`;
+  const reparsed = parseSelfUpdateBlock(body);
+  assert.equal(reparsed.installerDate, '2026-09-13');
+  assert.equal(reparsed.download['installer_win.exe'], 'https://x/win');
+});
+
+test('shouldAppendManagedBlock: the block retires only after the transition release (#341)', () => {
+  // This module was imported with the REAL config (SELF_UPDATE_MECHANISM_SINCE
+  // = 2026-09-29). The block serves PRE-cutover binaries (they parse release
+  // bodies only), so it must stay until a post-cutover installer release has
+  // shipped — retiring earlier would strand them on a block-less newest tag.
+  // No cutover configured → always append (legacy behavior).
+  assert.equal(shouldAppendManagedBlock(null), true);
+  // No prior installer tag (first publish / listing failed) → fail-safe append.
+  assert.equal(shouldAppendManagedBlock('2026-09-01'), true);
+  // Prior tag PREDATES the cutover → this publish IS the transition release:
+  // append (its binaries read the body; the Pages payload also ships).
+  assert.equal(shouldAppendManagedBlock('2026-09-28'), true);
+  // A post-cutover release already shipped → retire (every installable binary
+  // now reads the Pages payload).
+  assert.equal(shouldAppendManagedBlock('2026-09-29'), false);
+  assert.equal(shouldAppendManagedBlock('2026-10-01'), false);
 });
 
 test('parseSelfUpdateBlock: round-trips the fenced managed block', () => {
-  const block = renderSelfUpdateBlock('2026-09-13', {
+  const block = renderSelfUpdatePayload('2026-09-13', {
     'installer_win.exe': 'https://x/win',
   });
   const body = `Installer binaries — 2026-09-13.\n\n- installer_win.exe\n\n\`\`\`json\n${block}\n\`\`\`\n`;
@@ -401,7 +430,7 @@ test('parseSelfUpdateBlock: round-trips the DETAILS-WRAPPED fenced block (#356 i
   // The published shape after the collapse: <details> wrapper around the same
   // ```json fence. The backwards brace walk + fence scan must both stay
   // wrapper-transparent — this body IS the same-day-merge input.
-  const block = renderSelfUpdateBlock('2026-09-13', {
+  const block = renderSelfUpdatePayload('2026-09-13', {
     'installer_win.exe': 'https://x/win',
     'installer_mac': 'https://x/mac',
   });

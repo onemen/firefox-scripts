@@ -1475,6 +1475,43 @@ async function runUiLayer(counter, opts, snapshotDir) {
       const shotPath = path.join(shotDir, 'installer-e2e-screenshot.png');
       const shotOk = await screenshotPrivileged(page, shotPath);
       if (shotOk) uiCheck(true, 'UI-11', 'installer screenshot saved');
+
+      // UI-13 (issue #341): the tab's self-update ingest chose the RIGHT
+      // surface for this build. The snapshot binary is freshly built, so its
+      // build date >= the payload's mechanismSince cutover → the Pages
+      // payload (self-update.json, served by the local installer from the
+      // snapshot dir) must be ingested and the release-body flow skipped.
+      // Proven from the browser side without asserting on banner visibility
+      // (the snapshot's date typically equals today's — up to date, banner
+      // hidden): /api/self-update must report the PAGES payload's
+      // installerDate as latestDate. A regression to body-only ingest would
+      // leave latestDate '' here (the dev release body carries no block),
+      // failing the check.
+      const suState = await page.evaluate(
+        /* eslint-disable no-undef */
+        async () => {
+          try {
+            // withToken() is the page's own helper (10-ingest.js): appends
+            // the session token from the page URL — a bare fetch would 403.
+            // It exists only inside the page's IIFE, not in this test file.
+            const res = await fetch(withToken('/api/self-update'));
+            if (!res.ok) return {ok: false};
+            return {ok: true, ...(await res.json())};
+          } catch (_) {
+            return {ok: false};
+          }
+        }
+        /* eslint-enable no-undef */
+      );
+      uiCheck(
+        Boolean(suState.ok && suState.latestDate),
+        'UI-13',
+        'self-update ingest consumed the Pages payload (mechanismSince cutover, #341)',
+        `latestDate=${suState.latestDate ?? '(none)'} buildDate=${suState.buildDate ?? '?'} ` +
+          (consoleLines.length ?
+            `\n    tab console tail:\n    ${consoleLines.slice(-8).join('\n    ')}`
+          : '')
+      );
     }
 
     return;

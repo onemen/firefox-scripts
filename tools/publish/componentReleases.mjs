@@ -32,7 +32,7 @@
 
 import fs from 'fs';
 
-import {REPO_OWNER, REPO_NAME} from './paths.js';
+import {REPO_OWNER, REPO_NAME, SELF_UPDATE_MECHANISM_SINCE} from './paths.js';
 import {green, dim, warn} from './log.mjs';
 import {installerSha256Sidecar} from './hashUtils.mjs';
 
@@ -59,13 +59,11 @@ export function installerTag(date) {
 }
 
 /**
- * The managed self-update block embedded in an installer-<date> release body
- * (ADR 0019 amendment, date-based self-update): the installer tab ingests the
- * newest installer-<date> body, and the C side parses this block for the build
- * date and this platform's download URL. The block is JSON-escaped inside the
- * body string in the /releases listing, and the C side scans the whole body for
- * the bare keys — so the wrapper markup around the fence (renderComponentBody's
- * collapsed <details>, issue #356 item 2) stays opaque to it.
+ * The managed self-update payload (issue #341): `installerDate` + per-platform
+ * `download` URLs, plus `mechanismSince` — the cutover date (config
+ * SELF_UPDATE_MECHANISM_SINCE) a binary compares its own build date against to
+ * decide which ingest surface to trust (Pages payload vs release body). The
+ * Pages copy carries the same fields — one shape, two hosts.
  *
  * `urlByAsset` maps installer asset name → browser_download_url under the
  * permanently-named `latest` tag (entries missing for platforms this run did
@@ -75,10 +73,39 @@ export function installerTag(date) {
  *   for the binaries this publish ships — that equality is what makes the
  *   C-side strcmp comparison converge)
  * @param {Record<string, string>} urlByAsset asset name → download URL
- * @returns {string} JSON block, no fence
+ * @returns {string} JSON payload, no fence (the renderer adds markup)
  */
-export function renderSelfUpdateBlock(date, urlByAsset) {
-  return JSON.stringify({installerDate: date, download: urlByAsset});
+export function renderSelfUpdatePayload(date, urlByAsset) {
+  return JSON.stringify({
+    ...(SELF_UPDATE_MECHANISM_SINCE ? {mechanismSince: SELF_UPDATE_MECHANISM_SINCE} : {}),
+    installerDate: date,
+    download: urlByAsset,
+  });
+}
+
+/**
+ * Should this publish append the managed self-update block to the
+ * installer-<date> release body? (issue #341 — the one-transition-release
+ * fallback window.) The block serves binaries baked BEFORE the cutover
+ * (SELF_UPDATE_MECHANISM_SINCE): they parse release bodies only, never the
+ * Pages payload. It retires only once a post-cutover installer release has
+ * already shipped — that transition release carried the block and gave every
+ * updating install the post-cutover binaries, so later tags need not carry it.
+ * Fail-safe ordering (a missing block strands pre-cutover installs; an extra
+ * block costs one collapsed <details>): • no cutover configured (stripped conf)
+ * → always append (legacy); • no prior tag known (listing failed / first
+ * publish) → append; • prior newest < cutover → append (this publish IS the
+ * transition); • prior newest ≥ cutover → retire.
+ *
+ * @param {string | null} newestPriorInstallerTag YYYY-MM-DD of the newest
+ *   installer-<date> tag EXCLUDING this run's own tag (a same-day republish
+ *   must not retire the block an earlier run today appended)
+ * @returns {boolean}
+ */
+export function shouldAppendManagedBlock(newestPriorInstallerTag) {
+  if (!SELF_UPDATE_MECHANISM_SINCE) return true;
+  if (!newestPriorInstallerTag) return true;
+  return newestPriorInstallerTag < SELF_UPDATE_MECHANISM_SINCE;
 }
 
 /**
@@ -231,8 +258,8 @@ export function componentAssets(installer, built, access) {
  * `dates` maps asset name → YYYY-MM-DD (per-package source-commit date from the
  * manifest; defaults to the release's own date).
  *
- * For installer releases `selfUpdateBlock` (the managed JSON block from
- * renderSelfUpdateBlock) is appended as a ```json fence inside a <details>
+ * For installer releases `selfUpdateBlock` (the managed JSON payload from
+ * renderSelfUpdatePayload) is appended as a ```json fence inside a <details>
  * element that renders collapsed by default (issue #356 item 2, the #341
  * collapse: machine-read, not for humans) — the machine-readable payload the
  * installer's date-based self-update ingests (ADR 0019 amendment) — followed by
@@ -272,6 +299,9 @@ export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlo
   // anywhere in the body; the JS side's same-day merge scans back to the
   // fence) inside a <details> wrapper with a blank line before the fence
   // (#356 item 2) — see SELF_UPDATE_BLOCK_SUMMARY for the shape rationale.
+  // The block itself is the TRANSITION FALLBACK surface (#341): publishes stop
+  // appending it once the run date reaches SELF_UPDATE_MECHANISM_SINCE, when
+  // every installable binary reads the Pages payload instead.
   const managed =
     selfUpdateBlock ?
       `\n\n<details>\n${SELF_UPDATE_BLOCK_SUMMARY}\n\n\`\`\`json\n${selfUpdateBlock}\n\`\`\`\n</details>\n`
@@ -431,6 +461,35 @@ export function newestInstallerDate(tagNames) {
 }
 
 /**
+ * Newest installer-<date> tag date on the repo EXCLUDING `excludeTag` (this
+ * run's own tag — a same-day republish must not count itself as the transition
+ * release). Fail-safe for the #341 body-block retire decision: any listing
+ * error resolves null (caller appends the block). Pure networking, no CLI.
+ *
+ * @param {import('@octokit/rest').Octokit} octokit authenticated client
+ * @param {string} excludeTag this run's installer tag name
+ * @returns {Promise<string | null>} YYYY-MM-DD or null
+ */
+export async function newestPriorInstallerTag(octokit, excludeTag) {
+  try {
+    const tagNames = [];
+    for (let page = 1; page <= 3; page++) {
+      const {data} = await octokit.repos.listTags({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        per_page: 100,
+        page,
+      });
+      tagNames.push(...data.map(t => t.name).filter(n => n !== excludeTag));
+      if (data.length < 100) break;
+    }
+    return newestInstallerDate(tagNames);
+  } catch {
+    return null; // append rather than retire — never strand a pre-cutover install
+  }
+}
+
+/**
  * Splice a freshly rendered managed section into a `latest` body: replace the
  * region between the markers when present, otherwise append. Everything outside
  * the markers is returned untouched.
@@ -487,19 +546,26 @@ export function bodyAssetNames(currentNames, priorNames) {
  *   (defaults to the tag date for every row; no asset labels — GitHub renders a
  *   label instead of the file name, issue #354)
  * @param {Record<string, string> | null} [opts.selfUpdateUrlByAsset] asset →
- *   self-update URL map (scripts body only)
+ *   self-update URL map (installer body only)
+ * @param {string} [opts.selfUpdateBlock] this run's managed self-update JSON
+ *   payload (renderSelfUpdatePayload output) — '' retires the block from the
+ *   body (the #341 post-cutover state); undefined keeps the legacy behavior of
+ *   always rendering it
  * @returns {Promise<{created: boolean}>} whether the release was newly created
  */
 export async function syncComponentRelease(octokit, tagName, date, assets, opts = {}) {
-  const {kind, dates = {}, selfUpdateUrlByAsset = null} = opts;
+  const {kind, dates = {}, selfUpdateUrlByAsset = null, selfUpdateBlock: forcedBlock} = opts;
   const {getRelease, getOrCreateRelease, deleteExistingAsset, uploadAsset, uploadAssetBuffer} =
     await import('./uploadUtilsZip.mjs');
   const existed = !!(await getRelease(octokit, tagName));
 
   // Managed self-update block (installer releases only): merge this run's
   // download URLs over the prior same-day body so entries for platforms an
-  // earlier run rebuilt survive (same-day tag reuse).
-  let selfUpdateBlock = '';
+  // earlier run rebuilt survive (same-day tag reuse). The caller may force
+  // '' (post-cutover, #341: the body block is retired) — the retire decision
+  // must win over the merge, but the MERGE still runs first so a later revert
+  // of the cutover loses nothing.
+  let selfUpdateBlock;
   if (kind === 'installer' && selfUpdateUrlByAsset) {
     let prior = null;
     if (existed) {
@@ -510,11 +576,12 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
         prior = null; // under-merge rather than fail the sync
       }
     }
-    selfUpdateBlock = renderSelfUpdateBlock(
+    selfUpdateBlock = renderSelfUpdatePayload(
       date,
       mergeSelfUpdateBlock(date, selfUpdateUrlByAsset, prior)
     );
   }
+  if (forcedBlock !== undefined) selfUpdateBlock = forcedBlock;
 
   const release = await getOrCreateRelease(octokit, tagName, {
     name: `${kind === 'scripts' ? 'Scripts' : 'Installer'} — ${date}`,
@@ -776,8 +843,8 @@ export async function syncComponentReleases(
 
       // The managed URL intentionally targets the `latest` RELEASE download
       // (the user-facing artifact; the banner downloads via an anchor click
-      // and needs no CORS).  The gh-pages mirror exists for any future
-      // fetch-based flow, not as the banner's target.
+      // and needs no CORS).  The Pages mirror exists for the #341 fetch-based
+      // flow's post-cutover binaries.
       // Sidecar names are excluded: the C self-update resolves its URL by a
       // plain substring search for the asset name, and `installer_win.exe` is
       // a prefix of `installer_win.exe.sha256` — a sidecar entry here would
@@ -786,9 +853,32 @@ export async function syncComponentReleases(
         if (assetName.endsWith('.sha256')) continue;
         selfUpdateUrlByAsset[assetName] = `${downloadBase}/latest/${assetName}`;
       }
+      // Transition fallback only (#341): the body block serves pre-cutover
+      // binaries; it retires once a post-cutover installer release has
+      // already shipped (that transition release carried the block). List the
+      // repo's tags (excluding this run's own) and let shouldAppendManagedBlock
+      // decide — fail-safe (unknown → append). (Old same-day bodies still
+      // parse — parseSelfUpdateBlock ignores the wrapper and mechanismSince.)
+      const selfUpdateBlock =
+        (
+          shouldAppendManagedBlock(
+            await newestPriorInstallerTag(octokit, installerTag(installerDate))
+          )
+        ) ?
+          renderSelfUpdatePayload(installerDate, selfUpdateUrlByAsset)
+        : '';
+      if (!selfUpdateBlock) {
+        console.log(
+          dim(
+            `  managed JSON block retired from the release body ` +
+              `(a post-cutover installer release already shipped; #341)`
+          )
+        );
+      }
       await syncComponentRelease(octokit, installerTag(installerDate), installerDate, assets, {
         kind: 'installer',
         selfUpdateUrlByAsset,
+        selfUpdateBlock,
       });
     }
   } catch (err) {

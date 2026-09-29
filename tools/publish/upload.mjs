@@ -88,6 +88,7 @@ import {
   REPO_NAME,
   REPO_OWNER,
   SCRIPTS_DIST,
+  SELF_UPDATE_FILE,
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
@@ -111,7 +112,12 @@ import {
 import {buildDates} from './generateBuildDates.mjs';
 import {branchExistsOnPages, pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
 import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
-import {pinLatestRelease, refreshLatestBody, syncComponentReleases} from './componentReleases.mjs';
+import {
+  pinLatestRelease,
+  refreshLatestBody,
+  renderSelfUpdatePayload,
+  syncComponentReleases,
+} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {ledgerEntry, ledgerStats, ledgerTable, mergeLedger} from '../ci/avLedger.mjs';
@@ -845,6 +851,27 @@ async function publishToGitHub({
     pagesFiles[HASHES_FILE] = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf-8');
   }
 
+  // Managed installer self-update payload (issue #341): written whenever any
+  // installer was built this run, so the payload's installerDate can never lag
+  // the newest installer-<date> tag. Dev mode publishes to the dev-build
+  // branch jsDelivr serves; local mode's overrides leave SELF_UPDATE_URL
+  // localhost-shaped and the write lands in the snapshot dir. The tab fetches
+  // it INSTEAD of the release body on post-cutover binaries (mechanismSince);
+  // the URLs target the plain-name latest-tag downloads in both channels —
+  // the #341 proposal's one transition release keeps legacy bodies working
+  // meanwhile.
+  if (builtInstallers.length > 0) {
+    const suBase = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/latest`;
+    const suUrls = {};
+    for (const p of builtInstallers) {
+      suUrls[installerAssetName(p)] = `${suBase}/${installerAssetName(p)}`;
+    }
+    pagesFiles[SELF_UPDATE_FILE] = Buffer.from(
+      renderSelfUpdatePayload(buildDates().installer, suUrls) + '\n',
+      'utf-8'
+    );
+  }
+
   // README.md renders on the branch listing page at github.com — the exact
   // page a human browsing the branch lands on, and the one where "save link
   // as" on a file entry saves a blob HTML page instead of the artifact.
@@ -1019,7 +1046,7 @@ async function publishToGitHub({
  * publishes, so filling a held-back binary in from an older snapshot would
  * misrepresent the run.
  */
-function writeSnapshot({merged, platforms, dir, label, scope}) {
+function writeSnapshot({merged, platforms, dir, label, scope, builtInstallers = []}) {
   // Any artifact this run didn't rebuild (an unchanged zip or binary) is
   // reused from the newest previous snapshot so the folder is complete.
   const prev = findLatestSnapshot();
@@ -1094,6 +1121,28 @@ function writeSnapshot({merged, platforms, dir, label, scope}) {
   const manifest = JSON.stringify(merged, null, 2) + '\n';
   fs.writeFileSync(path.join(dir, HASHES_FILE), manifest);
   info(`    ${green('+')} ${HASHES_FILE}`);
+
+  // Managed self-update payload (issue #341) — mirrors the Pages layout too, so
+  // a local snapshot's installer tab fetches it from the installer's own
+  // server (INSTALLER_ZIP_URL is localhost in local mode) exactly like prod
+  // fetches it from the branch. Stale-copy guard mirrors the stale sweep above:
+  // a partial --include run must not leave yesterday's payload behind.
+  if (scope.installer) {
+    const suPath = path.join(dir, SELF_UPDATE_FILE);
+    if (builtInstallers.length > 0) {
+      const suBase = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/latest`;
+      const suUrls = {};
+      for (const p of platforms) {
+        if (fs.existsSync(installerPath(p))) {
+          suUrls[installerAssetName(p)] = `${suBase}/${installerAssetName(p)}`;
+        }
+      }
+      fs.writeFileSync(suPath, renderSelfUpdatePayload(buildDates().installer, suUrls) + '\n');
+      info(`    ${green('+')} ${SELF_UPDATE_FILE}`);
+    } else {
+      fs.rmSync(suPath, {force: true});
+    }
+  }
 
   success(`\n✓ ${label} ready: ${path.relative(process.cwd(), dir)}`);
 }
@@ -1458,6 +1507,7 @@ async function main() {
         dir: snapshotDir(),
         label: 'Snapshot',
         scope: SCOPE,
+        builtInstallers,
       });
     } else {
       section('Publishing');
