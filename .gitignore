@@ -68,3 +68,6 @@ core/chrome/utils/updater/updater-config.sys.mjs
 # Remote updater stylesheet — generated on disk only for the ?demo=1 preview;
 # the publisher builds it in-memory (tools/publish/syncGeneratedFiles.mjs).
 tools/publish/remote-ui/updater.css
+
+# av-watchdog local state (VT ledger, baselines) — machine-local, never shipped
+.watchdog-av/
