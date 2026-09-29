@@ -61,7 +61,11 @@ test('groupBuilt: updater-ui excluded from scripts; helpers never join a release
 
 test('groupBuilt: helper-only rebuild produces no component release', () => {
   assert.deepEqual(
-    groupBuilt({builtZips: ['updater-ui'], builtInstallers: [], builtHelpers: ['win']}),
+    groupBuilt({
+      builtZips: ['updater-ui'],
+      builtInstallers: [],
+      builtHelpers: ['win'],
+    }),
     {scripts: [], installer: []}
   );
 });
@@ -110,6 +114,13 @@ test('renderComponentBody: installer bodies carry the Windows-only SmartScreen/U
   );
   assert.match(withBlock, /Windows only.*SmartScreen.*More info → Run anyway/s);
   assert.match(withBlock, /checksum-verified elevation/);
+
+  // Collapsed managed block (issue #356 item 2, the #341 collapse): the fence
+  // rides inside a <details> whose tags are single-line (GitHub's CommonMark
+  // strips raw HTML blocks of their newlines — multi-line tags would swallow
+  // the fence). Scripts bodies carry no wrapper.
+  assert.match(withBlock, /<details>\n<summary>⚙ Managed self-update block[^\n]*<\/summary>\n/);
+  assert.match(withBlock, /```json\n\{"installerDate":"2026-09-09"\}\n```\n<\/details>/);
 
   const bare = renderComponentBody('installer', '2026-09-09', ['installer_win.exe']);
   assert.match(bare, /Windows only/);
@@ -177,7 +188,9 @@ test('renderSelfUpdateBlock: JSON with installerDate + download map', () => {
 });
 
 test('parseSelfUpdateBlock: round-trips the fenced managed block', () => {
-  const block = renderSelfUpdateBlock('2026-09-13', {'installer_win.exe': 'https://x/win'});
+  const block = renderSelfUpdateBlock('2026-09-13', {
+    'installer_win.exe': 'https://x/win',
+  });
   const body = `Installer binaries — 2026-09-13.\n\n- installer_win.exe\n\n\`\`\`json\n${block}\n\`\`\`\n`;
   const parsed = parseSelfUpdateBlock(body);
   assert.equal(parsed.installerDate, '2026-09-13');
@@ -209,7 +222,10 @@ test('mergeSelfUpdateBlock: this run wins, prior same-day entries survive', () =
 });
 
 test('mergeSelfUpdateBlock: prior entries from a DIFFERENT date are dropped', () => {
-  const prior = {installerDate: '2026-09-12', download: {installer_mac: 'https://x/stale'}};
+  const prior = {
+    installerDate: '2026-09-12',
+    download: {installer_mac: 'https://x/stale'},
+  };
   const merged = mergeSelfUpdateBlock('2026-09-13', {'installer_win.exe': 'https://x/win'}, prior);
   assert.deepEqual(merged, {'installer_win.exe': 'https://x/win'});
 });
@@ -254,7 +270,7 @@ test('renderLatestDownloads: one row per downloadable asset, dated by its own up
   );
   // Sidecars are NOT rows — the verify line covers them.
   assert.doesNotMatch(section, /sha256`\]/);
-  // The verify line rides under the table, inside the managed section.
+  // The verify line rides under the tables, inside the managed section.
   assert.match(
     section,
     /Verify before use: each file has a `\.sha256` sidecar; the installer itself hash-verifies every package it fetches\./
@@ -262,6 +278,37 @@ test('renderLatestDownloads: one row per downloadable asset, dated by its own up
   // The managed markers wrap the section.
   assert.ok(section.startsWith(LATEST_MANAGED_START));
   assert.ok(section.trimEnd().endsWith(LATEST_MANAGED_END));
+});
+
+test('renderLatestDownloads: Packages and Installer sub-tables (#356 item 1)', () => {
+  // GitHub returns assets in upload order; the managed table groups them into
+  // two labeled sub-tables regardless. Canonical order within each table.
+  const section = renderLatestDownloads([
+    {name: 'installer_linux_aarch64', updatedAt: '2026-09-28T12:20:00Z'},
+    {name: 'fx-folder.zip', updatedAt: '2026-09-28T11:52:03Z'},
+    {name: 'installer_linux', updatedAt: '2026-09-28T12:20:00Z'},
+    {name: 'installer_mac', updatedAt: '2026-09-28T12:20:00Z'},
+    {name: 'installer_win.exe', updatedAt: '2026-09-28T12:20:00Z'},
+    {name: 'utils.zip', updatedAt: '2026-09-28T11:36:55Z'},
+  ]);
+  const packagesAt = section.indexOf('Packages');
+  const installerAt = section.indexOf('Installer (per platform, sidecars ride each binary)');
+  assert.ok(packagesAt > -1, 'Packages label present');
+  assert.ok(installerAt > packagesAt, 'Installer label after Packages label');
+  const utilsAt = section.indexOf('[`utils.zip`]');
+  const fxFolderAt = section.indexOf('[`fx-folder.zip`]');
+  const winAt = section.indexOf('[`installer_win.exe`]');
+  const macAt = section.indexOf('[`installer_mac`]');
+  const linuxAt = section.indexOf('[`installer_linux`]');
+  const armAt = section.indexOf('[`installer_linux_aarch64`]');
+  // Packages table: utils first, fx-folder second, both above the label.
+  assert.ok(utilsAt > packagesAt && utilsAt < installerAt, 'utils.zip in Packages table');
+  assert.ok(fxFolderAt > utilsAt && fxFolderAt < installerAt, 'fx-folder.zip second');
+  // Installer table, canonical platform order, all below the Installer label.
+  assert.ok(winAt > installerAt, 'installer_win.exe first in Installer table');
+  assert.ok(macAt > winAt && macAt < linuxAt && linuxAt < armAt, 'mac → linux → aarch64 order');
+  // Exactly two tables, one header each.
+  assert.equal(section.split('| File | What it is | Updated |').length - 1, 2);
 });
 
 test('updateLatestDownloads: replaces the managed region, keeps manual prose', () => {
@@ -300,6 +347,23 @@ test('updateLatestDownloads: appends the managed section when the body has none'
   const out2 = updateLatestDownloads(broken, section);
   assert.ok(out2.includes('prose'));
   assert.ok(out2.includes('junk'));
+});
+
+test('parseSelfUpdateBlock: round-trips the DETAILS-WRAPPED fenced block (#356 item 2)', () => {
+  // The published shape after the collapse: <details> wrapper around the same
+  // ```json fence. The backwards brace walk + fence scan must both stay
+  // wrapper-transparent — this body IS the same-day-merge input.
+  const block = renderSelfUpdateBlock('2026-09-13', {
+    'installer_win.exe': 'https://x/win',
+    'installer_mac': 'https://x/mac',
+  });
+  const body = renderComponentBody('installer', '2026-09-13', ['installer_win.exe'], {}, block);
+  assert.match(body, /<details>/);
+  const parsed = parseSelfUpdateBlock(body);
+  assert.ok(parsed, 'wrapped body still parses');
+  assert.equal(parsed.installerDate, '2026-09-13');
+  assert.equal(parsed.download['installer_win.exe'], 'https://x/win');
+  assert.equal(parsed.download.installer_mac, 'https://x/mac');
 });
 
 test('parseSelfUpdateBlock: bare (unfenced) block keeps the nested download map', () => {

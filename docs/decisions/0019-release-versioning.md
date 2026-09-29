@@ -64,7 +64,8 @@ update detection is therefore defined here, aligned with the same scheme:
 
 - **Detection is date-based, not version-based.** The binaries bake their build date (YYYY-MM-DD) at
   generation time; the installer-<date> release body carries a machine-managed block written by the
-  publish automation (the build date plus the download map). The installer compares the two dates
+  publish automation (the build date plus the download map; rendered collapsed in a `<details>` on
+  the release page since #356 — machine-read, not for humans). The installer compares the two dates
   (lexicographic = chronological for ISO dates); the release tag itself is never compared.
 - **The installer tab ingests the newest installer-<date> release body** (via the `/releases`
   listing, so a fresh installer publish is never masked by a scripts-only republish of `latest`). A

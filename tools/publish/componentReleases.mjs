@@ -62,21 +62,20 @@ export function installerTag(date) {
  * The managed self-update block embedded in an installer-<date> release body
  * (ADR 0019 amendment, date-based self-update): the installer tab ingests the
  * newest installer-<date> body, and the C side parses this block for the build
- * date and this platform's download URL. The block is wrapped in a
- *
- * ```json
- * keys, so the fence is opaque to it.
+ * date and this platform's download URL. The block is JSON-escaped inside the
+ * body string in the /releases listing, and the C side scans the whole body for
+ * the bare keys — so the wrapper markup around the fence (renderComponentBody's
+ * collapsed <details>, issue #356 item 2) stays opaque to it.
  *
  * `urlByAsset` maps installer asset name → browser_download_url under the
  * permanently-named `latest` tag (entries missing for platforms this run did
  * not rebuild — the installer falls back to the releases page for those).
  *
- * @param {string} date YYYY-MM-DD (must match config/installer.conf
- *   BUILD_DATE for the binaries this publish ships — that equality is what
- *   makes the C-side strcmp comparison converge)
+ * @param {string} date YYYY-MM-DD (must match config/installer.conf BUILD_DATE
+ *   for the binaries this publish ships — that equality is what makes the
+ *   C-side strcmp comparison converge)
  * @param {Record<string, string>} urlByAsset asset name → download URL
  * @returns {string} JSON block, no fence
- * ```
  */
 export function renderSelfUpdateBlock(date, urlByAsset) {
   return JSON.stringify({installerDate: date, download: urlByAsset});
@@ -163,7 +162,10 @@ export function parseSelfUpdateBlock(body) {
  * @returns {Record<string, string>} merged asset → URL map
  */
 export function mergeSelfUpdateBlock(date, urlByAsset, prior) {
-  const merged = {...(prior && prior.installerDate === date ? prior.download : {}), ...urlByAsset};
+  const merged = {
+    ...(prior && prior.installerDate === date ? prior.download : {}),
+    ...urlByAsset,
+  };
   return merged;
 } /**
  * Group the built artifacts into component-release buckets.
@@ -230,11 +232,13 @@ export function componentAssets(installer, built, access) {
  * manifest; defaults to the release's own date).
  *
  * For installer releases `selfUpdateBlock` (the managed JSON block from
- * renderSelfUpdateBlock) is appended in a ```json fence — the machine-readable
- * payload the installer's date-based self-update ingests (ADR 0019 amendment) —
- * followed by the WINDOWS_ONLY_INSTALLER_NOTE (the README's SmartScreen/UAC
- * paragraph: user-facing, #184's plain-English standard; maintainers asked for
- * it on the release pages, 2026-09-27).
+ * renderSelfUpdateBlock) is appended as a ```json fence inside a <details>
+ * element that renders collapsed by default (issue #356 item 2, the #341
+ * collapse: machine-read, not for humans) — the machine-readable payload the
+ * installer's date-based self-update ingests (ADR 0019 amendment) — followed by
+ * the WINDOWS_ONLY_INSTALLER_NOTE (the README's SmartScreen/UAC paragraph:
+ * user-facing, #184's plain-English standard; maintainers asked for it on the
+ * release pages, 2026-09-27).
  */
 export const WINDOWS_ONLY_INSTALLER_NOTE =
   '**Windows only:** the installer is currently unsigned, so SmartScreen may show ' +
@@ -244,6 +248,19 @@ export const WINDOWS_ONLY_INSTALLER_NOTE =
   'Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets you ' +
   'pick which browser to set up.';
 
+/**
+ * Human-facing label of the collapsed managed self-update block (issue #356
+ * item 2, the #341 collapse): the block stays in the body — the installed
+ * installer's self-update parses it (ADR 0019 amendment; the C parser scans the
+ * whole body for the bare keys, so the HTML wrapper is transparent) — but
+ * renders as a collapsed <details> on the release page instead of a raw JSON
+ * line. The blank line between the summary and the fence matters: it ends the
+ * CommonMark HTML block, so the fence renders as a code block INSIDE the
+ * collapsible instead of being absorbed as raw text.
+ */
+export const SELF_UPDATE_BLOCK_SUMMARY =
+  '<summary>⚙ Managed self-update block — machine-read, not for humans (click to expand)</summary>';
+
 export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlock = '') {
   const base = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases`;
   const title = kind === 'scripts' ? 'Package zips (utils, fx-folder)' : 'Installer binaries';
@@ -251,9 +268,16 @@ export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlo
     names.length > 0 ?
       names.map(n => `- ${n} — updated ${dates[n] || date}`).join('\n')
     : '- (no artifacts this date)';
-  const managed = selfUpdateBlock ? `\n\n\`\`\`json\n${selfUpdateBlock}\n\`\`\`\n` : '';
-  // The installer note rides LAST (after the managed block) — the machine
-  // block must stay the body's tail for the parser, humans read after it.
+  // The managed block keeps its ```json fence (the C side finds the bare keys
+  // anywhere in the body; the JS side's same-day merge scans back to the
+  // fence) inside a <details> wrapper with a blank line before the fence
+  // (#356 item 2) — see SELF_UPDATE_BLOCK_SUMMARY for the shape rationale.
+  const managed =
+    selfUpdateBlock ?
+      `\n\n<details>\n${SELF_UPDATE_BLOCK_SUMMARY}\n\n\`\`\`json\n${selfUpdateBlock}\n\`\`\`\n</details>\n`
+    : '';
+  // The installer note rides LAST (after the managed block): the parser reads
+  // the whole body, and humans get the user-facing note as the body's tail.
   const note = kind === 'installer' ? `\n\n${WINDOWS_ONLY_INSTALLER_NOTE}\n` : '';
   return (
     `${title} — ${date}.\n\n` +
@@ -305,29 +329,60 @@ const LATEST_ASSET_DESCRIPTIONS = {
 
 const describeAsset = name => LATEST_ASSET_DESCRIPTIONS[name] ?? '';
 
+/** Package-zip row order in the latest table's Packages section (#356). */
+const LATEST_PACKAGE_ASSETS = ['utils.zip', 'fx-folder.zip'];
+/** Installer row order in the latest table's Installer section (#356). */
+const LATEST_INSTALLER_ASSETS = [
+  'installer_win.exe',
+  'installer_mac',
+  'installer_linux',
+  'installer_linux_aarch64',
+];
+
 /**
  * Render the managed downloads table for the `latest` body. One row per
  * downloadable asset (sidecars are NOT rows — the verify line below the table
  * covers them), with the date that asset was last uploaded — "the date of the
  * file that was released".
  *
+ * Two labeled sub-tables (issue #356, item 1): Packages (the zips users set up
+ * through the installer/updater) and Installer (per-platform binaries).
+ * Packages first — they are the artifact most users come for; installers are
+ * the platform pick. Within each table, canonical order when the caller's list
+ * contains them (any other asset still renders, trailing in its table).
+ *
  * @param {{name: string; updatedAt?: string | null}[]} assets release assets
  * @returns {string} the full managed section, markers included
  */
 export function renderLatestDownloads(assets) {
   const base = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`;
+  // Downloadable assets only (sidecars are NOT rows — the verify line below
+  // covers them), grouped: packages vs installer binaries.
   const rows = assets
     .filter(a => !a.name.endsWith('.sha256'))
-    .map(a => {
-      const date = (a.updatedAt || '').slice(0, 10);
-      return `| [\`${a.name}\`](${base}/${a.name}) | ${describeAsset(a.name)} | ${date} |`;
-    })
-    .join('\n');
-  // Mock-faithful shape (releases-mock): a bold Downloads line, the table, the
-  // verify sentence — no H2 sections in the release body.
+    .map(a => ({
+      name: a.name,
+      row: `| [\`${a.name}\`](${base}/${a.name}) | ${describeAsset(a.name)} | ${(a.updatedAt || '').slice(0, 10)} |`,
+    }));
+  // Canonical row order within each table, regardless of the caller's
+  // (GitHub upload) order.
+  const rowsFor = names => names.map(name => rows.find(r => r.name === name)?.row).filter(Boolean);
+  const packages = rowsFor(LATEST_PACKAGE_ASSETS).join('\n');
+  // A known-but-unbuilt installer just renders no row; an unknown future asset
+  // trails the Installer table rather than disappearing.
+  const known = new Set([...LATEST_PACKAGE_ASSETS, ...LATEST_INSTALLER_ASSETS]);
+  const installers = [
+    ...rowsFor(LATEST_INSTALLER_ASSETS),
+    ...rows.filter(r => !known.has(r.name)).map(r => r.row),
+  ].join('\n');
+  // Mock-faithful shape (releases-mock, #356 split): a bold Downloads line,
+  // the two labeled tables, the verify sentence — no H2 sections in the body.
   return (
     `${LATEST_MANAGED_START}\n\n**Downloads**\n\n` +
-    `| File | What it is | Updated |\n|---|---|---|\n${rows}\n\n` +
+    `Packages\n\n` +
+    `| File | What it is | Updated |\n|---|---|---|\n${packages}\n\n` +
+    `Installer (per platform, sidecars ride each binary)\n\n` +
+    `| File | What it is | Updated |\n|---|---|---|\n${installers}\n\n` +
     `Verify before use: each file has a \`.sha256\` sidecar; the installer itself ` +
     `hash-verifies every package it fetches.\n\n${LATEST_MANAGED_END}`
   );
@@ -597,7 +652,11 @@ export async function syncComponentReleases(
           `fix git history (or the generator) before publishing installers (the self-update date compare depends on it).`
       );
     }
-    const {scripts, installer} = groupBuilt({builtZips, builtInstallers, builtHelpers});
+    const {scripts, installer} = groupBuilt({
+      builtZips,
+      builtInstallers,
+      builtHelpers,
+    });
     // scriptsTagNames (issue #354): the complete staged package set — the tag
     // is synced whenever ANY zip was rebuilt, so an unchanged zip still lands
     // on the tag when its sibling changed. (The `latest` table refresh is NOT
@@ -626,7 +685,11 @@ export async function syncComponentReleases(
       const assets = componentAssets(
         installer,
         {builtInstallers},
-        {installer: installerAssetName, installerSha: installerShaAssetName, installerPath}
+        {
+          installer: installerAssetName,
+          installerSha: installerShaAssetName,
+          installerPath,
+        }
       );
       if (assets.size === 0) {
         console.log(dim('  component releases: installer bucket empty — date tag unchanged'));
