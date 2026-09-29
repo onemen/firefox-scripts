@@ -2,7 +2,7 @@
 description: When to delegate to `cavecrew-investigator` (locate code), `cavecrew-builder` (1-2 file edit) or `cavecrew-reviewer` (diff review) instead of working inline or using `Explore`. Their output is compressed, so main context lasts longer.
 metadata:
     github-path: skills/cavecrew
-    github-ref: refs/tags/bin-v1.1.6
+    github-ref: refs/tags/v2.7.0
     github-repo: https://github.com/JuliusBrussee/caveman
     github-tree-sha: 58b9a0bdb00d97953bfc840cb4dc3b38faf03759
 name: cavecrew
