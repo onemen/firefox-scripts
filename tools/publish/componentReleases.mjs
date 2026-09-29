@@ -351,10 +351,23 @@ const LATEST_INSTALLER_ASSETS = [
  * the platform pick. Within each table, canonical order when the caller's list
  * contains them (any other asset still renders, trailing in its table).
  *
+ * Row dates (issue #356 item 3, maintainer decision 2026-09-29): the installer
+ * tag date IS the installer's version (the binaries bake it as their
+ * VERSIONINFO FileVersion and the self-update compares it — ADR 0019/0036), so
+ * Installer rows carry it via `context.installerDate` — this run's derived
+ * build date at publish time, else the newest installer-<date> tag's date —
+ * falling back to the upload date when no installer tag exists yet. Package
+ * rows keep their own upload date ("the date of the file that was released",
+ * issue #354).
+ *
  * @param {{name: string; updatedAt?: string | null}[]} assets release assets
+ * @param {{installerDate?: string | null}} [context] this run's derived
+ *   installer build date, or the newest installer-<date> tag's date (both are
+ *   the installer's version; publish passes the former, callers without a fresh
+ *   build the latter) — null/absent falls back to upload dates
  * @returns {string} the full managed section, markers included
  */
-export function renderLatestDownloads(assets) {
+export function renderLatestDownloads(assets, context = {}) {
   const base = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`;
   // Downloadable assets only (sidecars are NOT rows — the verify line below
   // covers them), grouped: packages vs installer binaries.
@@ -362,8 +375,18 @@ export function renderLatestDownloads(assets) {
     .filter(a => !a.name.endsWith('.sha256'))
     .map(a => ({
       name: a.name,
-      row: `| [\`${a.name}\`](${base}/${a.name}) | ${describeAsset(a.name)} | ${(a.updatedAt || '').slice(0, 10)} |`,
+      // Installer rows show the version (build date); packages show their own
+      // upload date. The fallback never fires for a published repo (the
+      // installer tag always exists) — it keeps first runs honest.
+      date:
+        LATEST_INSTALLER_ASSETS.includes(a.name) && context.installerDate ?
+          context.installerDate
+        : (a.updatedAt || '').slice(0, 10),
+      row: '',
     }));
+  for (const r of rows) {
+    r.row = `| [\`${r.name}\`](${base}/${r.name}) | ${describeAsset(r.name)} | ${r.date} |`;
+  }
   // Canonical row order within each table, regardless of the caller's
   // (GitHub upload) order.
   const rowsFor = names => names.map(name => rows.find(r => r.name === name)?.row).filter(Boolean);
@@ -386,6 +409,25 @@ export function renderLatestDownloads(assets) {
     `Verify before use: each file has a \`.sha256\` sidecar; the installer itself ` +
     `hash-verifies every package it fetches.\n\n${LATEST_MANAGED_END}`
   );
+}
+
+/**
+ * Newest `installer-<date>` date among tag names — the installer's current
+ * version (the tag date is the binaries' derived build date, ADR 0036, and what
+ * the release page shows as the installer's version). Pure: exported for tests;
+ * lexicographic max is chronological for ISO dates.
+ *
+ * @param {string[]} tagNames tag names from the repo
+ * @returns {string | null} YYYY-MM-DD of the newest installer tag, or null when
+ *   the repo has none
+ */
+export function newestInstallerDate(tagNames) {
+  let best = null;
+  for (const n of tagNames) {
+    const m = /^installer-(\d{4}-\d{2}-\d{2})$/.exec(n);
+    if (m && (!best || m[1] > best)) best = m[1];
+  }
+  return best;
 }
 
 /**
@@ -528,7 +570,8 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
 
 /**
  * Rewrite the `latest` body's managed downloads section from the release's
- * current assets (each dated by its own upload time). Fails soft: a GitHub
+ * current assets (each dated by its own upload time; installer rows dated by
+ * the installer's version — see renderLatestDownloads). Fails soft: a GitHub
  * error warns, never fails the publish.
  *
  * @param {import('@octokit/rest').Octokit} octokit authenticated client
@@ -536,9 +579,37 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
  *   used: body and assets are re-fetched fresh below, so the refresh can never
  *   overwrite a manual edit made while this run was uploading and every row
  *   carries its true upload date (CodeRabbit on #355)
+ * @param {{installerDate?: string | null}} [context] when the run rebuilt
+ *   installers, the derived build date just baked into them (the binaries on
+ *   `latest` are exactly that version; the newest installer tag still points at
+ *   the previous one until the component sync below runs). When absent, the
+ *   version is read from the newest installer-<date> tag instead
  */
-export async function refreshLatestBody(octokit, latestRelease) {
+export async function refreshLatestBody(octokit, latestRelease, context = {}) {
   try {
+    let installerDate = context.installerDate || null;
+    if (!installerDate) {
+      // Idle / packages-only run: the installer binaries on `latest` are the
+      // ones the newest installer-<date> tag freezes — that tag's date IS
+      // their version. (First runs with no installer tag fall back to upload
+      // dates.) Fail soft — dates are display-only.
+      try {
+        const tagNames = [];
+        for (let page = 1; page <= 3; page++) {
+          const {data} = await octokit.repos.listTags({
+            owner: REPO_OWNER,
+            repo: REPO_NAME,
+            per_page: 100,
+            page,
+          });
+          tagNames.push(...data.map(t => t.name));
+          if (data.length < 100) break;
+        }
+        installerDate = newestInstallerDate(tagNames);
+      } catch {
+        installerDate = null;
+      }
+    }
     const [{data: release}, {data: assets}] = await Promise.all([
       octokit.repos.getRelease({
         owner: REPO_OWNER,
@@ -552,7 +623,10 @@ export async function refreshLatestBody(octokit, latestRelease) {
       }),
     ]);
     const section = renderLatestDownloads(
-      assets.map(a => ({name: a.name, updatedAt: a.updated_at}))
+      assets.map(a => ({name: a.name, updatedAt: a.updated_at})),
+      {
+        installerDate,
+      }
     );
     const body = updateLatestDownloads(release.body || '', section);
     await octokit.repos.updateRelease({

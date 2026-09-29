@@ -840,11 +840,13 @@ The unified flow (one upload.mjs run):
    managed self-update JSON block rendered collapsed in a `<details>`, issue #356) alongside
    `latest`, then refreshes the **`latest` downloads table**: a managed section of the `latest` body
    (HTML-comment markers) regenerated on every publish — Packages and Installer sub-tables (issue
-   #356), one row per release asset, dated by that asset's own upload date; manual prose outside the
-   markers survives. The `latest` badge is re-pinned onto `latest` with `make_latest` (issue #72,
-   ADR 0019). The tags are frozen per-component snapshots for humans to browse; artifacts are always
-   fetched by the permanent unversioned names from `latest`/gh-pages, and `hashes.json` stays the
-   machine source of truth. An idle run (nothing rebuilt) leaves the date tags untouched.
+   #356), one row per release asset: package rows carry their own upload date, installer rows the
+   installer's version (the tag/build date — the same string the binaries bake as their VERSIONINFO
+   FileVersion, #356 item 3); manual prose outside the markers survives. The `latest` badge is
+   re-pinned onto `latest` with `make_latest` (issue #72, ADR 0019). The tags are frozen
+   per-component snapshots for humans to browse; artifacts are always fetched by the permanent
+   unversioned names from `latest`/gh-pages, and `hashes.json` stays the machine source of truth. An
+   idle run (nothing rebuilt) leaves the date tags untouched.
 
 Prod mode refuses to publish unless the current git branch is `main`; dev mode works from any branch
 (dev URLs are baked into the regenerated generated files on purpose). `snapshot:*` runs on any

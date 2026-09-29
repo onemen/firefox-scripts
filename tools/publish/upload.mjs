@@ -927,9 +927,17 @@ async function publishToGitHub({
   // release to touch — including an idle packages run, whose byte-identical
   // re-uploads still bump the assets' upload dates (CodeRabbit on #355).
   // Component date tags above stay gated on actual rebuilds; this refresh
-  // only restates what is on the release right now. Fails soft inside.
+  // only restates what is on the release right now. Installer rows are dated
+  // by the installer's version (the tag date — #356 item 3): after an
+  // installer rebuild that is this run's derived build date (the binaries
+  // just uploaded bake it); otherwise the newest installer-<date> tag's date.
+  // Fails soft inside.
   if (PUBLISH_MODE === 'prod' && release) {
-    await refreshLatestBody(octokit, release);
+    await refreshLatestBody(
+      octokit,
+      release,
+      builtInstallers.length > 0 ? {installerDate: buildDates().installer} : {}
+    );
   }
 
   // Prod: keep the 'latest' release tag pointing at the commit this upload was

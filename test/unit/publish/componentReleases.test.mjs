@@ -31,6 +31,7 @@ const {
   scriptsAssetNames,
   renderLatestDownloads,
   updateLatestDownloads,
+  newestInstallerDate,
   LATEST_MANAGED_START,
   LATEST_MANAGED_END,
 } = await import(moduleUrl);
@@ -309,6 +310,53 @@ test('renderLatestDownloads: Packages and Installer sub-tables (#356 item 1)', (
   assert.ok(macAt > winAt && macAt < linuxAt && linuxAt < armAt, 'mac → linux → aarch64 order');
   // Exactly two tables, one header each.
   assert.equal(section.split('| File | What it is | Updated |').length - 1, 2);
+});
+
+test('renderLatestDownloads: installer rows carry the VERSION date, packages their upload date (#356 item 3)', () => {
+  // Maintainer decision 2026-09-29: the installer tag date IS the installer's
+  // version (the binaries bake it as VERSIONINFO FileVersion — screenshot:
+  // 1.0.2026.926 for the 2026-09-26 build) — so the latest table shows it,
+  // not the upload timestamp. Zips keep the upload-date logic (#354).
+  const section = renderLatestDownloads(
+    [
+      {name: 'utils.zip', updatedAt: '2026-09-28T11:36:55Z'},
+      {name: 'fx-folder.zip', updatedAt: '2026-09-28T11:52:03Z'},
+      {name: 'installer_win.exe', updatedAt: '2026-09-28T12:20:00Z'},
+      {name: 'installer_mac', updatedAt: '2026-09-28T12:20:00Z'},
+    ],
+    {installerDate: '2026-09-26'}
+  );
+  // Installer rows: the version date, despite the 09-28 upload timestamp.
+  assert.match(section, /\| \[`installer_win\.exe`\].*\| 2026-09-26 \|/);
+  assert.match(section, /\| \[`installer_mac`\].*\| 2026-09-26 \|/);
+  // Package rows: own upload dates, unchanged.
+  assert.match(section, /\| \[`utils\.zip`\].*\| 2026-09-28 \|/);
+  assert.match(section, /\| \[`fx-folder\.zip`\].*\| 2026-09-28 \|/);
+});
+
+test('renderLatestDownloads: without a version the installer rows fall back to upload dates', () => {
+  // First runs / no installer tag yet: display-only fallback, never a crash.
+  const section = renderLatestDownloads([
+    {name: 'installer_win.exe', updatedAt: '2026-09-28T12:20:00Z'},
+  ]);
+  assert.match(section, /\| \[`installer_win\.exe`\].*\| 2026-09-28 \|/);
+});
+
+test('newestInstallerDate: newest installer-<date> tag wins, other tags ignored', () => {
+  assert.equal(
+    newestInstallerDate([
+      'latest',
+      'scripts-2026-09-28',
+      'installer-2026-09-26',
+      'installer-2026-09-12',
+      'dev-build-42',
+    ]),
+    '2026-09-26'
+  );
+  assert.equal(newestInstallerDate(['latest', 'scripts-2026-09-28']), null);
+  assert.equal(newestInstallerDate([]), null);
+  // ISO dates sort lexicographically == chronologically (year boundary too).
+  assert.equal(newestInstallerDate(['installer-2026-12-31', 'installer-2027-01-02']), '2027-01-02');
 });
 
 test('updateLatestDownloads: replaces the managed region, keeps manual prose', () => {
