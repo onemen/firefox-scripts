@@ -62,6 +62,17 @@ export const REMOTE_UI_DIR = path.resolve(__dirname, 'remote-ui');
 // dev → 'dev-build'.  Env-overridable in both modes.
 export const RELEASE_NAME = cfgMode('RELEASE_NAME', 'latest', 'dev-build');
 
+// Managed installer self-update payload (issue #341): the Pages file name, its
+// URL (the CORS-enabled artifact branch, same host as hashes.json) and the
+// mechanism cutover date — installer binaries baked ON/after it read the
+// Pages payload; older ones keep the release-body flow, and publishes stop
+// appending the managed JSON block to installer-<date> bodies once the run
+// date reaches this date. Empty MECHANISM_SINCE (stripped config) = legacy
+// body-always behavior.
+export const SELF_UPDATE_FILE = 'self-update.json';
+export const SELF_UPDATE_URL = cfg('SELF_UPDATE_URL', '');
+export const SELF_UPDATE_MECHANISM_SINCE = cfg('SELF_UPDATE_MECHANISM_SINCE', '');
+
 // Env var that holds the GitHub token (read via getGitHubToken()).
 // Fixed name — no indirection; .env-example documents it.
 export const GITHUB_TOKEN_VAR = 'GITHUB_TOKEN_VAR';

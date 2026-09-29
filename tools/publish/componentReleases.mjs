@@ -32,7 +32,7 @@
 
 import fs from 'fs';
 
-import {REPO_OWNER, REPO_NAME} from './paths.js';
+import {REPO_OWNER, REPO_NAME, SELF_UPDATE_MECHANISM_SINCE} from './paths.js';
 import {green, dim, warn} from './log.mjs';
 import {installerSha256Sidecar} from './hashUtils.mjs';
 
@@ -59,27 +59,53 @@ export function installerTag(date) {
 }
 
 /**
- * The managed self-update block embedded in an installer-<date> release body
- * (ADR 0019 amendment, date-based self-update): the installer tab ingests the
- * newest installer-<date> body, and the C side parses this block for the build
- * date and this platform's download URL. The block is wrapped in a
- *
- * ```json
- * keys, so the fence is opaque to it.
+ * The managed self-update payload (issue #341): `installerDate` + per-platform
+ * `download` URLs, plus `mechanismSince` — the cutover date (config
+ * SELF_UPDATE_MECHANISM_SINCE) a binary compares its own build date against to
+ * decide which ingest surface to trust (Pages payload vs release body). The
+ * Pages copy carries the same fields — one shape, two hosts.
  *
  * `urlByAsset` maps installer asset name → browser_download_url under the
  * permanently-named `latest` tag (entries missing for platforms this run did
  * not rebuild — the installer falls back to the releases page for those).
  *
- * @param {string} date YYYY-MM-DD (must match config/installer.conf
- *   BUILD_DATE for the binaries this publish ships — that equality is what
- *   makes the C-side strcmp comparison converge)
+ * @param {string} date YYYY-MM-DD (must match config/installer.conf BUILD_DATE
+ *   for the binaries this publish ships — that equality is what makes the
+ *   C-side strcmp comparison converge)
  * @param {Record<string, string>} urlByAsset asset name → download URL
- * @returns {string} JSON block, no fence
- * ```
+ * @returns {string} JSON payload, no fence (the renderer adds markup)
  */
-export function renderSelfUpdateBlock(date, urlByAsset) {
-  return JSON.stringify({installerDate: date, download: urlByAsset});
+export function renderSelfUpdatePayload(date, urlByAsset) {
+  return JSON.stringify({
+    ...(SELF_UPDATE_MECHANISM_SINCE ? {mechanismSince: SELF_UPDATE_MECHANISM_SINCE} : {}),
+    installerDate: date,
+    download: urlByAsset,
+  });
+}
+
+/**
+ * Should this publish append the managed self-update block to the
+ * installer-<date> release body? (issue #341 — the one-transition-release
+ * fallback window.) The block serves binaries baked BEFORE the cutover
+ * (SELF_UPDATE_MECHANISM_SINCE): they parse release bodies only, never the
+ * Pages payload. It retires only once a post-cutover installer release has
+ * already shipped — that transition release carried the block and gave every
+ * updating install the post-cutover binaries, so later tags need not carry it.
+ * Fail-safe ordering (a missing block strands pre-cutover installs; an extra
+ * block costs one collapsed <details>): • no cutover configured (stripped conf)
+ * → always append (legacy); • no prior tag known (listing failed / first
+ * publish) → append; • prior newest < cutover → append (this publish IS the
+ * transition); • prior newest ≥ cutover → retire.
+ *
+ * @param {string | null} newestPriorInstallerTag YYYY-MM-DD of the newest
+ *   installer-<date> tag EXCLUDING this run's own tag (a same-day republish
+ *   must not retire the block an earlier run today appended)
+ * @returns {boolean}
+ */
+export function shouldAppendManagedBlock(newestPriorInstallerTag) {
+  if (!SELF_UPDATE_MECHANISM_SINCE) return true;
+  if (!newestPriorInstallerTag) return true;
+  return newestPriorInstallerTag < SELF_UPDATE_MECHANISM_SINCE;
 }
 
 /**
@@ -163,7 +189,10 @@ export function parseSelfUpdateBlock(body) {
  * @returns {Record<string, string>} merged asset → URL map
  */
 export function mergeSelfUpdateBlock(date, urlByAsset, prior) {
-  const merged = {...(prior && prior.installerDate === date ? prior.download : {}), ...urlByAsset};
+  const merged = {
+    ...(prior && prior.installerDate === date ? prior.download : {}),
+    ...urlByAsset,
+  };
   return merged;
 } /**
  * Group the built artifacts into component-release buckets.
@@ -229,12 +258,14 @@ export function componentAssets(installer, built, access) {
  * `dates` maps asset name → YYYY-MM-DD (per-package source-commit date from the
  * manifest; defaults to the release's own date).
  *
- * For installer releases `selfUpdateBlock` (the managed JSON block from
- * renderSelfUpdateBlock) is appended in a ```json fence — the machine-readable
- * payload the installer's date-based self-update ingests (ADR 0019 amendment) —
- * followed by the WINDOWS_ONLY_INSTALLER_NOTE (the README's SmartScreen/UAC
- * paragraph: user-facing, #184's plain-English standard; maintainers asked for
- * it on the release pages, 2026-09-27).
+ * For installer releases `selfUpdateBlock` (the managed JSON payload from
+ * renderSelfUpdatePayload) is appended as a ```json fence inside a <details>
+ * element that renders collapsed by default (issue #356 item 2, the #341
+ * collapse: machine-read, not for humans) — the machine-readable payload the
+ * installer's date-based self-update ingests (ADR 0019 amendment) — followed by
+ * the WINDOWS_ONLY_INSTALLER_NOTE (the README's SmartScreen/UAC paragraph:
+ * user-facing, #184's plain-English standard; maintainers asked for it on the
+ * release pages, 2026-09-27).
  */
 export const WINDOWS_ONLY_INSTALLER_NOTE =
   '**Windows only:** the installer is currently unsigned, so SmartScreen may show ' +
@@ -244,6 +275,19 @@ export const WINDOWS_ONLY_INSTALLER_NOTE =
   'Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab, and lets you ' +
   'pick which browser to set up.';
 
+/**
+ * Human-facing label of the collapsed managed self-update block (issue #356
+ * item 2, the #341 collapse): the block stays in the body — the installed
+ * installer's self-update parses it (ADR 0019 amendment; the C parser scans the
+ * whole body for the bare keys, so the HTML wrapper is transparent) — but
+ * renders as a collapsed <details> on the release page instead of a raw JSON
+ * line. The blank line between the summary and the fence matters: it ends the
+ * CommonMark HTML block, so the fence renders as a code block INSIDE the
+ * collapsible instead of being absorbed as raw text.
+ */
+export const SELF_UPDATE_BLOCK_SUMMARY =
+  '<summary>⚙ Managed self-update block — machine-read, not for humans (click to expand)</summary>';
+
 export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlock = '') {
   const base = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases`;
   const title = kind === 'scripts' ? 'Package zips (utils, fx-folder)' : 'Installer binaries';
@@ -251,9 +295,19 @@ export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlo
     names.length > 0 ?
       names.map(n => `- ${n} — updated ${dates[n] || date}`).join('\n')
     : '- (no artifacts this date)';
-  const managed = selfUpdateBlock ? `\n\n\`\`\`json\n${selfUpdateBlock}\n\`\`\`\n` : '';
-  // The installer note rides LAST (after the managed block) — the machine
-  // block must stay the body's tail for the parser, humans read after it.
+  // The managed block keeps its ```json fence (the C side finds the bare keys
+  // anywhere in the body; the JS side's same-day merge scans back to the
+  // fence) inside a <details> wrapper with a blank line before the fence
+  // (#356 item 2) — see SELF_UPDATE_BLOCK_SUMMARY for the shape rationale.
+  // The block itself is the TRANSITION FALLBACK surface (#341): publishes stop
+  // appending it once the run date reaches SELF_UPDATE_MECHANISM_SINCE, when
+  // every installable binary reads the Pages payload instead.
+  const managed =
+    selfUpdateBlock ?
+      `\n\n<details>\n${SELF_UPDATE_BLOCK_SUMMARY}\n\n\`\`\`json\n${selfUpdateBlock}\n\`\`\`\n</details>\n`
+    : '';
+  // The installer note rides LAST (after the managed block): the parser reads
+  // the whole body, and humans get the user-facing note as the body's tail.
   const note = kind === 'installer' ? `\n\n${WINDOWS_ONLY_INSTALLER_NOTE}\n` : '';
   return (
     `${title} — ${date}.\n\n` +
@@ -305,32 +359,142 @@ const LATEST_ASSET_DESCRIPTIONS = {
 
 const describeAsset = name => LATEST_ASSET_DESCRIPTIONS[name] ?? '';
 
+/** Package-zip row order in the latest table's Packages section (#356). */
+const LATEST_PACKAGE_ASSETS = ['utils.zip', 'fx-folder.zip'];
+/** Installer row order in the latest table's Installer section (#356). */
+const LATEST_INSTALLER_ASSETS = [
+  'installer_win.exe',
+  'installer_mac',
+  'installer_linux',
+  'installer_linux_aarch64',
+];
+
 /**
  * Render the managed downloads table for the `latest` body. One row per
  * downloadable asset (sidecars are NOT rows — the verify line below the table
  * covers them), with the date that asset was last uploaded — "the date of the
  * file that was released".
  *
+ * Two labeled sub-tables (issue #356, item 1): Packages (the zips users set up
+ * through the installer/updater) and Installer (per-platform binaries).
+ * Packages first — they are the artifact most users come for; installers are
+ * the platform pick. Within each table, canonical order when the caller's list
+ * contains them (any other asset still renders, trailing in its table).
+ *
+ * Row dates (issue #356 item 3, maintainer decision 2026-09-29): the installer
+ * tag date IS the installer's version (the binaries bake it as their
+ * VERSIONINFO FileVersion and the self-update compares it — ADR 0019/0036), so
+ * Installer rows carry it. The date comes PER ASSET from
+ * `context.installerDatesByAsset` — upload.mjs maps only the platforms this run
+ * rebuilt, because a partial publish (e.g. the win job of pages.yml's
+ * sequential matrix) must never stamp its fresh date onto platforms whose
+ * binaries on `latest` are still the previous version (CodeRabbit on #367) —
+ * else from the single `context.installerDate`, else the newest
+ * installer-<date> tag's date (the binaries on `latest` are that tag's
+ * version), else the asset's own upload date. Package rows keep their own
+ * upload date ("the date of the file that was released", issue #354).
+ *
  * @param {{name: string; updatedAt?: string | null}[]} assets release assets
+ * @param {{
+ *   installerDate?: string | null;
+ *   installerDatesByAsset?: Record<string, string> | null;
+ * }} [context]
+ *   the installer version date(s): the per-asset map wins; the single date covers
+ *   callers without a fresh build; null/absent falls back to tag date, then
+ *   upload dates
  * @returns {string} the full managed section, markers included
  */
-export function renderLatestDownloads(assets) {
+export function renderLatestDownloads(assets, context = {}) {
   const base = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`;
+  const byAsset = context.installerDatesByAsset || {};
+  // Downloadable assets only (sidecars are NOT rows — the verify line below
+  // covers them), grouped: packages vs installer binaries.
   const rows = assets
     .filter(a => !a.name.endsWith('.sha256'))
-    .map(a => {
-      const date = (a.updatedAt || '').slice(0, 10);
-      return `| [\`${a.name}\`](${base}/${a.name}) | ${describeAsset(a.name)} | ${date} |`;
-    })
-    .join('\n');
-  // Mock-faithful shape (releases-mock): a bold Downloads line, the table, the
-  // verify sentence — no H2 sections in the release body.
+    .map(a => ({
+      name: a.name,
+      // Installer rows show the version (build date); packages show their own
+      // upload date. The fallback never fires for a published repo (the
+      // installer tag always exists) — it keeps first runs honest.
+      date:
+        LATEST_INSTALLER_ASSETS.includes(a.name) ?
+          byAsset[a.name] || context.installerDate || (a.updatedAt || '').slice(0, 10)
+        : (a.updatedAt || '').slice(0, 10),
+      row: '',
+    }));
+  for (const r of rows) {
+    r.row = `| [\`${r.name}\`](${base}/${r.name}) | ${describeAsset(r.name)} | ${r.date} |`;
+  }
+  // Canonical row order within each table, regardless of the caller's
+  // (GitHub upload) order.
+  const rowsFor = names => names.map(name => rows.find(r => r.name === name)?.row).filter(Boolean);
+  const packages = rowsFor(LATEST_PACKAGE_ASSETS).join('\n');
+  // A known-but-unbuilt installer just renders no row; an unknown future asset
+  // trails the Installer table rather than disappearing.
+  const known = new Set([...LATEST_PACKAGE_ASSETS, ...LATEST_INSTALLER_ASSETS]);
+  const installers = [
+    ...rowsFor(LATEST_INSTALLER_ASSETS),
+    ...rows.filter(r => !known.has(r.name)).map(r => r.row),
+  ].join('\n');
+  // Mock-faithful shape (releases-mock, #356 split): a bold Downloads line,
+  // the two labeled tables, the verify sentence — no H2 sections in the body.
   return (
     `${LATEST_MANAGED_START}\n\n**Downloads**\n\n` +
-    `| File | What it is | Updated |\n|---|---|---|\n${rows}\n\n` +
+    `Packages\n\n` +
+    `| File | What it is | Updated |\n|---|---|---|\n${packages}\n\n` +
+    `Installer (per platform, sidecars ride each binary)\n\n` +
+    `| File | What it is | Updated |\n|---|---|---|\n${installers}\n\n` +
     `Verify before use: each file has a \`.sha256\` sidecar; the installer itself ` +
     `hash-verifies every package it fetches.\n\n${LATEST_MANAGED_END}`
   );
+}
+
+/**
+ * Newest `installer-<date>` date among tag names — the installer's current
+ * version (the tag date is the binaries' derived build date, ADR 0036, and what
+ * the release page shows as the installer's version). Pure: exported for tests;
+ * lexicographic max is chronological for ISO dates.
+ *
+ * @param {string[]} tagNames tag names from the repo
+ * @returns {string | null} YYYY-MM-DD of the newest installer tag, or null when
+ *   the repo has none
+ */
+export function newestInstallerDate(tagNames) {
+  let best = null;
+  for (const n of tagNames) {
+    const m = /^installer-(\d{4}-\d{2}-\d{2})$/.exec(n);
+    if (m && (!best || m[1] > best)) best = m[1];
+  }
+  return best;
+}
+
+/**
+ * Newest installer-<date> tag date on the repo EXCLUDING `excludeTag` (this
+ * run's own tag — a same-day republish must not count itself as the transition
+ * release). Fail-safe for the #341 body-block retire decision: any listing
+ * error resolves null (caller appends the block). Pure networking, no CLI.
+ *
+ * @param {import('@octokit/rest').Octokit} octokit authenticated client
+ * @param {string} excludeTag this run's installer tag name
+ * @returns {Promise<string | null>} YYYY-MM-DD or null
+ */
+export async function newestPriorInstallerTag(octokit, excludeTag) {
+  try {
+    const tagNames = [];
+    for (let page = 1; page <= 3; page++) {
+      const {data} = await octokit.repos.listTags({
+        owner: REPO_OWNER,
+        repo: REPO_NAME,
+        per_page: 100,
+        page,
+      });
+      tagNames.push(...data.map(t => t.name).filter(n => n !== excludeTag));
+      if (data.length < 100) break;
+    }
+    return newestInstallerDate(tagNames);
+  } catch {
+    return null; // append rather than retire — never strand a pre-cutover install
+  }
 }
 
 /**
@@ -390,19 +554,26 @@ export function bodyAssetNames(currentNames, priorNames) {
  *   (defaults to the tag date for every row; no asset labels — GitHub renders a
  *   label instead of the file name, issue #354)
  * @param {Record<string, string> | null} [opts.selfUpdateUrlByAsset] asset →
- *   self-update URL map (scripts body only)
+ *   self-update URL map (installer body only)
+ * @param {string} [opts.selfUpdateBlock] this run's managed self-update JSON
+ *   payload (renderSelfUpdatePayload output) — '' retires the block from the
+ *   body (the #341 post-cutover state); undefined keeps the legacy behavior of
+ *   always rendering it
  * @returns {Promise<{created: boolean}>} whether the release was newly created
  */
 export async function syncComponentRelease(octokit, tagName, date, assets, opts = {}) {
-  const {kind, dates = {}, selfUpdateUrlByAsset = null} = opts;
+  const {kind, dates = {}, selfUpdateUrlByAsset = null, selfUpdateBlock: forcedBlock} = opts;
   const {getRelease, getOrCreateRelease, deleteExistingAsset, uploadAsset, uploadAssetBuffer} =
     await import('./uploadUtilsZip.mjs');
   const existed = !!(await getRelease(octokit, tagName));
 
   // Managed self-update block (installer releases only): merge this run's
   // download URLs over the prior same-day body so entries for platforms an
-  // earlier run rebuilt survive (same-day tag reuse).
-  let selfUpdateBlock = '';
+  // earlier run rebuilt survive (same-day tag reuse). The caller may force
+  // '' (post-cutover, #341: the body block is retired) — the retire decision
+  // must win over the merge, but the MERGE still runs first so a later revert
+  // of the cutover loses nothing.
+  let selfUpdateBlock;
   if (kind === 'installer' && selfUpdateUrlByAsset) {
     let prior = null;
     if (existed) {
@@ -413,11 +584,12 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
         prior = null; // under-merge rather than fail the sync
       }
     }
-    selfUpdateBlock = renderSelfUpdateBlock(
+    selfUpdateBlock = renderSelfUpdatePayload(
       date,
       mergeSelfUpdateBlock(date, selfUpdateUrlByAsset, prior)
     );
   }
+  if (forcedBlock !== undefined) selfUpdateBlock = forcedBlock;
 
   const release = await getOrCreateRelease(octokit, tagName, {
     name: `${kind === 'scripts' ? 'Scripts' : 'Installer'} — ${date}`,
@@ -473,7 +645,8 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
 
 /**
  * Rewrite the `latest` body's managed downloads section from the release's
- * current assets (each dated by its own upload time). Fails soft: a GitHub
+ * current assets (each dated by its own upload time; installer rows dated by
+ * the installer's version — see renderLatestDownloads). Fails soft: a GitHub
  * error warns, never fails the publish.
  *
  * @param {import('@octokit/rest').Octokit} octokit authenticated client
@@ -481,9 +654,42 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
  *   used: body and assets are re-fetched fresh below, so the refresh can never
  *   overwrite a manual edit made while this run was uploading and every row
  *   carries its true upload date (CodeRabbit on #355)
+ * @param {{
+ *   installerDate?: string | null;
+ *   installerDatesByAsset?: Record<string, string> | null;
+ * }} [context]
+ *   the installer version date(s): when the run rebuilt installers, the derived
+ *   build date just baked into them — as a PER-ASSET map naming exactly the
+ *   platforms rebuilt (a partial publish must not stamp its date onto platforms
+ *   whose binaries on `latest` are still the previous version; CodeRabbit on
+ *   #367) or as the single-date form; when absent, the version is read from the
+ *   newest installer-<date> tag
  */
-export async function refreshLatestBody(octokit, latestRelease) {
+export async function refreshLatestBody(octokit, latestRelease, context = {}) {
   try {
+    let installerDate = context.installerDate || null;
+    if (!installerDate) {
+      // Idle / packages-only run: the installer binaries on `latest` are the
+      // ones the newest installer-<date> tag freezes — that tag's date IS
+      // their version. (First runs with no installer tag fall back to upload
+      // dates.) Fail soft — dates are display-only.
+      try {
+        const tagNames = [];
+        for (let page = 1; page <= 3; page++) {
+          const {data} = await octokit.repos.listTags({
+            owner: REPO_OWNER,
+            repo: REPO_NAME,
+            per_page: 100,
+            page,
+          });
+          tagNames.push(...data.map(t => t.name));
+          if (data.length < 100) break;
+        }
+        installerDate = newestInstallerDate(tagNames);
+      } catch {
+        installerDate = null;
+      }
+    }
     const [{data: release}, {data: assets}] = await Promise.all([
       octokit.repos.getRelease({
         owner: REPO_OWNER,
@@ -497,7 +703,10 @@ export async function refreshLatestBody(octokit, latestRelease) {
       }),
     ]);
     const section = renderLatestDownloads(
-      assets.map(a => ({name: a.name, updatedAt: a.updated_at}))
+      assets.map(a => ({name: a.name, updatedAt: a.updated_at})),
+      {
+        installerDate,
+      }
     );
     const body = updateLatestDownloads(release.body || '', section);
     await octokit.repos.updateRelease({
@@ -597,7 +806,11 @@ export async function syncComponentReleases(
           `fix git history (or the generator) before publishing installers (the self-update date compare depends on it).`
       );
     }
-    const {scripts, installer} = groupBuilt({builtZips, builtInstallers, builtHelpers});
+    const {scripts, installer} = groupBuilt({
+      builtZips,
+      builtInstallers,
+      builtHelpers,
+    });
     // scriptsTagNames (issue #354): the complete staged package set — the tag
     // is synced whenever ANY zip was rebuilt, so an unchanged zip still lands
     // on the tag when its sibling changed. (The `latest` table refresh is NOT
@@ -626,7 +839,11 @@ export async function syncComponentReleases(
       const assets = componentAssets(
         installer,
         {builtInstallers},
-        {installer: installerAssetName, installerSha: installerShaAssetName, installerPath}
+        {
+          installer: installerAssetName,
+          installerSha: installerShaAssetName,
+          installerPath,
+        }
       );
       if (assets.size === 0) {
         console.log(dim('  component releases: installer bucket empty — date tag unchanged'));
@@ -639,8 +856,8 @@ export async function syncComponentReleases(
 
       // The managed URL intentionally targets the `latest` RELEASE download
       // (the user-facing artifact; the banner downloads via an anchor click
-      // and needs no CORS).  The gh-pages mirror exists for any future
-      // fetch-based flow, not as the banner's target.
+      // and needs no CORS).  The Pages mirror exists for the #341 fetch-based
+      // flow's post-cutover binaries.
       // Sidecar names are excluded: the C self-update resolves its URL by a
       // plain substring search for the asset name, and `installer_win.exe` is
       // a prefix of `installer_win.exe.sha256` — a sidecar entry here would
@@ -649,9 +866,32 @@ export async function syncComponentReleases(
         if (assetName.endsWith('.sha256')) continue;
         selfUpdateUrlByAsset[assetName] = `${downloadBase}/latest/${assetName}`;
       }
+      // Transition fallback only (#341): the body block serves pre-cutover
+      // binaries; it retires once a post-cutover installer release has
+      // already shipped (that transition release carried the block). List the
+      // repo's tags (excluding this run's own) and let shouldAppendManagedBlock
+      // decide — fail-safe (unknown → append). (Old same-day bodies still
+      // parse — parseSelfUpdateBlock ignores the wrapper and mechanismSince.)
+      const selfUpdateBlock =
+        (
+          shouldAppendManagedBlock(
+            await newestPriorInstallerTag(octokit, installerTag(installerDate))
+          )
+        ) ?
+          renderSelfUpdatePayload(installerDate, selfUpdateUrlByAsset)
+        : '';
+      if (!selfUpdateBlock) {
+        console.log(
+          dim(
+            `  managed JSON block retired from the release body ` +
+              `(a post-cutover installer release already shipped; #341)`
+          )
+        );
+      }
       await syncComponentRelease(octokit, installerTag(installerDate), installerDate, assets, {
         kind: 'installer',
         selfUpdateUrlByAsset,
+        selfUpdateBlock,
       });
     }
   } catch (err) {

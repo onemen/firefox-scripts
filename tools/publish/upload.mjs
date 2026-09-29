@@ -88,6 +88,7 @@ import {
   REPO_NAME,
   REPO_OWNER,
   SCRIPTS_DIST,
+  SELF_UPDATE_FILE,
   snapshotDirName,
   ZIP_PAGES_BRANCH,
 } from './paths.js';
@@ -109,9 +110,20 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {buildDates} from './generateBuildDates.mjs';
-import {branchExistsOnPages, pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {
+  branchExistsOnPages,
+  pagesIndex,
+  readPagesFile,
+  uploadFilesToPages,
+} from './uploadToPages.mjs';
 import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
-import {pinLatestRelease, refreshLatestBody, syncComponentReleases} from './componentReleases.mjs';
+import {
+  mergeSelfUpdateBlock,
+  pinLatestRelease,
+  refreshLatestBody,
+  renderSelfUpdatePayload,
+  syncComponentReleases,
+} from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
 import {scanVirusTotal} from '../scan-vt.mjs';
 import {ledgerEntry, ledgerStats, ledgerTable, mergeLedger} from '../ci/avLedger.mjs';
@@ -845,6 +857,45 @@ async function publishToGitHub({
     pagesFiles[HASHES_FILE] = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf-8');
   }
 
+  // Managed installer self-update payload (issue #341): written whenever any
+  // installer was built this run, so the payload's installerDate can never lag
+  // the newest installer-<date> tag. Dev mode publishes to the dev-build
+  // branch jsDelivr serves; local mode's overrides leave SELF_UPDATE_URL
+  // localhost-shaped and the write lands in the snapshot dir. The tab fetches
+  // it INSTEAD of the release body on post-cutover binaries (mechanismSince);
+  // the URLs target the plain-name latest-tag downloads in both channels —
+  // the #341 proposal's one transition release keeps legacy bodies working
+  // meanwhile.
+  if (builtInstallers.length > 0) {
+    const suBase = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/latest`;
+    const suUrls = {};
+    for (const p of builtInstallers) {
+      suUrls[installerAssetName(p)] = `${suBase}/${installerAssetName(p)}`;
+    }
+    // Merge over the branch's current payload (CodeRabbit on #367): pages.yml
+    // builds one platform per sequential job, and each job's write replaces
+    // the whole file — without the merge, the final job's commit would name
+    // only its own platforms and post-cutover installers of the earlier
+    // platforms would lose their managed URLs. Same-day semantics: prior
+    // entries survive only while their installerDate matches this run's
+    // (a newer build date supersedes the stale map wholesale). Under-merge on
+    // any read/parse problem — never a publish failure.
+    const installerDate = buildDates().installer;
+    let prior;
+    try {
+      const raw = await readPagesFile(octokit, SELF_UPDATE_FILE);
+      prior = raw ? JSON.parse(raw.toString('utf-8')) : null;
+    } catch (err) {
+      warn(`self-update.json read from ${ZIP_PAGES_BRANCH} failed (under-merge): ${err.message}`);
+      prior = null;
+    }
+    pagesFiles[SELF_UPDATE_FILE] = Buffer.from(
+      renderSelfUpdatePayload(installerDate, mergeSelfUpdateBlock(installerDate, suUrls, prior)) +
+        '\n',
+      'utf-8'
+    );
+  }
+
   // README.md renders on the branch listing page at github.com — the exact
   // page a human browsing the branch lands on, and the one where "save link
   // as" on a file entry saves a blob HTML page instead of the artifact.
@@ -927,9 +978,22 @@ async function publishToGitHub({
   // release to touch — including an idle packages run, whose byte-identical
   // re-uploads still bump the assets' upload dates (CodeRabbit on #355).
   // Component date tags above stay gated on actual rebuilds; this refresh
-  // only restates what is on the release right now. Fails soft inside.
+  // only restates what is on the release right now. Installer rows are dated
+  // by the installer's version (the tag date — #356 item 3): after an
+  // installer rebuild that is this run's derived build date (the binaries
+  // just uploaded bake it); otherwise the newest installer-<date> tag's date.
+  // Fails soft inside.
   if (PUBLISH_MODE === 'prod' && release) {
-    await refreshLatestBody(octokit, release);
+    // Per-asset version dates: only the platforms THIS run rebuilt carry the
+    // fresh build date — a partial publish (pages.yml runs win → linux → mac
+    // sequentially) must not stamp its date onto platforms whose binaries on
+    // `latest` are still the previous version (CodeRabbit on #367). Those
+    // rows fall back to their own upload date until their platform's job runs.
+    const installerDatesByAsset = {};
+    for (const p of builtInstallers) {
+      installerDatesByAsset[installerAssetName(p)] = buildDates().installer;
+    }
+    await refreshLatestBody(octokit, release, {installerDatesByAsset});
   }
 
   // Prod: keep the 'latest' release tag pointing at the commit this upload was
@@ -1011,7 +1075,7 @@ async function publishToGitHub({
  * publishes, so filling a held-back binary in from an older snapshot would
  * misrepresent the run.
  */
-function writeSnapshot({merged, platforms, dir, label, scope}) {
+function writeSnapshot({merged, platforms, dir, label, scope, builtInstallers = []}) {
   // Any artifact this run didn't rebuild (an unchanged zip or binary) is
   // reused from the newest previous snapshot so the folder is complete.
   const prev = findLatestSnapshot();
@@ -1086,6 +1150,28 @@ function writeSnapshot({merged, platforms, dir, label, scope}) {
   const manifest = JSON.stringify(merged, null, 2) + '\n';
   fs.writeFileSync(path.join(dir, HASHES_FILE), manifest);
   info(`    ${green('+')} ${HASHES_FILE}`);
+
+  // Managed self-update payload (issue #341) — mirrors the Pages layout too, so
+  // a local snapshot's installer tab fetches it from the installer's own
+  // server (INSTALLER_ZIP_URL is localhost in local mode) exactly like prod
+  // fetches it from the branch. Stale-copy guard mirrors the stale sweep above:
+  // a partial --include run must not leave yesterday's payload behind.
+  if (scope.installer) {
+    const suPath = path.join(dir, SELF_UPDATE_FILE);
+    if (builtInstallers.length > 0) {
+      const suBase = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/latest`;
+      const suUrls = {};
+      for (const p of platforms) {
+        if (fs.existsSync(installerPath(p))) {
+          suUrls[installerAssetName(p)] = `${suBase}/${installerAssetName(p)}`;
+        }
+      }
+      fs.writeFileSync(suPath, renderSelfUpdatePayload(buildDates().installer, suUrls) + '\n');
+      info(`    ${green('+')} ${SELF_UPDATE_FILE}`);
+    } else {
+      fs.rmSync(suPath, {force: true});
+    }
+  }
 
   success(`\n✓ ${label} ready: ${path.relative(process.cwd(), dir)}`);
 }
@@ -1450,6 +1536,7 @@ async function main() {
         dir: snapshotDir(),
         label: 'Snapshot',
         scope: SCOPE,
+        builtInstallers,
       });
     } else {
       section('Publishing');

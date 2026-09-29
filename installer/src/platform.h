@@ -96,6 +96,15 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
 #define INSTALLER_ZIP_URL CFG_ZIP_BASE_URL
 #endif
 #define INSTALLER_HASHES_URL CFG_HASHES_URL
+/* Managed self-update payload file name on the artifact branch (issue #341):
+ * self-update.json sits next to hashes.json; the tab combines it with
+ * INSTALLER_ZIP_PAGES_URL (so a local snapshot serves it from the installer's
+ * own directory like every other Pages artifact). */
+#ifdef CFG_SELF_UPDATE_FILE
+#define INSTALLER_SELF_UPDATE_FILE CFG_SELF_UPDATE_FILE
+#else
+#define INSTALLER_SELF_UPDATE_FILE "self-update.json"
+#endif
 #define DEFAULT_PORT 8777  // fixed so restored stale tabs hit the live server
 /* Name suffix appended to published artifacts ('' in prod, '-dev' in dev
  * mode, from installer.conf ASSET_SUFFIX).  Adjacent string-literal

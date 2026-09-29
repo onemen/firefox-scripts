@@ -1475,6 +1475,43 @@ async function runUiLayer(counter, opts, snapshotDir) {
       const shotPath = path.join(shotDir, 'installer-e2e-screenshot.png');
       const shotOk = await screenshotPrivileged(page, shotPath);
       if (shotOk) uiCheck(true, 'UI-11', 'installer screenshot saved');
+
+      // UI-13 (issue #341): the tab's self-update ingest must have consumed
+      // SOME managed payload. The ingest order is Pages-first (post-cutover
+      // binaries) with the release-body flow as the pre-cutover fallback —
+      // the page reports both its console ('[ingest]' lines) and the server
+      // state; asserting only "a managed payload was ingested" keeps the
+      // check valid in every environment: dev-snapshot bodies carry no block
+      // and the Pages payload may be unreachable from a CI runner's browser
+      // session (api.github.com without a token rate-limits; jsDelivr may be
+      // blocked) — in those cases the ingest stays silent BY DESIGN and
+      // UI-13 still passes on the self-update state being reachable and
+      // well-formed. What UI-13 catches is the regression class where the
+      // ingest chain never completes or the verdict API breaks shape.
+      const suState = await page.evaluate(async () => {
+        try {
+          // Append the session token from the page URL by hand: the page's
+          // withToken()/getSessionToken() helpers exist only inside the
+          // page's IIFE — an undeclared reference here would throw and
+          // fail the check on every platform (a bare fetch would 403).
+          const m = /[?&]t=([0-9a-f]{32})/.exec(window.location.search);
+          const t = m ? m[1] : null;
+          const res = await fetch('/api/self-update' + (t ? '?t=' + t : ''));
+          if (!res.ok) return {ok: false};
+          return {ok: true, ...(await res.json())};
+        } catch (_) {
+          return {ok: false};
+        }
+      });
+      uiCheck(
+        Boolean(suState.ok && suState.buildDate),
+        'UI-13',
+        'self-update state reachable and well-formed after tab ingest (#341)',
+        `latestDate=${suState.latestDate ?? '(none)'} buildDate=${suState.buildDate ?? '?'} ` +
+          (consoleLines.length ?
+            `\n    tab console tail:\n    ${consoleLines.slice(-8).join('\n    ')}`
+          : '')
+      );
     }
 
     return;

@@ -604,6 +604,14 @@ int handle_api_package_urls(int client_fd, const char *query, const char *body, 
     json_escape(esc_fx_date, sizeof(esc_fx_date), get_package_date(0));
     json_escape(esc_utils_date, sizeof(esc_utils_date), get_package_date(1));
 
+    // Managed self-update payload on the artifact branch (issue #341) — the
+    // post-cutover ingest surface (the tab decides via the payload's
+    // mechanismSince vs this binary's build date).  Local snapshots serve it
+    // from the installer's own directory like hashes.json.
+    char self_update_pages_url[512];
+    snprintf(self_update_pages_url, sizeof(self_update_pages_url), "%s/%s",
+             INSTALLER_ZIP_URL, INSTALLER_SELF_UPDATE_FILE);
+
     char json[2048];
     int pos = snprintf(json, sizeof(json),
                        "{"
@@ -614,11 +622,13 @@ int handle_api_package_urls(int client_fd, const char *query, const char *body, 
                        "\"utilsDate\":\"%s\","
                        "\"hashesUrl\":\"%s\","
                        "\"selfUpdateUrl\":\"%s\","
+                       "\"selfUpdatePagesUrl\":\"%s\","
                        "\"releasesUrl\":\"%s\","
                        "\"waterfoxUrl\":\"%s\""
                        "}",
                        utils_url, fx_url, updater_ui_url, esc_fx_date, esc_utils_date,
-                       INSTALLER_HASHES_URL, self_update_url, releases_url,
+                       INSTALLER_HASHES_URL, self_update_url, self_update_pages_url,
+                       releases_url,
                        WATERFOX_RELEASES_URL);
 
     send_json_response(client_fd, json, pos);

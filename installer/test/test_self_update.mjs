@@ -160,7 +160,11 @@ function main() {
         })
       ),
       build: '2026-09-01',
-      expect: {status: 1, latest: '2026-09-13', url: 'https://x/installer-download'},
+      expect: {
+        status: 1,
+        latest: '2026-09-13',
+        url: 'https://x/installer-download',
+      },
     },
     {
       name: 'older published date → up to date (build ahead of latest)',
@@ -182,7 +186,11 @@ function main() {
     },
     {
       name: 'substring guard: installer_linux must not match installer_linux_aarch64',
-      json: releaseWithBody(managedBlock('2026-09-14', {installer_linux_aarch64: 'https://x/arm'})),
+      json: releaseWithBody(
+        managedBlock('2026-09-14', {
+          installer_linux_aarch64: 'https://x/arm',
+        })
+      ),
       build: '2026-09-01',
       asset: plainBase === 'installer_linux' ? 'installer_linux' : asset,
       expect: {status: 1, latest: '2026-09-14', url: ''},
@@ -200,12 +208,22 @@ function main() {
         {
           tag_name: 'installer-2026-09-14',
           body: '```json\n' + managedBlock('2026-09-14', {[asset]: 'https://x/managed'}) + '\n```',
-          assets: [{name: otherAsset, browser_download_url: 'https://DECOY-ASSETS/other'}],
+          assets: [
+            {
+              name: otherAsset,
+              browser_download_url: 'https://DECOY-ASSETS/other',
+            },
+          ],
         },
         {
           tag_name: 'installer-2026-09-01',
           body: '```json\n' + managedBlock('2026-09-01', {[asset]: 'https://x/stale'}) + '\n```',
-          assets: [{name: asset, browser_download_url: 'https://DECOY-STALE/installer'}],
+          assets: [
+            {
+              name: asset,
+              browser_download_url: 'https://DECOY-STALE/installer',
+            },
+          ],
         },
         {tag_name: 'scripts-2026-09-01', body: 'no block', assets: []},
       ]),
@@ -222,6 +240,48 @@ function main() {
       }),
       build: '2026-09-01',
       expect: {status: 1, latest: '2026-09-14', url: 'https://x/toplevel'},
+    },
+    {
+      // Issue #356 item 2 (the #341 collapse): the published body wraps the
+      // ```json fence in a <details> block. The parser must treat the wrapper
+      // as opaque — bare-key scan over the whole body, never a fence-position
+      // assumption. THIS is the shape a real installer download must parse.
+      name: 'details-wrapped managed block (release page collapse) parses',
+      json: releaseWithBody(
+        '<details>\n<summary>⚙ Managed self-update block — machine-read, not for humans (click to expand)</summary>\n\n' +
+          managedBlock('2026-09-14', {[asset]: 'https://x/collapsed'}) +
+          '\n</details>',
+        [[otherAsset, 'https://DECOY-WRAPPED/other']]
+      ),
+      build: '2026-09-01',
+      expect: {status: 1, latest: '2026-09-14', url: 'https://x/collapsed'},
+    },
+    {
+      // Issue #341: the POST-cutover ingest surface is the Pages payload —
+      // self-update.json, a PURE bare object (no release envelope, no body
+      // fence, no assets decoys) with the mechanismSince marker on top. The
+      // same bare-key parser must handle it: this is what post-cutover
+      // installs actually POST to /api/self-update.
+      name: 'bare Pages payload (self-update.json, #341) parses with mechanismSince',
+      json: JSON.stringify({
+        mechanismSince: '2026-09-29',
+        installerDate: '2026-09-14',
+        download: {[asset]: 'https://x/pages'},
+      }),
+      build: '2026-09-01',
+      expect: {status: 1, latest: '2026-09-14', url: 'https://x/pages'},
+    },
+    {
+      // Same Pages shape but no URL for this platform (a publish that did not
+      // rebuild it): still flags the newer build — UI falls back to releases.
+      name: 'bare Pages payload without this platform URL → flags, empty url',
+      json: JSON.stringify({
+        mechanismSince: '2026-09-29',
+        installerDate: '2026-09-14',
+        download: {[otherAsset]: 'https://x/other'},
+      }),
+      build: '2026-09-01',
+      expect: {status: 1, latest: '2026-09-14', url: ''},
     },
     // ── graceful degradation ────────────────────────────────────────────────
     {
