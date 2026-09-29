@@ -1,9 +1,11 @@
 // test/unit/tools/check-md-list-markers.test.mjs — the fused-list-marker gate
 // (issue #307). The four fixtures the issue requires: the real AGENTS.md line
 // (must flag), the quoted example inside code spans (must not), a legitimate
-// mid-line dash (must not), and a fenced-block line (must not) — plus the diff
-// plumbing (added-line hunk parsing, changed-lines-only scope, the vendored
-// skills exclusion).
+// mid-line dash (must not), and a fenced-block line (must not) — plus the
+// whole-file fence-state rule (an ADDED line inside an UNCHANGED fenced block
+// must not flag; a line after the fence has closed must still scan) and the
+// diff plumbing (added-line hunk parsing, changed-lines-only scope, the
+// vendored skills exclusion).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -65,6 +67,31 @@ test('fixture 4: a line inside a fenced block is skipped', () => {
   const diff = ['@@ -1,3 +1,3 @@', '+```markdown', '+' + lines[1], '+```'].join('\n');
   const findings = findFusedMarkers('docs/x.md', lines, {baseSha: 'HEAD~1', runGit: () => diff});
   assert.deepEqual(findings, []);
+});
+
+test('fixture 5: an ADDED line inside an UNCHANGED fenced block is skipped (whole-file fence state)', () => {
+  const lines = [
+    'intro paragraph',
+    '```markdown',
+    `… keep the record to roughly half a page (Context / Decision / Consequences). -One decision`,
+    'still fenced prose',
+    '```',
+    'outro',
+  ];
+  // Only line 4 is added; the opening fence (line 2) is UNCHANGED, so a
+  // changed-lines-only fence walk would treat line 4 as prose and flag it.
+  // Fence state must come from walking the whole file.
+  const diff = ['@@ -4 +4 @@', '+' + lines[3]].join('\n');
+  const findings = findFusedMarkers('docs/x.md', lines, {baseSha: 'HEAD~1', runGit: () => diff});
+  assert.deepEqual(findings, []);
+});
+
+test('an added line after the same fence has CLOSED still scans (fence tracking is exact)', () => {
+  const lines = ['```', 'fenced', '```', `a fused marker after the fence:). -Tail rule`];
+  const diff = ['@@ -4 +4 @@', '+' + lines[3]].join('\n');
+  const findings = findFusedMarkers('docs/x.md', lines, {baseSha: 'HEAD~1', runGit: () => diff});
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].line, 4);
 });
 
 // ── the detector itself ────────────────────────────────────────────────────

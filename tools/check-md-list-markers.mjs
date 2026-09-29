@@ -42,7 +42,7 @@
 import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -149,14 +149,17 @@ export function findFusedMarkers(file, lines, opts = {}) {
   }
 
   const findings = [];
+  // Fence state must be computed from the WHOLE file: an added line inside an
+  // existing (unchanged) fenced block sits after an opening fence the diff
+  // never shows, and scanning it as prose would flag quoted text.
   let inFence = false;
-  for (const n of [...changed].sort((a, b) => a - b)) {
+  for (let n = 1; n <= lines.length; n++) {
     const text = lines[n - 1] ?? '';
     if (/^\s*(```|~~~)/.test(text)) {
       inFence = !inFence;
       continue;
     }
-    if (inFence) continue;
+    if (inFence || !changed.has(n)) continue;
     const snippet = fusedSnippet(stripCodeSpans(text));
     if (snippet) findings.push({line: n, text: text.trim(), snippet});
   }
@@ -257,6 +260,6 @@ function main() {
   console.log(`check-md-list-markers: clean (${files.length} changed markdown file(s) scanned).`);
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main();
 }
