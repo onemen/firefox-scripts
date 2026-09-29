@@ -110,9 +110,15 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {buildDates} from './generateBuildDates.mjs';
-import {branchExistsOnPages, pagesIndex, uploadFilesToPages} from './uploadToPages.mjs';
+import {
+  branchExistsOnPages,
+  pagesIndex,
+  readPagesFile,
+  uploadFilesToPages,
+} from './uploadToPages.mjs';
 import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
 import {
+  mergeSelfUpdateBlock,
   pinLatestRelease,
   refreshLatestBody,
   renderSelfUpdatePayload,
@@ -866,8 +872,26 @@ async function publishToGitHub({
     for (const p of builtInstallers) {
       suUrls[installerAssetName(p)] = `${suBase}/${installerAssetName(p)}`;
     }
+    // Merge over the branch's current payload (CodeRabbit on #367): pages.yml
+    // builds one platform per sequential job, and each job's write replaces
+    // the whole file — without the merge, the final job's commit would name
+    // only its own platforms and post-cutover installers of the earlier
+    // platforms would lose their managed URLs. Same-day semantics: prior
+    // entries survive only while their installerDate matches this run's
+    // (a newer build date supersedes the stale map wholesale). Under-merge on
+    // any read/parse problem — never a publish failure.
+    const installerDate = buildDates().installer;
+    let prior;
+    try {
+      const raw = await readPagesFile(octokit, SELF_UPDATE_FILE);
+      prior = raw ? JSON.parse(raw.toString('utf-8')) : null;
+    } catch (err) {
+      warn(`self-update.json read from ${ZIP_PAGES_BRANCH} failed (under-merge): ${err.message}`);
+      prior = null;
+    }
     pagesFiles[SELF_UPDATE_FILE] = Buffer.from(
-      renderSelfUpdatePayload(buildDates().installer, suUrls) + '\n',
+      renderSelfUpdatePayload(installerDate, mergeSelfUpdateBlock(installerDate, suUrls, prior)) +
+        '\n',
       'utf-8'
     );
   }
@@ -960,11 +984,16 @@ async function publishToGitHub({
   // just uploaded bake it); otherwise the newest installer-<date> tag's date.
   // Fails soft inside.
   if (PUBLISH_MODE === 'prod' && release) {
-    await refreshLatestBody(
-      octokit,
-      release,
-      builtInstallers.length > 0 ? {installerDate: buildDates().installer} : {}
-    );
+    // Per-asset version dates: only the platforms THIS run rebuilt carry the
+    // fresh build date — a partial publish (pages.yml runs win → linux → mac
+    // sequentially) must not stamp its date onto platforms whose binaries on
+    // `latest` are still the previous version (CodeRabbit on #367). Those
+    // rows fall back to their own upload date until their platform's job runs.
+    const installerDatesByAsset = {};
+    for (const p of builtInstallers) {
+      installerDatesByAsset[installerAssetName(p)] = buildDates().installer;
+    }
+    await refreshLatestBody(octokit, release, {installerDatesByAsset});
   }
 
   // Prod: keep the 'latest' release tag pointing at the commit this upload was

@@ -384,21 +384,29 @@ const LATEST_INSTALLER_ASSETS = [
  * Row dates (issue #356 item 3, maintainer decision 2026-09-29): the installer
  * tag date IS the installer's version (the binaries bake it as their
  * VERSIONINFO FileVersion and the self-update compares it — ADR 0019/0036), so
- * Installer rows carry it via `context.installerDate` — this run's derived
- * build date at publish time, else the newest installer-<date> tag's date —
- * falling back to the upload date when no installer tag exists yet. Package
- * rows keep their own upload date ("the date of the file that was released",
- * issue #354).
+ * Installer rows carry it. The date comes PER ASSET from
+ * `context.installerDatesByAsset` — upload.mjs maps only the platforms this run
+ * rebuilt, because a partial publish (e.g. the win job of pages.yml's
+ * sequential matrix) must never stamp its fresh date onto platforms whose
+ * binaries on `latest` are still the previous version (CodeRabbit on #367) —
+ * else from the single `context.installerDate`, else the newest
+ * installer-<date> tag's date (the binaries on `latest` are that tag's
+ * version), else the asset's own upload date. Package rows keep their own
+ * upload date ("the date of the file that was released", issue #354).
  *
  * @param {{name: string; updatedAt?: string | null}[]} assets release assets
- * @param {{installerDate?: string | null}} [context] this run's derived
- *   installer build date, or the newest installer-<date> tag's date (both are
- *   the installer's version; publish passes the former, callers without a fresh
- *   build the latter) — null/absent falls back to upload dates
+ * @param {{
+ *   installerDate?: string | null;
+ *   installerDatesByAsset?: Record<string, string> | null;
+ * }} [context]
+ *   the installer version date(s): the per-asset map wins; the single date covers
+ *   callers without a fresh build; null/absent falls back to tag date, then
+ *   upload dates
  * @returns {string} the full managed section, markers included
  */
 export function renderLatestDownloads(assets, context = {}) {
   const base = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`;
+  const byAsset = context.installerDatesByAsset || {};
   // Downloadable assets only (sidecars are NOT rows — the verify line below
   // covers them), grouped: packages vs installer binaries.
   const rows = assets
@@ -409,8 +417,8 @@ export function renderLatestDownloads(assets, context = {}) {
       // upload date. The fallback never fires for a published repo (the
       // installer tag always exists) — it keeps first runs honest.
       date:
-        LATEST_INSTALLER_ASSETS.includes(a.name) && context.installerDate ?
-          context.installerDate
+        LATEST_INSTALLER_ASSETS.includes(a.name) ?
+          byAsset[a.name] || context.installerDate || (a.updatedAt || '').slice(0, 10)
         : (a.updatedAt || '').slice(0, 10),
       row: '',
     }));
@@ -646,11 +654,16 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
  *   used: body and assets are re-fetched fresh below, so the refresh can never
  *   overwrite a manual edit made while this run was uploading and every row
  *   carries its true upload date (CodeRabbit on #355)
- * @param {{installerDate?: string | null}} [context] when the run rebuilt
- *   installers, the derived build date just baked into them (the binaries on
- *   `latest` are exactly that version; the newest installer tag still points at
- *   the previous one until the component sync below runs). When absent, the
- *   version is read from the newest installer-<date> tag instead
+ * @param {{
+ *   installerDate?: string | null;
+ *   installerDatesByAsset?: Record<string, string> | null;
+ * }} [context]
+ *   the installer version date(s): when the run rebuilt installers, the derived
+ *   build date just baked into them — as a PER-ASSET map naming exactly the
+ *   platforms rebuilt (a partial publish must not stamp its date onto platforms
+ *   whose binaries on `latest` are still the previous version; CodeRabbit on
+ *   #367) or as the single-date form; when absent, the version is read from the
+ *   newest installer-<date> tag
  */
 export async function refreshLatestBody(octokit, latestRelease, context = {}) {
   try {

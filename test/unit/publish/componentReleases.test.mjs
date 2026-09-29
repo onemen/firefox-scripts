@@ -363,6 +363,26 @@ test('renderLatestDownloads: installer rows carry the VERSION date, packages the
   assert.match(section, /\| \[`fx-folder\.zip`\].*\| 2026-09-28 \|/);
 });
 
+test('renderLatestDownloads: PER-ASSET version dates for partial publishes (CodeRabbit on #367)', () => {
+  // pages.yml builds win → linux → mac sequentially. The win job rebuilt only
+  // its binary: its row shows the fresh build date, the platforms NOT rebuilt
+  // keep their own upload date (their binaries on `latest` are still the
+  // previous version — stamping the fresh date would lie about them).
+  const section = renderLatestDownloads(
+    [
+      {name: 'installer_win.exe', updatedAt: '2026-09-29T12:00:00Z'},
+      {name: 'installer_mac', updatedAt: '2026-09-26T09:00:00Z'},
+      {name: 'installer_linux', updatedAt: '2026-09-26T10:00:00Z'},
+      {name: 'installer_linux_aarch64', updatedAt: '2026-09-26T10:00:00Z'},
+    ],
+    {installerDatesByAsset: {'installer_win.exe': '2026-09-29'}}
+  );
+  assert.match(section, /\| \[`installer_win\.exe`\].*\| 2026-09-29 \|/);
+  assert.match(section, /\| \[`installer_mac`\].*\| 2026-09-26 \|/);
+  assert.match(section, /\| \[`installer_linux`\].*\| 2026-09-26 \|/);
+  assert.match(section, /\| \[`installer_linux_aarch64`\].*\| 2026-09-26 \|/);
+});
+
 test('renderLatestDownloads: without a version the installer rows fall back to upload dates', () => {
   // First runs / no installer tag yet: display-only fallback, never a crash.
   const section = renderLatestDownloads([

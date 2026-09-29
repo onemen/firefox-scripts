@@ -119,6 +119,31 @@ async function pagesBranchHead(octokit) {
 }
 
 /**
+ * Read one file from the Pages branch head (issue #341: the self-update payload
+ * is MERGED across pages.yml's sequential OS jobs — each job reads the branch's
+ * current self-update.json, merges its own platform URLs over it, and rewrites
+ * the file, so the final job's commit carries every platform). Returns null
+ * when the branch or the file is missing, and rethrows real errors — callers
+ * downgrade to under-merge, never to a wrong payload.
+ *
+ * @param {import('@octokit/rest').Octokit} octokit authenticated client
+ * @param {string} path file path on the branch (e.g. 'self-update.json')
+ * @returns {Promise<Buffer | null>} file bytes, or null when absent
+ */
+export async function readPagesFile(octokit, path) {
+  const headSha = await pagesBranchHead(octokit);
+  if (!headSha) return null;
+  const {data} = await octokit.repos.getContent({
+    owner: REPO_OWNER,
+    repo: ZIP_PAGES_REPO,
+    path,
+    ref: headSha,
+  });
+  if (Array.isArray(data) || data.type !== 'file') return null;
+  return Buffer.from(data.content, 'base64');
+}
+
+/**
  * Does the target branch already exist? `null` when the probe itself fails
  * (network, permissions) — callers downgrade their message instead of
  * asserting. Mode-aware through the module constants: prod probes gh-pages, dev

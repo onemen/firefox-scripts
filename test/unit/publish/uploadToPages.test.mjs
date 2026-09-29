@@ -13,7 +13,8 @@ import crypto from 'node:crypto';
 // before the dynamic import (same pattern as pagesIndex.test.mjs).
 process.argv.push('--mode=prod');
 
-const {uploadFilesToPages} = await import('../../../tools/publish/uploadToPages.mjs');
+const {uploadFilesToPages, readPagesFile} =
+  await import('../../../tools/publish/uploadToPages.mjs');
 
 /** Independent git blob sha (the canonical git object hashing). */
 const gitBlobSha = buf =>
@@ -177,4 +178,27 @@ test('missing message argument falls back to the generic publish-files subject',
   await uploadFilesToPages(api, {'hashes.json': Buffer.from('x\n')});
   const commit = calls.find(([name]) => name === 'createCommit');
   assert.match(commit[1], /^chore: publish files \(\d{4}-\d{2}-\d{2}\)$/);
+});
+
+test('readPagesFile: decodes the branch file; missing branch/file → null (issue #341 merge reader)', async () => {
+  // Existing branch + file: base64 content comes back decoded.
+  const content = Buffer.from('{"installerDate":"2026-09-29"}\n', 'utf-8');
+  const {api} = fakeOctokit({
+    tracked: {'self-update.json': gitBlobSha(content)},
+  });
+  // getContent is not part of the uploadFilesToPages stub — add it inline.
+  api.repos = {
+    getContent: async ({path}) => {
+      if (path !== 'self-update.json') throw new Error('unexpected path');
+      return {data: {type: 'file', content: content.toString('base64')}};
+    },
+  };
+  const out = await readPagesFile(api, 'self-update.json');
+  assert.equal(out.toString('utf-8'), '{"installerDate":"2026-09-29"}\n');
+  // Directory responses and non-file types are treated as absent.
+  api.repos.getContent = async () => ({data: {type: 'dir', content: ''}});
+  assert.equal(await readPagesFile(api, 'logos'), null);
+  // Missing branch (headSha null): null without a getContent call.
+  const {api: missing} = fakeOctokit({headSha: null});
+  assert.equal(await readPagesFile(missing, 'self-update.json'), null);
 });
