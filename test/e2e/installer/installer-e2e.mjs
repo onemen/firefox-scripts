@@ -1488,22 +1488,21 @@ async function runUiLayer(counter, opts, snapshotDir) {
       // UI-13 still passes on the self-update state being reachable and
       // well-formed. What UI-13 catches is the regression class where the
       // ingest chain never completes or the verdict API breaks shape.
-      const suState = await page.evaluate(
-        /* eslint-disable no-undef */
-        async () => {
-          try {
-            // withToken() is the page's own helper (10-ingest.js): appends
-            // the session token from the page URL — a bare fetch would 403.
-            // It exists only inside the page's IIFE, not in this test file.
-            const res = await fetch(withToken('/api/self-update'));
-            if (!res.ok) return {ok: false};
-            return {ok: true, ...(await res.json())};
-          } catch (_) {
-            return {ok: false};
-          }
+      const suState = await page.evaluate(async () => {
+        try {
+          // Append the session token from the page URL by hand: the page's
+          // withToken()/getSessionToken() helpers exist only inside the
+          // page's IIFE — an undeclared reference here would throw and
+          // fail the check on every platform (a bare fetch would 403).
+          const m = /[?&]t=([0-9a-f]{32})/.exec(window.location.search);
+          const t = m ? m[1] : null;
+          const res = await fetch('/api/self-update' + (t ? '?t=' + t : ''));
+          if (!res.ok) return {ok: false};
+          return {ok: true, ...(await res.json())};
+        } catch (_) {
+          return {ok: false};
         }
-        /* eslint-enable no-undef */
-      );
+      });
       uiCheck(
         Boolean(suState.ok && suState.buildDate),
         'UI-13',
