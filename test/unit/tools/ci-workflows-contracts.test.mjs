@@ -444,22 +444,39 @@ export function publishSingleWriterViolations(jobs, file) {
     }
   }
 
-  // The writer takes the staging matrix as its input, and no leg is skipped by
-  // construction: the packages-only dispatch (include=packages stages nothing,
-  // so every leg skips) must still reach the writer via the always() branch.
+  // The writer takes the staging matrix as its input, and the gates stay
+  // upstream of every publish: pre-publish + baseline are explicit needs and
+  // are required to succeed, so a failed drift gate can never be published
+  // past. The matrix legs may be legitimately 'skipped' (packages-only
+  // dispatch: include=packages stages nothing) — the writer then runs alone
+  // via the always() branch.
   const publishing = byName.get('publishing');
   if (publishing) {
     const needs = jobNeeds(publishing.body);
-    if (needs.length !== 1 || needs[0] !== 'publish') {
+    const expectedPublishingNeeds = ['pre-publish', 'baseline', 'publish'];
+    if (
+      needs.length !== expectedPublishingNeeds.length ||
+      expectedPublishingNeeds.some((n, i) => needs[i] !== n)
+    ) {
       violations.push(
-        `${file}: 'publishing' needs [${needs.join(', ')}] but the single writer pins [publish]`
+        `${file}: 'publishing' needs [${needs.join(', ')}] but the single writer pins ` +
+          `[${expectedPublishingNeeds.join(', ')}]`
       );
     }
-    if (!stripComments(publishing.body).includes('always()')) {
+    const publishingIf = stripComments(publishing.body);
+    if (!publishingIf.includes('always()')) {
       violations.push(
         `${file}: 'publishing' must carry an always() branch — a packages-only dispatch ` +
           '(include=packages) skips every staging leg, and a plain needs would skip the writer too'
       );
+    }
+    for (const gate of ['pre-publish', 'baseline']) {
+      if (!publishingIf.includes(`needs.${gate}.result == 'success'`)) {
+        violations.push(
+          `${file}: 'publishing' must require needs.${gate}.result == 'success' — the drift ` +
+            'gate stays upstream of every publish (a failed gate must not be published past)'
+        );
+      }
     }
   }
 
@@ -973,7 +990,7 @@ test('publish-single-writer: a writer job beside the chain is a violation', () =
     job('pre-publish', ''),
     job('baseline', 'pre-publish'),
     `  publish:\n    needs: baseline\n    strategy:\n      matrix:\n        include:\n          - platform: win\n${pass1}`,
-    `  publishing:\n    needs: publish\n    if: \${{ always() && (inputs.include == 'packages' || needs.publish.result == 'success') }}\n${pass2}`,
+    `  publishing:\n    needs: [pre-publish, baseline, publish]\n    if: \${{ always() && needs.pre-publish.result == 'success' && needs.baseline.result == 'success' && (needs.publish.result == 'success' || (inputs.include == 'packages' && needs.publish.result == 'skipped')) }}\n${pass2}`,
   ].join('\n');
   assert.deepEqual(publishSingleWriterViolations(workflowJobs(graph), 'pages.yml'), []);
 
@@ -994,14 +1011,17 @@ test('publish-single-writer: a writer job beside the chain is a violation', () =
   assert.equal(reorderedViolations.length, 1);
   assert.match(reorderedViolations[0], /publish/);
 
-  // The writer without its always() branch would skip on a packages-only dispatch.
+  // The writer without its always() branch would skip on a packages-only
+  // dispatch — and dropping the branch drops the gate-success checks with it.
   const noAlways = graph.replace(
-    "    if: ${{ always() && (inputs.include == 'packages' || needs.publish.result == 'success') }}",
+    "    if: ${{ always() && needs.pre-publish.result == 'success' && needs.baseline.result == 'success' && (needs.publish.result == 'success' || (inputs.include == 'packages' && needs.publish.result == 'skipped')) }}",
     "    if: ${{ needs.publish.result == 'success' }}"
   );
   const noAlwaysViolations = publishSingleWriterViolations(workflowJobs(noAlways), 'pages.yml');
-  assert.equal(noAlwaysViolations.length, 1);
+  assert.equal(noAlwaysViolations.length, 3);
   assert.match(noAlwaysViolations[0], /always\(\)/);
+  assert.match(noAlwaysViolations[1], /pre-publish/);
+  assert.match(noAlwaysViolations[2], /baseline/);
 
   // A second --skip-build invocation anywhere outside the writer is a violation.
   const doubleWriter = graph.replace(

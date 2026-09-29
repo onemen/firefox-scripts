@@ -185,10 +185,12 @@ jobs:
             cross: true
           - platform: mac
             os: macos-latest
-    # A packages-only publish stages no binaries — every leg would find nothing
-    # to build, so the matrix skips and the single-writer job below runs pass 2
-    # alone (zips are built inside pass 2; --skip-build requires no staged
-    # binaries when nothing changed).
+    # A packages-only publish stages no binaries — the legs SKIP instead of
+    # failing red (their upload step has if-no-files-found: error and the
+    # staging tree would be empty); the single-writer job below then runs
+    # pass 2 alone (zips are built inside pass 2; --skip-build requires no
+    # staged binaries when nothing changed).
+    if: ${{ inputs.include != 'packages' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -254,16 +256,21 @@ jobs:
   # all three platforms in scope: verifies the staged set (every binary a
   # changed hash would publish must be present — missing ones fail the run by
   # name), re-runs the AV/VT gates over the exact bytes, builds the packages
-  # and performs the release + Pages publish. The packages-only case never
-  # reaches this job (the matrix skips, and a skipped dependency skips its
-  # dependents).
+  # and performs the release + Pages publish. A packages-only dispatch reaches
+  # this job ALONE (the matrix legs skip; the if below still runs the writer).
   publishing:
     name: publish staged set (single writer)
-    needs: publish
-    # Run after a successful staging matrix — OR alone when the matrix skipped
-    # (packages-only dispatch: the zips are built inside pass 2). A failed or
-    # cancelled matrix leg must NOT reach the single writer.
-    if: ${{ always() && (inputs.include == 'packages' || needs.publish.result == 'success') }}
+    # The prod drift gate stays upstream of every publish: pre-publish and
+    # baseline are explicit needs, so a failed gate can never be published
+    # past (a plain `needs: publish` let a packages-only prod dispatch run
+    # the writer after pre-publish failed). always() + the per-job result
+    # checks still let the writer run when the matrix legitimately skipped
+    # (packages-only dispatch: the zips are built inside pass 2).
+    needs: [pre-publish, baseline, publish]
+    if: >-
+      ${{ always() && needs.pre-publish.result == 'success' && needs.baseline.result == 'success' &&
+      (needs.publish.result == 'success' || (inputs.include == 'packages' && needs.publish.result ==
+      'skipped')) }}
     # Prod publishes deploy through the `release` environment (protected-branch
     # policy: main only). Dev publishes are disposable and bypass the
     # environment so they can run from any branch.
