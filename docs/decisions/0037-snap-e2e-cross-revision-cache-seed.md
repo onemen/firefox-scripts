@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (amends ADR 0025's E2E matrix — additive; recorded per the #291 investigation, 2026-09-30).
+- **Status:** accepted
+- **Amends:** [0025](./0025-waterfox-hard-gate.md) — the E2E matrix's snap leg gets a cross-revision
+  cache seed and a single install track (additive; recorded per the #291 investigation, 2026-09-30)
 
 ## Context
 
