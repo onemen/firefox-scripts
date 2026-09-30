@@ -51,6 +51,10 @@ on:
   # snapd self-refresh deadlocks cost ~4 min per updater-PR and, being
   # advisory, never gated anything). Scheduled runs exercise it on a timer; a
   # red scheduled snap leg still shows up as the usual advisory failure.
+  # 2026-09-30: back ON the updater-PR path per maintainer decision — #382's
+  # fixes (install after any download outcome, AppArmor prompting-client,
+  # seed-preserving revision check) address the flake sources that got it
+  # removed, and PR-time coverage is wanted again. The Monday schedule stays.
   schedule:
     - cron: '30 5 * * 1' # Monday 05:30 UTC — ahead of the url-watchdog (06:00)
   # Manual dispatch (ADR 0021): `browser` filters the browser-matrix to one
@@ -645,7 +649,7 @@ jobs:
     needs: [changes, snapshot]
     if: >-
       github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
-      (needs.changes.outputs.updater == 'true' && github.event_name == 'push')
+      needs.changes.outputs.updater == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
@@ -725,19 +729,10 @@ jobs:
           set -euo pipefail
           mkdir -p ~/snap-pkg
           cd ~/snap-pkg
-          # Exact-revision cache hit? The restore-key seed below may have
-          # restored an OLDER revision — only trust the hit when the fetched
-          # pair matches the resolved revision (ADR 0037); otherwise fall
-          # through and download the pinned one.
-          if ls firefox_*.snap >/dev/null 2>&1; then
-            if [ "$(snap info firefox 2>/dev/null | grep -m1 'stable:' | grep -oE '[0-9]+-[0-9]+' || true)" = "${{ steps.rev.outputs.revision }}" ]; then
-              echo "cache hit: using cached .snap + assertion"
-              echo "from-cache=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "::warning::restored cache is a DIFFERENT (older) revision — re-downloading the pinned one"
-            rm -f firefox_*.snap firefox_*.assert
-          fi
+          # Store-down check FIRST (before any cached-file deletion): when the
+          # probe failed, `revision` is empty and a compare-then-delete would
+          # discard the seed the fallback below needs (review:batch finding on
+          # this PR — the seed IS the ADR 0037 store-down scenario).
           if [ "${{ steps.rev.outputs.available }}" != 'true' ]; then
             if ls firefox_*.snap >/dev/null 2>&1; then
               echo "::warning::store API down — seeded from an OLDER cached revision (restore-key, ADR 0037)"
@@ -748,6 +743,30 @@ jobs:
             echo "SNAP_STORE_UNAVAILABLE=1" >> "$GITHUB_ENV"
             exit 1
           fi
+          # Exact-revision cache hit? The restore-key seed may have restored an
+          # OLDER revision — only trust the hit when the restored pair IS the
+          # resolved revision. The revision is read from the pair's own
+          # assertion filename (firefox_<rev>.assert — the authoritative marker,
+          # no dash parsing): `snap info` prints the revision bare (8969), so
+          # the earlier [0-9]+-[0-9]+ pattern never matched and the
+          # exact-revision cache could never hit (every run re-downloaded and
+          # the seed was deleted — the red-main-adjacent bug this fixes).
+          if ls firefox_*.snap >/dev/null 2>&1; then
+            cached_rev="$(ls firefox_*.assert | head -n1 | grep -oE '[0-9]+' | head -n1)"
+            if [ "$cached_rev" = "${{ steps.rev.outputs.revision }}" ]; then
+              echo "cache hit: using cached .snap + assertion"
+              echo "from-cache=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::restored cache is a DIFFERENT (older) revision ($cached_rev vs ${{ steps.rev.outputs.revision }}) — re-downloading the pinned one"
+          fi
+          # Atomic-ish download: fetch into a staging dir and only replace the
+          # cached pair on SUCCESS — a failed download must never destroy the
+          # seed the store-down fallback below needs (review:batch finding;
+          # the old flow rm -f'd the pair first, so a failed download turned a
+          # perfectly good seed into SNAP_STORE_UNAVAILABLE).
+          rm -rf ~/snap-pkg-staging
+          mkdir -p ~/snap-pkg-staging
           # Two attempts, hard 8-min wall each: a hang must die before the
           # 20-min job timeout so the diagnostic steps still run. cd + CWD
           # output instead of `--directory` — that flag does not exist on the
@@ -756,14 +775,22 @@ jobs:
           # `--channel` alongside `--revision` ("cannot specify both channel
           # and revision"), so the channel is never passed here (regression
           # from #290, every leg red since Sep 22).
+          dl_ok=false
           for i in 1 2; do
-            if timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}"; then
-              echo "from-cache=false" >> "$GITHUB_OUTPUT"
-              exit 0
+            if (cd ~/snap-pkg-staging && timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}"); then
+              dl_ok=true
+              break
             fi
             echo "::warning::snap download attempt $i failed — retrying in 20s"
             sleep 20
           done
+          if [ "$dl_ok" = true ]; then
+            rm -f ~/snap-pkg/firefox_*.snap ~/snap-pkg/firefox_*.assert
+            mv ~/snap-pkg-staging/firefox_* ~/snap-pkg/
+            echo "from-cache=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          rm -rf ~/snap-pkg-staging
           echo "::error::snap download failed after retry — trying cache fallback"
           if ls firefox_*.snap >/dev/null 2>&1; then
             echo "::warning::store down — proceeding with an OLDER cached revision"
@@ -784,19 +811,34 @@ jobs:
       # FIREFOX_BINARY itself — the steps below (Verify snap GreD, both E2E
       # runs) read it, and without the export the cache-hit path died with
       # `FIREFOX_BINARY: unbound variable` (every run after #311 until fixed).
-      - name: Install Firefox (snap, offline from cache)
-        if: steps.snapd.outputs.available == 'true' && steps.dl.outputs.from-cache == 'true'
+      # Runs after ANY successful download outcome — exact cache hit, seeded
+      # older revision, or a fresh store download (from-cache true or false).
+      # The single install track means ONE step must cover every outcome:
+      # gating it on from-cache == 'true' left the store-up path with no
+      # install at all and no FIREFOX_BINARY (the red main run of 2026-09-30,
+      # run 36726376484). The revision-verification above guarantees the files
+      # in ~/snap-pkg ARE the resolved revision before we get here.
+      - name: Install Firefox (snap, offline from the resolved pair)
+        if: steps.snapd.outputs.available == 'true' && !failure() && !cancelled()
         run: |
           set -euo pipefail
+          # Ubuntu 22.04/24.04 AppArmor change (Sept 2026): snap installs silently
+          # fail under AppArmor unless a prompting client is present. Install the
+          # two required components BEFORE firefox; snap set debug + journalctl
+          # are the documented diagnostics if AppArmor still denies.
+          sudo timeout 120 snap install desktop-security-center || true
+          sudo timeout 120 snap install prompting-client || true
           sudo snap ack ~/snap-pkg/firefox_*.assert
           sudo snap install ~/snap-pkg/firefox_*.snap --classic
           test -x /snap/bin/firefox || { echo '::error::snap install ran, but /snap/bin/firefox not found'; exit 1; }
           echo "FIREFOX_BINARY=/snap/bin/firefox" >> "$GITHUB_ENV"
 
-      # Single install track (ADR 0037): the store download above only fills
-      # the cache for THIS revision; the offline-from-cache install below is
-      # the only install path (the removed downloads.mjs firefox-snap direct
-      # install was a second, divergent path — the exact class #313 fixed).
+      # Single install track (ADR 0037, as corrected after the 2026-09-30 red
+      # main run): the store download and the cache restore both land the
+      # resolved revision's pair in ~/snap-pkg, and the ONE install step above
+      # covers every outcome (from-cache true AND false). There is no second
+      # install path (the removed downloads.mjs firefox-snap direct install was
+      # the divergent path — the exact class #313 fixed).
 
       # THE point of this leg (#55): discover the snap GreD at runtime —
       # findGreDir() maps a /snap/ binary to /etc/firefox — and verify it
@@ -1419,7 +1461,7 @@ jobs:
             updater:${{ needs.changes.outputs.updater == 'true' }}
             updater-waterfox:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
-            snap-firefox:${{ (needs.changes.outputs.updater == 'true' && github.event_name == 'push') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+            snap-firefox:${{ needs.changes.outputs.updater == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
             core-lifecycle:${{ needs.changes.outputs.core == 'true' }}
             browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr') }}
             fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr') }}
