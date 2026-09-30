@@ -67,7 +67,16 @@ const makefile = fs
 // registers its root; one sweep runs after the file's tests finish.
 const tempRoots = [];
 after(() => {
-  for (const root of tempRoots) fs.rmSync(root, {recursive: true, force: true});
+  for (const root of tempRoots) {
+    try {
+      fs.rmSync(root, {recursive: true, force: true});
+    } catch (error) {
+      // Cleanup is hygiene, not an assertion: a Windows AV handle on a fresh
+      // file (this repo documents Defender interference) must not redden the
+      // suite. Warn loudly and keep sweeping the rest.
+      console.warn(`temp cleanup failed for ${root}: ${error.message}`);
+    }
+  }
 });
 
 /**

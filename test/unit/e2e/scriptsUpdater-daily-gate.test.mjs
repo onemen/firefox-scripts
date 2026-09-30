@@ -34,7 +34,14 @@ import {fileURLToPath} from 'node:url';
 // Temp forced this.
 const tempRoots = [];
 after(() => {
-  for (const root of tempRoots) fs.rmSync(root, {recursive: true, force: true});
+  for (const root of tempRoots) {
+    try {
+      fs.rmSync(root, {recursive: true, force: true});
+    } catch (error) {
+      // See buildEpoch.test.mjs: hygiene, not an assertion — warn and continue.
+      console.warn(`temp cleanup failed for ${root}: ${error.message}`);
+    }
+  }
 });
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
