@@ -668,7 +668,7 @@ command when the chain is done** — the explicit re-run is by design, and it pr
 publishing. The probe checks both gate conditions (drift + validated coverage, and the
 E2E-for-commit count for main HEAD); a probe that cannot be observed (gh error) fails **open** —
 pages.yml's in-run gate remains the moment of truth. Dev publishes skip the pre-flight (they skip
-the gates), and every `--include` runs the same five pages.yml jobs (the input only scopes what
+the gates), and every `--include` runs the same pages.yml jobs (the input only scopes what
 `upload.mjs` builds/attaches inside the publish jobs). `pnpm publish:*` runs no unit or E2E tests
 itself — the tests live in the workflows.
 
@@ -876,16 +876,23 @@ The same run compiles the installer and helper binaries when their source (`inst
 Pages publish → Run workflow) with a `mode` (prod/dev) and an optional `force` input. It runs the
 **same** `node tools/publish/upload.mjs` as the local commands above — no separate publish logic,
 always through the shared `.github/actions/publish-upload` composite action (one invocation contract
-for both publish workflows) — once per OS (`--platform=win|linux|mac`) in three sequential jobs, so
-all three installer/helper platforms get built on their native toolchains. The jobs are serial so
-gh-pages commits and release-asset uploads can never interleave; change detection is anchored to a
-shared **pre-run baseline**: a first job captures the current `hashes.json` and every publish job
-diffs against it (via `FIREFOX_SCRIPTS_STORED_HASHES_FILE`) instead of the manifest an earlier
-sibling just pushed — the package hashes in the manifest are platform-independent, so without the
-baseline only the first platform would rebuild after a source change. Prod dispatches must target
-`main` (enforced inside `upload.mjs`); dev dispatches work from any branch. Pages serving stays
-"Deploy from branch: `gh-pages`" — the workflow pushes to that branch, it does not switch Pages to
-the actions deployment method.
+for both publish workflows) — in two stages (#353): a parallel win/linux/mac build+stage matrix
+(`--platform=<os>`, upload.mjs **pass 1** / `--build-only`: change-detect against the shared
+baseline, rebuild, stage binaries, upload them as artifacts, and stop — no publish target is
+touched), then ONE single-writer `publishing` job (upload.mjs **pass 2** / `--skip-build` with all
+three platforms) that verifies the staged set, re-runs the AV/VT gates over the exact staged bytes,
+builds the packages and performs the release + Pages publish. Because only the last job writes,
+gh-pages commits and release-asset uploads can never interleave; the matrix legs run concurrently,
+cutting the wall clock to the slowest platform plus the single-writer pass. Change detection is
+still anchored to a shared **pre-run baseline**: a first job captures the current `hashes.json` and
+every staging leg diffs against it (via `FIREFOX_SCRIPTS_STORED_HASHES_FILE`) instead of the
+manifest a sibling pushed — the installer/helper hashes in the manifest are platform-independent, so
+without the baseline only the first platform would rebuild after a source change. A packages-only
+dispatch (`--include=packages`) skips the matrix entirely — the single writer then runs pass 2
+alone, since the packages are built inside pass 2. Prod dispatches must target `main` (enforced
+inside `upload.mjs`); dev dispatches work from any branch. Pages serving stays "Deploy from branch:
+`gh-pages`" — the workflow pushes to that branch, it does not switch Pages to the actions deployment
+method.
 
 Every publish also pushes an `index.html` to the branch root: the repository's own `README.md`,
 rendered server-side by GitHub (`pagesIndex()` in `tools/publish/uploadToPages.mjs`) and wrapped in
