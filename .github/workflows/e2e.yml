@@ -759,8 +759,14 @@ jobs:
               exit 0
             fi
             echo "::warning::restored cache is a DIFFERENT (older) revision ($cached_rev vs ${{ steps.rev.outputs.revision }}) — re-downloading the pinned one"
-            rm -f firefox_*.snap firefox_*.assert
           fi
+          # Atomic-ish download: fetch into a staging dir and only replace the
+          # cached pair on SUCCESS — a failed download must never destroy the
+          # seed the store-down fallback below needs (review:batch finding;
+          # the old flow rm -f'd the pair first, so a failed download turned a
+          # perfectly good seed into SNAP_STORE_UNAVAILABLE).
+          rm -rf ~/snap-pkg-staging
+          mkdir -p ~/snap-pkg-staging
           # Two attempts, hard 8-min wall each: a hang must die before the
           # 20-min job timeout so the diagnostic steps still run. cd + CWD
           # output instead of `--directory` — that flag does not exist on the
@@ -769,14 +775,22 @@ jobs:
           # `--channel` alongside `--revision` ("cannot specify both channel
           # and revision"), so the channel is never passed here (regression
           # from #290, every leg red since Sep 22).
+          dl_ok=false
           for i in 1 2; do
-            if timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}"; then
-              echo "from-cache=false" >> "$GITHUB_OUTPUT"
-              exit 0
+            if (cd ~/snap-pkg-staging && timeout 480 snap download firefox --revision="${{ steps.rev.outputs.revision }}"); then
+              dl_ok=true
+              break
             fi
             echo "::warning::snap download attempt $i failed — retrying in 20s"
             sleep 20
           done
+          if [ "$dl_ok" = true ]; then
+            rm -f ~/snap-pkg/firefox_*.snap ~/snap-pkg/firefox_*.assert
+            mv ~/snap-pkg-staging/firefox_* ~/snap-pkg/
+            echo "from-cache=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          rm -rf ~/snap-pkg-staging
           echo "::error::snap download failed after retry — trying cache fallback"
           if ls firefox_*.snap >/dev/null 2>&1; then
             echo "::warning::store down — proceeding with an OLDER cached revision"
