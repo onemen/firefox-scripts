@@ -26,7 +26,8 @@
 
 import {execFileSync} from 'node:child_process';
 import {mkdir, writeFile} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 
 // Providers/models are configured as an array of objects. Order matters: when
 // no --provider is given, the first entry that has its API key set is used,
@@ -574,7 +575,7 @@ export async function writeArtifacts(args, result) {
   return {rdjsonPath, summaryPath};
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = parseArgs(process.argv.slice(2));
   console.log(
     `AI review: providers=${args.providers.join('+')} base=${args.baseRef || '(missing)'} head=${args.headRef}`
