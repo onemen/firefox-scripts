@@ -1219,6 +1219,13 @@ async function runOneVariant(
   const {skipUtils} = variantSpec(variant);
   const today = new Date().toISOString().slice(0, 10);
 
+  // The realm can die between variants (the same mid-session death the folded
+  // phases degrade on). Probe BEFORE mutating the fixture: a gone realm is the
+  // caller's signal to defer what is left, never this variant's failure.
+  if (!(await driverAlive(driver))) {
+    throw new DriverLostError(`variant ${variant}: pre-check`);
+  }
+
   try {
     applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig);
   } catch (err) {
@@ -1231,9 +1238,11 @@ async function runOneVariant(
 
   // The other input this variant differs in: the per-package skip pref. '' means
   // "no skip" for the check (getCharPref(prefix, '') → falsy).
-  await driver.setSkip('utils', skipUtils ? utilsHash : '');
+  await driverCall(driver, `${variant}: setSkip`, () =>
+    driver.setSkip('utils', skipUtils ? utilsHash : '')
+  );
 
-  const result = await driver.check();
+  const result = await driverCall(driver, `${variant}: check`, () => driver.check());
   if (expectTab) {
     check(
       counter,
@@ -1262,7 +1271,7 @@ async function runOneVariant(
   if (!expectTab) {
     // No tab was opened (correctly): render the card in a tab the harness opens,
     // so the decision is asserted through the real UI, not only through prefs.
-    await driver.openUpdaterTab();
+    await driverCall(driver, `${variant}: open tab`, () => driver.openUpdaterTab());
   }
   const page = await findUpdaterPage(browser, 15_000);
   if (!page) {
@@ -1286,8 +1295,13 @@ async function runOneVariant(
   }
 
   // Leave no updater tab behind: the next variant's count must measure what its
-  // own check opened.
-  await driver.closeUpdaterTabs();
+  // own check opened. Best-effort on a realm that just died: the variant's
+  // assertions are already in the tally, and the degrade path re-seeds a fresh
+  // profile anyway — swallowing the sentinel here keeps the completed variant
+  // completed instead of deferring it a second time.
+  await driver.closeUpdaterTabs().catch(err => {
+    if (!err?.driverLost) throw err;
+  });
   return ok;
 }
 
@@ -1298,9 +1312,11 @@ async function runOneVariant(
  *
  * Fallback for a host where BiDi CAN evaluate the updater tab but the driver
  * page's realm never came up (the driver tab did not commit, its script did not
- * run): driver mode cannot drive the orchestrator there, so the trio keeps
+ * run), or for a realm that died after some driver variants already ran: in
+ * both cases driver mode cannot drive the orchestrator, so the trio keeps
  * exactly the coverage it had before #309 — which is the point. The coverage
- * collapse is a structure/speed win and must never drop a variant.
+ * collapse is a structure/speed win and must never drop a variant; `variants`
+ * names the subset that still needs asserting (defaults to the whole trio).
  *
  * @param {{passed: number; failed: number}} counter
  * @param {{
@@ -1308,11 +1324,12 @@ async function runOneVariant(
  *   firefoxBin: string;
  *   seeded: object;
  *   pristineConfig: Buffer;
+ *   variants?: string[];
  * }} ctx
  * @returns {Promise<boolean>} false when a variant failed (stop the trio)
  */
-async function assertStaleTrioInTab(counter, {page, firefoxBin, seeded, pristineConfig}) {
-  for (const variant of STALE_VARIANTS) {
+async function assertStaleTrioInTab(counter, {page, firefoxBin, seeded, pristineConfig, variants}) {
+  for (const variant of variants ?? STALE_VARIANTS) {
     // Errors are collected per variant, attached BEFORE the reload that
     // triggers this variant's render (same net as the driver path).
     const pageErrors = [];
@@ -1329,8 +1346,20 @@ async function assertStaleTrioInTab(counter, {page, firefoxBin, seeded, pristine
       await page.evaluate(() => window.UpdaterEngine.init());
       if (!(await assertStaleCard(counter, page, variant, pageErrors))) return false;
     } catch (err) {
-      // Disk mutation failed (e.g. GreD became unwritable), or the evaluation
-      // channel died with the page: this variant's failure, not a harness crash.
+      // The startup tab's frame can be torn down mid-assertion when the driver
+      // realm died with it ("Attempted to use detached Frame" — the tab's own
+      // session, not the driver page, is the dead peer in this degrade path).
+      // The assertions are NOT lost: this variant goes back to the launch path
+      // with the up-to-date/skipped decisions, so a false failure is impossible
+      // — record it as a degrade, not a card failure.
+      if (/detached Frame/i.test(String(err?.message))) {
+        console.log(
+          `  [driver] the startup tab's frame died with the realm (${variant}) — deferring to its launch path`
+        );
+        return false;
+      }
+      // Disk mutation failed (e.g. GreD became unwritable): this variant's
+      // failure, not a harness crash.
       check(counter, false, `card assertions (${variant})`, err.message);
       return false;
     } finally {
@@ -1829,7 +1858,11 @@ async function runFoldedNoUi(counter, ctx) {
  * The folded scenarios degrade the same way when the realm dies MID-session:
  * runSessionExtras re-probes before every phase, and whatever it could not
  * finish is reported back in `extrasRemaining` so the caller launches exactly
- * those, and a phase that already passed is never run twice.
+ * those, and a phase that already passed is never run twice. The VARIANT loop
+ * has the same contract: every runOneVariant driver command goes through
+ * driverCall, a sentinel between variants re-asserts the deferred STALE cards
+ * in-tab (the engine re-checks on init() — no driver needed), and whatever
+ * still could not run is reported in `variantsRemaining` for run() to launch.
  *
  * Wrapped in the same retry-once guard as before: a browser-internal startup
  * race (observed live on waterfox, run 35460461221 — NS_ERROR_NOT_INITIALIZED
@@ -1841,11 +1874,14 @@ async function runFoldedNoUi(counter, ctx) {
  *   profiles: string[];
  *   driverAvailable: boolean;
  *   extrasRemaining?: string[];
+ *   variantsRemaining?: string[];
  * }>}
  *   the created profiles (centralized cleanup), whether the in-browser driver
- *   came up in this environment, and the folded scenarios the caller still has
- *   to launch (`extrasRemaining`, present only when driver mode is unavailable
- *   or the realm died mid-session)
+ *   came up in this environment, and the work the caller still has to launch:
+ *   `extrasRemaining` (the folded scenarios) plus `variantsRemaining`
+ *   (up-to-date / skipped, and the stale variants whose in-tab re-assertion
+ *   could not run either) — present only when driver mode is unavailable or the
+ *   realm died mid-session
  */
 async function runVariantSession(counter, opts, snapshotDir) {
   const label = 'variants';
@@ -2031,6 +2067,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
           profiles: createdProfiles,
           driverAvailable: false,
           extrasRemaining: [...FOLDED_SCENARIOS],
+          variantsRemaining: ['up-to-date', 'skipped'],
         };
       }
       driverAvailable = true;
@@ -2065,24 +2102,70 @@ async function runVariantSession(counter, opts, snapshotDir) {
         {variant: 'skipped', expectTab: false},
       ];
       let variantFailure = false;
-      for (const {variant, expectTab} of plan) {
-        const ok = await runOneVariant(counter, {
-          driver,
-          browser,
-          firefoxBin,
-          seeded,
-          variant,
-          expectTab,
-          pristineConfig,
-          utilsHash,
-        });
-        if (!ok) {
-          variantFailure = true;
-          break;
+      let variantsRun = 0;
+      let remainingVariants = [];
+      try {
+        for (const {variant, expectTab} of plan) {
+          const ok = await runOneVariant(counter, {
+            driver,
+            browser,
+            firefoxBin,
+            seeded,
+            variant,
+            expectTab,
+            pristineConfig,
+            utilsHash,
+          });
+          variantsRun++;
+          if (!ok) {
+            variantFailure = true;
+            break;
+          }
         }
+      } catch (err) {
+        if (!err?.driverLost) throw err;
+        // The realm died between variants (the same mid-session death the
+        // folded phases degrade on): the variants that already ran keep their
+        // assertions in the tally; everything else is deferrable. The stale
+        // variants among the remainder are re-asserted IN THIS TAB below (the
+        // pre-#309 shape — the engine re-checks on init(), no driver needed);
+        // the up-to-date/skipped decisions and the folded phases go to run()'s
+        // launch path. A realm death is a speed loss, never a coverage loss
+        // and never a false failure.
+        remainingVariants = plan.slice(variantsRun).map(entry => entry.variant);
+        console.log(
+          `  [driver] ${err.message} — the remaining variants (${remainingVariants.join(', ')}) fall back to the in-tab / launch paths`
+        );
       }
 
       if (!variantFailure) {
+        const staleLeft = remainingVariants.filter(v => STALE_VARIANTS.includes(v));
+        if (staleLeft.length > 0) {
+          // The pre-#309 trio path, on the tab the startup check opened: the
+          // engine re-checks on init() (no scheduler, no driver realm), so a
+          // dead driver does not take the card coverage with it.
+          console.log(`  [driver] re-asserting the stale variants in-tab: ${staleLeft.join(', ')}`);
+          const trioOk = await assertStaleTrioInTab(counter, {
+            page,
+            firefoxBin,
+            seeded,
+            pristineConfig,
+            variants: staleLeft,
+          });
+          if (trioOk) {
+            // Covered in-tab: drop them from the launch deferral.
+            remainingVariants = remainingVariants.filter(v => !STALE_VARIANTS.includes(v));
+          } else {
+            // The tab's frame usually died with the realm: the stale variants
+            // go to their launch path with the decisions (run()'s dispatch
+            // launches every remaining variant name).
+            console.log(
+              '  [driver] the in-tab stale assertions could not run — the stale variants keep their launch path'
+            );
+          }
+        }
+
+        // ── Folded state-only scenarios (#309 follow-up) ──
         // ── Folded state-only scenarios (#309 follow-up) ──
         // install-applies + manual-install-no-ui run in THIS browser, after the
         // variants: they mutate the seeded trees and the GreD config, so they
@@ -2110,6 +2193,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
             profiles: createdProfiles,
             driverAvailable,
             extrasRemaining: extras.remaining,
+            variantsRemaining: remainingVariants,
           };
         }
         // Every variant and folded scenario ran the production orchestrator
@@ -2120,6 +2204,28 @@ async function runVariantSession(counter, opts, snapshotDir) {
         logScenarioTime(attemptLabel, t0, phases);
         return {profiles: createdProfiles, driverAvailable, extrasRun: true};
       }
+      // A realm death was degraded in-session; the deferred work goes to
+      // run()'s launch path. Stale variants keep their name in
+      // variantsRemaining when (and only when) the in-tab re-assertion could
+      // not run — their tab died with the realm — so the caller launches them.
+      const staleDeferred = remainingVariants.filter(v => STALE_VARIANTS.includes(v));
+      if (staleDeferred.length > 0) {
+        console.log(
+          `  [driver] deferring the stale variants (${staleDeferred.join(', ')}) to their launch path`
+        );
+      }
+      if (remainingVariants.length > 0) {
+        assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
+        phases.total = Date.now() - t0;
+        logScenarioTime(attemptLabel, t0, phases);
+        return {
+          profiles: createdProfiles,
+          driverAvailable,
+          extrasRemaining: [...FOLDED_SCENARIOS],
+          variantsRemaining: remainingVariants,
+        };
+      }
+
       // Assertion failure: retry only makes sense for startup-shaped failures;
       // a card/decision assertion failure is deterministic (bad fixture/code),
       // so do not burn the retry on it — fail fast.
@@ -2136,6 +2242,82 @@ async function runVariantSession(counter, opts, snapshotDir) {
       /* ignore */
     }
   }
+}
+
+/**
+ * Launch ONE stale variant the pre-#309 way: seed the profile, launch, and wait
+ * for the tab the startup check opens — the same observable the in-session
+ * driver path asserts, used when a mid-session realm death defers a stale
+ * variant and its startup tab is gone with it.
+ *
+ * Returns the profile dir for run()'s centralized cleanup.
+ *
+ * @param {{passed: number; failed: number}} counter
+ * @param {object} opts
+ * @param {string} snapshotDir
+ * @param {string} variant - a member of STALE_VARIANTS
+ * @returns {Promise<string>} the created profile dir
+ */
+async function runLaunchedStaleVariantScenario(counter, opts, snapshotDir, variant) {
+  const label = variant;
+  console.log(`\n## Scenario: ${label} (deferred by the dead driver realm)`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
+
+  // Per-variant staleness — NOT the blanket "both stale": utils-stale must
+  // ship a PRISTINE config and config-stale a pristine utils tree, or the card
+  // shows one badge more than the variant expects (reproduced 2026-09-30).
+  const want = expectedStaleState(variant);
+  const seeded = seedProfile(snapshotDir, {forceUtilsStale: want.utilsStale});
+  const greDir = findGreDir(firefoxBin);
+  const greSeed = installFxFolder(snapshotDir, greDir);
+  check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
+  if (!greSeed.ok) return seeded.profileDir;
+  if (want.configStale) {
+    check(counter, appendConfigProbe(greDir), `config probe appended (${label})`);
+  }
+
+  let browser;
+  try {
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+    });
+    attachProcessLogging(browser, label);
+    const page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
+    const viaPref = greShownToday(seeded.profileDir);
+    const sawMirror = mirrorSaysTabOpened(seeded.profileDir);
+    check(
+      counter,
+      Boolean(page) || viaPref || sawMirror,
+      `tab opens (${label})`,
+      'scheduler never reached addTrustedTab'
+    );
+    // Card assertions need a BiDi handle; where BiDi cannot attach, the tab-open
+    // proof above is the same observable the pre-#309 session had.
+    if (page) {
+      const pageErrors = [];
+      const onErr = err => pageErrors.push(err.message);
+      page.on('pageerror', onErr);
+      try {
+        await assertStaleCard(counter, page, variant, pageErrors);
+      } catch (err) {
+        check(counter, false, `card assertions (${label})`, err.message);
+      } finally {
+        page.off('pageerror', onErr);
+      }
+      assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label);
+    }
+  } finally {
+    try {
+      await closeBrowser(browser);
+    } catch {
+      /* ignore */
+    }
+    if (!opts.keepProfile) rmDir(seeded.profileDir);
+    else console.log(`  [keep] profile: ${seeded.profileDir}`);
+  }
+  return seeded.profileDir;
 }
 
 /**
@@ -3779,12 +3961,17 @@ async function run() {
           profiles.push(...session.profiles);
 
           if (session.driverAvailable) {
-            // The realm died mid-session, after some folded phases passed: only
-            // the ones that did not finish need a launch. Coverage is complete
-            // either way — this is the degraded shape, not a failed leg.
+            // A realm death was degraded in-session (the stale cards the dead
+            // realm deferred were re-asserted in-tab; see runVariantSession):
+            // only the decisions + folded phases it could not finish need a
+            // launch. Coverage is complete either way — this is the degraded
+            // shape, not a failed leg.
             const remaining = session.extrasRemaining ?? [];
-            if (remaining.length === 0) return;
-            console.log(`\n  [driver] resuming out-of-session: ${remaining.join(', ')}`);
+            const remainingVariants = session.variantsRemaining ?? [];
+            if (remaining.length === 0 && remainingVariants.length === 0) return;
+            console.log(
+              `\n  [driver] resuming out-of-session: ${[...remainingVariants, ...remaining].join(', ')}`
+            );
             if (remaining.includes('install-applies')) {
               profiles.push(
                 await runInstallAppliesScenario(counter, opts, snapshotDir, 'install-applies')
@@ -3797,6 +3984,50 @@ async function run() {
                   opts,
                   snapshotDir,
                   'manual-install-no-ui'
+                )
+              );
+            }
+            // Stale variants the dead realm deferred (its in-tab re-assertion
+            // could not run either): they launch in the trio order, each its
+            // own scenario — the pre-#309 shape for exactly those variants.
+            const staleToLaunch = remainingVariants.filter(v => STALE_VARIANTS.includes(v));
+            for (const variant of staleToLaunch) {
+              profiles.push(
+                await runLaunchedStaleVariantScenario(counter, opts, snapshotDir, variant)
+              );
+            }
+            if (remainingVariants.includes('up-to-date')) {
+              const upToDate = await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
+                skipUtils: false,
+                skipConfig: false,
+              });
+              profiles.push(handoffProfileDir(upToDate));
+              // Only a FULL state carries the reuse fields; an early-exit string
+              // (or partial object) leaves the reuse null and the skipped step
+              // seeds its own profile instead of consuming undefined chromeUtils.
+              if (remainingVariants.includes('skipped')) {
+                const reuse = fullHandoffState(upToDate);
+                profiles.push(
+                  handoffProfileDir(
+                    await runNoTabScenario(
+                      counter,
+                      opts,
+                      snapshotDir,
+                      'skipped',
+                      {skipUtils: true, forceUtilsStale: true},
+                      reuse
+                    )
+                  )
+                );
+              }
+            } else if (remainingVariants.includes('skipped')) {
+              // skipped without up-to-date: no reuse source, seed fresh.
+              profiles.push(
+                handoffProfileDir(
+                  await runNoTabScenario(counter, opts, snapshotDir, 'skipped', {
+                    skipUtils: true,
+                    forceUtilsStale: true,
+                  })
                 )
               );
             }

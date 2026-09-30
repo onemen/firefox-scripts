@@ -136,7 +136,9 @@ test('driver mode never trades the stale trio away for the one-browser collapse'
   const trioAt = source.indexOf('async function assertStaleTrioInTab(');
   assert.ok(trioAt !== -1, 'assertStaleTrioInTab must exist');
   const trioBody = source.slice(trioAt, source.indexOf('\n}', trioAt));
-  assert.match(trioBody, /for \(const variant of STALE_VARIANTS\)/);
+  // Default is the whole trio; a caller may pass a subset (a mid-session realm
+  // death re-asserts only the variants the dead driver never reached).
+  assert.match(trioBody, /for \(const variant of variants \?\? STALE_VARIANTS\)/);
   assert.match(trioBody, /assertStaleCard\(counter, page, variant, pageErrors\)/);
 });
 
@@ -162,9 +164,13 @@ test('state-only scenarios fold into the session, and keep their launches as fal
   // scenarios as their own launches (the pre-#309 shape).
   const probeAt = source.indexOf('if (session.driverAvailable) {');
   assert.ok(probeAt !== -1, 'step 1 must branch on driver availability');
+  // Slice to the UNAVAILABLE branch only: the degraded branch above it resumes
+  // the same launches conditionally (only what the dead realm never finished).
+  const unavailableAt = source.indexOf('falling back to the launch-per-scenario path', probeAt);
+  assert.ok(unavailableAt !== -1, 'the launch fallback must exist');
   const fallbackBody = source.slice(
-    probeAt,
-    source.indexOf('const upToDate = await runNoTabScenario', probeAt)
+    unavailableAt,
+    source.indexOf('const upToDate = await runNoTabScenario', unavailableAt)
   );
   assert.match(
     fallbackBody,
@@ -193,15 +199,41 @@ test('state-only scenarios fold into the session, and keep their launches as fal
 
   // The mid-session degrade: only the phases that did NOT finish are resumed
   // out-of-session — the ones that already passed must not run twice.
+  const degradedBody = source.slice(probeAt, unavailableAt);
   assert.match(
-    fallbackBody,
+    degradedBody,
     /remaining.includes\('install-applies'\)/,
     'the degraded path must resume the unfinished install-applies launch'
   );
   assert.match(
-    fallbackBody,
+    degradedBody,
     /remaining.includes\('manual-install-no-ui'\)/,
     'the degraded path must resume the unfinished no-ui launch'
+  );
+  assert.match(
+    degradedBody,
+    /remainingVariants\.includes\('up-to-date'\)/,
+    'the degraded path must resume the unfinished up-to-date launch'
+  );
+  assert.match(
+    degradedBody,
+    /remainingVariants\.includes\('skipped'\)/,
+    'the degraded path must resume the unfinished skipped launch'
+  );
+  // A realm death between variants re-asserts the deferred STALE cards in-tab
+  // (the pre-#309 shape) before the session returns — the card coverage never
+  // waits on a launch to come back.
+  const sessionAt2 = source.indexOf('async function runVariantSession(');
+  const sessionBody = source.slice(sessionAt2, sessionAt2 + 60000);
+  assert.match(
+    sessionBody,
+    /const staleLeft = remainingVariants\.filter\(v => STALE_VARIANTS\.includes\(v\)\)/,
+    'the session must compute the stale variants the dead realm deferred'
+  );
+  assert.match(
+    sessionBody,
+    /assertStaleTrioInTab\(counter, \{[\s\S]{0,200}variants: staleLeft/,
+    'the deferred stale variants must be re-asserted in-tab'
   );
 
   // helper-checksum-win stays a launch of its own (Windows-only; CI cannot
