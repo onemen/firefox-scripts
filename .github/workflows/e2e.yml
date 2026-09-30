@@ -51,6 +51,10 @@ on:
   # snapd self-refresh deadlocks cost ~4 min per updater-PR and, being
   # advisory, never gated anything). Scheduled runs exercise it on a timer; a
   # red scheduled snap leg still shows up as the usual advisory failure.
+  # 2026-09-30: back ON the updater-PR path per maintainer decision — #382's
+  # fixes (install after any download outcome, AppArmor prompting-client,
+  # seed-preserving revision check) address the flake sources that got it
+  # removed, and PR-time coverage is wanted again. The Monday schedule stays.
   schedule:
     - cron: '30 5 * * 1' # Monday 05:30 UTC — ahead of the url-watchdog (06:00)
   # Manual dispatch (ADR 0021): `browser` filters the browser-matrix to one
@@ -645,7 +649,7 @@ jobs:
     needs: [changes, snapshot]
     if: >-
       github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
-      (needs.changes.outputs.updater == 'true' && github.event_name == 'push')
+      needs.changes.outputs.updater == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
@@ -1443,7 +1447,7 @@ jobs:
             updater:${{ needs.changes.outputs.updater == 'true' }}
             updater-waterfox:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
-            snap-firefox:${{ (needs.changes.outputs.updater == 'true' && github.event_name == 'push') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+            snap-firefox:${{ needs.changes.outputs.updater == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
             core-lifecycle:${{ needs.changes.outputs.core == 'true' }}
             browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr') }}
             fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr') }}
