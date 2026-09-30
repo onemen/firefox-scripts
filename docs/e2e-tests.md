@@ -89,14 +89,20 @@ modify prefs to force a specific state → launch Firefox via puppeteer-core + W
 for the updater tab to auto-open → assert the card renders the expected status, all 8 buttons are
 present, checkbox wiring works, and no page/console errors appeared.
 
-| Id       | Seed (fixture)                                                                                                                                                                                    | Expected (assertions)                                                                                                                   |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 (4, 5) | ONE browser, five variants (#309 driver mode): marker on `RDFDataSource.sys.mjs` + GreD probe, then per variant a disk/pref flip — utils stale → config stale → both stale → up-to-date → skipped | each check's own decision (stale: the tab opens; up-to-date/skipped: no tab AND the day recorded, #333) + the full card set per variant |
-| 6        | utils marker + GreD probe (both stale)                                                                                                                                                            | `btn-install` copies both packages; installed trees re-hash to the manifest; badges/banner flip                                         |
-| 7        | hand-installed pre-updater `utils.zip` (no `updater/`), then the real one                                                                                                                         | no tab with the old utils; tab after the manual replace                                                                                 |
-| 8        | hand-installed `utils.zip` + no `ui/` folder                                                                                                                                                      | scheduler self-installs the UI (`ensureUpdaterUi`) and the tab renders                                                                  |
-| 9        | fx-folder in an ACL-write-denied GreD (Windows)                                                                                                                                                   | tab-open proof, ACL block, and that nothing was copied without elevation                                                                |
-| 10       | stale utils, one launch, timer observed                                                                                                                                                           | the daily in-session re-check timer fires (startup + ≥2 re-fetches)                                                                     |
+| Id             | Seed (fixture)                                                                                                                                                                                                                                               | Expected (assertions)                                                                                                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 (4, 5, 6, 8) | ONE browser, five state-only variants (#309 driver mode): marker on `RDFDataSource.sys.mjs` + GreD probe, then per variant a disk/pref flip — utils stale → config stale → both stale → up-to-date → skipped, THEN the folded install-applies + no-ui phases | each check's own decision (stale: the tab opens; up-to-date/skipped: no tab AND the day recorded, #333) + the full card set per variant; then `btn-install` copies both packages and the trees re-hash, and `ensureUpdaterUi` re-installs the ui from the manifest host |
+| 7              | hand-installed pre-updater `utils.zip` (no `updater/`), then the real one                                                                                                                                                                                    | no tab with the old utils; tab after the manual replace                                                                                                                                                                                                                 |
+| 9              | fx-folder in an ACL-write-denied GreD (Windows)                                                                                                                                                                                                              | tab-open proof, ACL block, and that nothing was copied without elevation                                                                                                                                                                                                |
+| 10             | stale utils, one launch, timer observed                                                                                                                                                                                                                      | the daily in-session re-check timer fires (startup + ≥2 re-fetches)                                                                                                                                                                                                     |
+
+The state-only scenarios that touch neither the module graph nor the process boundary are folded
+into step 1 (`runSessionExtras`, after the five variants — they mutate the seeded trees, so they
+must run last): install-applies (#37) and manual-install-no-ui (#102) reuse the driver page and just
+flip their own fixture. helper-checksum (#9) deliberately keeps its own launch: it runs only on
+Windows, where the CI legs cannot attach BiDi to the trusted tab, so driver mode is unavailable and
+folding it would save nothing while dragging a scratch-snapshot stand-in helper into every variant's
+wiring.
 
 Step 1 is one browser for five state-only variants (#309 driver mode): after the startup check opens
 the tab (the wiring under test), the harness opens a privileged in-browser driver page
@@ -114,10 +120,15 @@ and never retried. Full card assertions additionally require WebDriver BiDi to a
 chrome:// tab; on runners where it cannot, the leg verifies the tab-open via the probe mirror /
 persisted pref and says so in the check label (the pre-#309 session could not assert a card there
 either). Where the tab _is_ attachable but the driver realm never comes up, the stale trio falls
-back to the pre-#309 in-tab re-render loop (`assertStaleTrioInTab`) and up-to-date/skipped fall back
-to their own launches (`runNoTabScenario`) — driver mode degrades by capability, never by coverage.
-Skip individual steps during iteration with `--scenario 1,6,9` (step 1 includes all five variants;
-`--scenario 4` / `--scenario 5` select the same session).
+back to the pre-#309 in-tab re-render loop (`assertStaleTrioInTab`) and up-to-date / skipped /
+install-applies / manual-install-no-ui fall back to their own launches (`runNoTabScenario`,
+`runInstallAppliesScenario`, `runManualInstallNoUiScenario`) — driver mode degrades by capability,
+never by coverage. A realm that dies **mid-session** degrades the same way: the folded phases
+re-probe the realm before every driver call, and whatever could not finish is handed to its launch
+path, so the leg passes with the launches it would have had before the fold instead of failing on a
+false negative. Assertion failures are never degraded — a check that genuinely fails still fails the
+leg. Skip individual steps during iteration with `--scenario 1,7,9` (step 1 includes all five
+variants and the folded scenarios; `--scenario 4` / `5` / `6` / `8` select the same session).
 
 ### Running the updater E2E locally (e.g. on Nightly, Windows)
 
@@ -146,7 +157,7 @@ The snapshot is the newest `dist/` one (`--snapshot <dir>` picks explicitly, `--
 accepts a snapshot from any branch — the direct script never branch-checks).
 
 `--keep-profile` keeps each scenario's profile for inspection, `--repeat 2` runs the whole selection
-twice (determinism check), `--scenario 1,6,9` narrows the run, and `--no-fail-fast` runs every
+twice (determinism check), `--scenario 1,7,9` narrows the run, and `--no-fail-fast` runs every
 scenario even after a failure.
 
 ### Updater E2E scenario 9 (helper-checksum-win, Windows)

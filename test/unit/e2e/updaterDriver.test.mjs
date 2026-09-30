@@ -140,6 +140,158 @@ test('driver mode never trades the stale trio away for the one-browser collapse'
   assert.match(trioBody, /assertStaleCard\(counter, page, variant, pageErrors\)/);
 });
 
+test('state-only scenarios fold into the session, and keep their launches as fallback', () => {
+  const source = fs.readFileSync(UPDATER_E2E, 'utf-8');
+
+  // The fold itself: install-applies + manual-install-no-ui run inside the
+  // variant session's browser, driven by the driver page.
+  const sessionAt = source.indexOf('async function runVariantSession(');
+  assert.ok(sessionAt !== -1, 'runVariantSession must exist');
+  assert.match(
+    source,
+    /async function runSessionExtras\(/,
+    'the folded state-only scenarios must live in runSessionExtras'
+  );
+  assert.match(
+    source.slice(sessionAt),
+    /await runSessionExtras\(counter, \{/,
+    'the session must invoke the folded scenarios in-browser'
+  );
+
+  // Coverage never drops: the driver-unavailable path runs the folded
+  // scenarios as their own launches (the pre-#309 shape).
+  const probeAt = source.indexOf('if (session.driverAvailable) {');
+  assert.ok(probeAt !== -1, 'step 1 must branch on driver availability');
+  const fallbackBody = source.slice(
+    probeAt,
+    source.indexOf('const upToDate = await runNoTabScenario', probeAt)
+  );
+  assert.match(
+    fallbackBody,
+    /await runInstallAppliesScenario\(counter, opts, snapshotDir/,
+    'the fallback must still run install-applies as its own launch'
+  );
+  assert.match(
+    fallbackBody,
+    /await runManualInstallNoUiScenario\(counter, opts, snapshotDir/,
+    'the fallback must still run manual-install-no-ui as its own launch'
+  );
+
+  // The folded copy asserts the same ground truth the launched one did: the
+  // installed trees re-hash to the manifest, and the ui comes back from the
+  // manifest's own host (the #102 regression).
+  assert.match(
+    source,
+    /install-applies: installed utils re-hashes to the manifest/,
+    'the folded install-applies must assert the installed tree hash'
+  );
+  assert.match(
+    source,
+    /no-ui: ui folder auto-installed/,
+    'the folded no-ui must assert the ui was re-extracted'
+  );
+
+  // The mid-session degrade: only the phases that did NOT finish are resumed
+  // out-of-session — the ones that already passed must not run twice.
+  assert.match(
+    fallbackBody,
+    /remaining.includes\('install-applies'\)/,
+    'the degraded path must resume the unfinished install-applies launch'
+  );
+  assert.match(
+    fallbackBody,
+    /remaining.includes\('manual-install-no-ui'\)/,
+    'the degraded path must resume the unfinished no-ui launch'
+  );
+
+  // helper-checksum-win stays a launch of its own (Windows-only; CI cannot
+  // attach BiDi there, so folding it would buy nothing) — pin the intent so a
+  // later edit has to update this test consciously.
+  assert.match(source, /id: '9',/, 'helper-checksum must keep its own step');
+  assert.doesNotMatch(
+    source,
+    /alias: \[[^\]]*'9'/,
+    'helper-checksum must NOT be folded into the session (its Windows-only, BiDi-less CI legs would gain nothing)'
+  );
+});
+
+test('a driver realm that dies mid-session degrades the folded phases, never fails the leg', () => {
+  const source = fs.readFileSync(UPDATER_E2E, 'utf-8');
+
+  // The three parts of the contract: a bounded liveness probe, a sentinel error
+  // the coordinator can recognise, and a remaining-work report.
+  assert.match(
+    source,
+    /class DriverLostError extends Error[\s\S]*?this\.driverLost = true;/,
+    'the realm-lost sentinel must be distinguishable from a real assertion bug'
+  );
+  assert.match(
+    source,
+    /async function driverAlive\(driver, timeoutMs = 3_000\)/,
+    'the liveness probe must exist and be bounded'
+  );
+  assert.match(
+    source,
+    /Promise\.race\(\[probe, cap\]\)/,
+    'the probe must race the evaluate against a timeout so a wedged session cannot hang the leg'
+  );
+  assert.match(
+    source,
+    /async function driverCall\(driver, where, fn\)[\s\S]*?throw new DriverLostError/,
+    'driverCall must convert a gone realm into the sentinel'
+  );
+
+  // The coordinator probes BEFORE the first phase, and reports what it could not
+  // finish so run() can launch exactly that.
+  const extrasAt = source.indexOf('async function runSessionExtras(');
+  const installAt = source.indexOf('async function runFoldedInstallApplies(');
+  assert.ok(extrasAt !== -1 && installAt > extrasAt, 'the coordinator must precede the phases');
+  const coordinator = source.slice(extrasAt, installAt);
+  assert.match(
+    coordinator,
+    /if \(!\(await driverAlive\(ctx\.driver\)\)\) \{[\s\S]*?remaining: \[\.\.\.FOLDED_SCENARIOS\]/,
+    'a realm that is already gone must defer every folded scenario'
+  );
+  assert.match(
+    coordinator,
+    /if \(!err\?\.driverLost\) throw err;/,
+    'only the sentinel degrades — an assertion failure must still fail the leg'
+  );
+  assert.match(
+    coordinator,
+    /FOLDED_SCENARIOS\.filter\(scenario => !completed\.includes\(scenario\)\)/,
+    'only the phases that did not finish may be resumed'
+  );
+
+  // ...and the assertion that can outlive the realm (the tab's UI reflection) is
+  // guarded, or a dead realm would read as a failed render.
+  const installBody = source.slice(installAt, source.indexOf('async function runFoldedNoUi('));
+  assert.match(
+    installBody,
+    /if \(!\(await driverAlive\(driver\)\)\) throw new DriverLostError\('install-applies: UI reflection'\)/,
+    'the UI-reflection assertion must probe the realm first'
+  ); // Every driver command inside the folded phases goes through driverCall (or at
+  // least sits behind a driverAlive guard): a bare `driver.x()` would reject with
+  // a raw protocol error and fail the leg instead of deferring the phase.
+  const noUiAt = source.indexOf('async function runFoldedNoUi(');
+  for (const [name, phase] of [
+    ['install-applies', installAt],
+    ['manual-install-no-ui', noUiAt],
+  ]) {
+    const body = source.slice(phase, source.indexOf('\n}\n', phase));
+    assert.match(body, /await driverCall\(driver, '/, `${name} must drive the browser`);
+    const lines = body.split('\n');
+    for (const [i, line] of lines.entries()) {
+      if (!/await driver\.\w+\(/.test(line)) continue;
+      assert.match(
+        lines.slice(Math.max(0, i - 3), i + 1).join('\n'),
+        /driverCall\(driver, |driverAlive\(driver\)/,
+        `${name}: every driver call must be wrapped in driverCall or guarded by driverAlive`
+      );
+    }
+  }
+});
+
 test('the driver page is a harness artifact, never a shipped package file', () => {
   const shipped = path.join(REPO_ROOT, 'core', 'chrome', 'utils');
   const strays = [];

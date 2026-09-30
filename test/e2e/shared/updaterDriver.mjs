@@ -135,6 +135,22 @@ window.UpdaterE2EDriver = {
     return true;
   },
 
+  /**
+   * Generic char-pref write (a folded scenario's input): the override prefs
+   * (extensions.firefox-scripts.override.*) are read by the scheduler at every
+   * call, so a scenario can repoint a URL for its own phase without a relaunch.
+   */
+  setPref(name, value) {
+    Services.prefs.setCharPref(name, value);
+    return true;
+  },
+
+  /** Drop a pref set by setPref, restoring the baked configuration. */
+  clearPref(name) {
+    Services.prefs.clearUserPref(name);
+    return true;
+  },
+
   readSkip(pkg) {
     return Services.prefs.getCharPref(PREF_SKIP_PREFIX + pkg, '');
   },
@@ -374,6 +390,11 @@ function driverCommands(page) {
     /** Set a per-package skip pref (a variant input). */
     setSkip: (pkg, hash) =>
       page.evaluate((p, h) => window.UpdaterE2EDriver.setSkip(p, h), pkg, hash),
+    /** Generic char-pref write (folded scenarios repoint override URLs). */
+    setPref: (name, value) =>
+      page.evaluate((n, v) => window.UpdaterE2EDriver.setPref(n, v), name, value),
+    /** Clear a pref set with setPref. */
+    clearPref: name => page.evaluate(n => window.UpdaterE2EDriver.clearPref(n), name),
     /** Read it back (the check clears stale skip prefs). */
     readSkip: pkg => page.evaluate(p => window.UpdaterE2EDriver.readSkip(p), pkg),
     /**
