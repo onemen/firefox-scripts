@@ -23,11 +23,14 @@
 //                            an image hiccup into a merge outage.
 //
 //   pages.yml / build-and-upload.yml
-//   - publish-serialization  pages.yml's publish jobs form ONE needs-chain
-//                            (pre-publish → baseline → win → linux → mac);
-//                            the gh-pages/release single-writer property is
-//                            bought with that chain, so a new parallel
-//                            branch is a concurrent-writer bug, not a speedup.
+//   - publish-single-writer  pages.yml: the gh-pages/release single-writer
+//                            property is structural — exactly ONE job writes
+//                            a publish target: the needs-chain must end at a
+//                            lone `publishing` job that runs upload.mjs pass
+//                            2 (--skip-build); the parallel matrix legs are
+//                            pass 1 (--build-only, stage-only, artifact-out).
+//                            A second --skip-build invocation, or a writer
+//                            job beside the chain, is a concurrent-writer bug.
 //   - baseline-artifact-pairing
 //                            every `baseline-hashes` download has the
 //                            baseline job's upload behind it (same coupling
@@ -389,50 +392,116 @@ export function canaryClassificationViolations(jobs) {
   return violations;
 }
 
-// ── contract: publish-serialization (pages.yml) ────────────────────────────
+// ── contract: publish-single-writer (pages.yml) ────────────────────────────
 
-/** The single-writer needs-chain pages.yml must keep. */
-const PUBLISH_CHAIN = {
-  'pre-publish': [],
-  'baseline': ['pre-publish'],
-  'publish-win': ['baseline'],
-  'publish-linux': ['publish-win'],
-  'publish-mac': ['publish-linux'],
-};
+/** The staged-set matrix legs (pass 1) and the lone writer (pass 2). */
+const PUBLISH_STAGE_JOBS = ['publish', 'publishing'];
+
+/** The full publish needs-chain: the two plumbing jobs plus the stage jobs. */
+const PUBLISH_CHAIN_JOBS = [...PUBLISH_STAGE_JOBS, 'pre-publish', 'baseline'];
 
 /**
- * The publish jobs must form exactly one needs-chain. The gh-pages commits and
- * release uploads have no lock — the serialization IS the correctness mechanism
- * (pages.yml header: "they can never interleave"). A job added beside the
- * chain, or a reordered edge, is a concurrent-writer bug.
+ * The gh-pages/release single-writer property, enforced structurally (#353):
+ * exactly ONE pages.yml job runs upload.mjs pass 2 (--skip-build) — the lone
+ * `publishing` job at the end of the needs-chain — and the parallel `publish`
+ * matrix legs run pass 1 (--build-only) only. The old serialization contract
+ * pinned a literal win→linux→mac chain; the chain is now win/linux/mac in
+ * PARALLEL and the exclusivity is bought by the two-pass upload.mjs
+ * architecture instead. A second --skip-build invocation, a --build-only job
+ * outside the matrix, a missing writer, or a reordered edge is a
+ * concurrent-writer bug or a publish outage.
  *
  * @param {{name: string; body: string}[]} jobs
  * @param {string} file file name for messages
  * @returns {string[]}
  */
-export function publishChainViolations(jobs, file) {
+export function publishSingleWriterViolations(jobs, file) {
   const violations = [];
-  const actual = new Set(jobs.map(job => job.name));
-  for (const name of Object.keys(PUBLISH_CHAIN)) {
-    if (!actual.has(name)) violations.push(`${file}: publish job '${name}' is missing`);
+  const byName = new Map(jobs.map(job => [job.name, job]));
+  for (const name of PUBLISH_STAGE_JOBS) {
+    if (!byName.has(name)) violations.push(`${file}: publish job '${name}' is missing`);
   }
-  for (const name of actual) {
-    if (!(name in PUBLISH_CHAIN)) {
+  for (const name of byName.keys()) {
+    if (!PUBLISH_CHAIN_JOBS.includes(name)) {
       violations.push(
         `${file}: job '${name}' is not part of the publish needs-chain — extend ` +
-          'PUBLISH_CHAIN consciously: a job beside the chain can write gh-pages concurrently'
+          'PUBLISH_STAGE_JOBS consciously: a job beside the chain can write gh-pages concurrently'
       );
     }
   }
-  const byName = new Map(jobs.map(job => [job.name, job]));
-  for (const [name, expected] of Object.entries(PUBLISH_CHAIN)) {
+
+  // Edge shape: pre-publish → baseline → {publish (matrix) → publishing}.
+  const expectedNeeds = {'pre-publish': [], 'baseline': ['pre-publish'], 'publish': ['baseline']};
+  for (const [name, expected] of Object.entries(expectedNeeds)) {
     const job = byName.get(name);
     if (!job) continue;
     const needs = jobNeeds(job.body);
     if (needs.length !== expected.length || expected.some((n, i) => needs[i] !== n)) {
       violations.push(
-        `${file}: '${name}' needs [${needs.join(', ')}] but the single-writer chain pins ` +
+        `${file}: '${name}' needs [${needs.join(', ')}] but the publish chain pins ` +
           `[${expected.join(', ')}]`
+      );
+    }
+  }
+
+  // The writer takes the staging matrix as its input, and the gates stay
+  // upstream of every publish: pre-publish + baseline are explicit needs and
+  // are required to succeed, so a failed drift gate can never be published
+  // past. The matrix legs may be legitimately 'skipped' (packages-only
+  // dispatch: include=packages stages nothing) — the writer then runs alone
+  // via the always() branch.
+  const publishing = byName.get('publishing');
+  if (publishing) {
+    const needs = jobNeeds(publishing.body);
+    const expectedPublishingNeeds = ['pre-publish', 'baseline', 'publish'];
+    if (
+      needs.length !== expectedPublishingNeeds.length ||
+      expectedPublishingNeeds.some((n, i) => needs[i] !== n)
+    ) {
+      violations.push(
+        `${file}: 'publishing' needs [${needs.join(', ')}] but the single writer pins ` +
+          `[${expectedPublishingNeeds.join(', ')}]`
+      );
+    }
+    const publishingIf = stripComments(publishing.body);
+    if (!publishingIf.includes('always()')) {
+      violations.push(
+        `${file}: 'publishing' must carry an always() branch — a packages-only dispatch ` +
+          '(include=packages) skips every staging leg, and a plain needs would skip the writer too'
+      );
+    }
+    for (const gate of ['pre-publish', 'baseline']) {
+      if (!publishingIf.includes(`needs.${gate}.result == 'success'`)) {
+        violations.push(
+          `${file}: 'publishing' must require needs.${gate}.result == 'success' — the drift ` +
+            'gate stays upstream of every publish (a failed gate must not be published past)'
+        );
+      }
+    }
+  }
+
+  // Exactly ONE pass-2 (--skip-build) invocation across the whole workflow,
+  // and it lives in the writer; every other publish job is pass 1.
+  const sawBuildOnly = job => stripComments(job.body).includes('--build-only');
+  const sawSkipBuild = job => stripComments(job.body).includes('--skip-build');
+  const publishingJob = byName.get('publishing');
+  if (publishingJob && !sawSkipBuild(publishingJob)) {
+    violations.push(
+      `${file}: 'publishing' does not run upload.mjs pass 2 (--skip-build) — it is the ` +
+        'single writer and must be the only job performing the release + Pages publish'
+    );
+  }
+  for (const job of jobs) {
+    if (job.name !== 'publishing' && sawSkipBuild(job)) {
+      violations.push(
+        `${file}: '${job.name}' invokes upload.mjs pass 2 (--skip-build) — only the lone ` +
+          `'publishing' job may write the release + Pages targets`
+      );
+    }
+    if (job.name !== 'publish' && sawBuildOnly(job)) {
+      violations.push(
+        `${file}: '${job.name}' runs a --build-only staging pass outside the publish matrix — ` +
+          'staging happens only in the parallel publish legs'
       );
     }
   }
@@ -699,9 +768,10 @@ const CI_CONTRACTS = [
 
 const PAGES_CONTRACTS = [
   {
-    id: 'publish-serialization',
-    description: 'the publish jobs form exactly one single-writer needs-chain',
-    check: text => publishChainViolations(workflowJobs(text), 'pages.yml'),
+    id: 'publish-single-writer',
+    description:
+      'exactly one job writes the release + Pages targets: the needs-chain ends at the lone publishing job (pass 2), the parallel publish matrix is pass 1',
+    check: text => publishSingleWriterViolations(workflowJobs(text), 'pages.yml'),
   },
   {
     id: 'baseline-artifact-pairing',
@@ -894,7 +964,7 @@ test('canary-stays-advisory: classifying the canary as required is a violation',
   assert.match(violations[1], /must stay advisory/);
 });
 
-test('publish-serialization: a job beside the chain is a violation', () => {
+test('publish-single-writer: a writer job beside the chain is a violation', () => {
   const job = (name, needs) =>
     [
       'jobs:',
@@ -902,25 +972,75 @@ test('publish-serialization: a job beside the chain is a violation', () => {
       ...(needs ? [`    needs: ${needs}`] : []),
       '    runs-on: ubuntu-24.04',
     ].join('\n');
-  const chain = [
+  const pass1 = [
+    '    steps:',
+    '      - name: Stage',
+    '        uses: ./.github/actions/publish-upload',
+    '        with:',
+    '          extra-args: --build-only',
+  ].join('\n');
+  const pass2 = [
+    '    steps:',
+    '      - name: Publish',
+    '        uses: ./.github/actions/publish-upload',
+    '        with:',
+    '          extra-args: --skip-build',
+  ].join('\n');
+  const graph = [
     job('pre-publish', ''),
     job('baseline', 'pre-publish'),
-    job('publish-win', 'baseline'),
-    job('publish-linux', 'publish-win'),
-    job('publish-mac', 'publish-linux'),
+    `  publish:\n    needs: baseline\n    strategy:\n      matrix:\n        include:\n          - platform: win\n${pass1}`,
+    `  publishing:\n    needs: [pre-publish, baseline, publish]\n    if: \${{ always() && needs.pre-publish.result == 'success' && needs.baseline.result == 'success' && (needs.publish.result == 'success' || (inputs.include == 'packages' && needs.publish.result == 'skipped')) }}\n${pass2}`,
   ].join('\n');
-  assert.deepEqual(publishChainViolations(workflowJobs(chain), 'pages.yml'), []);
+  assert.deepEqual(publishSingleWriterViolations(workflowJobs(graph), 'pages.yml'), []);
 
-  const parallel = `${chain}\n${job('publish-arm', 'baseline')}`;
-  const violations = publishChainViolations(workflowJobs(parallel), 'pages.yml');
-  assert.equal(violations.length, 1);
-  assert.match(violations[0], /publish-arm/);
+  // A second writer job beside the chain.
+  const parallel = `${graph}\n  rogue:\n    steps:\n      - name: Rogue publish\n        uses: ./.github/actions/publish-upload\n        with:\n          extra-args: --skip-build`;
+  const violations = publishSingleWriterViolations(workflowJobs(parallel), 'pages.yml');
+  assert.equal(violations.length, 2); // beside the chain + a second --skip-build writer
+  assert.match(violations[0], /rogue/);
   assert.match(violations[0], /concurrently/);
+  assert.match(violations[1], /only the lone/);
 
-  const reordered = chain.replace('    needs: publish-win', '    needs: baseline');
-  const reorderedViolations = publishChainViolations(workflowJobs(reordered), 'pages.yml');
+  // A reordered edge: the matrix is no longer anchored to the baseline.
+  const reordered = graph.replace(
+    '    needs: baseline\n    strategy:',
+    '    needs: pre-publish\n    strategy:'
+  );
+  const reorderedViolations = publishSingleWriterViolations(workflowJobs(reordered), 'pages.yml');
   assert.equal(reorderedViolations.length, 1);
-  assert.match(reorderedViolations[0], /publish-linux/);
+  assert.match(reorderedViolations[0], /publish/);
+
+  // The writer without its always() branch would skip on a packages-only
+  // dispatch — and dropping the branch drops the gate-success checks with it.
+  const noAlways = graph.replace(
+    "    if: ${{ always() && needs.pre-publish.result == 'success' && needs.baseline.result == 'success' && (needs.publish.result == 'success' || (inputs.include == 'packages' && needs.publish.result == 'skipped')) }}",
+    "    if: ${{ needs.publish.result == 'success' }}"
+  );
+  const noAlwaysViolations = publishSingleWriterViolations(workflowJobs(noAlways), 'pages.yml');
+  assert.equal(noAlwaysViolations.length, 3);
+  assert.match(noAlwaysViolations[0], /always\(\)/);
+  assert.match(noAlwaysViolations[1], /pre-publish/);
+  assert.match(noAlwaysViolations[2], /baseline/);
+
+  // A second --skip-build invocation anywhere outside the writer is a violation.
+  const doubleWriter = graph.replace(
+    '          extra-args: --build-only',
+    '          extra-args: --skip-build'
+  );
+  const doubleWriterViolations = publishSingleWriterViolations(
+    workflowJobs(doubleWriter),
+    'pages.yml'
+  );
+  assert.equal(doubleWriterViolations.length, 1);
+  assert.match(doubleWriterViolations[0], /only the lone/);
+
+  // A --build-only staging pass outside the matrix is a violation.
+  const strayed = `${graph}\n  extra-stage:\n    steps:\n      - name: Stray stage\n        uses: ./.github/actions/publish-upload\n        with:\n          extra-args: --build-only`;
+  const strayedViolations = publishSingleWriterViolations(workflowJobs(strayed), 'pages.yml');
+  assert.equal(strayedViolations.length, 2); // beside the chain + staging outside the matrix
+  assert.match(strayedViolations[0], /concurrently/);
+  assert.match(strayedViolations[1], /outside the publish matrix/);
 });
 
 test('baseline-artifact-pairing: a download no upload produces is a violation', () => {
