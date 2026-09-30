@@ -137,6 +137,12 @@ background processes run — and never re-run a finished command just to "check 
 
 - generated files are regenerated on demand (Makefile / createZip / syncGeneratedFiles);
 - no `.local` files were used as authoritative sources;
+- **scratch files are deleted when no longer needed** — the moment the action that consumed one is
+  done (the API call returned, the log was read into the reply, the artifact was posted), delete the
+  file right there; sweep anything left before the session ends (end of session = nothing is needed
+  anymore — this backstop also covers whatever the judgment missed). Stage scratch in the repo's
+  gitignored `dist/`, never bare `/tmp` (on this machine /tmp IS the user's Temp — 13 stray files
+  proved it on 2026-09-30) — and never delete anything you did not create;
 - no unrelated files were modified;
 - failed/unavailable validation is reported;
 - when the PR is ready for review, run the ADR 0020 review step (see the `ai-review` skill);

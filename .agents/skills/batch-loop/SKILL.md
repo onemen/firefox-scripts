@@ -94,6 +94,10 @@ Run before the step-6 summary — every item is a one-command verification:
       `<workspace>/worktrees/` listing confirms the directories are gone; the husk recipe ran
       (`rm -rf node_modules` → `git worktree remove --force` → verify) and `git worktree prune`
       reports nothing.
+- [ ] **No scratch-file residue** — every scratch file the session created (API body files, log
+      dumps, probe outputs) was deleted when the action consuming it finished; anything left is
+      swept at session end. Scratch lives in the repo's gitignored `dist/`, never bare `/tmp` (= the
+      user's Temp on this machine).
 - [ ] **No orphan branches** — every batch branch is either pushed with an open PR or deleted; no
       unpushed local batch branch lingers.
 - [ ] **Main checkout clean** — `git status --short` shows no uncommitted duplicates of work that
