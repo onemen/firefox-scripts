@@ -43,7 +43,7 @@
 //      their own binary's epoch, the assertion the CI determinism job
 //      re-checks on fresh builds.
 
-import {test} from 'node:test';
+import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
@@ -60,6 +60,24 @@ const {datePathspecs} = await import('../../../tools/publish/generateBuildDates.
 const makefile = fs
   .readFileSync(path.join(REPO_ROOT, 'installer', 'Makefile'), 'utf-8')
   .replace(/\r\n/g, '\n');
+
+// Temp repos accumulate under the OS tempdir when a suite leaks them — over
+// 300 `build-epoch-*` dirs piled up in the user's Temp before this cleanup was
+// added (test/temp-cleanup-convention pins the rule). Every mkdtempSync here
+// registers its root; one sweep runs after the file's tests finish.
+const tempRoots = [];
+after(() => {
+  for (const root of tempRoots) {
+    try {
+      fs.rmSync(root, {recursive: true, force: true});
+    } catch (error) {
+      // Cleanup is hygiene, not an assertion: a Windows AV handle on a fresh
+      // file (this repo documents Defender interference) must not redden the
+      // suite. Warn loudly and keep sweeping the rest.
+      console.warn(`temp cleanup failed for ${root}: ${error.message}`);
+    }
+  }
+});
 
 /**
  * The ambient git overlays git exports into hooks. Left in place they redirect
@@ -98,6 +116,7 @@ function git(args, cwd) {
  */
 function tempRepo(withInstaller = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-epoch-repo-'));
+  tempRoots.push(dir); // before any setup can throw — the sweep owns the dir
   git(['init', '-q'], dir);
   fs.writeFileSync(path.join(dir, 'unrelated.txt'), 'x\n');
   if (withInstaller) {
@@ -317,6 +336,7 @@ test('an unmatched pathspec is a hard error, never an empty epoch', () => {
 
 test('without git history the epoch is a FIXED fallback, not the current time', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-epoch-nogit-'));
+  tempRoots.push(dir);
   const {epoch, source} = buildEpoch('helper', dir);
   assert.equal(source, 'no-git');
   assert.equal(epoch, FALLBACK_EPOCH);

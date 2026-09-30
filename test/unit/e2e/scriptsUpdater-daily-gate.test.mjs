@@ -19,7 +19,7 @@
 //     the tab itself records the shown day (updater.js engineInit, source
 //     canary below), and an ignored tab simply resurfaces tomorrow.
 
-import {test} from 'node:test';
+import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -27,6 +27,22 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import vm from 'vm';
 import {fileURLToPath} from 'node:url';
+
+// Temp-leak hygiene (see buildEpoch.test.mjs): the PathUtils profile dir seeded
+// per loadUpdater() registers here and one sweep removes them all after the
+// file's tests finish — 534 leaked `fxs-gate-pathutils-*` dirs in the user's
+// Temp forced this.
+const tempRoots = [];
+after(() => {
+  for (const root of tempRoots) {
+    try {
+      fs.rmSync(root, {recursive: true, force: true});
+    } catch (error) {
+      // See buildEpoch.test.mjs: hygiene, not an assertion — warn and continue.
+      console.warn(`temp cleanup failed for ${root}: ${error.message}`);
+    }
+  }
+});
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const MODULE_PATH = path.join(
@@ -197,6 +213,12 @@ const updaterConfig = () => ({
   IS_LOCAL: false,
 });
 
+/**
+ * Load scriptsUpdater.sys.mjs into a vm sandbox wired to real fs fixtures. The
+ * PathUtils profile dir it seeds is a fresh mkdtemp root registered in
+ * `tempRoots` (swept once after the file's tests finish — see the import
+ * block).
+ */
 function loadUpdater({store = {}, routes = {}} = {}) {
   const source = fs
     .readFileSync(MODULE_PATH, 'utf-8')
@@ -229,7 +251,11 @@ function loadUpdater({store = {}, routes = {}} = {}) {
     // ensureUpdaterUi builds its paths through PathUtils (profile/temp dirs)
     // and probes/copies through IOUtils — both are backed by the real fs here.
     PathUtils: {
-      profileDir: fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-gate-pathutils-')),
+      profileDir: (() => {
+        const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-gate-pathutils-'));
+        tempRoots.push(profileDir);
+        return profileDir;
+      })(),
       tempDir: os.tmpdir(),
       join: (...parts) => path.join(...parts),
       exists: async p => fs.existsSync(p),

@@ -20,7 +20,7 @@
 // refs/remotes/...` — no network, no real remote; a failed `git fetch` (no
 // remote configured here) only warns, which is itself pinned behavior.
 
-import {test} from 'node:test';
+import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
@@ -28,6 +28,21 @@ import os from 'node:os';
 import path from 'node:path';
 
 const {resolveDispatchRef} = await import('../../../tools/publish/release.mjs');
+
+// Same temp-leak hygiene as buildEpoch.test.mjs: every throwaway repo registers
+// its root and one sweep removes them all after the file's tests finish —
+// 1216 leaked `dispatch-ref-repo-*` dirs in the user's Temp forced this.
+const tempRoots = [];
+after(() => {
+  for (const root of tempRoots) {
+    try {
+      fs.rmSync(root, {recursive: true, force: true});
+    } catch (error) {
+      // See buildEpoch.test.mjs: hygiene, not an assertion — warn and continue.
+      console.warn(`temp cleanup failed for ${root}: ${error.message}`);
+    }
+  }
+});
 
 /**
  * Scrub the ambient git overlays (GIT_DIR/GIT_INDEX_FILE/…) for every git call
@@ -60,6 +75,7 @@ function cleanGitEnv() {
  */
 function tempRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-ref-repo-'));
+  tempRoots.push(dir);
   git(['init', '-q', '-b', 'main'], dir);
   fs.writeFileSync(path.join(dir, 'file.txt'), 'one\n');
   git(['add', '.'], dir);
