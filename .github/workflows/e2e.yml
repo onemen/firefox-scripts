@@ -726,16 +726,21 @@ jobs:
           mkdir -p ~/snap-pkg
           cd ~/snap-pkg
           # Exact-revision cache hit? The restore-key seed below may have
-          # restored an OLDER revision — only trust the hit when the fetched
-          # pair matches the resolved revision (ADR 0037); otherwise fall
-          # through and download the pinned one.
+          # restored an OLDER revision — only trust the hit when the restored
+          # pair IS the resolved revision. The revision is read from the pair's
+          # own assertion filename (firefox_<rev>.assert — the authoritative
+          # revision marker, no dash parsing): `snap info` prints the revision
+          # bare (8969), so the earlier [0-9]+-[0-9]+ pattern never matched and
+          # the exact-revision cache could never hit (every run re-downloaded
+          # and the seed was deleted — the red-main-adjacent bug this fixes).
           if ls firefox_*.snap >/dev/null 2>&1; then
-            if [ "$(snap info firefox 2>/dev/null | grep -m1 'stable:' | grep -oE '[0-9]+-[0-9]+' || true)" = "${{ steps.rev.outputs.revision }}" ]; then
+            cached_rev="$(ls firefox_*.assert | head -n1 | grep -oE '[0-9]+' | head -n1)"
+            if [ "$cached_rev" = "${{ steps.rev.outputs.revision }}" ]; then
               echo "cache hit: using cached .snap + assertion"
               echo "from-cache=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "::warning::restored cache is a DIFFERENT (older) revision — re-downloading the pinned one"
+            echo "::warning::restored cache is a DIFFERENT (older) revision ($cached_rev vs ${{ steps.rev.outputs.revision }}) — re-downloading the pinned one"
             rm -f firefox_*.snap firefox_*.assert
           fi
           if [ "${{ steps.rev.outputs.available }}" != 'true' ]; then
