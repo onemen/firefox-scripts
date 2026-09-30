@@ -220,6 +220,16 @@ export async function launchFirefox(
       ...STARTUP_HYGIENE_PREFS,
       ...extraPrefsFirefox,
     },
+    env: {
+      // Firefox nightly (2026-09-30, observed on the updater E2E legs) rejects
+      // privileged remote-agent calls unless system access is allowed via ENV
+      // — the old -remote-allow-system-access CLI flag no longer suffices:
+      //   RemoteError: unsupported operation System access is required. Start
+      //   Firefox with the "MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1" environment
+      //   variable set to enable it.
+      ...process.env,
+      MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1',
+    },
     args: ['-remote-allow-system-access', '--new-instance'],
   });
   // closeBrowser's startup sweep keys off this (puppeteer's Browser keeps no

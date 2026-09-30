@@ -43,6 +43,19 @@ test('launchFirefox injects the hygiene prefs ahead of caller prefs', () => {
   assert.match(source, /\.\.\.STARTUP_HYGIENE_PREFS,\s*\.\.\.extraPrefsFirefox,/);
 });
 
+test('launchFirefox grants remote-agent system access via the environment', () => {
+  // Firefox nightly (2026-09-30) requires MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1 in
+  // the ENVIRONMENT for privileged remote-agent calls — the
+  // -remote-allow-system-access CLI flag alone now fails with
+  // "unsupported operation System access is required" (updater E2E legs).
+  // The env block must also spread process.env so PATH et al. survive.
+  assert.match(
+    source,
+    /\.\.\.process\.env,\s*MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1',/,
+    'puppeteer launch must set MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1 on top of process.env'
+  );
+});
+
 test('seedStartupHygienePrefs writes the prefs into a fresh profile user.js', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-launchprefs-'));
   try {
