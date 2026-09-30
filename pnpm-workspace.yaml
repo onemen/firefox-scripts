@@ -14,6 +14,11 @@ minimumReleaseAgeExclude:
 
 overrides:
   smol-toml: '>=1.7.1'
+  # GHSA-qhr7-859c-m2p7: brace-expansion DoS via uncontrolled recursion on
+  # nested brace groups. Three transitive copies ride devDependencies
+  # (@microsoft/eslint-plugin-sdl, clang-format → minimatch); the patched
+  # 1.1.20+ / 2.1.6+ / 5.0.11+ releases all satisfy this floor.
+  brace-expansion: '>=1.1.20'
 
 trustPolicy: no-downgrade
 
