@@ -8,6 +8,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
   classifyStatus,
+  coverageLines,
   isRetryable,
   normalizeFinding,
   parseArgs,
@@ -296,6 +297,90 @@ test('caps findings via maxFindings and honors summaryOnly', async () => {
   });
   assert.equal(summaryOnly.rdjson.diagnostics.length, 0);
   assert.equal(summaryOnly.totalFindings, 3);
+});
+
+test('coverage counts reviewed, failed, and non-reviewable files', async () => {
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const fileDiffs = new Map([
+    ['a.js', 'diff a'],
+    ['b.js', 'diff b'],
+    ['c.bin', 'Binary files differ'],
+    ['d.js', 'diff d'],
+  ]);
+  const requestImpl = async (provider, body) => {
+    const file = /Review the diff of ([^\s:]+)/.exec(body.messages[1].content)?.[1] ?? '?';
+    if (file === 'd.js') return {kind: 'permanent', status: 429, reason: 'rate limited'};
+    return {
+      kind: 'success',
+      body: {choices: [{message: {content: JSON.stringify({summary: `S ${file}`, findings: []})}}]},
+    };
+  };
+  // All reviewable files start concurrently (default), so the 429 lands after
+  // the successes — failed counts the 429, skipped stays 0.
+  const result = await reviewFiles({
+    files: ['a.js', 'b.js', 'c.bin', 'd.js'],
+    fileDiffs,
+    providers,
+    requestImpl,
+  });
+  assert.deepEqual(result.coverage, {
+    total: 4,
+    reviewable: 3,
+    reviewed: 2,
+    failed: 1,
+    skipped: 0,
+    skippedFiles: [],
+  });
+});
+
+test('coverage records rate-limit skips with the file names', async () => {
+  const providers = [{name: 'test', model: 'm1', key: 'k', endpoint: 'https://x'}];
+  const fileDiffs = new Map([
+    ['a.js', 'diff a'],
+    ['b.js', 'diff b'],
+  ]);
+  const requestImpl = async () => ({kind: 'permanent', status: 429, reason: 'rate limited'});
+  // concurrency 1 keeps the skip deterministic: a.js fails, b.js is skipped.
+  const result = await reviewFiles({
+    files: ['a.js', 'b.js'],
+    fileDiffs,
+    providers,
+    requestImpl,
+    concurrency: 1,
+  });
+  assert.deepEqual(result.coverage, {
+    total: 2,
+    reviewable: 2,
+    reviewed: 0,
+    failed: 1,
+    skipped: 1,
+    skippedFiles: ['b.js'],
+  });
+});
+
+test('coverageLines renders the partial-coverage summary line', () => {
+  const lines = coverageLines({
+    total: 4,
+    reviewable: 3,
+    reviewed: 2,
+    failed: 1,
+    skipped: 0,
+    skippedFiles: [],
+  });
+  assert.match(
+    lines[0],
+    /Coverage: 2 of 4 changed file\(s\) reviewed — 1 failed, 0 skipped; 1 not reviewable \(binary\/empty diff\)\./
+  );
+  const withNames = coverageLines({
+    total: 2,
+    reviewable: 2,
+    reviewed: 0,
+    failed: 1,
+    skipped: 1,
+    skippedFiles: ['b.js'],
+  });
+  assert.match(withNames[0], /skipped \(b\.js\)/);
+  assert.equal(lines[1], '');
 });
 
 test('records provider failure and stops on rate limit', async () => {
