@@ -20,6 +20,7 @@ const {
   INSTALLER_ARGV0_ERE,
   INSTALLER_ARGV0_PS,
   isE2eProcess,
+  killProcessesByCmdline,
   killStrayProcesses,
   removeProfileCompatibilityIni,
 } = await import(hygieneUrl);
@@ -316,4 +317,64 @@ test('killStrayProcesses: missing OS tooling is reported, not thrown', async () 
   });
   assert.equal(killed, 0);
   assert.match(logs[0], /unavailable/);
+});
+
+// ── killProcessesByCmdline (#384) ───────────────────────────────────────────
+// Same seam contract as killStrayProcesses: the real sweep kills matching
+// processes, so the runner is injected and both platform branches are tested
+// on any host.
+
+test('killProcessesByCmdline: win32 branch matches the needle via .Contains and counts kills', () => {
+  const seen = [];
+  const killed = killProcessesByCmdline('C:\\temp\\fxs-e2e-ABC123', {
+    platform: 'win32',
+    run: (cmd, args) => {
+      seen.push({cmd, args: [...args]});
+      return {status: 0, stdout: '123:firefox.exe\n456:firefox.exe\n'};
+    },
+  });
+  assert.equal(killed, 2);
+  assert.equal(seen[0].cmd, 'powershell.exe');
+  const ps = seen[0].args.at(-1);
+  // Plain containment (.Contains), no wildcard semantics, and the needle is
+  // embedded.
+  assert.match(ps, /\.Contains\('/);
+  assert.ok(ps.includes('C:\\temp\\fxs-e2e-ABC123'));
+});
+
+test('killProcessesByCmdline: POSIX branch escapes regex specials in the needle', () => {
+  const seen = [];
+  const killed = killProcessesByCmdline('/tmp/fxs-e2e-ABC (1)', {
+    platform: 'linux',
+    run: (cmd, args) => {
+      seen.push({cmd, args: [...args]});
+      return {status: 0, stdout: ''};
+    },
+  });
+  assert.equal(killed, 1);
+  assert.equal(seen[0].cmd, 'pkill');
+  assert.equal(seen[0].args[0], '-f');
+  // Parentheses and the dot must be escaped for the ERE.
+  assert.equal(seen[0].args[1], '/tmp/fxs-e2e-ABC \\(1\\)');
+});
+
+test('killProcessesByCmdline: POSIX no-match (exit 1) kills nothing and logs nothing', () => {
+  const logs = [];
+  const killed = killProcessesByCmdline('/tmp/fxs-e2e-NONE', {
+    log: m => logs.push(m),
+    platform: 'linux',
+    run: () => ({status: 1, stdout: ''}),
+  });
+  assert.equal(killed, 0);
+  assert.equal(logs.length, 0);
+});
+
+test('killProcessesByCmdline: empty needle is a no-op (refuses to match everything)', () => {
+  const killed = killProcessesByCmdline('', {
+    platform: 'win32',
+    run: () => {
+      throw new Error('must not spawn');
+    },
+  });
+  assert.equal(killed, 0);
 });

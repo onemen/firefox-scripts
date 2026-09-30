@@ -57,6 +57,26 @@ test('launchFirefox grants remote-agent system access via the environment', () =
   );
 });
 
+test('launchFirefox bounds the handshake and retries once (#384)', () => {
+  // The launch handshake is raced against a hard deadline; a wedged start is
+  // killed BY TAG (whole process tree — launcher-only kills orphan the
+  // browser's children) and retried once. protocolTimeout (per protocol
+  // command) must stay 45_000 — this contract bounds the launch phase only.
+  assert.match(source, /const LAUNCH_DEADLINE_MS = [\d_]+;/);
+  assert.match(source, /Promise\.race\(\[launchPromise, deadline\]\)/);
+  assert.match(source, /launchPromise\.catch\(\(\) => \{\}\);/);
+  assert.match(source, /killProcessesByCmdline\(tag/);
+  assert.match(source, /return launchOnce\(\);/);
+  assert.match(source, /protocolTimeout: 45_000/);
+});
+
+test('launchFirefox embeds a unique per-launch tag in the browser argv', () => {
+  // The deadline kill matches this tag in the process command lines, so it
+  // must be unique per launch AND present in the launch args.
+  assert.match(source, /--fxs-e2e-puppeteer-\$\{Date\.now\(\)\}/);
+  assert.match(source, /args: \['-remote-allow-system-access', '--new-instance', tag\]/);
+});
+
 test('seedStartupHygienePrefs writes the prefs into a fresh profile user.js', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-launchprefs-'));
   try {

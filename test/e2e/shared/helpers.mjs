@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
+import {killProcessesByCmdline} from './processHygiene.mjs';
 
 export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -185,7 +186,64 @@ export async function pollUntil(fn, timeoutMs, intervalMs = 500, label = '') {
 // ── Puppeteer ──────────────────────────────────────────────────────────────
 
 /**
+ * Hard bound on the puppeteer launch handshake (process spawn + BiDi session
+ * establishment), in ms. A 159 headless start under load can wedge inside the
+ * handshake — neither puppeteer.launch nor the ProtocolError's own 45 s
+ * protocolTimeout reliably fires — and the scenario then stalls instead of
+ * reaching its retry (#384). Ported from the firefox-updater's
+ * firefoxPuppeteer.js pattern: race the launch against this deadline, tag the
+ * launch, kill the tagged tree on failure, retry once.
+ */
+const LAUNCH_DEADLINE_MS = 20_000;
+
+/**
+ * Race a puppeteer launch promise against a hard deadline. On deadline win,
+ * kill every process whose command line carries `tag` (the whole browser tree —
+ * killing only the launcher orphans its children) and reject with a tagged
+ * error; the loser promise's late rejection is swallowed by the caller's
+ * `launchPromise.catch(() => {})` so it cannot become an unhandled rejection
+ * (same shape as firefoxPuppeteer.js).
+ *
+ * @param {Promise<import('puppeteer-core').Browser>} launchPromise
+ * @param {number} deadlineMs
+ * @param {string} tag unique per-launch tag (also present in the browser's
+ *   argv)
+ * @param {(msg: string) => void} log
+ * @returns {Promise<import('puppeteer-core').Browser>}
+ */
+async function raceLaunchDeadline(launchPromise, deadlineMs, tag, log) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`puppeteer launch timed out after ${deadlineMs / 1000}s (${tag})`)),
+      deadlineMs
+    );
+  });
+  try {
+    return await Promise.race([launchPromise, deadline]);
+  } catch (err) {
+    if (!/launch timed out/.test(String(err?.message))) throw err;
+    log(
+      `  [launch] start exceeded ${deadlineMs / 1000}s — killing the wedged browser tree (${tag})`
+    );
+    killProcessesByCmdline(tag, {log});
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Launch Firefox via puppeteer-core + WebDriver BiDi.
+ *
+ * Bounded (#384): the handshake is raced against LAUNCH_DEADLINE_MS; a wedged
+ * start is killed BY TAG (the whole process tree) and the launch retried once.
+ * A wedged start is transient (load-sensitive), so the retry usually connects;
+ * if it wedges too, the tagged error surfaces to the scenario's own retry-once.
+ * protocolTimeout (45 s per protocol command) is intentionally UNCHANGED — this
+ * bounds only the launch phase. Same defensive shape as the firefox-updater's
+ * firefoxPuppeteer.js (deadline race + per-launch tag + taskkill by tag +
+ * late-rejection swallow).
  *
  * @param {string} binary - absolute path to Firefox executable
  * @param {string} profileDir - userDataDir (temp profile)
@@ -198,44 +256,67 @@ export async function launchFirefox(
   {headless = false, extraPrefsFirefox = {}} = {}
 ) {
   const puppeteer = await import('puppeteer-core');
-  return puppeteer.launch({
-    browser: 'firefox',
-    executablePath: binary,
-    userDataDir: profileDir,
-    headless,
-    protocol: 'webDriverBiDi',
-    // Default is 180 s per protocol command; session.new can hang that long
-    // when a Firefox start wedges (observed 2026-09-22, reuse-path
-    // measurement). Cap it so a wedged start surfaces as an error the
-    // scenario can retry instead of stalling the whole leg.
-    protocolTimeout: 45_000,
-    // Puppeteer overwrites user.js with its own preferences before launch
-    // (createProfile -> syncPreferences), so any prefs the caller needs must
-    // be injected through this option — a caller-written user.js would be
-    // silently replaced and never reach Firefox.
-    extraPrefsFirefox: {
-      // Never let a throwaway test install appear in the user's Windows
-      // Startup apps — see STARTUP_HYGIENE_PREFS. Callers can still override
-      // for a test that needs the real behavior.
-      ...STARTUP_HYGIENE_PREFS,
-      ...extraPrefsFirefox,
-    },
-    env: {
-      // Firefox 159 (Bug 2054896, landed on nightly 2026-09-29) removed the
-      // -remote-allow-system-access CLI argument and requires privileged
-      // remote-agent calls to be allowed via the ENVIRONMENT — which is why
-      // the updater E2E nightly legs failed on 2026-09-30 with
-      //   RemoteError: unsupported operation System access is required. Start
-      //   Firefox with the "MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1" environment
-      //   variable set to enable it.
-      // Harmless on Firefox <= 158 (where the flag still works) and required
-      // on 159+ (the gate follows the Gecko base, so every browser leg needs
-      // it once its base rebases past 158).
-      ...process.env,
-      MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1',
-    },
-    args: ['-remote-allow-system-access', '--new-instance'],
-  });
+  // Unique per-launch tag, embedded in the browser argv: the deadline's kill
+  // step matches it in the process command lines, so the wedged tree dies
+  // completely instead of leaking orphans (firefoxPuppeteer.js pattern).
+  const tag = `--fxs-e2e-puppeteer-${Date.now()}`;
+
+  const launchOnce = async () => {
+    const launchPromise = puppeteer.launch({
+      browser: 'firefox',
+      executablePath: binary,
+      userDataDir: profileDir,
+      headless,
+      protocol: 'webDriverBiDi',
+      // Default is 180 s per protocol command; session.new can hang that long
+      // when a Firefox start wedges (observed 2026-09-22, reuse-path
+      // measurement). Cap it so a wedged start surfaces as an error the
+      // scenario can retry instead of stalling the whole leg.
+      protocolTimeout: 45_000,
+      // Puppeteer overwrites user.js with its own preferences before launch
+      // (createProfile -> syncPreferences), so any prefs the caller needs must
+      // be injected through this option — a caller-written user.js would be
+      // silently replaced and never reach Firefox.
+      extraPrefsFirefox: {
+        // Never let a throwaway test install appear in the user's Windows
+        // Startup apps — see STARTUP_HYGIENE_PREFS. Callers can still override
+        // for a test that needs the real behavior.
+        ...STARTUP_HYGIENE_PREFS,
+        ...extraPrefsFirefox,
+      },
+      env: {
+        // Firefox 159 (Bug 2054896, landed on nightly 2026-09-29) removed the
+        // -remote-allow-system-access CLI argument and requires privileged
+        // remote-agent calls to be allowed via the ENVIRONMENT — which is why
+        // the updater E2E nightly legs failed on 2026-09-30 with
+        //   RemoteError: unsupported operation System access is required. Start
+        //   Firefox with the "MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1" environment
+        //   variable set to enable it.
+        // Harmless on Firefox <= 158 (where the flag still works) and required
+        // on 159+ (the gate follows the Gecko base, so every browser leg needs
+        // it once its base rebases past 158).
+        ...process.env,
+        MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1',
+      },
+      args: ['-remote-allow-system-access', '--new-instance', tag],
+    });
+    // A rejection after the deadline won the race must not become an unhandled
+    // rejection (it would crash the harness) — firefoxPuppeteer.js shape.
+    launchPromise.catch(() => {});
+    return raceLaunchDeadline(launchPromise, LAUNCH_DEADLINE_MS, tag, console.log);
+  };
+
+  try {
+    return await launchOnce();
+  } catch (err) {
+    // One fast retry: a wedged start is load-sensitive and transient; a
+    // relaunch almost always connects (issue #384). The retry shares the tag —
+    // a deadline kill then also sweeps any survivor of the first attempt. The
+    // 45 s protocolTimeout is intentionally UNCHANGED — this bounds the launch
+    // phase, not protocol commands.
+    console.log(`  [launch] wedged (${err?.message}) — retrying once`);
+    return launchOnce();
+  }
   // closeBrowser's startup sweep keys off this (puppeteer's Browser keeps no
   // executable path of its own).
 }

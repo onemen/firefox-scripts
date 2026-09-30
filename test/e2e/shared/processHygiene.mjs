@@ -150,6 +150,70 @@ export async function killStrayProcesses({
 }
 
 /**
+ * Kill every process whose command line contains `needle`. Only for
+ * HARNESS-OWNED, unique needles: the match is a plain substring of the full
+ * command line, so a non-unique needle could kill unrelated processes. Two
+ * needle kinds are supported:
+ *
+ * - a unique mkdtemp profile path (launch-deadline cleanup, #384)
+ * - the per-launch tag (`--puppeteer-<ts>`, ported from the firefox-updater's
+ *   firefoxPuppeteer.js: tag every launch so a wedged one can be killed as a
+ *   TREE — killing only the launcher orphans the browser's child processes,
+ *   which is how a scratch tool leaked 158 firefox processes on 2026-09-30).
+ *
+ * Unit-test seam: `run` replaces the spawnSync call and `platform` selects the
+ * win32/POSIX branch, exactly like killStrayProcesses.
+ *
+ * @param {string} needle unique substring that must appear in the command line
+ * @param {{
+ *   log?: (msg: string) => void;
+ *   run?: typeof import('node:child_process').spawnSync;
+ *   platform?: string;
+ * }} [opts]
+ * @returns {number} number of processes killed (best-effort count; pkill on
+ *   POSIX does not report a count, so ≥1 is reported as 1)
+ */
+export function killProcessesByCmdline(
+  needle,
+  {log = console.log, run = spawnSync, platform = process.platform} = {}
+) {
+  if (!needle) return 0;
+  if (platform === 'win32') {
+    // .Contains(), not -like: plain string containment — no wildcard semantics
+    // (a temp path can contain [ ] which -like reads as a character set).
+    const ps =
+      'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ' +
+      `$_.CommandLine.Contains('${needle}') } | ForEach-Object { ` +
+      'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; ' +
+      '"$($_.ProcessId):$($_.Name)" }';
+    const res = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    return report(res, log);
+  }
+  // POSIX: pkill -f takes an ERE — escape the specials a path can contain
+  // (dots at least).
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const res = run('pkill', ['-f', escaped], {
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  if (res.error) {
+    log(`  [hygiene] cmdline sweep unavailable: ${res.error.message}`);
+    return 0;
+  }
+  if (res.status === 0) {
+    log('  [hygiene] killed ≥1 process matching the needle (pkill does not report the count)');
+    return 1;
+  }
+  if (res.status > 1) {
+    log(`  [hygiene] cmdline sweep failed (pkill exit ${res.status})`);
+  }
+  return 0;
+}
+
+/**
  * Interpret the Windows sweep result for the log; returns the killed-process
  * count (the PowerShell loop prints one `PID:Name` line per killed process).
  */
