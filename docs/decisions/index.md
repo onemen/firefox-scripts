@@ -116,6 +116,9 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0036](./0036-git-derived-build-dates.md) — Build dates are derived from git per binary (same
   input set as the publish hash); PE epoch scoped to those inputs, per binary (extends [0019]'s
   self-update)
+- [0037](./0037-snap-e2e-cross-revision-cache-seed.md) — Snap Firefox E2E leg: cross-revision cache
+  seed + single install track (offline-from-cache only); store outages degrade to an older revision
+  instead of a hard fail (#291)
 
 ## Historical
 

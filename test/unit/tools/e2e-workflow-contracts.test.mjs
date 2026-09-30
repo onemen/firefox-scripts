@@ -473,20 +473,33 @@ test('e2e.yml: the snapshot job publishes the dev-snapshot artifact the legs dow
   );
 });
 
-test('e2e.yml: the snap leg publishes FIREFOX_BINARY on BOTH install paths', () => {
+test('e2e.yml: the snap leg publishes FIREFOX_BINARY on the single install track', () => {
   // The regression contract 1 was born from: the store path (downloads.mjs) and
-  // the cache path (snap install from the pinned pair) are mutually exclusive at
-  // runtime, so each has to satisfy the contract on its own.
+  // the cache path (snap install from the pinned pair) were mutually exclusive
+  // at runtime, so each had to satisfy the contract on its own. ADR 0037 made
+  // the offline-from-cache install the ONLY install path (the store download
+  // fills the cache; it never installs), so exactly ONE provisioning step
+  // remains, and it must publish FIREFOX_BINARY itself.
   const snap = workflowJobs(readWorkflow(E2E)).find(job => job.name === 'snap-firefox');
   assert.ok(snap, 'expected a `snap-firefox` job in e2e.yml');
   const installs = jobSteps(snap.body).filter(step => provisionsBrowser(step));
-  assert.equal(installs.length, 2, 'expected exactly the two snap install paths');
+  assert.equal(
+    installs.length,
+    1,
+    'expected exactly the one offline-from-cache install path (ADR 0037)'
+  );
   for (const step of installs) {
     assert.ok(
       publishesFirefoxBinary(step),
       `snap path "${stepName(step)}" must publish FIREFOX_BINARY`
     );
   }
+  // The direct-store downloads.mjs install must stay gone (a second track would
+  // re-split the FIREFOX_BINARY/cache-hit invariants).
+  assert.ok(
+    !jobSteps(snap.body).some(step => /downloads\.mjs firefox-snap/.test(stripComments(step))),
+    'the downloads.mjs firefox-snap direct install must not return to the snap leg (ADR 0037 single track)'
+  );
 });
 
 // ── per-contract fixtures: a contract that cannot fail is worthless ─────────
