@@ -1,13 +1,13 @@
 ---
-description: Turn complex or visual agent responses into rich, reviewable HTML artifacts the user can annotate and send feedback on, using the lavish-axi CLI. Use when about to give a plan, comparison, diagram, table, code diff, report, or anything easier to grasp visually than as prose.
+description: Turn complex or visual agent responses into rich, reviewable HTML artifacts (HTML files) the user can annotate and send feedback on, using the lavish-axi CLI. Use when about to give a plan, comparison, diagram, table, code diff, report, or anything easier to grasp visually than as prose.
 license: MIT
 metadata:
     argument-hint: <what the artifact should show>
     author: Kun Chen (kunchenguid)
     github-path: skills/lavish
-    github-ref: refs/tags/lavish-axi-v0.1.64
+    github-ref: refs/tags/lavish-axi-v0.1.79
     github-repo: https://github.com/kunchenguid/lavish-axi
-    github-tree-sha: 1a478558b7c2a681e9e8ef97b99968c411f6f905
+    github-tree-sha: 1fb88446e7db6bf3e3df95f3f0b1065d956e47d2
     hermes-category: productivity
     hermes-tags: html, review, artifacts, visualization
 name: lavish
@@ -32,5 +32,5 @@ If lavish-axi output shows a follow-up command starting with `lavish-axi`, run i
 
 $ARGUMENTS
 
-If the request above is non-empty, the user invoked `/lavish` explicitly - fetch the current CLI guidance, then build that artifact.
+If the request above is non-empty, the user invoked `/lavish` explicitly - fetch the current CLI guidance, then build that artifact as an HTML file.
 If it is empty, infer what to visualize from the conversation.

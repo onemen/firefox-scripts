@@ -10,13 +10,26 @@ name: Pages publish
 # (enforced inside upload.mjs); dev mode publishes a disposable
 # dev-build-<branch>-<sha> branch + pre-release and never touches prod.
 #
-# The three publish jobs run SEQUENTIALLY so they can never interleave
-# gh-pages commits or release-asset uploads. Change detection is anchored to
-# a shared PRE-RUN baseline (`baseline` job captures the current hashes.json;
-# every job diffs against it via FIREFOX_SCRIPTS_STORED_HASHES_FILE): the
-# installer/helper/zips hashes in the manifest are platform-independent, so
-# if each job re-read the branch after the previous job pushed, only the
-# first platform would ever rebuild after a source change.
+# Three stages (#353):
+#   1. pre-publish — the prod drift gate (the shared drift-gate composite).
+#   2. baseline, then a PARALLEL win/linux/mac matrix — each publish-<os> job
+#      runs upload.mjs pass 1 (`--build-only`): hash-check against the shared
+#      pre-run baseline, rebuild what changed, stage the binaries, upload the
+#      staging tree as the publish-staged-<os> artifact. A staged pass touches
+#      NO publish target, so the legs cannot interleave writers and may run
+#      concurrently.
+#   3. publish — ONE upload.mjs pass 2 (`--skip-build`) with all three
+#      platforms in scope: verifies the staged set, re-runs the AV/VT gates
+#      and performs the release + Pages publish. Single writer, so gh-pages
+#      commits and release-asset uploads can never interleave — the property
+#      the old serial job chain bought, bought here with the same two-pass
+#      architecture build-and-upload.yml uses.
+#
+# The pre-run baseline still anchors change detection: the installer/helper
+# hashes in the manifest are platform-independent, so a source change must
+# make every platform diff against the manifest captured BEFORE the run —
+# if a leg re-read the branch after a sibling pushed, only the first platform
+# would ever rebuild after a source change.
 #
 # Pages serving stays "Deploy from branch: gh-pages" — this workflow pushes
 # to that branch; it does not use the actions-pages deployment method.
@@ -118,7 +131,7 @@ jobs:
         run: node tools/ci/prune-caches.mjs --keep=3
 
   # Snapshot the hash manifest as it was BEFORE this run started. Every
-  # publish job diffs its sources against this same baseline, so a source
+  # publish leg diffs its sources against this same baseline, so a source
   # change makes all three platforms rebuild their native binaries.
   baseline:
     name: capture pre-run hash manifest
@@ -145,19 +158,45 @@ jobs:
           path: baseline/hashes.json
           if-no-files-found: error
 
-  publish-win:
-    name: publish — windows binaries
+  # Build + stage matrix (pass 1, PARALLEL — #353). Each OS runs
+  # `upload.mjs --build-only`: hash-check, rebuild changed, stage binaries,
+  # upload the staging tree as an artifact, and STOP before the AV/VT gates
+  # and any publishing. No leg touches any GitHub publish target; the merged
+  # staging set is what the single-writer job publishes.
+  #
+  # The 'linux' platform builds the aarch64 twin too (upload.mjs expands it
+  # automatically), so its leg needs the cross toolchain.
+  #
+  # Prod diff anchor: FIREFOX_SCRIPTS_STORED_HASHES_FILE points at the shared
+  # pre-run baseline (never at what a sibling leg just pushed — pass 1 legs
+  # push nothing, and the baseline predates the whole run).
+  publish:
+    name: publish — ${{ matrix.platform }} binaries
     needs: baseline
-    # Prod publishes deploy through the `release` environment (protected-branch
-    # policy: main only). Dev publishes are disposable and bypass the
-    # environment so they can run from any branch.
-    environment:
-      name: ${{ inputs.mode == 'prod' && 'release' || 'dev' }}
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win
+            os: windows-latest
+            msys2: true
+          - platform: linux
+            os: ubuntu-24.04
+            cross: true
+          - platform: mac
+            os: macos-latest
+    # A packages-only publish stages no binaries — the legs SKIP instead of
+    # failing red (their upload step has if-no-files-found: error and the
+    # staging tree would be empty); the single-writer job below then runs
+    # pass 2 alone (zips are built inside pass 2; --skip-build requires no
+    # staged binaries when nothing changed).
+    if: ${{ inputs.include != 'packages' }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      # Node + pnpm here; dependencies install AFTER the MSYS2 toolchain
-      # step (make needs MSYS2, pnpm install does not care about order).
+      # Node + pnpm here; on Windows dependencies install AFTER the MSYS2
+      # toolchain step (make needs MSYS2, pnpm install does not care about
+      # order).
       - uses: $/.github/actions/setup-repo
         with:
           install: 'false'
@@ -166,7 +205,17 @@ jobs:
       # published PEs are unsigned with a per-hash AV verdict (issue #157), so
       # the bytes must be reproducible, not merely "a recent MSYS2".
       - name: Pinned MSYS2 toolchain (make + gcc)
+        if: matrix.msys2
         uses: ./.github/actions/pinned-msys2
+      - name: Harden apt sources
+        if: matrix.cross
+        uses: ./.github/actions/harden-apt
+      - name: Install aarch64 cross toolchain (linux builds the twin)
+        if: matrix.cross
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-gcc --version | head -1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: baseline-hashes
@@ -177,19 +226,56 @@ jobs:
       # action so the two publish workflows can never drift apart. Dispatch
       # inputs reach the shell through env vars, never interpolated into the
       # run script (script-injection surface).
-      - uses: ./.github/actions/publish-upload
+      - name: Build and stage binaries (pass 1 — no publish target touched)
+        uses: ./.github/actions/publish-upload
         with:
           mode: ${{ inputs.mode }}
           include: ${{ inputs.include }}
-          platforms: 'win'
+          platforms: ${{ matrix.platform }}
           force: ${{ inputs.force }}
+          extra-args: '--build-only'
           baseline-file: ${{ runner.temp }}/baseline/hashes.json
           vt-api-key: ${{ secrets.VT_API_KEY }}
+      # The staging tree (dist/.build) carries build-manifest.json — unused by
+      # pass 2, which re-derives its staged set from disk. Each leg's manifest
+      # overwrites the siblings' on artifact merge; only the staged bytes
+      # matter here.
+      - name: Upload staged binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: publish-staged-${{ matrix.platform }}
+          path: dist/.build/
+          # dist/.build is a hidden directory — v4+ artifacts exclude hidden
+          # paths by default, which silently uploads nothing.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
-  publish-linux:
-    name: publish — linux binaries
-    needs: publish-win
-    environment: ${{ inputs.mode == 'prod' && 'release' || null }}
+  # Single writer (pass 2, #353): the ONLY job that writes any GitHub target.
+  # Downloads all staging artifacts, then runs `upload.mjs --skip-build` with
+  # all three platforms in scope: verifies the staged set (every binary a
+  # changed hash would publish must be present — missing ones fail the run by
+  # name), re-runs the AV/VT gates over the exact bytes, builds the packages
+  # and performs the release + Pages publish. A packages-only dispatch reaches
+  # this job ALONE (the matrix legs skip; the if below still runs the writer).
+  publishing:
+    name: publish staged set (single writer)
+    # The prod drift gate stays upstream of every publish: pre-publish and
+    # baseline are explicit needs, so a failed gate can never be published
+    # past (a plain `needs: publish` let a packages-only prod dispatch run
+    # the writer after pre-publish failed). always() + the per-job result
+    # checks still let the writer run when the matrix legitimately skipped
+    # (packages-only dispatch: the zips are built inside pass 2).
+    needs: [pre-publish, baseline, publish]
+    if: >-
+      ${{ always() && needs.pre-publish.result == 'success' && needs.baseline.result == 'success' &&
+      (needs.publish.result == 'success' || (inputs.include == 'packages' && needs.publish.result ==
+      'skipped')) }}
+    # Prod publishes deploy through the `release` environment (protected-branch
+    # policy: main only). Dev publishes are disposable and bypass the
+    # environment so they can run from any branch.
+    environment:
+      name: ${{ inputs.mode == 'prod' && 'release' || 'dev' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -198,43 +284,22 @@ jobs:
         with:
           name: baseline-hashes
           path: ${{ runner.temp }}/baseline/
-      # The 'linux' platform builds the aarch64 twin too (upload.mjs expands
-      # it automatically), so the cross toolchain is required here.
-      - name: Harden apt sources
-        uses: ./.github/actions/harden-apt
-
-      - name: Install aarch64 cross toolchain
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
-          aarch64-linux-gnu-gcc --version | head -1
-
-      - uses: ./.github/actions/publish-upload
+      - name: Download staged binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: publish-staged-*
+          merge-multiple: true
+          path: dist/.build/
+      # Pass 2: the staged bytes ARE the final artifacts — the gates and the
+      # publish run on exactly what the matrix staged. The shared composite
+      # action owns the invocation (see the matrix legs above).
+      - name: Publish (pass 2 — gates + upload)
+        uses: ./.github/actions/publish-upload
         with:
           mode: ${{ inputs.mode }}
           include: ${{ inputs.include }}
-          platforms: 'linux'
+          platforms: 'win linux mac'
           force: ${{ inputs.force }}
-          baseline-file: ${{ runner.temp }}/baseline/hashes.json
-          vt-api-key: ${{ secrets.VT_API_KEY }}
-
-  publish-mac:
-    name: publish — mac binaries
-    needs: publish-linux
-    environment: ${{ inputs.mode == 'prod' && 'release' || null }}
-    runs-on: macos-latest
-    timeout-minutes: 20
-    steps:
-      - uses: $/.github/actions/setup-repo
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: baseline-hashes
-          path: ${{ runner.temp }}/baseline/
-      - uses: ./.github/actions/publish-upload
-        with:
-          mode: ${{ inputs.mode }}
-          include: ${{ inputs.include }}
-          platforms: 'mac'
-          force: ${{ inputs.force }}
+          extra-args: '--skip-build'
           baseline-file: ${{ runner.temp }}/baseline/hashes.json
           vt-api-key: ${{ secrets.VT_API_KEY }}

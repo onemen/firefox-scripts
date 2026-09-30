@@ -18,14 +18,14 @@ stay SHA-pinned (`.github/dependabot.yml`).
 `.github/workflows/ci.yml` runs on every PR and on `main` pushes:
 
 - **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, markdownlint-cli2 — MD056
-  table-column-count catches merged table rows that prettier cannot see (#147) — clang-format,
-  `gcc -fanalyzer`), `pnpm format`, `pnpm test`, and a separate
-  `node --test --experimental-test-coverage "test/unit/**/*.test.mjs"` pass whose report goes to the
-  log — informational only, no threshold gate.
+  table-column-count catches merged table rows that prettier cannot see (#147) — the fused-list
+  marker gate on changed markdown (#307), clang-format, `gcc -fanalyzer`), `pnpm format`,
+  `pnpm test`, and a separate `node --test --experimental-test-coverage "test/unit/**/*.test.mjs"`
+  pass whose report goes to the log — informational only, no threshold gate.
 - **lint stages** (#230) — `pnpm lint` is a strict fail-fast `&&` chain composed from granular
   `pnpm lint:*` scripts (`lint:js`, `lint:ncpy`, `lint:types`, `lint:c`, `lint:analyze`, `lint:md`,
-  `lint:skills`) — CI and the pre-push hook enforce only the aggregate, so the granular views cannot
-  drift from what CI gates. For local iteration, `pnpm lint:all` (npm-run-all2
+  `lint:md-markers`, `lint:skills`) — CI and the pre-push hook enforce only the aggregate, so the
+  granular views cannot drift from what CI gates. For local iteration, `pnpm lint:all` (npm-run-all2
   `run-s --continue-on-error --print-label`) runs every stage and reports all findings at once; it
   is a developer convenience and never used by CI or hooks.
 - **publish gate** (Windows / Linux / macOS) — `pnpm snapshot:dev` rebuilds every package zip and
