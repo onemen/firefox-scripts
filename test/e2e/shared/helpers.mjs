@@ -220,6 +220,20 @@ export async function launchFirefox(
       ...STARTUP_HYGIENE_PREFS,
       ...extraPrefsFirefox,
     },
+    env: {
+      // Firefox 159 (Bug 2054896, landed on nightly 2026-09-29) removed the
+      // -remote-allow-system-access CLI argument and requires privileged
+      // remote-agent calls to be allowed via the ENVIRONMENT — which is why
+      // the updater E2E nightly legs failed on 2026-09-30 with
+      //   RemoteError: unsupported operation System access is required. Start
+      //   Firefox with the "MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1" environment
+      //   variable set to enable it.
+      // Harmless on Firefox <= 158 (where the flag still works) and required
+      // on 159+ (the gate follows the Gecko base, so every browser leg needs
+      // it once its base rebases past 158).
+      ...process.env,
+      MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1',
+    },
     args: ['-remote-allow-system-access', '--new-instance'],
   });
   // closeBrowser's startup sweep keys off this (puppeteer's Browser keeps no
