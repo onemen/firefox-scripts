@@ -3,6 +3,8 @@
 - **Status:** accepted
 - **Date:** 2026-09-10
 - **Extends:** [0021](./0021-tiered-publish-gating-shared-resolver.md)
+- **Amended:** [0037](./0037-snap-e2e-cross-revision-cache-seed.md) — the snap leg installs via the
+  cross-revision cache seed only (no direct-store install)
 
 ## Context
 
