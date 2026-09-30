@@ -725,24 +725,10 @@ jobs:
           set -euo pipefail
           mkdir -p ~/snap-pkg
           cd ~/snap-pkg
-          # Exact-revision cache hit? The restore-key seed below may have
-          # restored an OLDER revision — only trust the hit when the restored
-          # pair IS the resolved revision. The revision is read from the pair's
-          # own assertion filename (firefox_<rev>.assert — the authoritative
-          # revision marker, no dash parsing): `snap info` prints the revision
-          # bare (8969), so the earlier [0-9]+-[0-9]+ pattern never matched and
-          # the exact-revision cache could never hit (every run re-downloaded
-          # and the seed was deleted — the red-main-adjacent bug this fixes).
-          if ls firefox_*.snap >/dev/null 2>&1; then
-            cached_rev="$(ls firefox_*.assert | head -n1 | grep -oE '[0-9]+' | head -n1)"
-            if [ "$cached_rev" = "${{ steps.rev.outputs.revision }}" ]; then
-              echo "cache hit: using cached .snap + assertion"
-              echo "from-cache=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "::warning::restored cache is a DIFFERENT (older) revision ($cached_rev vs ${{ steps.rev.outputs.revision }}) — re-downloading the pinned one"
-            rm -f firefox_*.snap firefox_*.assert
-          fi
+          # Store-down check FIRST (before any cached-file deletion): when the
+          # probe failed, `revision` is empty and a compare-then-delete would
+          # discard the seed the fallback below needs (review:batch finding on
+          # this PR — the seed IS the ADR 0037 store-down scenario).
           if [ "${{ steps.rev.outputs.available }}" != 'true' ]; then
             if ls firefox_*.snap >/dev/null 2>&1; then
               echo "::warning::store API down — seeded from an OLDER cached revision (restore-key, ADR 0037)"
@@ -752,6 +738,24 @@ jobs:
             echo "::error::no cached snap (no seed) and the store API is unreachable — no fallback (SNAP_STORE_UNAVAILABLE)"
             echo "SNAP_STORE_UNAVAILABLE=1" >> "$GITHUB_ENV"
             exit 1
+          fi
+          # Exact-revision cache hit? The restore-key seed may have restored an
+          # OLDER revision — only trust the hit when the restored pair IS the
+          # resolved revision. The revision is read from the pair's own
+          # assertion filename (firefox_<rev>.assert — the authoritative marker,
+          # no dash parsing): `snap info` prints the revision bare (8969), so
+          # the earlier [0-9]+-[0-9]+ pattern never matched and the
+          # exact-revision cache could never hit (every run re-downloaded and
+          # the seed was deleted — the red-main-adjacent bug this fixes).
+          if ls firefox_*.snap >/dev/null 2>&1; then
+            cached_rev="$(ls firefox_*.assert | head -n1 | grep -oE '[0-9]+' | head -n1)"
+            if [ "$cached_rev" = "${{ steps.rev.outputs.revision }}" ]; then
+              echo "cache hit: using cached .snap + assertion"
+              echo "from-cache=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::restored cache is a DIFFERENT (older) revision ($cached_rev vs ${{ steps.rev.outputs.revision }}) — re-downloading the pinned one"
+            rm -f firefox_*.snap firefox_*.assert
           fi
           # Two attempts, hard 8-min wall each: a hang must die before the
           # 20-min job timeout so the diagnostic steps still run. cd + CWD
@@ -804,8 +808,8 @@ jobs:
           # fail under AppArmor unless a prompting client is present. Install the
           # two required components BEFORE firefox; snap set debug + journalctl
           # are the documented diagnostics if AppArmor still denies.
-          sudo snap install desktop-security-center || true
-          sudo snap install prompting-client || true
+          sudo timeout 120 snap install desktop-security-center || true
+          sudo timeout 120 snap install prompting-client || true
           sudo snap ack ~/snap-pkg/firefox_*.assert
           sudo snap install ~/snap-pkg/firefox_*.snap --classic
           test -x /snap/bin/firefox || { echo '::error::snap install ran, but /snap/bin/firefox not found'; exit 1; }
