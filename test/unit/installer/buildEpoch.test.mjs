@@ -116,6 +116,7 @@ function git(args, cwd) {
  */
 function tempRepo(withInstaller = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-epoch-repo-'));
+  tempRoots.push(dir); // before any setup can throw — the sweep owns the dir
   git(['init', '-q'], dir);
   fs.writeFileSync(path.join(dir, 'unrelated.txt'), 'x\n');
   if (withInstaller) {
@@ -129,7 +130,6 @@ function tempRepo(withInstaller = false) {
     ['-c', 'user.email=t@example.invalid', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'],
     dir
   );
-  tempRoots.push(dir);
   return dir;
 }
 

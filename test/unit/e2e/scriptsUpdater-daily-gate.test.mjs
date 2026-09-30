@@ -213,6 +213,12 @@ const updaterConfig = () => ({
   IS_LOCAL: false,
 });
 
+/**
+ * Load scriptsUpdater.sys.mjs into a vm sandbox wired to real fs fixtures. The
+ * PathUtils profile dir it seeds is a fresh mkdtemp root registered in
+ * `tempRoots` (swept once after the file's tests finish — see the import
+ * block).
+ */
 function loadUpdater({store = {}, routes = {}} = {}) {
   const source = fs
     .readFileSync(MODULE_PATH, 'utf-8')

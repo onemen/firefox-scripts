@@ -34,6 +34,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const TEST_ROOT = path.join(REPO_ROOT, 'test');
 const SELF = fileURLToPath(import.meta.url);
 
+/** Every .mjs file under `dir`, recursively, as absolute paths. */
 function listTestFiles(dir) {
   const out = [];
   for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
@@ -52,9 +53,28 @@ test('test files that mkdtemp must clean up (no leaked temp roots)', () => {
     const creates = /\bmkdtemp(?:Sync)?\(/.test(source);
     const removes = /\b(?:rm|rmdir)Sync\(/.test(source);
     if (creates && !removes) offenders.push(path.relative(REPO_ROOT, file));
-    const scratchDoc = source.match(/mkdtemp(?:Sync)?\([^)]*?([A-Za-z0-9_.-]+)\s*\)\s*;?\s*$/m);
-    if (scratchDoc && scratchDoc[1].endsWith('.md')) {
-      offenders.push(`${path.relative(REPO_ROOT, file)} (stages a .md scratch file)`);
+    // Scratch-document rule: a mkdtemp whose path argument ends in .md is an
+    // agent staging a scratch file into the user's Temp. Scan the call's
+    // argument with a linear paren counter (a nested-quantifier regex here
+    // trips security/detect-unsafe-regex) and flag any string literal ending
+    // in .md — quoted or nested, e.g. mkdtempSync(path.join(os.tmpdir(),
+    // 'scratch.md')).
+    if (/\bmkdtemp(?:Sync)?\(/.test(source)) {
+      for (const match of source.matchAll(/\bmkdtemp(?:Sync)?\(/g)) {
+        let depth = 1;
+        let i = match.index + match[0].length;
+        while (i < source.length && depth > 0) {
+          depth +=
+            source[i] === '(' ? 1
+            : source[i] === ')' ? -1
+            : 0;
+          i += 1;
+        }
+        const args = source.slice(match.index + match[0].length, i - 1);
+        if (/["'`]([^"'`]*\.md)["'`]/.test(args)) {
+          offenders.push(`${path.relative(REPO_ROOT, file)} (stages a .md scratch file)`);
+        }
+      }
     }
   }
   assert.deepEqual(
