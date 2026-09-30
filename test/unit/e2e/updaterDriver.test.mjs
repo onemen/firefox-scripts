@@ -220,9 +220,11 @@ test('state-only scenarios fold into the session, and keep their launches as fal
     /remainingVariants\.includes\('skipped'\)/,
     'the degraded path must resume the unfinished skipped launch'
   );
-  // A realm death between variants re-asserts the deferred STALE cards in-tab
-  // (the pre-#309 shape) before the session returns — the card coverage never
-  // waits on a launch to come back.
+  // A realm death between variants defers the STALE cards to their launch
+  // path: the startup tab was closed before the variant loop, so there is no
+  // in-tab frame to re-assert in (the session-scope `page` would be a detached
+  // frame). The launch path runs every remaining variant name — coverage is
+  // preserved by the launches, never by the dead session's tab.
   const sessionAt2 = source.indexOf('async function runVariantSession(');
   const sessionBody = source.slice(sessionAt2, sessionAt2 + 60000);
   assert.match(
@@ -230,10 +232,61 @@ test('state-only scenarios fold into the session, and keep their launches as fal
     /const staleLeft = remainingVariants\.filter\(v => STALE_VARIANTS\.includes\(v\)\)/,
     'the session must compute the stale variants the dead realm deferred'
   );
-  assert.match(
+  assert.doesNotMatch(
     sessionBody,
     /assertStaleTrioInTab\(counter, \{[\s\S]{0,200}variants: staleLeft/,
-    'the deferred stale variants must be re-asserted in-tab'
+    'the session must NOT re-assert stale cards on the closed startup tab'
+  );
+  assert.match(
+    sessionBody,
+    /keep their launch path/,
+    'the deferred stale variants must be reported as keeping their launch path'
+  );
+
+  // The tab-cleanup call after a completed variant must produce the degrade
+  // sentinel itself: a bare driver.closeUpdaterTabs() on a dead realm rejects
+  // with a raw protocol error (no .driverLost) and would abort the leg
+  // instead of degrading.
+  const cleanupBody = source.slice(
+    source.indexOf('Leave no updater tab behind'),
+    source.indexOf('async function assertStaleTrioInTab(')
+  );
+  assert.match(
+    cleanupBody,
+    /driverCall\(driver, `\$\{variant\}: close tabs`, \(\) => driver\.closeUpdaterTabs\(\)\)\.catch/,
+    'the per-variant tab cleanup must be wrapped in driverCall (the sentinel producer)'
+  );
+
+  // The session prelude's driver calls are wrapped too: initScheduler and the
+  // startup-tab close run before any per-variant driverCall exists to catch
+  // them.
+  const preludeFrom = source.indexOf('driverAvailable = true;', sessionAt2);
+  const preludeTo = source.indexOf('const manifest = JSON.parse', preludeFrom);
+  const preludeBody = source.slice(preludeFrom, preludeTo);
+  assert.match(
+    preludeBody,
+    /driverCall\(driver, `\$\{attemptLabel\}: init scheduler`/,
+    'the session prelude must wrap initScheduler in driverCall'
+  );
+  assert.match(
+    preludeBody,
+    /driverCall\(driver, `\$\{attemptLabel\}: close startup tabs`/,
+    'the session prelude must wrap the startup-tab close in driverCall'
+  );
+
+  // Clearing the skip prefs before the folded scenarios uses the SHIPPED
+  // package keys: utils and fx-folder (the config package's key is fx-folder,
+  // not 'config' — addSkipPrefs and the scheduler both use it).
+  const clearBody = source.slice(
+    source.indexOf("'clear skip prefs'"),
+    source.indexOf('await runFoldedInstallApplies')
+  );
+  assert.match(clearBody, /setSkip\('utils', ''\)/);
+  assert.match(clearBody, /setSkip\('fx-folder', ''\)/);
+  assert.doesNotMatch(
+    clearBody,
+    /setSkip\('config'/,
+    "'config' is not a package key — the config package's skip pref is skippedHash.fx-folder"
   );
 
   // helper-checksum-win stays a launch of its own (Windows-only; CI cannot

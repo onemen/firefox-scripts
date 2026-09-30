@@ -1298,8 +1298,12 @@ async function runOneVariant(
   // own check opened. Best-effort on a realm that just died: the variant's
   // assertions are already in the tally, and the degrade path re-seeds a fresh
   // profile anyway — swallowing the sentinel here keeps the completed variant
-  // completed instead of deferring it a second time.
-  await driver.closeUpdaterTabs().catch(err => {
+  // completed instead of deferring it a second time. The driverCall wrapper is
+  // what PRODUCES that sentinel: a bare call on a dead realm rejects with a raw
+  // protocol error (no .driverLost), which would rethrow, escape the session
+  // and abort the leg — the exact opposite of the degrade this path exists for
+  // (CodeRabbit on #343, 2026-09-30).
+  await driverCall(driver, `${variant}: close tabs`, () => driver.closeUpdaterTabs()).catch(err => {
     if (!err?.driverLost) throw err;
   });
   return ok;
@@ -1509,7 +1513,11 @@ async function runSessionExtras(counter, ctx) {
     // and the no-ui check would decide "up to date" (reproduced 2026-09-30).
     await driverCall(ctx.driver, 'clear skip prefs', async () => {
       await ctx.driver.setSkip('utils', '');
-      await ctx.driver.setSkip('config', '');
+      // The config package's key is `fx-folder` (addSkipPrefs writes
+      // skippedHash.fx-folder; the shipped scheduler reads the same key) —
+      // 'config' here would write an unused pref and never clear the real
+      // config skip (CodeRabbit on #343, 2026-09-30).
+      await ctx.driver.setSkip('fx-folder', '');
     });
 
     await runFoldedInstallApplies(counter, ctx);
@@ -2076,12 +2084,14 @@ async function runVariantSession(counter, opts, snapshotDir) {
       // scriptsUpdater instance starts uninitialized (no gWindow), so the
       // driver initializes it exactly the way BootstrapLoader.js initializes
       // the browser's — same entry point, same production code path.
-      await driver.initScheduler();
+      await driverCall(driver, `${attemptLabel}: init scheduler`, () => driver.initScheduler());
 
       // The startup tab was the proof, not a fixture: close it so every count
       // below measures what THAT variant's check opened (the scheduler's own
       // addTrustedTab decision), never something inherited from the seed.
-      await driver.closeUpdaterTabs();
+      await driverCall(driver, `${attemptLabel}: close startup tabs`, () =>
+        driver.closeUpdaterTabs()
+      );
       check(
         counter,
         (await driver.updaterTabCount()) === 0,
@@ -2139,33 +2149,18 @@ async function runVariantSession(counter, opts, snapshotDir) {
       }
 
       if (!variantFailure) {
+        // The deferred stale variants keep their launch path: the startup tab
+        // was closed before the variant loop, so there is no in-tab frame left
+        // to re-assert them in (a realm death took that frame with it — the
+        // launch path is the only coverage left, and run()'s dispatch runs
+        // every remaining variant name).
         const staleLeft = remainingVariants.filter(v => STALE_VARIANTS.includes(v));
         if (staleLeft.length > 0) {
-          // The pre-#309 trio path, on the tab the startup check opened: the
-          // engine re-checks on init() (no scheduler, no driver realm), so a
-          // dead driver does not take the card coverage with it.
-          console.log(`  [driver] re-asserting the stale variants in-tab: ${staleLeft.join(', ')}`);
-          const trioOk = await assertStaleTrioInTab(counter, {
-            page,
-            firefoxBin,
-            seeded,
-            pristineConfig,
-            variants: staleLeft,
-          });
-          if (trioOk) {
-            // Covered in-tab: drop them from the launch deferral.
-            remainingVariants = remainingVariants.filter(v => !STALE_VARIANTS.includes(v));
-          } else {
-            // The tab's frame usually died with the realm: the stale variants
-            // go to their launch path with the decisions (run()'s dispatch
-            // launches every remaining variant name).
-            console.log(
-              '  [driver] the in-tab stale assertions could not run — the stale variants keep their launch path'
-            );
-          }
+          console.log(
+            `  [driver] the deferred stale variants (${staleLeft.join(', ')}) keep their launch path`
+          );
         }
 
-        // ── Folded state-only scenarios (#309 follow-up) ──
         // ── Folded state-only scenarios (#309 follow-up) ──
         // install-applies + manual-install-no-ui run in THIS browser, after the
         // variants: they mutate the seeded trees and the GreD config, so they

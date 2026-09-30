@@ -126,7 +126,9 @@ install-applies / manual-install-no-ui fall back to their own launches (`runNoTa
 never by coverage. A realm that dies **mid-session** degrades the same way: the folded phases
 re-probe the realm before every driver call, and whatever could not finish is handed to its launch
 path, so the leg passes with the launches it would have had before the fold instead of failing on a
-false negative. Assertion failures are never degraded — a check that genuinely fails still fails the
+false negative. A realm death between variants likewise defers the not-yet-run variants to their
+launch paths (the startup tab is closed before the loop, so there is no in-tab frame left to
+re-assert in). Assertion failures are never degraded — a check that genuinely fails still fails the
 leg. Skip individual steps during iteration with `--scenario 1,7,9` (step 1 includes all five
 variants and the folded scenarios; `--scenario 4` / `5` / `6` / `8` select the same session).
 
