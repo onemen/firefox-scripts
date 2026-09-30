@@ -56,6 +56,22 @@ Scan the batch for tasks that touch the same files or subsystems.
 4. Between tasks, check CI one-shot — `gh pr checks <branch>` per open PR:
    - Green → mark `done`; remove that worktree (verify the directory is really gone — Windows
      `node_modules` husk; recipe in `change-workflow`).
+   - **Green + the PR body carries closing keywords (`Fixes #N`)?** After merging (only with the
+     user's explicit word), VERIFY each referenced issue actually closed — squash merges on this
+     repo default to `PR_TITLE` + `BLANK` messages, so the keyword lives only in the PR body, and
+     2026-09-30 proved that path is not reliable: #368–#370 each led with `Fixes #N` (and GitHub
+     showed the issues under `closingIssuesReferences`), yet none auto-closed, while #367's
+     identical-looking body closed #341 two seconds after merge the day before. Closing keywords in
+     the squash **commit message** are the reliable path — put `Fixes #N` on the first line after
+     the `(#N)` reference (repo squash defaults keep the title as the message, so add it explicitly:
+     `gh pr merge --squash -t "title (#N)" --body "Fixes #N"`). If the issue is still open
+     post-merge: REST-close it
+     (`gh api -X PATCH repos/<owner>/<repo>/issues/<n> -F state=closed -F state_reason=completed`)
+     and post the evidence comment (🤖 marker; `gh issue close` has no `--comment-file` — comment
+     via `gh api …/issues/<n>/comments -F body=@file`, then PATCH). Exception: watchdog-owned
+     rolling issues (`[skills-watchdog]`, `[av-watchdog]`, `[runner-watchdog]` titles) are
+     opened/reopened/closed by their watchdog — a merged fix PR does NOT close #366-style issues;
+     leave them to the next dispatch and say so in the summary.
    - Red → work in that task's worktree, fix, push (CI re-runs), stay `ci`. After 3 failed attempts,
      mark `blocked` and move on.
    - Still running → leave it and continue the loop.
@@ -94,13 +110,19 @@ Run before the step-6 summary — every item is a one-command verification:
 
 - **NEVER call sleep** and never idle-wait on CI, tests, or builds — the never-idle-wait rule in the
   `change-workflow` skill applies at all times. End the turn instead.
-- **The terminal tool here is sync-only — this is why never-idle-wait exists.** Probed 2026-09-24:
-  `process_type: BACKGROUND` errors ("not implemented"), and same-block terminal calls dispatch in
-  parallel but **execute sequentially**. A long call (`sleep 240; gh pr checks`, a `--watch`, a
-  minutes-long `review:local`) blocks the whole turn and is lost if the client restarts — and **no
-  `--watch` variant is ever a substitute for ending the turn**. Budget foreground commands in tens
-  of seconds; anything longer is covered by ending the turn and re-checking one-shot on the next
-  message.
+- **The terminal tool here is sync-only — this is why never-idle-wait exists.** Probed 2026-09-24
+  and re-probed 2026-09-30 (unchanged): `process_type: BACKGROUND` errors ("not implemented"), and
+  same-block terminal calls dispatch in parallel but **execute sequentially** (two 2 s `sleep`s ran
+  back-to-back, ~80 ms apart) — stacking slow foreground calls in one block serializes them, so a
+  long call (`sleep 240; gh pr checks`, a `--watch`, a minutes-long `review:local`) blocks the whole
+  turn and is lost if the client restarts — and **no `--watch` variant is ever a substitute for
+  ending the turn**. Budget foreground commands in tens of seconds; anything longer is covered by
+  ending the turn and re-checking one-shot on the next message. Read-only `gh`/git queries are the
+  safe things to batch in one block (their serialization costs milliseconds); anything with a real
+  runtime (install, build, review, long poll loop) goes in its own block or its own turn. Untracked
+  client-gap: no repo issue records this behavior (swept 2026-09-30: issue-body searches for
+  `sleep`, `parallel`, `BACKGROUND`, `idle-wait` match nothing on-topic) — the only records are this
+  note and the `change-workflow` rule.
 - **Never merge a PR without the user's explicit approval** (AGENTS.md Critical Rule) — the summary
   reports ready/merged/blocked state and stops there.
 - One worktree per task; never link the parent's node_modules into it.
