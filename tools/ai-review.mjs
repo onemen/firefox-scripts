@@ -422,12 +422,17 @@ export async function reviewFiles({
   });
 
   let skipped = 0;
+  let failed = 0;
+  let reviewed = 0;
+  const skippedFiles = [];
   for (const r of results) {
     if (r.skipped) {
       skipped += 1;
+      skippedFiles.push(r.file);
       continue;
     }
     if (r.failed) {
+      failed += 1;
       const reason =
         r.failed.kind === 'permanent' ?
           `${r.failed.reason} (HTTP ${r.failed.status}${r.failed.detail ? `: ${r.failed.detail}` : ''})`
@@ -437,6 +442,7 @@ export async function reviewFiles({
       summaries.push(`⚠️ \`${r.file}\` — no provider completed the review (${reason}); skipped.`);
       continue;
     }
+    reviewed += 1;
     const content = r.result.choices?.[0]?.message?.content;
     let parsed;
     try {
@@ -475,6 +481,17 @@ export async function reviewFiles({
     rdjson: {source: {name}, diagnostics: finalDiagnostics},
     summary: summaries,
     totalFindings: diagnostics.length,
+    // Coverage of the changed-file set: a zero-finding run means nothing
+    // unless every reviewable file was actually reviewed. Files dropped
+    // before the loop (binary / empty diff) are total - reviewable.
+    coverage: {
+      total: files.length,
+      reviewable: entries.length,
+      reviewed,
+      failed,
+      skipped,
+      skippedFiles,
+    },
   };
 }
 
@@ -508,6 +525,34 @@ export async function runReview(args = parseArgs(process.argv.slice(2))) {
   return {dryRun: false, ...result};
 }
 
+/**
+ * The coverage line for the summary file: partial coverage must be visible at a
+ * glance, and a zero-finding run is only trustworthy at full coverage. Files
+ * whose diffs never reached a provider (binary / empty diff) are reported
+ * separately from provider failures and rate-limit skips.
+ *
+ * @param {{
+ *   total: number;
+ *   reviewable: number;
+ *   reviewed: number;
+ *   failed: number;
+ *   skipped: number;
+ *   skippedFiles: string[];
+ * }} coverage
+ * @returns {string[]}
+ */
+export function coverageLines(coverage) {
+  const notReviewable = coverage.total - coverage.reviewable;
+  return [
+    `Coverage: ${coverage.reviewed} of ${coverage.total} changed file(s) reviewed — ` +
+      `${coverage.failed} failed, ${coverage.skipped} skipped` +
+      (coverage.skippedFiles.length > 0 ? ` (${coverage.skippedFiles.join(', ')})` : '') +
+      (notReviewable > 0 ? `; ${notReviewable} not reviewable (binary/empty diff)` : '') +
+      '.',
+    '',
+  ];
+}
+
 export async function writeArtifacts(args, result) {
   await mkdir(args.out, {recursive: true});
   const rdjsonPath = join(args.out, 'ai-review-rd.json');
@@ -519,6 +564,7 @@ export async function writeArtifacts(args, result) {
     '',
     `Model: ${result.providers?.join(', ') || 'see per-file notes'} · findings: ${result.totalFindings ?? result.rdjson.diagnostics.length}`,
     '',
+    ...(result.coverage ? coverageLines(result.coverage) : []),
     ...result.summary,
     '',
     '> Advisory only — this review never blocks the merge. Provider free-tier limits apply.',
@@ -540,8 +586,11 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
       `Dry run: ${result.files.length} file(s) would be reviewed by ${result.providers.join(', ')}`
     );
   } else {
+    const cov = result.coverage;
     console.log(
-      `Reviewed ${result.summary.length} file(s); ${result.totalFindings} finding(s) (${result.rdjson.diagnostics.length} posted).`
+      cov ?
+        `Reviewed ${cov.reviewed}/${cov.total} file(s) (${cov.failed} failed, ${cov.skipped} skipped); ${result.totalFindings} finding(s) (${result.rdjson.diagnostics.length} posted).`
+      : `Reviewed ${result.summary.length} file(s); ${result.totalFindings} finding(s) (${result.rdjson.diagnostics.length} posted).`
     );
   }
   console.log(`Wrote ${rdjsonPath} and ${summaryPath}`);
