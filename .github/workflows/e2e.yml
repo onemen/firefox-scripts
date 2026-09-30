@@ -784,19 +784,34 @@ jobs:
       # FIREFOX_BINARY itself — the steps below (Verify snap GreD, both E2E
       # runs) read it, and without the export the cache-hit path died with
       # `FIREFOX_BINARY: unbound variable` (every run after #311 until fixed).
-      - name: Install Firefox (snap, offline from cache)
-        if: steps.snapd.outputs.available == 'true' && steps.dl.outputs.from-cache == 'true'
+      # Runs after ANY successful download outcome — exact cache hit, seeded
+      # older revision, or a fresh store download (from-cache true or false).
+      # The single install track means ONE step must cover every outcome:
+      # gating it on from-cache == 'true' left the store-up path with no
+      # install at all and no FIREFOX_BINARY (the red main run of 2026-09-30,
+      # run 36726376484). The revision-verification above guarantees the files
+      # in ~/snap-pkg ARE the resolved revision before we get here.
+      - name: Install Firefox (snap, offline from the resolved pair)
+        if: steps.snapd.outputs.available == 'true' && !failure() && !cancelled()
         run: |
           set -euo pipefail
+          # Ubuntu 22.04/24.04 AppArmor change (Sept 2026): snap installs silently
+          # fail under AppArmor unless a prompting client is present. Install the
+          # two required components BEFORE firefox; snap set debug + journalctl
+          # are the documented diagnostics if AppArmor still denies.
+          sudo snap install desktop-security-center || true
+          sudo snap install prompting-client || true
           sudo snap ack ~/snap-pkg/firefox_*.assert
           sudo snap install ~/snap-pkg/firefox_*.snap --classic
           test -x /snap/bin/firefox || { echo '::error::snap install ran, but /snap/bin/firefox not found'; exit 1; }
           echo "FIREFOX_BINARY=/snap/bin/firefox" >> "$GITHUB_ENV"
 
-      # Single install track (ADR 0037): the store download above only fills
-      # the cache for THIS revision; the offline-from-cache install below is
-      # the only install path (the removed downloads.mjs firefox-snap direct
-      # install was a second, divergent path — the exact class #313 fixed).
+      # Single install track (ADR 0037, as corrected after the 2026-09-30 red
+      # main run): the store download and the cache restore both land the
+      # resolved revision's pair in ~/snap-pkg, and the ONE install step above
+      # covers every outcome (from-cache true AND false). There is no second
+      # install path (the removed downloads.mjs firefox-snap direct install was
+      # the divergent path — the exact class #313 fixed).
 
       # THE point of this leg (#55): discover the snap GreD at runtime —
       # findGreDir() maps a /snap/ binary to /etc/firefox — and verify it
