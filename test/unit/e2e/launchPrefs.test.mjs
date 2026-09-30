@@ -44,11 +44,12 @@ test('launchFirefox injects the hygiene prefs ahead of caller prefs', () => {
 });
 
 test('launchFirefox grants remote-agent system access via the environment', () => {
-  // Firefox nightly (2026-09-30) requires MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1 in
-  // the ENVIRONMENT for privileged remote-agent calls — the
-  // -remote-allow-system-access CLI flag alone now fails with
-  // "unsupported operation System access is required" (updater E2E legs).
-  // The env block must also spread process.env so PATH et al. survive.
+  // Firefox 159 (Bug 2054896, nightly 2026-09-29) removed the
+  // -remote-allow-system-access CLI flag; privileged remote-agent calls now
+  // require MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1 in the ENVIRONMENT — the flag
+  // alone fails with "unsupported operation System access is required"
+  // (updater E2E nightly legs). Harmless on Firefox <= 158. The env block
+  // must also spread process.env so PATH et al. survive.
   assert.match(
     source,
     /\.\.\.process\.env,\s*MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1',/,
