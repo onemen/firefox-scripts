@@ -323,10 +323,16 @@ export async function launchFirefox(
     return await launchOnce();
   } catch (err) {
     // One fast retry: a wedged start is load-sensitive and transient; a
-    // relaunch almost always connects (issue #384). The retry shares the tag —
-    // a deadline kill then also sweeps any survivor of the first attempt. The
-    // 45 s protocolTimeout is intentionally UNCHANGED — this bounds the launch
+    // relaunch almost always connects (issue #384). Sweep the first attempt's
+    // tree by tag BEFORE relaunching — the deadline kill only ran on the
+    // deadline path, but a protocolTimeout on session.new (or any other
+    // first-attempt rejection) can leave a browser holding the profileDir, and
+    // the retry's --new-instance would then die on the profile lock instead of
+    // the transient wedge (review on #343, 2026-10-01). The retry shares the
+    // tag — a deadline kill on it sweeps both trees either way. The 45 s
+    // protocolTimeout is intentionally UNCHANGED — this bounds the launch
     // phase, not protocol commands.
+    killProcessesByCmdline(tag, {log: console.log});
     console.log(`  [launch] wedged (${err?.message}) — retrying once`);
     return launchOnce();
   }

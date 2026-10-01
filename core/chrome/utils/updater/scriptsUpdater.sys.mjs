@@ -622,7 +622,11 @@ export async function checkForUpdates() {
     // it (close + purge from the recently-closed list, so Ctrl+Shift+T cannot
     // resurrect a duplicate) and fall through to ONE fresh open in the current
     // window (#384 follow-up). Scanned across ALL windows; window churn (a
-    // window closing mid-scan) and tabs mid-teardown are tolerated.
+    // window closing mid-scan) and tabs mid-teardown are tolerated. A
+    // scheduler-MARKED tab (this session's own fresh open) is never a victim:
+    // a second check that reaches this block while the fresh tab's engine is
+    // still running (the pending path writes the day only in engineInit) must
+    // not close it — the re-scan below sees the surviving tab and bails.
     for (const win of allBrowserWindows()) {
       if (win.closed) {
         continue;
@@ -630,8 +634,9 @@ export async function checkForUpdates() {
       for (const tab of [...win.gBrowser.tabs]) {
         try {
           if (
-            tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
-            tab.linkedBrowser?.initialURI === UPDATER_UI_URI
+            !tab._scriptsUpdateTab &&
+            (tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
+              tab.linkedBrowser?.initialURI === UPDATER_UI_URI)
           ) {
             forgetUpdaterTab(win, tab);
           }

@@ -39,9 +39,11 @@ export function lz4LiteralBlock(input) {
     parts.push(Buffer.from([255]));
     l -= 255;
   }
-  if (l > 0) {
-    parts.push(Buffer.from([l]));
-  }
+  // The extension-byte run ALWAYS ends with its terminating byte — including
+  // when the remainder is 0 (len = 15 + 255·k). A decoder reads extension
+  // bytes until one is < 255; without the 0x00 terminator it would read into
+  // the payload (the lengths 14/269/524… were corrupt; found by review).
+  parts.push(Buffer.from([l]));
   parts.push(input);
   return Buffer.concat(parts);
 }

@@ -253,12 +253,10 @@ try {
           // of exactly one tab, and the road there can legitimately include a
           // transient twin (restored tab materializing after the guard's
           // scan, then swept by the sessionstore-windows-restored sweep).
-          const tabSet = updaterSpecs.join(' | ');
+          const tabSet = updaterSpecs.join(' | ') || '(none)';
           if (tabSet !== lastTabSet) {
             lastTabSet = tabSet;
-            if (updaterSpecs.length > 0) {
-              writeUtf8('TAB_SET ' + new Date().toISOString() + ' ' + tabSet + '\\n');
-            }
+            writeUtf8('TAB_SET ' + new Date().toISOString() + ' ' + tabSet + '\\n');
           }
           if (updaterSpecs.length > 0 && !tabSeen) {
             tabSeen = true;
@@ -271,25 +269,27 @@ try {
                 updaterSpecs.join(' | ') +
                 '\\n'
             );
-            // Keep watching: the tab ENGINE's re-check (updater.js
-            // engineInit) writes the daily pref once its check completes —
-            // under stress that lands seconds after the tab appears. Mirror
-            // it as ENGINE-DONE so the stress scenario can await the engine
-            // instead of guessing a sleep (the pref only reaches prefs.js at
-            // the shutdown flush, so the LIVE value is the only timely
-            // signal). Cancel on the next poll after the pref appears.
-            try {
-              const shownDay = Services.prefs.getCharPref(
-                'extensions.firefox-scripts.lastScriptsCheckDate',
-                ''
-              );
-              if (shownDay) {
-                writeUtf8('ENGINE-DONE ' + shownDay + String.fromCharCode(10));
-                watcher.cancel();
-                return;
-              }
-            } catch (e) {}
           }
+          // The tab ENGINE's re-check (updater.js engineInit) writes the daily
+          // pref once its check completes — under stress that lands seconds
+          // AFTER the tab appears, so this probe must run on EVERY poll, not
+          // only the first-seen one (a first-poll-only check would never see
+          // the late write, and every ENGINE-DONE await would run its full 30 s
+          // for nothing). Mirror it as ENGINE-DONE so scenarios 11/12 await the
+          // engine instead of guessing a sleep (the pref only reaches prefs.js
+          // at the shutdown flush, so the LIVE value is the only timely
+          // signal). Cancel on the poll after the pref appears.
+          try {
+            const shownDay = Services.prefs.getCharPref(
+              'extensions.firefox-scripts.lastScriptsCheckDate',
+              ''
+            );
+            if (shownDay) {
+              writeUtf8('ENGINE-DONE ' + shownDay + String.fromCharCode(10));
+              watcher.cancel();
+              return;
+            }
+          } catch (e) {}
         } catch (e) {}
       },
     },
@@ -2147,19 +2147,39 @@ async function runVariantSession(counter, opts, snapshotDir) {
       // scriptsUpdater instance starts uninitialized (no gWindow), so the
       // driver initializes it exactly the way BootstrapLoader.js initializes
       // the browser's — same entry point, same production code path.
-      await driverCall(driver, `${attemptLabel}: init scheduler`, () => driver.initScheduler());
+      // A realm death HERE (before any variant ran) degrades like every other
+      // realm death: hand ALL the work back to run()'s launch path instead of
+      // failing the leg — the contract is "degrades by capability, never by
+      // coverage" (review on #343, 2026-10-01).
+      try {
+        await driverCall(driver, `${attemptLabel}: init scheduler`, () => driver.initScheduler());
 
-      // The startup tab was the proof, not a fixture: close it so every count
-      // below measures what THAT variant's check opened (the scheduler's own
-      // addTrustedTab decision), never something inherited from the seed.
-      await driverCall(driver, `${attemptLabel}: close startup tabs`, () =>
-        driver.closeUpdaterTabs()
-      );
-      check(
-        counter,
-        (await driver.updaterTabCount()) === 0,
-        `driver governs the updater tabs (${attemptLabel})`
-      );
+        // The startup tab was the proof, not a fixture: close it so every count
+        // below measures what THAT variant's check opened (the scheduler's own
+        // addTrustedTab decision), never something inherited from the seed.
+        await driverCall(driver, `${attemptLabel}: close startup tabs`, () =>
+          driver.closeUpdaterTabs()
+        );
+        check(
+          counter,
+          (await driver.updaterTabCount().catch(() => -1)) === 0,
+          `driver governs the updater tabs (${attemptLabel})`
+        );
+      } catch (err) {
+        if (!err?.driverLost) throw err;
+        console.log(
+          `  [driver] ${err.message} at bootstrap — the whole session degrades to the launch paths`
+        );
+        assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
+        phases.total = Date.now() - t0;
+        logScenarioTime(attemptLabel, t0, phases);
+        return {
+          profiles: createdProfiles,
+          driverAvailable,
+          extrasRemaining: [...FOLDED_SCENARIOS],
+          variantsRemaining: [...STALE_VARIANTS, 'up-to-date', 'skipped'],
+        };
+      }
 
       const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, 'hashes.json'), 'utf-8'));
       const utilsHash = manifest.utils?.hash || '';
@@ -4125,38 +4145,15 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       `both windows restored (WINDOW-COUNT ${restoredWindows ?? 0}, ${label})`,
       restoredWindows ? '' : 'the session fixture never restored a second window'
     );
-    const tabLine = await pollUntil(
-      () => {
-        const lines = readMirror(seeded.profileDir)
-          .split('\n')
-          .filter(l => l.includes('TAB_SET'));
-        return lines.length > 0 ? lines[lines.length - 1] : null;
-      },
-      45_000,
-      500,
-      label
-    );
-    check(
-      counter,
-      Boolean(tabLine) && !tabLine.includes(' | '),
-      `exactly one updater tab after restore — the always-fresh guard forgot the restored one and opened a fresh tab (${label})`,
-      tabLine && tabLine.includes(' | ') ?
-        'a SECOND updater tab SURVIVED (the sweep should have removed it): ' + tabLine
-      : 'no updater tab seen after restore'
-    );
-    const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
-    check(
-      counter,
-      !schemeIs,
-      `no AsyncTabSwitcher schemeIs error (${label})`,
-      'the selection race (#384) fired during restore'
-    );
-    // The fresh tab's engine re-check needs wall time after the tab opens, and
-    // its pref only reaches prefs.js at the shutdown flush — closing on
-    // WINDOW-COUNT would assert the harness's haste, not the engine (the same
-    // trap scenario 12 hit before its ENGINE-DONE wait: the 8/9 run of
-    // 2026-10-01 closed the browser ~4 s in, before a healthy engine under the
-    // operator's concurrent load had finished). The probe watcher mirrors
+    // Wait for the engine FIRST, then assert the FINAL tab set: asserting the
+    // first recorded set would false-fail on a transient twin the sweep removes
+    // later AND false-pass when a twin appears after the check (review on
+    // #343, 2026-10-01). The fresh tab's engine re-check needs wall time after
+    // the tab opens, and its pref only reaches prefs.js at the shutdown flush —
+    // closing on WINDOW-COUNT would assert the harness's haste, not the engine
+    // (the same trap scenario 12 hit before its ENGINE-DONE wait: the 8/9 run
+    // of 2026-10-01 closed the browser ~4 s in, before a healthy engine under
+    // the operator's concurrent load had finished). The probe watcher mirrors
     // ENGINE-DONE the moment the pref goes non-empty (live Services.prefs
     // read); bounded, so a wedged engine still fails the gate assertion below
     // instead of hanging the scenario.
@@ -4170,6 +4167,25 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       30_000,
       500,
       label
+    );
+    const tabLines = readMirror(seeded.profileDir)
+      .split('\n')
+      .filter(l => l.includes('TAB_SET'));
+    const finalTabLine = tabLines[tabLines.length - 1];
+    check(
+      counter,
+      Boolean(finalTabLine) && !finalTabLine.includes(' | '),
+      `final updater-tab set is exactly one (always-fresh guard; transient twins tolerated) (${label})`,
+      finalTabLine && finalTabLine.includes(' | ') ?
+        'a SECOND updater tab SURVIVED (the sweep should have removed it): ' + finalTabLine
+      : 'no updater tab was ever seen after restore'
+    );
+    const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
+    check(
+      counter,
+      !schemeIs,
+      `no AsyncTabSwitcher schemeIs error (${label})`,
+      'the selection race (#384) fired during restore'
     );
     console.log(`  [timing] ${label} wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } finally {

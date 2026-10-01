@@ -590,7 +590,11 @@ test('twin-tab guard: a restored tab in the SAME window is forgotten too — exa
   sandbox.Services.obs.notify('sessionstore-windows-restored');
   const restoredBrowser = makeBrowser();
   restoredBrowser.currentURI = {spec: TAB_URI}; // already restored/loaded
-  const restoredTab = {_uri: TAB_URI, linkedBrowser: restoredBrowser, _scriptsUpdateTab: true};
+  // A restored tab never carries the scheduler's mark — only THIS session's
+  // fresh open is marked. The forget pass therefore removes it (and, since the
+  // skip-marked rule, would skip a marked one: that shape is the sweep's, not
+  // the attach block's).
+  const restoredTab = {_uri: TAB_URI, linkedBrowser: restoredBrowser};
   win.gBrowser.tabs.push(restoredTab);
   try {
     sandbox.initScriptsUpdater(win);
