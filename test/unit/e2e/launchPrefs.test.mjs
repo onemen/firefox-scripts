@@ -61,13 +61,17 @@ test('launchFirefox bounds the handshake and retries once (#384)', () => {
   // The launch handshake is raced against a hard deadline; a wedged start is
   // killed BY TAG (whole process tree — launcher-only kills orphan the
   // browser's children) and retried once. protocolTimeout (per protocol
-  // command) must stay 45_000 — this contract bounds the launch phase only.
+  // command) defaults to 45_000 — this contract bounds the launch phase
+  // only. Both bounds are caller-extendable (never shortenable): the stress
+  // scenario (#384 repro) saturates the CPU before the handshake runs, and
+  // the stock bounds would kill healthy-but-slow starts every time.
   assert.match(source, /const LAUNCH_DEADLINE_MS = [\d_]+;/);
   assert.match(source, /Promise\.race\(\[launchPromise, deadline\]\)/);
   assert.match(source, /launchPromise\.catch\(\(\) => \{\}\);/);
   assert.match(source, /killProcessesByCmdline\(tag/);
   assert.match(source, /return launchOnce\(\);/);
-  assert.match(source, /protocolTimeout: 45_000/);
+  assert.match(source, /protocolTimeout: protocolTimeoutMs \|\| 45_000/);
+  assert.match(source, /Math\.max\(launchDeadlineMs, LAUNCH_DEADLINE_MS\)/);
 });
 
 test('launchFirefox embeds a unique per-launch tag in the browser argv', () => {

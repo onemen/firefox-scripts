@@ -247,13 +247,22 @@ async function raceLaunchDeadline(launchPromise, deadlineMs, tag, log) {
  *
  * @param {string} binary - absolute path to Firefox executable
  * @param {string} profileDir - userDataDir (temp profile)
- * @param {{headless?: boolean}} opts
+ * @param {{
+ *   headless?: boolean;
+ *   launchDeadlineMs?: number;
+ *   protocolTimeoutMs?: number;
+ * }} opts
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
 export async function launchFirefox(
   binary,
   profileDir,
-  {headless = false, extraPrefsFirefox = {}} = {}
+  {
+    headless = false,
+    extraPrefsFirefox = {},
+    launchDeadlineMs = LAUNCH_DEADLINE_MS,
+    protocolTimeoutMs,
+  } = {}
 ) {
   const puppeteer = await import('puppeteer-core');
   // Unique per-launch tag, embedded in the browser argv: the deadline's kill
@@ -272,7 +281,7 @@ export async function launchFirefox(
       // when a Firefox start wedges (observed 2026-09-22, reuse-path
       // measurement). Cap it so a wedged start surfaces as an error the
       // scenario can retry instead of stalling the whole leg.
-      protocolTimeout: 45_000,
+      protocolTimeout: protocolTimeoutMs || 45_000,
       // Puppeteer overwrites user.js with its own preferences before launch
       // (createProfile -> syncPreferences), so any prefs the caller needs must
       // be injected through this option — a caller-written user.js would be
@@ -303,7 +312,11 @@ export async function launchFirefox(
     // A rejection after the deadline won the race must not become an unhandled
     // rejection (it would crash the harness) — firefoxPuppeteer.js shape.
     launchPromise.catch(() => {});
-    return raceLaunchDeadline(launchPromise, LAUNCH_DEADLINE_MS, tag, console.log);
+    // Callers may extend the deadline (not shorten it): the stress scenario
+    // saturates the CPU BEFORE launching — the handshake itself starves, and
+    // the stock 20 s bound would kill healthy-but-slow starts every time.
+    const deadline = Math.max(launchDeadlineMs, LAUNCH_DEADLINE_MS);
+    return raceLaunchDeadline(launchPromise, deadline, tag, console.log);
   };
 
   try {

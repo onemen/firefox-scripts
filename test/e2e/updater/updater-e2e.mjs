@@ -208,25 +208,69 @@ try {
   // Watch for the updater tab and record the moment it appears — WebDriver
   // BiDi cannot reliably enumerate trusted chrome:// tabs on CI.
   let polls = 0;
+  let lastCount = 0;
+  let tabSeen = false;
   const watcher = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
   watcher.initWithCallback(
     {
       notify() {
         try {
-          // 30 s of polls comfortably exceeds the 15 s test deadline below.
-          if (++polls > 30) {
+          // Long-lived watch (4 min of 1 s polls): scenarios 11/12 await up to
+          // 45 s + 30 s of mirror lines, and under stress the engine's
+          // re-check lands tens of seconds after the tab. The probe dies with
+          // the browser either way; the scenarios' own timeouts govern.
+          if (++polls > 240) {
             watcher.cancel();
             return;
           }
-          const win = Services.wm.getMostRecentWindow('navigator:browser');
-          for (const tab of win?.gBrowser?.tabs || []) {
-            const spec = tab.linkedBrowser?.currentURI?.spec || '';
-            if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
-              const line = 'TAB_OPENED ' + new Date().toISOString() + ' ' + spec + '\\n';
-              writeUtf8(line);
-              watcher.cancel();
-              return;
+          // All windows (#384): a restored session can hold the updater tab
+          // in a NON-focused window, which a most-recent-window scan never
+          // sees. WINDOW-COUNT on change is the both-windows-restored proof
+          // the session-restore scenario (11) asserts.
+          let wcount = 0;
+          const wins = Services.wm.getEnumerator('navigator:browser');
+          const updaterSpecs = [];
+          while (wins.hasMoreElements()) {
+            wcount++;
+            const w = wins.getNext();
+            for (const tab of w?.gBrowser?.tabs || []) {
+              const spec = tab.linkedBrowser?.currentURI?.spec || '';
+              if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
+                updaterSpecs.push(spec);
+              }
             }
+          }
+          if (wcount !== lastCount) {
+            lastCount = wcount;
+            writeUtf8('WINDOW-COUNT ' + wcount + '\\n');
+          }
+          if (updaterSpecs.length > 0 && !tabSeen) {
+            tabSeen = true;
+            const line =
+              'TAB_OPENED ' +
+              new Date().toISOString() +
+              ' ' +
+              updaterSpecs.join(' | ') +
+              '\\n';
+            writeUtf8(line);
+            // Keep watching: the tab ENGINE's re-check (updater.js
+            // engineInit) writes the daily pref once its check completes —
+            // under stress that lands seconds after the tab appears. Mirror
+            // it as ENGINE-DONE so the stress scenario can await the engine
+            // instead of guessing a sleep (the pref only reaches prefs.js at
+            // the shutdown flush, so the LIVE value is the only timely
+            // signal). Cancel on the next poll after the pref appears.
+            try {
+              const shownDay = Services.prefs.getCharPref(
+                'extensions.firefox-scripts.lastScriptsCheckDate',
+                ''
+              );
+              if (shownDay) {
+                writeUtf8('ENGINE-DONE ' + shownDay + String.fromCharCode(10));
+                watcher.cancel();
+                return;
+              }
+            } catch (e) {}
           }
         } catch (e) {}
       },
@@ -257,7 +301,8 @@ function parseArgs() {
         'Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,6,9] [--repeat 2]\n' +
           '  Scenarios: 1 variant session (stale trio + up-to-date + skipped; 4/5 are aliases),\n' +
           '             6 install-applies, 7 manual-install-upgrade, 8 manual-install-no-ui,\n' +
-          '             9 helper-checksum-win, 10 daily-recheck-timer.'
+          '             9 helper-checksum-win, 10 daily-recheck-timer,\n' +
+          '             11 session-restore (#384), 12 stress-startup (opt-in: FXS_E2E_STRESS=1).'
       );
       process.exit(0);
     }
@@ -3852,6 +3897,413 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+/** Read the console mirror written by the config probe (empty when absent). */
+function readMirror(profileDir) {
+  try {
+    return fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+/** lastScriptsCheckDate persisted in prefs.js, or ''. */
+function readPrefsGate(profileDir) {
+  try {
+    // prefs.js is CRLF on Windows: normalize before splitting, or every line
+    // ends with a stray \r and the $-anchored match below never fires.
+    const line = fs
+      .readFileSync(path.join(profileDir, 'prefs.js'), 'utf-8')
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .find(l => l.includes('extensions.firefox-scripts.lastScriptsCheckDate'));
+    const m = line && line.match(/"([^"]*)"\);$/);
+    return m ? m[1] : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * TEMP diagnostic (#384 follow-up): breadcrumb the seeded profile's updater.js
+ * engineInit — engine entry, twin-tab outcome, and the checkCompleted value it
+ * gates the shown-day write on. logStringMessage routes through the console
+ * service into the mirror (console.* from the page would not).
+ *
+ * @param {string} chromeUtils - the seeded profile's chrome/utils dir
+ */
+/**
+ * TEMP diagnostic for the session-restore scenario: breadcrumb the seeded
+ * profile updater UI. Inserted code NEVER contains a backslash escape (the
+ * previous attempt produced "invalid escape sequence" SyntaxErrors in the page,
+ * which killed the whole updater.js/updater-ui.js parse) — line breaks come
+ * from String.fromCharCode(10) at page runtime.
+ *
+ * @param {string} chromeUtils - the seeded profile chrome/utils dir
+ */
+
+/**
+ * Overwrite the seeded profile's scheduler with the CURRENT source (the
+ * snapshot's utils.zip may predate an in-review fix — scenario 10 sets the same
+ * precedent). Fails loudly when the source file is missing.
+ *
+ * @param {string} chromeUtils - the seeded profile's chrome/utils dir
+ */
+function overwriteSchedulerFromSource(chromeUtils) {
+  const repoSched = path.join(
+    REPO_ROOT,
+    'core',
+    'chrome',
+    'utils',
+    'updater',
+    'scriptsUpdater.sys.mjs'
+  );
+  fs.copyFileSync(repoSched, path.join(chromeUtils, 'updater', 'scriptsUpdater.sys.mjs'));
+}
+
+/**
+ * Tree manifest over the extracted utils with one stale marker byte flipped:
+ * every check sees a pending utils update (shared by the new scenarios).
+ */
+function buildStaleUtilsManifest(snapshotDir, staleTreeDir) {
+  const utilsZipPath = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
+  if (!utilsZipPath) throw new Error(`no utils zip found in ${snapshotDir}`);
+  extractZip(utilsZipPath, staleTreeDir);
+  const stale = path.join(staleTreeDir, FORCE_UTILS_STALE);
+  fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
+  // The snapshot manifest keeps its REAL fx-folder/updater-ui entries and only
+  // the utils entry is re-hashed over the staled tree. Both user-facing
+  // packages then compare on every check, so the updater tab engine re-check
+  // is allowed to own the day (ADR 0012) — buildTreeManifest's empty
+  // fx-folder entry would make that re-check correctly pref-silent.
+  const manifestPath = path.join(snapshotDir, 'hashes.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+  manifest['utils'] = buildTreeManifest(staleTreeDir)['utils'];
+  return manifest;
+}
+
+/**
+ * The session-restore scenario (#384 follow-up): relaunch on a profile whose
+ * previous session (a checked-in, Firefox-authored fixture) holds the updater
+ * tab in a NON-selected window, backgrounded inside that window, with a
+ * different window selected — the exact restore shape the all-windows twin-tab
+ * guard must survive.
+ *
+ * Assertions: both windows restore (WINDOW-COUNT), exactly ONE updater tab
+ * exists across all windows (the guard found the restored one instead of
+ * opening a duplicate into the active window), the restored tab's engine
+ * re-checked (lastScriptsCheckDate), and no AsyncTabSwitcher schemeIs error
+ * (the deferred-selection contract). Stale-utils manifest ⇒ a pending update ⇒
+ * the restored tab's re-check is real, not a no-op.
+ *
+ * The fixture (test/e2e/fixtures/session-2win.jsonlz4) was authored by hand in
+ * a throwaway Firefox profile: 2 windows, selectedWindow 2, updater tab
+ * backgrounded in window 1 (about:config selected there). FXS_E2E_SESSION_FILE
+ * overrides it with any Firefox-authored file.
+ */
+async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
+  console.log(`\n## Scenario: ${label}`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
+  const t0 = Date.now();
+  const fixture =
+    process.env.FXS_E2E_SESSION_FILE ||
+    path.join(REPO_ROOT, 'test', 'e2e', 'fixtures', 'session-2win.jsonlz4');
+  if (!fs.existsSync(fixture)) {
+    check(counter, false, `session fixture exists (${label})`, `missing: ${fixture}`);
+    return null;
+  }
+  const seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
+  const greDir11 = findGreDir(firefoxBin);
+  const greSeed11 = installFxFolder(snapshotDir, greDir11);
+  check(counter, greSeed11.ok, `seed GreD (${label})`, greSeed11.error);
+  appendConfigProbe(greDir11);
+  // SessionStore reads previous.jsonlz4 for "Restore previous session"; the
+  // root copy covers the legacy-migration read path. Seeded BEFORE launch:
+  // startup.page=3 makes restore-on-startup read it at init.
+  fs.mkdirSync(path.join(seeded.profileDir, 'sessionstore-backups'), {recursive: true});
+  fs.copyFileSync(
+    fixture,
+    path.join(seeded.profileDir, 'sessionstore-backups', 'previous.jsonlz4')
+  );
+  fs.copyFileSync(fixture, path.join(seeded.profileDir, 'sessionstore.jsonlz4'));
+  overwriteSchedulerFromSource(seeded.chromeUtils);
+  // Seed the updater UI from the snapshot (self-consistent with the
+  // manifest): the scenario asserts the engine re-check on a RESTORED tab,
+  // not a ensureUpdaterUi download. Also gives the breadcrumb patch a file
+  // to work on.
+  const uiZip11 = findZip(snapshotDir, ['updater-ui.zip', 'updater-ui-dev.zip']);
+  if (uiZip11) {
+    extractZip(uiZip11, path.join(seeded.chromeUtils, 'updater', 'ui'));
+  }
+  const staleTreeDir = fs.mkdtempSync(path.join(REPO_ROOT, 'dist', 'fxs-session-stale-'));
+  const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
+    multiRequest: true,
+    manifestOverride: buildStaleUtilsManifest(snapshotDir, staleTreeDir),
+  });
+  Object.assign(seeded.prefs, serverOverridePrefs(server.url));
+  // Restore the authored session at startup, eagerly (restore_on_demand=false
+  // loads background tabs too — the restored updater tab is NOT selected in
+  // its window, so lazy restore would leave a placeholder with no engine).
+  seeded.prefs['browser.startup.page'] = 3;
+  seeded.prefs['browser.sessionstore.resume_session_once'] = true;
+  seeded.prefs['browser.sessionstore.restore_on_demand'] = false;
+  let browser;
+  try {
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+    });
+    attachProcessLogging(browser, label);
+    const restoredWindows = await pollUntil(
+      () => {
+        const counts = [...readMirror(seeded.profileDir).matchAll(/WINDOW-COUNT (\d+)/g)].map(m =>
+          Number(m[1])
+        );
+        return counts.some(c => c >= 2) ? Math.max(...counts) : null;
+      },
+      45_000,
+      500,
+      label
+    );
+    check(
+      counter,
+      (restoredWindows ?? 0) >= 2,
+      `both windows restored (WINDOW-COUNT ${restoredWindows ?? 0}, ${label})`,
+      restoredWindows ? '' : 'the session fixture never restored a second window'
+    );
+    const tabLine = await pollUntil(
+      () => {
+        const lines = readMirror(seeded.profileDir)
+          .split('\n')
+          .filter(l => l.includes('TAB_OPENED'));
+        return lines.length > 0 ? lines[lines.length - 1] : null;
+      },
+      45_000,
+      500,
+      label
+    );
+    check(
+      counter,
+      Boolean(tabLine) && !tabLine.includes(' | '),
+      `exactly one updater tab after restore — the always-fresh guard forgot the restored one and opened a fresh tab (${label})`,
+      tabLine && tabLine.includes(' | ') ?
+        'a SECOND updater tab was open at some point: ' + tabLine
+      : 'no updater tab seen after restore'
+    );
+    const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
+    check(
+      counter,
+      !schemeIs,
+      `no AsyncTabSwitcher schemeIs error (${label})`,
+      'the selection race (#384) fired during restore'
+    );
+    // The fresh tab's engine re-check needs wall time after the tab opens, and
+    // its pref only reaches prefs.js at the shutdown flush — closing on
+    // WINDOW-COUNT would assert the harness's haste, not the engine (the same
+    // trap scenario 12 hit before its ENGINE-DONE wait: the 8/9 run of
+    // 2026-10-01 closed the browser ~4 s in, before a healthy engine under the
+    // operator's concurrent load had finished). The probe watcher mirrors
+    // ENGINE-DONE the moment the pref goes non-empty (live Services.prefs
+    // read); bounded, so a wedged engine still fails the gate assertion below
+    // instead of hanging the scenario.
+    await pollUntil(
+      () => {
+        const line = readMirror(seeded.profileDir)
+          .split('\n')
+          .find(l => l.includes('ENGINE-DONE'));
+        return line || null;
+      },
+      30_000,
+      500,
+      label
+    );
+    console.log(`  [timing] ${label} wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  } finally {
+    try {
+      await closeBrowser(browser);
+    } catch {
+      /* ignore */
+    }
+    await server.close().catch(() => {});
+    try {
+      fs.rmSync(staleTreeDir, {recursive: true, force: true});
+    } catch {
+      /* ignore */
+    }
+  }
+  // The daily pref is flushed to prefs.js at shutdown (lazy while live), and
+  // the flush can land a moment AFTER the browser process exits — read through
+  // it with a short poll instead of a single racy read (the ziOHlE run wrote
+  // the pref ~100 ms after the first read saw the old value).
+  const today = new Date().toISOString().slice(0, 10);
+  let gate = '';
+  await pollUntil(
+    () => {
+      gate = readPrefsGate(seeded.profileDir);
+      return gate === today || null;
+    },
+    10_000,
+    500,
+    label
+  );
+  check(
+    counter,
+    gate === today,
+    `restored tab engine re-checked (lastScriptsCheckDate=${gate || '(none)'}, ${label})`
+  );
+  if (!opts.keepProfile) {
+    rmDir(seeded.profileDir);
+  } else {
+    console.log(`  [keep] profile: ${seeded.profileDir}`);
+  }
+  return null;
+}
+
+/**
+ * Opt-in startup-stress scenario (env FXS_E2E_STRESS=1; never on by default —
+ * it deliberately saturates the CPU): the #384 repro. Spawns self-expiring node
+ * CPU hogs (FXS_E2E_STRESS_HOGS, default 4, ~40 s), launches the stale fixture
+ * under that contention, and asserts the updater tab still opens, its engine
+ * still re-checks (lastScriptsCheckDate), and no schemeIs error — the
+ * deferred-selection contract under the exact conditions that wedged the
+ * synchronous selection.
+ */
+async function runStressStartupScenario(counter, opts, snapshotDir, label) {
+  console.log(`\n## Scenario: ${label}`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
+  const t0 = Date.now();
+  const hogCount = Number(process.env.FXS_E2E_STRESS_HOGS) || 4;
+  const {spawn} = await import('node:child_process');
+  const hogs = [];
+  for (let i = 0; i < hogCount; i++) {
+    try {
+      hogs.push(
+        spawn(process.execPath, ['-e', 'const t=Date.now()+40000;while(Date.now()<t){}'], {
+          stdio: 'ignore',
+        })
+      );
+    } catch {
+      /* a lost hog is fine — the stress is best-effort */
+    }
+  }
+  console.log(`  [stress] ${hogs.length} CPU hogs for ~40s`);
+  const seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
+  const greDir12 = findGreDir(firefoxBin);
+  const greSeed12 = installFxFolder(snapshotDir, greDir12);
+  check(counter, greSeed12.ok, `seed GreD (${label})`, greSeed12.error);
+  appendConfigProbe(greDir12);
+  overwriteSchedulerFromSource(seeded.chromeUtils);
+  const staleTreeDir = fs.mkdtempSync(path.join(REPO_ROOT, 'dist', 'fxs-stress-stale-'));
+  const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
+    // TWO fetches minimum: the scheduler's check AND the tab engine's
+    // re-check (engineInit). A single-request server 503s the second fetch,
+    // the re-check never completes, and the daily pref is never written —
+    // the engine re-check assertion would fail on harness plumbing, not on
+    // the wedge under test (same trap scenario 11 hit before multiRequest).
+    multiRequest: true,
+    manifestOverride: buildStaleUtilsManifest(snapshotDir, staleTreeDir),
+  });
+  Object.assign(seeded.prefs, serverOverridePrefs(server.url));
+  let browser;
+  try {
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+      // The hogs are already saturating the CPU when the handshake runs: the
+      // stock 20 s launch deadline kills healthy-but-slow starts, and the 45 s
+      // protocolTimeout starves on the handshake's getUserContexts command.
+      // 60 s / 120 s let the connect through with the safety nets intact.
+      launchDeadlineMs: 60_000,
+      protocolTimeoutMs: 120_000,
+    });
+    attachProcessLogging(browser, label);
+    // Poll, don't peek: under stress the tab opens seconds after launch, and a
+    // single immediate read + close would close the browser before the
+    // scheduler ever attached it (the scenario would then assert its own
+    // self-inflicted absence).
+    const tabLine = await pollUntil(
+      () => {
+        const line = readMirror(seeded.profileDir)
+          .split('\n')
+          .find(l => l.includes('TAB_OPENED'));
+        return line || null;
+      },
+      45_000,
+      500,
+      label
+    );
+    check(counter, Boolean(tabLine), `stress: updater tab seen (${label})`);
+    // The engine needs wall time to load the chrome page and run its re-check
+    // (its pref only reaches prefs.js at the shutdown flush), and under hog
+    // saturation a chrome load takes seconds. Closing at TAB_OPENED would
+    // assert nothing but the harness's own haste (the nsEbfx run: tab seen
+    // 0.8 s after start, browser closed ~1.3 s in, pref never written). Wait
+    // for the engine's own up-to-date check to complete, bounded.
+    await pollUntil(
+      () => {
+        const line = readMirror(seeded.profileDir)
+          .split('\n')
+          .find(l => l.includes('ENGINE-DONE'));
+        return line || null;
+      },
+      30_000,
+      500,
+      label
+    );
+    const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
+    check(
+      counter,
+      !schemeIs,
+      `stress: no AsyncTabSwitcher schemeIs error (${label})`,
+      'the selection race (#384) fired under stress'
+    );
+    console.log(`  [timing] ${label} wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  } finally {
+    for (const hog of hogs) {
+      try {
+        hog.kill();
+      } catch {
+        /* self-expiring anyway */
+      }
+    }
+    try {
+      await closeBrowser(browser);
+    } catch {
+      /* ignore */
+    }
+    await server.close().catch(() => {});
+    try {
+      fs.rmSync(staleTreeDir, {recursive: true, force: true});
+    } catch {
+      /* ignore */
+    }
+  }
+  // The daily pref flushes to prefs.js at shutdown — and possibly a moment
+  // after the process exit (see the session-restore scenario) — poll for it.
+  const today = new Date().toISOString().slice(0, 10);
+  let gate = '';
+  await pollUntil(
+    () => {
+      gate = readPrefsGate(seeded.profileDir);
+      return gate === today || null;
+    },
+    10_000,
+    500,
+    label
+  );
+  check(
+    counter,
+    gate === today,
+    `stress: updater tab loaded and engine re-checked under CPU contention (lastScriptsCheckDate=${gate || '(none)'}, ${label})`
+  );
+  if (!opts.keepProfile) {
+    rmDir(seeded.profileDir);
+  } else {
+    console.log(`  [keep] profile: ${seeded.profileDir}`);
+  }
+  return null;
+}
 async function run() {
   const opts = parseArgs();
   const counter = createCounter();
@@ -3928,7 +4380,7 @@ async function run() {
   // the folded install-applies / manual-install-no-ui scenarios, and the ids
   // 4/5/6/8 are its aliases (--scenario 6 still runs the whole session). The
   // default list names them only for back-compat with existing invocations.
-  const scenarios = opts.scenarios || ['1', '6', '7', '8', '9', '10'];
+  const scenarios = opts.scenarios || ['1', '6', '7', '8', '9', '10', '11'];
 
   const profiles = [];
 
@@ -4114,6 +4566,28 @@ async function run() {
           // No retry — a missed timer is deterministic (module-level bug), not
           // a startup race; a retry would only mask a real regression.
           await runTimerRegressionScenario(counter, opts, snapshotDir, 'daily-recheck-timer');
+        },
+      },
+      {
+        id: '11',
+        run: async () => {
+          // Session restore across windows (#384 follow-up): the checked-in,
+          // Firefox-authored fixture restores the updater tab in a NON-focused
+          // window, backgrounded inside that window. The all-windows twin-tab
+          // guard must keep the restored tab (no duplicate) and its engine
+          // must re-check. FXS_E2E_SESSION_FILE overrides the fixture with
+          // any Firefox-authored sessionstore.jsonlz4.
+          await runSessionRestoreScenario(counter, opts, snapshotDir, 'session-restore');
+        },
+      },
+      {
+        id: '12',
+        // Opt-in: set FXS_E2E_STRESS=1. Deliberately saturates the CPU to
+        // reproduce the #384 startup wedge conditions.
+        pre: () => (process.env.FXS_E2E_STRESS ? null : 'set FXS_E2E_STRESS=1 to opt in'),
+        skipLabel: 'stress-startup',
+        run: async () => {
+          await runStressStartupScenario(counter, opts, snapshotDir, 'stress-startup');
         },
       },
     ];
