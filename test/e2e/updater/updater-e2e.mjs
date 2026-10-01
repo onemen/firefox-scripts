@@ -4052,6 +4052,13 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {
       headless: opts.headless,
       extraPrefsFirefox: seeded.prefs,
+      // Restoring a 2-window session (with eager background tabs) makes the
+      // heaviest startup any scenario launches: on a busy runner the handshake
+      // can outlive the stock 20 s deadline (esr-140 Windows, 2026-10-01 —
+      // both the attempt AND its retry were killed at exactly 20 s), so the
+      // same extended bounds the stress scenario uses apply here.
+      launchDeadlineMs: 60_000,
+      protocolTimeoutMs: 120_000,
     });
     attachProcessLogging(browser, label);
     const restoredWindows = await pollUntil(
