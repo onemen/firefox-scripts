@@ -225,6 +225,13 @@ function loadUpdater({config, store = {}, routes = {}} = {}) {
         }
         return {}; // Downloads.sys.mjs — unused by the channel logic
       },
+      // The module's lazy Timer getter (module-scope setTimeout has never
+      // existed in ESM scope — #292); the channel tests never await it.
+      defineESModuleGetters(target, getters) {
+        if (getters.setTimeout && String(getters.setTimeout).includes('Timer.sys.mjs')) {
+          target.setTimeout = cb => setTimeout(cb, 0);
+        }
+      },
     },
     Services: {
       prefs: makePrefs(store),

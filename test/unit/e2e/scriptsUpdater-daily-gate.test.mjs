@@ -239,6 +239,13 @@ function loadUpdater({store = {}, routes = {}, captureExports = false} = {}) {
   const sandbox = {
     ChromeUtils: {
       generateQI: () => () => {},
+      defineESModuleGetters: (target, getters) => {
+        for (const [name, spec] of Object.entries(getters)) {
+          if (String(spec).includes('Timer')) {
+            target[name] = cb => setTimeout(cb, 0);
+          }
+        }
+      },
       importESModule(spec) {
         if (spec.includes('updater-config')) {
           return {CONFIG: updaterConfig()};
@@ -252,6 +259,32 @@ function loadUpdater({store = {}, routes = {}, captureExports = false} = {}) {
       dirsvc: {get: () => ({path: dirs['fx-folder']})},
       io: makeIo(routes),
       scriptSecurityManager: {getSystemPrincipal: () => ({})},
+      // The #384 twin-tab guard enumerates all browser windows; this suite's
+      // fake window is the only one the module ever needs to see.
+      obs: {
+        _observers: {},
+        addObserver(cb, topic) {
+          this._observers[topic] = this._observers[topic] || [];
+          this._observers[topic].push(cb);
+        },
+        removeObserver(cb, topic) {
+          this._observers[topic] = (this._observers[topic] || []).filter(o => o !== cb);
+        },
+        /** Test seam: fire a topic exactly like Services.obs.notifyObservers. */
+        notify(topic) {
+          for (const cb of this._observers[topic] || []) cb(null, topic);
+        },
+      },
+      wm: {
+        getEnumerator: () => {
+          let i = 0;
+          const wins = [];
+          return {
+            hasMoreElements: () => i < wins.length,
+            getNext: () => wins[i++],
+          };
+        },
+      },
     },
     Cc: makeCc(),
     Ci: new Proxy({}, {get: () => ({})}),
@@ -274,6 +307,7 @@ function loadUpdater({store = {}, routes = {}, captureExports = false} = {}) {
       makeDirectory: async (p, opts) =>
         fs.mkdirSync(p, {recursive: Boolean(opts?.ignoreExisting ?? opts?.recursive)}),
     },
+    setTimeout,
     console,
     TextEncoder,
     TextDecoder,
@@ -373,6 +407,7 @@ test('up-to-date check records the day, so new sessions do not re-run it', async
   writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     const settled = await waitFor(() => store[PREF_LAST_CHECK] === TODAY);
     assert.ok(settled, 'the daily pref was not written on the up-to-date path');
     assert.equal(store[PREF_LAST_SHOWN], undefined, 'the retired shown pref stays dead');
@@ -389,6 +424,7 @@ test('same-day re-check after a recorded day is a no-op (manifest not refetched)
   writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     assert.ok(await waitFor(() => store[PREF_LAST_CHECK] === TODAY));
     const fetchesAfterFirst = sandbox.Services.io._state.fetches;
     assert.ok(fetchesAfterFirst >= 1, 'the first check fetched the manifest');
@@ -396,6 +432,7 @@ test('same-day re-check after a recorded day is a no-op (manifest not refetched)
     // A "new session": init runs again the same day. The gate must exit BEFORE
     // the fetch — zero additional manifest fetches, nothing else observable.
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(
       sandbox.Services.io._state.fetches,
@@ -414,6 +451,7 @@ test('the daily pref from earlier today skips the check entirely', async () => {
   writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(sandbox.Services.io._state.fetches, 0, 'no manifest fetch');
   } finally {
@@ -432,6 +470,7 @@ test('unreachable manifest: NO pref written — the next session re-checks', asy
   fs.writeFileSync(path.join(layout.utilsDir, 'updater.js'), 'real code');
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     // Give the failing check ample time to settle, then assert the negative.
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(
@@ -455,6 +494,7 @@ test('malformed manifest: NO pref written — a broken publish must not consume 
   fs.writeFileSync(path.join(layout.utilsDir, 'updater.js'), 'real code');
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(
       store[PREF_LAST_CHECK],
@@ -488,6 +528,7 @@ test('incomplete manifest (fx-folder entry missing): NO pref written — skipped
   });
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(
       store[PREF_LAST_CHECK],
@@ -526,6 +567,7 @@ test('pending update: the scheduler writes NO pref, the tab opens (the tab recor
   const win = makeFakeWindow();
   try {
     sandbox.initScriptsUpdater(win);
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     assert.ok(
       await waitFor(() => win.openedTabs.length > 0, 3000),
       'the update tab path should have been reached'
@@ -548,6 +590,7 @@ test('driver seam: checkForUpdates is exported and re-decides on demand (#309)',
   const win = makeFakeWindow();
   try {
     sandbox.initScriptsUpdater(win);
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     assert.ok(await waitFor(() => store[PREF_LAST_CHECK] === TODAY));
     assert.equal(
       typeof sandbox.__moduleExports?.checkForUpdates,

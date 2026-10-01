@@ -125,6 +125,15 @@ export function getHelperBaseUrl() {
 
 const {Downloads} = ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs');
 
+// Window-independent timers for the updater's module scope: setTimeout
+// does not exist in ESM module scope (a bare reference throws — the #292
+// lesson), so the one deferred step that needs it comes from Timer.sys.mjs
+// through the canonical lazy getter.
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  setTimeout: 'resource://gre/modules/Timer.sys.mjs',
+});
+
 // The actual update tab (updater-ui.zip) — a privileged chrome:// page.
 const UPDATER_UI_URI = 'chrome://firefox-scripts/content/ui/updater.html';
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily re-check while the session lives
@@ -252,6 +261,14 @@ export function getAssetSuffix() {
 let gInitialized = false;
 let gWindow = null;
 
+// Session-restore gate (#384 follow-up): the tab-attach decision must run
+// AFTER SessionStore finished restoring, or the guard scans half-restored
+// windows (no updater tab yet), opens a duplicate, and the restored tab
+// lands afterwards. Set by an observer below; a session that never fires
+// the event (e.g. no saved session) is covered by the bounded wait in
+// checkForUpdates's attach block (sessionRestoredWait).
+let gSessionRestored = false;
+
 /**
  * Initialize the updater. Called per browser window on startup by
  * BootstrapLoader.js / userChrome.js; idempotent so double-init is harmless.
@@ -278,6 +295,20 @@ export function initScriptsUpdater(win) {
 
   gWindow = win;
 
+  // Track session-restore completion (once per process, never removed —
+  // the module lives as long as the browser).
+  try {
+    Services.obs.addObserver(function observe(subject, topic) {
+      if (topic === 'sessionstore-windows-restored') {
+        gSessionRestored = true;
+        Services.obs.removeObserver(observe, topic);
+      }
+    }, 'sessionstore-windows-restored');
+  } catch {
+    // Observer registration failed (unusual): the bounded wait in the attach
+    // block falls back to a first-pass timer instead.
+  }
+
   // Check on startup, then re-check daily for as long as the session lives.
   // The daily pref (PREF_LAST_CHECK vs todayStr()) gates every invocation, so
   // same-day re-checks are no-ops. The timer must be an
@@ -300,6 +331,137 @@ function todayStr() {
 }
 
 /**
+ * Resolve once SessionStore has finished restoring this session. Preferred
+ * path: SessionStore's own promiseAllWindowsRestored — the restore itself takes
+ * 1–2 s, and the promise resolves once done (expected to also resolve when
+ * there was nothing to restore — no saved session, sessionstore off — which the
+ * bounded fallback covers if it ever stays pending). Fallbacks: the module flag
+ * set by the sessionstore-windows-restored observer, then a bounded nsITimer
+ * poll — attaching late is cosmetic, attaching early duplicates tabs (#384).
+ * The 10 s bound covers any anomaly (a pending promise burns the bound once per
+ * day at worst); setTimeout does not exist in module scope, so the poll steps
+ * through an nsITimer.
+ */
+async function sessionRestoredWait() {
+  if (gSessionRestored) {
+    return;
+  }
+  try {
+    const {SessionStore} = ChromeUtils.importESModule(
+      'resource:///modules/sessionstore/SessionStore.sys.mjs'
+    );
+    await withTimeout(Promise.resolve(SessionStore.promiseAllWindowsRestored), 10000);
+    gSessionRestored = true;
+    return;
+  } catch {
+    // Import or promise unavailable (unexpected): fall back below.
+  }
+  const deadline = Date.now() + 10000;
+  while (!gSessionRestored && Date.now() < deadline) {
+    await new Promise(resolve => lazy.setTimeout(resolve, 100));
+  }
+}
+/** Every live navigator:browser window, in MRU order. */
+function allBrowserWindows() {
+  const wins = [];
+  const enumerator = Services.wm.getEnumerator('navigator:browser');
+  while (enumerator.hasMoreElements()) {
+    wins.push(enumerator.getNext());
+  }
+  return wins;
+}
+
+/**
+ * Select `tab` in `win` once its browser has committed a load (load or pageshow
+ * — about:blank placeholders can fire load without committing, so both are
+ * awaited). Selecting earlier is the #384 wedge: see checkForUpdates.
+ *
+ * A load that never comes must not wedge selection forever: a one-shot 10 s
+ * timer selects anyway (tabbar cosmetics at worst — the load itself is never
+ * affected). Listeners/timer are cleaned up on whichever path wins first.
+ *
+ * @param {Window} win - the window hosting the tab
+ * @param {Tab} tab - the freshly added updater tab
+ */
+function selectWhenLoaded(win, tab) {
+  const gBrowser = win.gBrowser;
+  let done = false;
+  const finish = () => {
+    if (done) {
+      return;
+    }
+    done = true;
+    try {
+      lb.removeEventListener('load', onLoad, true);
+      lb.removeEventListener('pageshow', onPageShow, true);
+      timer.cancel();
+    } catch {
+      // Tab/window already gone: nothing to clean up.
+    }
+    // Window churn after the add (the awaited ensureUpdaterUi above can
+    // outlive the window addTrustedTab targeted): select only if the tab is
+    // still in ITS window's gBrowser.
+    try {
+      if (!win.closed && gBrowser.tabContainer.contains(tab)) {
+        gBrowser.selectedTab = tab;
+      }
+    } catch {
+      // Same: teardown mid-select is not a scheduler failure.
+    }
+  };
+  const lb = tab.linkedBrowser;
+  const onLoad = () => {
+    if (lb.currentURI?.spec !== 'about:blank') {
+      finish();
+    }
+  };
+  const onPageShow = () => {
+    if (lb.currentURI?.spec !== 'about:blank') {
+      finish();
+    }
+  };
+  let timer = null;
+  try {
+    lb.addEventListener('load', onLoad, true);
+    lb.addEventListener('pageshow', onPageShow, true);
+    timer = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
+    timer.initWithCallback(finish, 10000, Ci.nsITimer.TYPE_ONE_SHOT);
+  } catch {
+    // No usable browser right now (nothing to select into): leave unselected —
+    // the same outcome as the pre-#384 code with a dead window.
+  }
+}
+
+/**
+ * Remove a restored updater tab from a non-current window: close the tab and
+ * purge the matching entry from the recently-closed list so the tab cannot be
+ * resurrected (Ctrl+Shift+T) as a duplicate updater later. Best-effort: a
+ * missing or changed SessionStore API degrades to a plain tab close (the fresh
+ * open below still yields exactly one live updater tab).
+ *
+ * @param {Window} win - the window hosting the restored updater tab
+ * @param {Tab} tab - the restored updater tab to forget
+ */
+function forgetUpdaterTab(win, tab) {
+  try {
+    win.gBrowser.removeTab(tab);
+    try {
+      const closed = Services.ss.getClosedTabDataForWindow(win);
+      const data = typeof closed === 'string' ? JSON.parse(closed) : closed;
+      const tabs = data?.windows?.[0]?.tabs ?? data?.tabs ?? [];
+      const index = tabs.findIndex(t => t.entries?.[0]?.url === UPDATER_UI_URI);
+      if (index >= 0) {
+        Services.ss.forgetClosedTab(win, index);
+      }
+    } catch {
+      // No session data for this tab: the plain removeTab above is enough.
+    }
+  } catch {
+    // Tab/window gone mid-normalize: nothing to forget.
+  }
+}
+
+/**
  * Daily check: fetch the manifest, compute local hashes, keep the updater UI
  * current, and open the update tab when utils or fx-folder needs an update.
  *
@@ -317,15 +479,6 @@ function todayStr() {
  * done": a pending update that is ignored resurfaces tomorrow, and the only
  * ways to stop the tab are to install, or check "Don't show again for this
  * update" (per-package skippedHash prefs).
- *
- * EXPORTED for the updater E2E's driver mode (#309): a privileged page can call
- * it on demand — repeatedly, within one browser — after flipping the inputs the
- * check reads (marker files on disk, override prefs, skip prefs), which is how
- * the variant matrix is covered without a relaunch per variant. The daily pref
- * still gates it, so a driver that wants a fresh decision clears it first (it
- * is an ordinary user pref, writable in-page). Requires initScriptsUpdater() to
- * have run (gWindow is the tab target): a check with no live window returns
- * without doing anything.
  */
 export async function checkForUpdates() {
   // The early gate only needs A live window for the fetch phase; the tab-open
@@ -382,15 +535,57 @@ export async function checkForUpdates() {
     return;
   }
 
-  // An updater tab may already be open (e.g. restored from a session): keep a
-  // single instance.  Pending session-restore tabs expose the target via
-  // initialURI before they finish loading.
-  for (const tab of b.tabs) {
-    if (
-      tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
-      tab.linkedBrowser?.initialURI === UPDATER_UI_URI
-    ) {
-      return;
+  // Session-restore gate: run the attach block only after SessionStore has
+  // finished restoring (see gSessionRestored). Bounded: proceed after 30 s
+  // even if the event never fires (no saved session, or restore disabled) —
+  // attaching late is cosmetic, attaching early duplicates tabs (#384).
+  await sessionRestoredWait();
+
+  {
+    // A restored session can hold an updater tab from the previous session —
+    // possibly in a window the user is not looking at, and a lazily restored
+    // chrome page may never run its engine. Rather than reuse it, ALWAYS forget
+    // it (close + purge from the recently-closed list, so Ctrl+Shift+T cannot
+    // resurrect a duplicate) and fall through to ONE fresh open in the current
+    // window (#384 follow-up). Scanned across ALL windows; window churn (a
+    // window closing mid-scan) and tabs mid-teardown are tolerated.
+    for (const win of allBrowserWindows()) {
+      if (win.closed) {
+        continue;
+      }
+      for (const tab of [...win.gBrowser.tabs]) {
+        try {
+          if (
+            tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
+            tab.linkedBrowser?.initialURI === UPDATER_UI_URI
+          ) {
+            forgetUpdaterTab(win, tab);
+          }
+        } catch {
+          // A tab mid-teardown has no usable browser; not an updater tab.
+        }
+      }
+    }
+
+    // Re-scan after the forget pass: a just-forgotten tab's SessionStore record
+    // can briefly keep initialURI visible to a racing fresh-open. If any updater
+    // tab survived (mid-teardown twin), let IT be the one and bail — never two.
+    for (const win of allBrowserWindows()) {
+      if (win.closed) {
+        continue;
+      }
+      for (const tab of win.gBrowser.tabs) {
+        try {
+          if (
+            tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
+            tab.linkedBrowser?.initialURI === UPDATER_UI_URI
+          ) {
+            return;
+          }
+        } catch {
+          // Mid-teardown: not countable here.
+        }
+      }
     }
   }
 
@@ -401,7 +596,16 @@ export async function checkForUpdates() {
   const tab = liveWin.gBrowser.addTrustedTab(UPDATER_UI_URI);
   tab._scriptsUpdateTab = true;
   tab.loadOnStartup = true;
-  liveWin.gBrowser.selectedTab = tab;
+  // Select the tab only once its browser has actually started loading the
+  // updater page. The selection here used to be synchronous, and under startup
+  // CPU contention that could wedge the tab forever in headless Nightly: the
+  // forced async tab switch raced the new browser's still-null currentURI
+  // (AsyncTabSwitcher.sys.mjs schemeIs TypeError in the wild), the load never
+  // committed — the tab stayed at about:blank busy=true, the engine never ran,
+  // and the pending update stayed hidden for the whole session (#384).
+  // Deferring to load/pageshow keeps the "updater tab selected" behavior on
+  // the healthy path while the load itself can never be killed by it.
+  selectWhenLoaded(liveWin, tab);
 }
 
 /**

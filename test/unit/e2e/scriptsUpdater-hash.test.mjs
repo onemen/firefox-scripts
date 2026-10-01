@@ -243,6 +243,13 @@ function loadUpdater({config = updaterConfig(), store = {}, routes = {}} = {}) {
   const sandbox = {
     ChromeUtils: {
       generateQI: () => () => {},
+      defineESModuleGetters: (target, getters) => {
+        for (const [name, spec] of Object.entries(getters)) {
+          if (String(spec).includes('Timer')) {
+            target[name] = cb => setTimeout(cb, 0);
+          }
+        }
+      },
       importESModule(spec) {
         if (spec.includes('updater-config')) {
           return {CONFIG: config};
