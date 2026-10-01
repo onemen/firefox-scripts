@@ -302,6 +302,63 @@ export function initScriptsUpdater(win) {
       if (topic === 'sessionstore-windows-restored') {
         gSessionRestored = true;
         Services.obs.removeObserver(observe, topic);
+        // A restore can MATERIALIZIZE its updater tab after this module's
+        // startup attach block already scanned (sessionstore feeds its windows
+        // in late; observed on ESR 140: the guard ran, opened the fresh tab,
+        // and the restored tab then appeared next to it — two engines, both
+        // self-closing on the twin-tab guard, no pref ever written). Sweep any
+        // unmarked updater tab the attach block could not have seen — bounded
+        // repeating (6 × 2 s), because the materialization itself can land
+        // after the event (the sweep must outlive it, not race it). The fresh
+        // tab carries _scriptsUpdateTab, so it is never a victim.
+        try {
+          let ticks = 0;
+          const sweep = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
+          sweep.initWithCallback(
+            {
+              notify() {
+                try {
+                  if (++ticks > 6) {
+                    sweep.cancel();
+                    return;
+                  }
+                  let removed = false;
+                  for (const win of allBrowserWindows()) {
+                    if (win.closed) {
+                      continue;
+                    }
+                    for (const tab of [...win.gBrowser.tabs]) {
+                      try {
+                        if (
+                          !tab._scriptsUpdateTab &&
+                          (tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
+                            tab.linkedBrowser?.initialURI === UPDATER_UI_URI)
+                        ) {
+                          forgetUpdaterTab(win, tab);
+                          removed = true;
+                        }
+                      } catch {
+                        // A tab mid-teardown has no usable browser.
+                      }
+                    }
+                  }
+                  // Nothing left to sweep twice in a row: the restore is done
+                  // feeding us tabs — stop early.
+                  if (!removed && ticks > 1) {
+                    sweep.cancel();
+                  }
+                } catch {
+                  // Window churn mid-sweep: the next tick retries.
+                }
+              },
+            },
+            2000,
+            Ci.nsITimer.TYPE_REPEATING_SLACK
+          );
+        } catch {
+          // Timer creation failed (unusual): the attach block's own guard and
+          // the tab engine's twin-tab guard still hold.
+        }
       }
     }, 'sessionstore-windows-restored');
   } catch {
@@ -446,12 +503,29 @@ function forgetUpdaterTab(win, tab) {
   try {
     win.gBrowser.removeTab(tab);
     try {
-      const closed = Services.ss.getClosedTabDataForWindow(win);
+      // Services.ss exists only on newer Firefox (159+); the SessionStore
+      // module is the portable path — same API, every supported engine.
+      const {SessionStore} = ChromeUtils.importESModule(
+        'resource:///modules/sessionstore/SessionStore.sys.mjs'
+      );
+      const closed = SessionStore.getClosedTabDataForWindow(win);
       const data = typeof closed === 'string' ? JSON.parse(closed) : closed;
-      const tabs = data?.windows?.[0]?.tabs ?? data?.tabs ?? [];
-      const index = tabs.findIndex(t => t.entries?.[0]?.url === UPDATER_UI_URI);
+      // Shape varies by method AND version: the window-state object carries
+      // _closedTabs[] (the array form), the plain list form carries tabs[] or
+      // windows[0]._closedTabs — scan every one of them.
+      const candidates =
+        [
+          data?._closedTabs,
+          data?.tabs,
+          data?.windows?.[0]?._closedTabs,
+          data?.windows?.[0]?.tabs,
+        ].find(Array.isArray) ?? [];
+      const index = candidates.findIndex(
+        t =>
+          t?.state?.entries?.[0]?.url === UPDATER_UI_URI || t?.entries?.[0]?.url === UPDATER_UI_URI
+      );
       if (index >= 0) {
-        Services.ss.forgetClosedTab(win, index);
+        SessionStore.forgetClosedTab(win, index);
       }
     } catch {
       // No session data for this tab: the plain removeTab above is enough.

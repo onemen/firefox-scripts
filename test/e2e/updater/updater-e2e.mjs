@@ -94,6 +94,7 @@ import {
   attachDriver,
   findUpdaterPage,
 } from '../shared/updaterDriver.mjs';
+import {buildSession, mozLz4} from '../shared/sessionFile.mjs';
 
 const FORCE_UTILS_STALE = 'RDFDataSource.sys.mjs';
 const FORCE_UTILS_STALE_MARKER = '\n// e2e-test: forced stale\n';
@@ -210,6 +211,7 @@ try {
   let polls = 0;
   let lastCount = 0;
   let tabSeen = false;
+  let lastTabSet = '';
   const watcher = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
   watcher.initWithCallback(
     {
@@ -236,7 +238,9 @@ try {
             for (const tab of w?.gBrowser?.tabs || []) {
               const spec = tab.linkedBrowser?.currentURI?.spec || '';
               if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
-                updaterSpecs.push(spec);
+                // '*' = scheduler-marked startup tab — the TAB_SET lines then
+                // say WHICH tab survived a twin race, not just how many.
+                updaterSpecs.push(tab._scriptsUpdateTab ? spec + '*' : spec);
               }
             }
           }
@@ -244,15 +248,29 @@ try {
             lastCount = wcount;
             writeUtf8('WINDOW-COUNT ' + wcount + '\\n');
           }
+          // The whole updater-tab SET on every change (not a once-only
+          // "opened" flag): the session-restore scenario asserts a FINAL state
+          // of exactly one tab, and the road there can legitimately include a
+          // transient twin (restored tab materializing after the guard's
+          // scan, then swept by the sessionstore-windows-restored sweep).
+          const tabSet = updaterSpecs.join(' | ');
+          if (tabSet !== lastTabSet) {
+            lastTabSet = tabSet;
+            if (updaterSpecs.length > 0) {
+              writeUtf8('TAB_SET ' + new Date().toISOString() + ' ' + tabSet + '\\n');
+            }
+          }
           if (updaterSpecs.length > 0 && !tabSeen) {
             tabSeen = true;
-            const line =
+            // First-seen marker (scenario 1/12's fast tab proof and
+            // mirrorSaysTabOpened's BiDi-grace decision still read it).
+            writeUtf8(
               'TAB_OPENED ' +
-              new Date().toISOString() +
-              ' ' +
-              updaterSpecs.join(' | ') +
-              '\\n';
-            writeUtf8(line);
+                new Date().toISOString() +
+                ' ' +
+                updaterSpecs.join(' | ') +
+                '\\n'
+            );
             // Keep watching: the tab ENGINE's re-check (updater.js
             // engineInit) writes the daily pref once its check completes —
             // under stress that lands seconds after the tab appears. Mirror
@@ -4000,15 +4018,40 @@ function buildStaleUtilsManifest(snapshotDir, staleTreeDir) {
  * backgrounded in window 1 (about:config selected there). FXS_E2E_SESSION_FILE
  * overrides it with any Firefox-authored file.
  */
+/**
+ * The generated session file: buildSession's payload (2 windows, updater tab
+ * backgrounded in the non-selected one) wrapped in the mozLz4 container with
+ * the same `version: ['sessionrestore', 1]` array shape a real Firefox write
+ * carries — every watched engine parses it (the esr-140 probe connects in ~2 s
+ * with this payload vs never with the 159-authored fixture).
+ *
+ * @returns {Buffer} sessionstore.jsonlz4 bytes
+ */
+function buildSessionBuffer() {
+  const session = buildSession({
+    windows: 2,
+    updaterInWindow: 1,
+    updaterUrl: UPDATER_URL,
+  });
+  session.version = ['sessionrestore', 1];
+  return mozLz4(session);
+}
+
 async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
   console.log(`\n## Scenario: ${label}`);
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error(missingFirefoxMessage());
   const t0 = Date.now();
-  const fixture =
-    process.env.FXS_E2E_SESSION_FILE ||
-    path.join(REPO_ROOT, 'test', 'e2e', 'fixtures', 'session-2win.jsonlz4');
-  if (!fs.existsSync(fixture)) {
+  // The session is GENERATED at runtime (sessionFile.mjs), not checked in:
+  // the original hand-authored fixture came from a Firefox 159 profile, and
+  // its 159-era fields (isAIWindow, splitViews, zIndex, …) wedge ESR 140's
+  // SessionStore at startup — the launch never completed (puppeteer
+  // handshake timed out, twice, esr-140 Windows 2026-10-01). The generated
+  // payload carries only long-stable session fields, so every engine from
+  // the oldest watched ESR to Nightly parses it. FXS_E2E_SESSION_FILE still
+  // overrides it with any Firefox-authored file for a hand-shaped session.
+  const fixture = process.env.FXS_E2E_SESSION_FILE || '';
+  if (fixture && !fs.existsSync(fixture)) {
     check(counter, false, `session fixture exists (${label})`, `missing: ${fixture}`);
     return null;
   }
@@ -4019,13 +4062,16 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
   appendConfigProbe(greDir11);
   // SessionStore reads previous.jsonlz4 for "Restore previous session"; the
   // root copy covers the legacy-migration read path. Seeded BEFORE launch:
-  // startup.page=3 makes restore-on-startup read it at init.
+  // startup.page=3 makes restore-on-startup read it at init. The generated
+  // session (below) mirrors the reported shape: the updater tab in a
+  // NON-active window and NOT that window's selected tab.
   fs.mkdirSync(path.join(seeded.profileDir, 'sessionstore-backups'), {recursive: true});
-  fs.copyFileSync(
-    fixture,
-    path.join(seeded.profileDir, 'sessionstore-backups', 'previous.jsonlz4')
+  const sessionBytes = fixture ? fs.readFileSync(fixture) : buildSessionBuffer();
+  fs.writeFileSync(
+    path.join(seeded.profileDir, 'sessionstore-backups', 'previous.jsonlz4'),
+    sessionBytes
   );
-  fs.copyFileSync(fixture, path.join(seeded.profileDir, 'sessionstore.jsonlz4'));
+  fs.writeFileSync(path.join(seeded.profileDir, 'sessionstore.jsonlz4'), sessionBytes);
   overwriteSchedulerFromSource(seeded.chromeUtils);
   // Seed the updater UI from the snapshot (self-consistent with the
   // manifest): the scenario asserts the engine re-check on a RESTORED tab,
@@ -4035,6 +4081,14 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
   if (uiZip11) {
     extractZip(uiZip11, path.join(seeded.chromeUtils, 'updater', 'ui'));
   }
+  // The snapshot's tab UI predates the PR's updater.js edits (Xray-safe twin
+  // guard). Overwrite it with the worktree source, exactly like
+  // overwriteSchedulerFromSource does for the scheduler — the scenario tests
+  // THIS branch's behavior on every engine.
+  fs.copyFileSync(
+    path.join(REPO_ROOT, 'tools', 'publish', 'remote-ui', 'updater.js'),
+    path.join(seeded.chromeUtils, 'updater', 'ui', 'updater.js')
+  );
   const staleTreeDir = fs.mkdtempSync(path.join(REPO_ROOT, 'dist', 'fxs-session-stale-'));
   const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
     multiRequest: true,
@@ -4052,13 +4106,6 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {
       headless: opts.headless,
       extraPrefsFirefox: seeded.prefs,
-      // Restoring a 2-window session (with eager background tabs) makes the
-      // heaviest startup any scenario launches: on a busy runner the handshake
-      // can outlive the stock 20 s deadline (esr-140 Windows, 2026-10-01 —
-      // both the attempt AND its retry were killed at exactly 20 s), so the
-      // same extended bounds the stress scenario uses apply here.
-      launchDeadlineMs: 60_000,
-      protocolTimeoutMs: 120_000,
     });
     attachProcessLogging(browser, label);
     const restoredWindows = await pollUntil(
@@ -4082,7 +4129,7 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       () => {
         const lines = readMirror(seeded.profileDir)
           .split('\n')
-          .filter(l => l.includes('TAB_OPENED'));
+          .filter(l => l.includes('TAB_SET'));
         return lines.length > 0 ? lines[lines.length - 1] : null;
       },
       45_000,
@@ -4094,7 +4141,7 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       Boolean(tabLine) && !tabLine.includes(' | '),
       `exactly one updater tab after restore — the always-fresh guard forgot the restored one and opened a fresh tab (${label})`,
       tabLine && tabLine.includes(' | ') ?
-        'a SECOND updater tab was open at some point: ' + tabLine
+        'a SECOND updater tab SURVIVED (the sweep should have removed it): ' + tabLine
       : 'no updater tab seen after restore'
     );
     const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');

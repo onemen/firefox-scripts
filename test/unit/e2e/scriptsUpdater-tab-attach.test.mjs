@@ -240,10 +240,36 @@ function loadUpdater({store = {}, routes = {}, windows = []} = {}) {
         if (spec.includes('updater-config')) {
           return {CONFIG: updaterConfig()};
         }
+        if (spec.includes('SessionStore')) {
+          // The purge path resolves through the SessionStore module (the
+          // portable API — Services.ss exists only on newer Firefox).
+          return {
+            SessionStore: {
+              getClosedTabDataForWindow: () =>
+                JSON.stringify({
+                  windows: [
+                    {
+                      _closedTabs: [
+                        {
+                          state: {
+                            entries: [{url: 'chrome://firefox-scripts/content/ui/updater.html'}],
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              forgetClosedTab: (win, index) => {
+                makeSsCalls.push({win, index});
+              },
+            },
+          };
+        }
         return {};
       },
     },
     Services: {
+      console: {logStringMessage: () => {}},
       prefs: makePrefs(store),
       appinfo: {OS: process.platform === 'win32' ? 'WINNT' : 'Linux', version: '140.0'},
       dirsvc: {get: () => ({path: dirs['fx-folder']})},
@@ -518,8 +544,17 @@ test('twin-tab guard: a restored tab (other window) is forgotten and replaced by
   // from the recently-closed list, then a fresh tab opens in the active window.
   const restoredWin = makeFakeWindow();
   restoredWin.gBrowser.tabs.push({linkedBrowser: {currentURI: {spec: TAB_URI}}});
-  const {layout, win, opened} = await openTabOnPendingWorld({windows: [restoredWin]});
+  const {layout, win, opened} = await openTabOnPendingWorld({
+    windows: [restoredWin],
+  });
   try {
+    // The restore-sweep timer runs after the attach block — the restored tab
+    // can materialize late (ESR 140, 2026-10-01), so the sweep fires on its
+    // own tick: play it here, after the fresh open already happened. Only the
+    // REPEATING sweep timer is driven (the last registered); firing the fetch
+    // timeout's one-shot would resolve the manifest await as a rejection.
+    const sweepTimer = ccTimers[ccTimers.length - 1];
+    if (typeof sweepTimer?._cb === 'function') sweepTimer._cb();
     assert.ok(opened, 'a fresh updater tab opens in the current window');
     assert.equal(
       restoredWin.openedTabs.length,
@@ -560,6 +595,9 @@ test('twin-tab guard: a restored tab in the SAME window is forgotten too — exa
   try {
     sandbox.initScriptsUpdater(win);
     sandbox.Services.obs.notify('sessionstore-windows-restored');
+    // The attach block's scan sees the seeded restored tab only if it landed
+    // BEFORE init; a late-materialized one is swept by the restore-sweep
+    // timer (play its tick here — same race the ESR 140 run exposed).
     assert.ok(
       await waitFor(() => win.openedTabs.some(x => x._uri === TAB_URI && x !== restoredTab)),
       'a fresh tab was opened'
