@@ -95,6 +95,8 @@ present, checkbox wiring works, and no page/console errors appeared.
 | 7              | hand-installed pre-updater `utils.zip` (no `updater/`), then the real one                                                                                                                                                                                    | no tab with the old utils; tab after the manual replace                                                                                                                                                                                                                 |
 | 9              | fx-folder in an ACL-write-denied GreD (Windows)                                                                                                                                                                                                              | tab-open proof, ACL block, and that nothing was copied without elevation                                                                                                                                                                                                |
 | 10             | stale utils, one launch, timer observed                                                                                                                                                                                                                      | the daily in-session re-check timer fires (startup + ≥2 re-fetches)                                                                                                                                                                                                     |
+| 11             | checked-in 2-window session fixture (`test/e2e/fixtures/session-2win.jsonlz4`) with the updater tab backgrounded in the NON-selected window (`FXS_E2E_SESSION_FILE` overrides it with any Firefox-authored file) — #384                                      | both windows restore, exactly ONE updater tab (the always-fresh guard forgot the restored one and opened a fresh one), no AsyncTabSwitcher schemeIs error, and the fresh tab's engine re-checks (`lastScriptsCheckDate`)                                                |
+| 12 (opt-in)    | stale utils + 4 self-expiring CPU hogs (~40 s) saturating the launch — `FXS_E2E_STRESS=1` (never in CI); `FXS_E2E_STRESS_HOGS` overrides the count — the #384 repro conditions                                                                               | under contention the updater tab still opens, its engine still re-checks, and no schemeIs error fires (deferred-selection contract)                                                                                                                                     |
 
 The state-only scenarios that touch neither the module graph nor the process boundary are folded
 into step 1 (`runSessionExtras`, after the five variants — they mutate the seeded trees, so they
@@ -188,6 +190,36 @@ trusted tab (elsewhere the leg says so in its check labels), and elevation never
 The gate's byte-level contract is therefore covered deterministically on every OS by
 `test/unit/publish/branchPagesContract.test.mjs`, which evaluates the shipped gate expression
 against real PE/ELF/Mach-O headers and HTML payloads.
+
+### Updater E2E scenarios 11–12 (session restore, startup stress — #384)
+
+Scenario 11 replays the #384 wedge shape without CPU stress: a Firefox-authored session fixture (two
+windows, `selectedWindow 2`, the updater tab backgrounded in window 1) is seeded as
+`sessionstore-backups/previous.jsonlz4` + `sessionstore.jsonlz4`, restore-on-startup is forced
+(`browser.startup.page=3`, `resume_session_once`, `restore_on_demand=false` so the background tab
+carries a real engine), and the scheduler runs against a stale-utils manifest. The assertions pin
+the two #384 contracts: the **always-fresh guard** (the restored updater tab is removed and
+forgotten via `forgetClosedTab`; exactly one fresh tab opens into the current window) and the
+**deferred selection** (no `AsyncTabSwitcher schemeIs` error — the fresh tab is selected only on its
+load/pageshow, never synchronously after `addTrustedTab`). The GreD probe watcher mirrors
+WINDOW-COUNT / TAB_OPENED / ENGINE-DONE lines into the e2e console mirror, where the assertions read
+them (no BiDi dependency on the trusted tab). The fresh tab's engine re-check needs wall time after
+the tab opens, and its pref only reaches prefs.js at the shutdown flush — the scenario waits for
+ENGINE-DONE (bounded) before closing, then polls prefs.js for the day.
+
+Scenario 12 is the original repro: the same launch under self-expiring CPU hogs (default 4, ~40 s;
+opt-in via `FXS_E2E_STRESS=1`, `FXS_E2E_STRESS_HOGS` overrides the count — never in CI). It also
+raises `launchDeadlineMs`/`protocolTimeoutMs` (60 s / 120 s) because hog saturation starves the
+puppeteer handshake itself, not just the browser.
+
+```bash
+node test/e2e/updater/updater-e2e.mjs --scenario 11 \
+  --firefox "$HOME/Documents/FireFox/portable/nightly/firefox.exe"
+FXS_E2E_STRESS=1 node test/e2e/updater/updater-e2e.mjs --scenario 12 \
+  --firefox "$HOME/Documents/FireFox/portable/nightly/firefox.exe"
+```
+
+Scenario 11 is part of the default selection (CI's updater legs run it); scenario 12 is not.
 
 ### Configuration
 
