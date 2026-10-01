@@ -1,0 +1,48 @@
+{
+  "utils": {
+    "hash": "dbfba25c293a56788f1788d6b10a8d09c2fd3faa1850797159c107986889f20d",
+    "files": [
+      "BootstrapLoader.js",
+      "chrome.manifest",
+      "RDFDataSource.sys.mjs",
+      "RDFManifestConverter.sys.mjs",
+      "updater/scriptsUpdater.sys.mjs",
+      "updater/updater-config.sys.mjs",
+      "userChrome.js",
+      "xPref.sys.mjs"
+    ],
+    "date": "2026-09-26"
+  },
+  "fx-folder": {
+    "hash": "98bda80b0c4036cb4ee849fdd1844aa0e8b0cd39f930ae4ae0d593b53d69fe5f",
+    "files": [
+      "config.js",
+      "defaults/pref/config-prefs.js"
+    ],
+    "date": "2026-08-21"
+  },
+  "updater-ui": {
+    "hash": "dbd202ddba05b3ee2f9a16c53cfa946ffca72075b5a6013fdb22c1eab86c60ec",
+    "files": [
+      "logos/favicon.svg",
+      "logos/firefox.png",
+      "logos/floorp.png",
+      "logos/librewolf.png",
+      "logos/waterfox.png",
+      "logos/zen.png",
+      "updater-ui.js",
+      "updater.css",
+      "updater.html",
+      "updater.js"
+    ],
+    "date": "2026-09-26"
+  },
+  "installer": {
+    "hash": "de1707567d12fc85be5f4c49503708da3f4e657b42a1b39677bc6f4a7f3d744e",
+    "date": "2026-09-26"
+  },
+  "helper": {
+    "hash": "9464f94eb797b8cb17e649382c52e590e1edb5e197aca4782c7534ffe6c89529",
+    "date": "2026-09-25"
+  }
+}
