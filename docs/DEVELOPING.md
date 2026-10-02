@@ -858,7 +858,7 @@ The unified flow (one upload.mjs run):
    issue #356) only as the transition fallback for pre-cutover binaries, and publishes stop
    appending it once a post-cutover installer release has shipped.
 7. Prod only, when something was rebuilt: syncs the date-stamped **component releases**
-   (`scripts-<date>` for the complete package-zip set — both zips ride along even when only one was
+   (`core-<date>` for the complete package-zip set — both zips ride along even when only one was
    rebuilt, issue #354 — and `installer-<date>` for rebuilt installers) alongside `latest`, then
    refreshes the **`latest` downloads table**: a managed section of the `latest` body (HTML-comment
    markers) regenerated on every publish — Packages and Installer sub-tables (issue #356), one row

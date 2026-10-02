@@ -1,9 +1,9 @@
 // componentReleases.mjs — date-stamped component releases alongside `latest`
 // (issue #72, ADR 0019): every prod publish also syncs tagged releases —
-// `scripts-<date>` (the changed package zips) and `installer-<date>` (the
-// changed installer + helper binaries) — so `latest` keeps serving the full
-// asset set by permanent unversioned names while the date tags freeze
-// per-component snapshots humans can browse.
+// `core-<date>` (the package zips) and `installer-<date>` (the installer +
+// helper binaries) — so `latest` keeps serving the full asset set by permanent
+// unversioned names while the date tags freeze per-component snapshots humans
+// can browse. The zips tag is `core-` and not `scripts-`: see coreTag().
 //
 // "Latest" badge rule (the #72 mechanism decision): a component release is
 // created with prerelease=true. GitHub's "Latest" badge only ever lands on a
@@ -22,13 +22,15 @@
 // tags are a convenience).
 //
 // Release shape (maintainer's Latest Scripts scheme, 2026-09-12): component
-// releases are FULL releases — GitHub renders the badge-holding release as the
-// hero card at the top of the releases page (verified on TabMixPlus), so after
-// every publish the badge is re-pinned onto `latest` and the page reads:
-// Latest Scripts hero first, frozen date tags below. The old prerelease=true
-// trick is obsolete: "Update a release" accepts make_latest (REST-level
-// parameter surfaced by the CLI's --latest flag), and prereleases can never
-// hold the badge.
+// releases are FULL releases, and after every publish the Latest badge is
+// re-pinned onto `latest` with make_latest=true (the old prerelease=true trick
+// is obsolete: "Update a release" accepts make_latest — the REST parameter
+// behind the CLI's --latest flag — and a prerelease can never hold the badge).
+// The badge is a LABEL, not a position: /releases is ordered by the linked
+// tag's commit day, then by tag name (measured 2026-10-02: `scripts-2026-09-28`
+// sat above `latest` because both tied on the day and "s" > "l"). So `latest`
+// stays first only by keeping its tag on the newest commit and by never naming
+// a date tag above it — see coreTag().
 
 import fs from 'fs';
 
@@ -48,9 +50,18 @@ export function componentDate(now = new Date()) {
   return now.toISOString().slice(0, 10);
 }
 
-/** Tag for the package-zip component release. */
-export function scriptsTag(date) {
-  return `scripts-${date}`;
+/**
+ * Tag for the package-zip component release: `core-<YYYY-MM-DD>`.
+ *
+ * `core-`, NOT `scripts-`: a component tag is created on the same commit — and
+ * day — as `latest`, so the ordering tie is decided by tag name, and
+ * `scripts-<date>` sorts ABOVE `latest` (`core-<date>`, like
+ * `installer-<date>`, sorts below). The guard test in
+ * test/unit/publish/componentReleases.test.mjs fails if a future tag name stops
+ * sorting below `latest`.
+ */
+export function coreTag(date) {
+  return `core-${date}`;
 }
 
 /** Tag for the installer+helper component release. */
@@ -592,7 +603,7 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
   if (forcedBlock !== undefined) selfUpdateBlock = forcedBlock;
 
   const release = await getOrCreateRelease(octokit, tagName, {
-    name: `${kind === 'scripts' ? 'Scripts' : 'Installer'} — ${date}`,
+    name: `${kind === 'scripts' ? 'Core' : 'Installer'} — ${date}`,
     body: renderComponentBody(kind, date, [...assets.keys()], dates, selfUpdateBlock),
     commitish: 'main',
     prerelease: false,
@@ -722,12 +733,13 @@ export async function refreshLatestBody(octokit, latestRelease, context = {}) {
 }
 
 /**
- * Re-pin the Latest badge onto the `latest` release (the Latest Scripts hero).
- * A newly created full component release briefly holds the badge (GitHub's
- * default for a new non-prerelease); make_latest=true on Update-a-release moves
- * it back. Idempotent and fails soft — the badge is cosmetic; the
- * /releases/latest URL is resolved by GitHub from this same flag, so call this
- * after every component-release sync.
+ * Re-pin the Latest badge onto the `latest` release (the Latest Scripts
+ * release). A newly created full component release briefly holds the badge
+ * (GitHub's default for a new non-prerelease); make_latest=true on
+ * Update-a-release moves it back. Idempotent and fails soft — the badge is
+ * cosmetic (it does not order the page); the /releases/latest URL is resolved
+ * by GitHub from this same flag, so call this after every component-release
+ * sync.
  */
 export async function pinLatestRelease(octokit) {
   try {
@@ -750,6 +762,67 @@ export async function pinLatestRelease(octokit) {
     console.log(green('  ✓ latest badge pinned on latest (make_latest=true)'));
   } catch (err) {
     warn(`latest badge re-pin failed (non-fatal): ${err.message}`);
+  }
+}
+
+/**
+ * `latest`'s title date in UTC, from the linked tag's commit date (`git show -s
+ * --format=%cI <ref>`). UTC is deliberate: GitHub orders by the tag commit day
+ * normalized to UTC, and these commits carry a +03:00 offset, so a late-evening
+ * commit must not pick the neighbouring day.
+ *
+ * @param {string} isoLike ISO-8601 timestamp (with an offset or `Z`)
+ * @returns {string | null} YYYY-MM-DD, or null when unparseable
+ */
+export function commitDateUtc(isoLike) {
+  const d = new Date(String(isoLike ?? '').trim());
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+/**
+ * Title of the `latest` release: `Latest Scripts - <YYYY-MM-DD>`, dated to the
+ * UTC day of the commit its tag points at — the day GitHub orders the card by.
+ *
+ * @param {string} date YYYY-MM-DD
+ * @returns {string}
+ */
+export function latestReleaseTitle(date) {
+  return `Latest Scripts - ${date}`;
+}
+
+/**
+ * Date the `latest` release's title to the commit its tag points at. Fails soft
+ * (the title is cosmetic — the tag move positions the card) and is idempotent.
+ *
+ * @param {import('@octokit/rest').Octokit} octokit authenticated client
+ * @param {string} date YYYY-MM-DD (a commitDateUtc() result)
+ * @param {{id: number} | null} [release] the `latest` release when the caller
+ *   already holds it (upload.mjs does) — looked up otherwise
+ */
+export async function retitleLatestRelease(octokit, date, release = null) {
+  try {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) {
+      warn(`latest release title: '${date}' is not YYYY-MM-DD — title left unchanged`);
+      return;
+    }
+    let target = release;
+    if (!target) {
+      const {getRelease} = await import('./uploadUtilsZip.mjs');
+      target = await getRelease(octokit);
+    }
+    if (!target) {
+      warn('latest release title: release not found — title left unchanged');
+      return;
+    }
+    await octokit.repos.updateRelease({
+      owner: REPO_OWNER,
+      repo: REPO_NAME,
+      release_id: target.id,
+      name: latestReleaseTitle(date),
+    });
+    console.log(green(`  ✓ latest release title → ${latestReleaseTitle(date)}`));
+  } catch (err) {
+    warn(`latest release title update failed (non-fatal): ${err.message}`);
   }
 }
 
@@ -830,7 +903,7 @@ export async function syncComponentReleases(
       // rows carry the TAG date (the snapshot's date, per the approved
       // releases-mock), not each package's source-commit date.
       const assets = new Map(scriptsTagNames.map(n => [`${n}.zip`, zipPath(n)]));
-      await syncComponentRelease(octokit, scriptsTag(date), date, assets, {
+      await syncComponentRelease(octokit, coreTag(date), date, assets, {
         kind: 'scripts',
       });
     }
