@@ -13,7 +13,10 @@
 // selected (1-based tab index), tabs[] → entries[] (index points at the
 // current page), plus the top-level selectedWindow. The updater tab is placed
 // in a NON-active window and is NOT that window's selected tab — the user's
-// reported restore shape.
+// reported restore shape. Only long-stable session fields are emitted, and the
+// filler tabs point at one inert static page, so the file parses on every
+// watched engine (ESR 140 floor → Nightly) without loading real-world content
+// or any third-party script.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -74,14 +77,23 @@ export function mozLz4(payload) {
  * @param {number} [opts.updaterInWindow=1] 1-based window holding the updater
  *   tab. Default is `1`
  * @param {string} opts.updaterUrl the chrome:// updater URL to restore
- * @param {string[]} [opts.fillerUrls] ordinary tabs padding each window
+ * @param {string[]} [opts.fillerUrls] ordinary tabs padding each window.
+ *   Defaults to a single inert http(s) page, and it MUST stay http(s): these
+ *   entries carry no saved principal, so a restored `about:`/`chrome://` entry
+ *   is loaded from `moz-nullprincipal` and BLOCKED — `Security Error: Content
+ *   at moz-nullprincipal:{…} may not load or link to about:config` — which
+ *   breaks the restore itself: the blocked tabs never finish, so SessionStore's
+ *   per-restored-tab notice lands during teardown and the scenario's SS-NOTIFY
+ *   assertion reads 0 (reproduced on ESR 140, 2026-10-02, by "simplifying"
+ *   these to about: pages). example.com is inert (static HTML, no scripts),
+ *   unlike a real content site, so the restore does no third-party JS work.
  * @returns {object} JSON-ready session object
  */
 export function buildSession({
   windows = 2,
   updaterInWindow = 1,
   updaterUrl,
-  fillerUrls = ['https://example.com/', 'https://www.mozilla.org/'],
+  fillerUrls = ['https://example.com/', 'https://example.com/?tab=2'],
 }) {
   if (!updaterUrl) {
     throw new Error('buildSession: updaterUrl is required');

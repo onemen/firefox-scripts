@@ -759,11 +759,7 @@ function dumpConsoleLog(profileDir) {
 
 /** True when the probe's mirror log contains the given marker. */
 function mirrorHasMarker(profileDir, marker) {
-  try {
-    return fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8').includes(marker);
-  } catch {
-    return false;
-  }
+  return readMirror(profileDir).includes(marker);
 }
 
 /** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
@@ -3951,13 +3947,30 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
-/** Read the console mirror written by the config probe (empty when absent). */
+/**
+ * Read the console mirror written by the config probe (empty when absent),
+ * scoped to the CURRENT browser session: the probe opens the file append-only
+ * and writes a `MIRROR-OPEN` marker the moment config.js runs, so the text from
+ * the LAST marker on is exactly this launch's output.
+ *
+ * Without the scope a launch the harness KILLED leaves its lines behind for the
+ * next launch in the same profile. The wedged-attempt retry (#384) then reads
+ * the dead attempt's state: on the 2026-10-02 firefox-dev Windows leg the
+ * killed attempt's ENGINE-DONE satisfied the engine wait — the retry's engine
+ * was never actually awaited, its pref never reached prefs.js, and the scenario
+ * failed an assertion the killed run had already passed in memory. Every
+ * mirror-based poll (WINDOW-COUNT, TAB_SET, ENGINE-DONE, TAB_OPENED, SS-NOTIFY)
+ * inherits the scope through this one reader.
+ */
 function readMirror(profileDir) {
+  let text;
   try {
-    return fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8');
+    text = fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8');
   } catch {
     return '';
   }
+  const at = text.lastIndexOf('MIRROR-OPEN');
+  return at === -1 ? text : text.slice(at);
 }
 
 /** lastScriptsCheckDate persisted in prefs.js, or ''. */
@@ -4142,6 +4155,17 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
     browser = await launchFirefox(firefoxBin, seeded.profileDir, {
       headless: opts.headless,
       extraPrefsFirefox: seeded.prefs,
+      // Restoring a 2-window session with EAGER background tabs is the heaviest
+      // startup any scenario launches, so the stock 20 s handshake deadline is
+      // not the right bound here: on a busy runner the start can outlive it
+      // (esr-140 Windows 2026-10-01 — attempt AND retry both killed at exactly
+      // 20 s; firefox-dev Windows 2026-10-02 — attempt killed at 20 s), and the
+      // failure then lands on whatever the killed attempt left behind instead
+      // of on the assertions. These bounds were added for that reason and were
+      // dropped by accident in the #384 rework; restored, and pinned by
+      // test/unit/e2e/launchPrefs.test.mjs so it cannot happen silently again.
+      launchDeadlineMs: 60_000,
+      protocolTimeoutMs: 120_000,
     });
     attachProcessLogging(browser, label);
     const restoredWindows = await pollUntil(
@@ -4238,7 +4262,7 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
     check(
       counter,
       !schemeIs,
-      `no AsyncTabSwitcher schemeIs error (${label})`,
+      `restore produced no AsyncTabSwitcher schemeIs crash (#384) (${label})`,
       'the selection race (#384) fired during restore'
     );
     console.log(`  [timing] ${label} wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -4379,7 +4403,7 @@ async function runStressStartupScenario(counter, opts, snapshotDir, label) {
     check(
       counter,
       !schemeIs,
-      `stress: no AsyncTabSwitcher schemeIs error (${label})`,
+      `stress: restore produced no AsyncTabSwitcher schemeIs crash (#384) (${label})`,
       'the selection race (#384) fired under stress'
     );
     console.log(`  [timing] ${label} wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);

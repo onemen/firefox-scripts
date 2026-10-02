@@ -169,13 +169,24 @@ export async function killStrayProcesses({
  *   log?: (msg: string) => void;
  *   run?: typeof import('node:child_process').spawnSync;
  *   platform?: string;
+ *   label?: string;
  * }} [opts]
+ *   `label` names what is being swept in the log line. The launch-retry callers
+ *   pass their own wording — the default ("from a previous run") was plain
+ *   wrong there, reading as a leaked browser when the sweep was really
+ *   collecting the wedged attempt's own tree (the 2026-10-02 firefox-dev
+ *   Windows leg had to be read twice to rule out a process leak).
  * @returns {number} number of processes killed (best-effort count; pkill on
  *   POSIX does not report a count, so ≥1 is reported as 1)
  */
 export function killProcessesByCmdline(
   needle,
-  {log = console.log, run = spawnSync, platform = process.platform} = {}
+  {
+    log = console.log,
+    run = spawnSync,
+    platform = process.platform,
+    label = 'stray processes from a previous run',
+  } = {}
 ) {
   if (!needle) return 0;
   if (platform === 'win32') {
@@ -190,7 +201,7 @@ export function killProcessesByCmdline(
       encoding: 'utf8',
       timeout: 30_000,
     });
-    return report(res, log);
+    return report(res, log, label);
   }
   // POSIX: pkill -f takes an ERE — escape the specials a path can contain
   // (dots at least).
@@ -217,21 +228,19 @@ export function killProcessesByCmdline(
  * Interpret the Windows sweep result for the log; returns the killed-process
  * count (the PowerShell loop prints one `PID:Name` line per killed process).
  */
-function report(res, log) {
+function report(res, log, label = 'stray processes from a previous run') {
   if (res.error) {
-    log(`  [hygiene] stray-process sweep unavailable: ${res.error.message}`);
+    log(`  [hygiene] sweep of ${label} unavailable: ${res.error.message}`);
     return 0;
   }
   const out = `${res.stdout ?? ''}`.trim();
   const count = out ? out.split('\n').filter(Boolean).length : 0;
   if (count > 0) {
-    log(
-      `  [hygiene] killed ${count} stray process(es) from a previous run: ${out.replaceAll('\n', ', ')}`
-    );
+    log(`  [hygiene] killed ${count} ${label}: ${out.replaceAll('\n', ', ')}`);
   } else if (res.status !== null && res.status > 1) {
-    log(`  [hygiene] stray-process sweep failed (exit ${res.status})`);
+    log(`  [hygiene] sweep of ${label} failed (exit ${res.status})`);
   } else {
-    log('  [hygiene] no stray processes from a previous run');
+    log(`  [hygiene] no ${label}`);
   }
   return count;
 }

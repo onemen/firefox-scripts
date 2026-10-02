@@ -226,7 +226,7 @@ async function raceLaunchDeadline(launchPromise, deadlineMs, tag, log) {
     log(
       `  [launch] start exceeded ${deadlineMs / 1000}s — killing the wedged browser tree (${tag})`
     );
-    killProcessesByCmdline(tag, {log});
+    killProcessesByCmdline(tag, {log, label: 'process(es) from the timed-out launch attempt'});
     throw err;
   } finally {
     clearTimeout(timer);
@@ -332,7 +332,10 @@ export async function launchFirefox(
     // tag — a deadline kill on it sweeps both trees either way. The 45 s
     // protocolTimeout is intentionally UNCHANGED — this bounds the launch
     // phase, not protocol commands.
-    killProcessesByCmdline(tag, {log: console.log});
+    killProcessesByCmdline(tag, {
+      log: console.log,
+      label: 'leftover process(es) from the wedged launch attempt',
+    });
     console.log(`  [launch] wedged (${err?.message}) — retrying once`);
     try {
       return await launchOnce();
@@ -342,7 +345,10 @@ export async function launchFirefox(
       // launch rejected (browser was never assigned), so a failed second
       // attempt would leak a browser still holding the profileDir — and on
       // Windows the next leg's profile lock (CodeRabbit on #343, 2026-10-02).
-      killProcessesByCmdline(tag, {log: console.log});
+      killProcessesByCmdline(tag, {
+        log: console.log,
+        label: 'process(es) from the failed retry launch attempt',
+      });
       throw retryErr;
     }
   }

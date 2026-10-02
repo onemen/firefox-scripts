@@ -19,8 +19,10 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const helpersPath = path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'helpers.mjs');
 const installerE2ePath = path.join(REPO_ROOT, 'test', 'e2e', 'installer', 'installer-e2e.mjs');
+const updaterE2ePath = path.join(REPO_ROOT, 'test', 'e2e', 'updater', 'updater-e2e.mjs');
 const source = fs.readFileSync(helpersPath, 'utf-8');
 const installerSource = fs.readFileSync(installerE2ePath, 'utf-8');
+const updaterE2eSource = fs.readFileSync(updaterE2ePath, 'utf-8');
 
 const {STARTUP_HYGIENE_PREFS, seedStartupHygienePrefs} = await import(
   pathToFileURL(helpersPath).href
@@ -76,11 +78,40 @@ test('launchFirefox bounds the handshake and retries once (#384)', () => {
   assert.match(source, /return await launchOnce\(\);/);
   assert.match(
     source,
-    /catch \(retryErr\) \{[\s\S]*?killProcessesByCmdline\(tag, \{log: console\.log\}\);[\s\S]*?throw retryErr;/,
+    /catch \(retryErr\) \{[\s\S]*?killProcessesByCmdline\(tag, \{[\s\S]*?label: 'process\(es\) from the failed retry launch attempt',[\s\S]*?\}\);[\s\S]*?throw retryErr;/,
     'a rejected retry must kill the tagged tree before rethrowing'
+  );
+  // Every sweep names what it is sweeping: the default wording ("stray
+  // process(es) from a previous run") read as a leaked browser when the sweep
+  // was really the launch retry collecting its OWN wedged tree (2026-10-02
+  // firefox-dev Windows leg).
+  assert.doesNotMatch(
+    source,
+    /killProcessesByCmdline\(tag, \{log(?:: console\.log)?\}\)/,
+    'the launch-retry sweeps must pass an explicit label'
   );
   assert.match(source, /protocolTimeout: protocolTimeoutMs \|\| 45_000/);
   assert.match(source, /Math\.max\(launchDeadlineMs, LAUNCH_DEADLINE_MS\)/);
+});
+
+test('scenario 11 launches with the extended bounds its restore start needs (#384)', () => {
+  // Restoring a 2-window session with eager background tabs is the heaviest
+  // startup any scenario launches: on busy Windows runners the handshake
+  // outlived the stock 20 s deadline (esr-140 2026-10-01 — attempt AND retry
+  // killed at exactly 20 s). The extension added for that reason was dropped by
+  // accident in the #384 rework (1bd1ca3) and the wedge came straight back on
+  // firefox-dev Windows 2026-10-02. Pin it so the next refactor cannot lose it
+  // silently — the whole point is that the failure then lands on the
+  // assertions instead of on the launch handshake.
+  const at = updaterE2eSource.indexOf('async function runSessionRestoreScenario');
+  assert.ok(at > -1, 'scenario 11 (session-restore) must exist');
+  const until = updaterE2eSource.indexOf('\nasync function', at + 1);
+  const scenario = updaterE2eSource.slice(at, until === -1 ? undefined : until);
+  const launchAt = scenario.indexOf('launchFirefox(firefoxBin, seeded.profileDir');
+  assert.ok(launchAt > -1, 'scenario 11 must launch via launchFirefox');
+  const call = scenario.slice(launchAt, scenario.indexOf('});', launchAt) + 3);
+  assert.match(call, /launchDeadlineMs: 60_000/, 'scenario 11 needs the 60 s launch deadline');
+  assert.match(call, /protocolTimeoutMs: 120_000/, 'scenario 11 needs the 120 s protocol timeout');
 });
 
 test('launchFirefox embeds a unique per-launch tag in the browser argv', () => {
