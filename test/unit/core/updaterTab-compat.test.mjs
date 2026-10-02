@@ -31,6 +31,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
+import {comparePlatformVersions, resolveSandboxLazyModule} from '../../shared/sandboxServices.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const TAB_PATH = path.join(REPO_ROOT, 'tools', 'publish', 'remote-ui', 'updater.js');
@@ -350,4 +351,95 @@ test('the legacy fixture stays a subset of the current module (exports are never
   );
   const lost = LEGACY_EXPORTS.filter(name => !current.has(name));
   assert.deepEqual(lost, [], 'dropping an export the legacy floor had would break the fixture');
+});
+
+/* ---------------- the Snap rule is one rule ---------------- */
+// The fallback duplicates the module's Snap rule (`XREExeF` under /snap/ →
+// /etc/firefox, else GreD). Nothing above ties the two together: an install
+// stranded on the pre-#142 module would get whichever rule the TAB spells,
+// while every newer install gets whichever rule the MODULE spells — a silent
+// split the static subset test cannot see. These two tests pin them to agree by
+// running BOTH against the same dirsvc values and comparing the answers.
+
+/**
+ * Evaluate the real module in a vm and return its fxFolderDir() for `dirsvc`
+ * values. Same technique as the channel tests: only the lazy getters the module
+ * resolves at load time are stubbed (SessionStore, Downloads, Timer).
+ *
+ * @param {string} exePath - Services XREExeF (the Snap marker lives here)
+ * @param {string} grePath - Services GreD
+ * @returns {string}
+ */
+function realModuleFxFolderDir(exePath, grePath) {
+  const source = fs
+    .readFileSync(MODULE_PATH, 'utf-8')
+    .replace(/\r\n/g, '\n')
+    // Every export is a function declaration, so stripping `export ` exposes
+    // fxFolderDir() on the sandbox object.
+    .replace(/^export /gm, '');
+  const sandbox = {
+    ChromeUtils: {
+      generateQI: () => () => {},
+      importESModule(spec) {
+        if (spec.includes('updater-config')) return {CONFIG: {...LEGACY_CONFIG}};
+        throw new Error(`unexpected importESModule(${spec})`);
+      },
+      defineESModuleGetters(target, getters) {
+        for (const [name, spec] of Object.entries(getters)) {
+          target[name] =
+            String(spec).includes('Timer.sys.mjs') ?
+              cb => setTimeout(cb, 0)
+            : resolveSandboxLazyModule(name, spec);
+        }
+      },
+    },
+    Services: {
+      prefs: makePrefs({}),
+      appinfo: {platformVersion: '140.0'},
+      vc: {compare: comparePlatformVersions},
+      dirsvc: {get: key => makeNsIFile(key === 'XREExeF' ? exePath : grePath)},
+    },
+    Ci: new Proxy({}, {get: () => ({})}),
+    console,
+    queueMicrotask,
+  };
+  vm.runInContext(source, vm.createContext(sandbox), {filename: 'scriptsUpdater.sys.mjs'});
+  assert.equal(typeof sandbox.fxFolderDir, 'function', 'the module must export fxFolderDir');
+  return sandbox.fxFolderDir();
+}
+
+test('the tab fallback agrees with the module: ordinary install keeps GreD', async () => {
+  const exePath = 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
+  const grePath = 'C:\\Program Files\\Mozilla Firefox';
+  // No fxFolderDir in the legacy namespace → the tab must run its fallback.
+  const {state} = await runTab({
+    moduleExports: legacyNamespace({...LEGACY_CONFIG}),
+    config: {...LEGACY_CONFIG},
+    exePath,
+    grePath,
+  });
+  assert.equal(realModuleFxFolderDir(exePath, grePath), grePath);
+  assert.equal(
+    state.configDir,
+    grePath,
+    'tab fallback must match the module on an ordinary install'
+  );
+});
+
+test('the tab fallback agrees with the module: a snap install maps to /etc/firefox', async () => {
+  const exePath = '/snap/firefox/1234/usr/lib/firefox/firefox';
+  const grePath = '/snap/firefox/1234/usr/lib/firefox';
+  const {state} = await runTab({
+    moduleExports: legacyNamespace({...LEGACY_CONFIG}),
+    config: {...LEGACY_CONFIG},
+    exePath,
+    grePath,
+    platform: 'linux',
+  });
+  assert.equal(realModuleFxFolderDir(exePath, grePath), '/etc/firefox');
+  assert.equal(
+    state.configDir,
+    '/etc/firefox',
+    'tab fallback must match the module on a snap install'
+  );
 });
