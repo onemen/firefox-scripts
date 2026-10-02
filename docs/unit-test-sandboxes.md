@@ -82,23 +82,23 @@ Timers are captured, never awaited: `makeCc()`'s `@mozilla.org/timer;1` stub rec
 `initWithCallback(cb, delay, type)` and exposes `fire()` (which invokes the callback the way a real
 `nsITimer` would). A test therefore fires _exactly_ the timer it means — `selectWhenLoaded`'s 10 s
 fallback, never the fetch `withTimeout` (firing that one resolves the manifest await as a
-rejection). The late-restore twin guard creates no timer at all: it is driven by
-`Services.obs.notify('sessionstore-one-or-no-tab-restored')`, which the suite calls explicitly.
+rejection). The attach block's restore wait is driven by the `sessionstore-windows-restored` event,
+which the suite notifies explicitly instead of waiting for a timer to come around.
 
 ## Coverage split with the E2E suites
 
 The sandbox suites are the deterministic half of a two-layer story:
 
-| Layer                                              | Runs in                           | Best at                                                                                                                                                                          |
-| -------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test/unit/**` (vm sandboxes)                      | Node, no browser                  | decision logic and failure branches: hashes, the daily gate, the attach/duplicate-tab branches, channel fallback, mid-teardown tabs, a dead driver realm — milliseconds per case |
-| `test/e2e/**` (see [e2e-tests.md](./e2e-tests.md)) | real Firefox via puppeteer + BiDi | everything browser-only: real `Services.vc`, real SessionStore notifications, real session restore, real installs                                                                |
+| Layer                                              | Runs in                           | Best at                                                                                                                                                                                                              |
+| -------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/unit/**` (vm sandboxes)                      | Node, no browser                  | decision logic and failure branches: hashes, the daily gate, the attach branches (restored-tab replacement, selection, MRU window), channel fallback, mid-teardown tabs, a dead driver realm — milliseconds per case |
+| `test/e2e/**` (see [e2e-tests.md](./e2e-tests.md)) | real Firefox via puppeteer + BiDi | everything browser-only: real `Services.vc`, real SessionStore notifications, real session restore, real installs                                                                                                    |
 
 Neither layer may be assumed to cover the other. A stub is a claim about the browser, and the claim
 belongs in an E2E assertion: the version-conditional SessionStore spec is pinned in the sandbox at
 140.0 / 156.0a1 / 159.0a1, while the E2E legs prove a real engine actually resolves it (Nightly
-resolves `moz-src://`; ESR 140 resolves `resource:///modules`), and scenario 11 asserts SessionStore
-really emits the per-restored-tab notification the twin guard reacts to.
+resolves `moz-src://`; ESR 140 resolves `resource:///modules`), and scenario 11 asserts that a real
+SessionStore restore ends with exactly one updater tab.
 
 ## Adding a new sandbox suite
 

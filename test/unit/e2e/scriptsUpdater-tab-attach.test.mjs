@@ -10,9 +10,10 @@
 //     about:blank in headless Nightly under startup CPU contention
 //     (AsyncTabSwitcher schemeIs TypeError; the tab never rendered, the pending
 //     update stayed hidden for the whole session);
-//   - the twin-tab guard scans ALL browser windows (a restored session can
-//     hold the updater tab in a non-active window) and tolerates a tab whose
-//     browser is mid-teardown;
+//   - a restored updater tab is always forgotten and replaced by a fresh one,
+//     scanned across ALL browser windows (a restored session can hold the
+//     updater tab in a non-active window), tolerating a tab whose browser is
+//     mid-teardown;
 //   - selection falls back after 10 s if no load event ever fires, and a tab
 //     whose window died before selection is not selected into a dead window.
 
@@ -505,13 +506,6 @@ function makeFakeWindow() {
 
 const TAB_URI = 'chrome://firefox-scripts/content/ui/updater.html';
 
-/** A browser already showing the updater page (a restored tab, not a fresh one). */
-function restoredUpdaterBrowser() {
-  const browser = makeBrowser();
-  browser.currentURI = {spec: TAB_URI};
-  return browser;
-}
-
 /**
  * Run initScriptsUpdater against a seeded pending-update world. `windows` are
  * the OTHER windows the enumerator must report (after the current one),
@@ -578,8 +572,8 @@ test('the session-restore gate is bounded at 5s (a pending promise cannot stall 
   // The attach awaits SessionStore.promiseAllWindowsRestored before it claims
   // the tab set, so a promise that never settles must not wedge the attach
   // forever: the race carries an explicit bound. 5 s is ~2-3x the observed
-  // restore (1-2 s) and the twin guard still catches a tab that lands after
-  // it, so the bound is policy, not implementation — pin the number.
+  // restore (1-2 s), so the bound is policy, not implementation — pin the
+  // number.
   const gate = fs.readFileSync(MODULE_PATH, 'utf-8');
   const match = gate.match(
     /withTimeout\(Promise\.resolve\(lazy\.SessionStore\.promiseAllWindowsRestored\), (\d+)\)/
@@ -661,21 +655,17 @@ test('selection falls back after the 10s timer when no load ever fires', async (
   }
 });
 
-test('twin-tab guard: a restored tab (other window) is forgotten and replaced by a fresh tab in the current window', async () => {
+test('a restored tab in another window is forgotten and replaced by a fresh tab in the current window', async () => {
   // The user reported the updater tab restoring into a window they were not
-  // looking at. The guard normalizes: the restored tab is closed AND purged
-  // from the recently-closed list, then a fresh tab opens in the active window.
+  // looking at. The attach block normalizes: the restored tab is closed AND
+  // purged from the recently-closed list, then a fresh tab opens in the active
+  // window.
   const restoredWin = makeFakeWindow();
   restoredWin.gBrowser.tabs.push({linkedBrowser: {currentURI: {spec: TAB_URI}}});
-  const {sandbox, layout, win, opened} = await openTabOnPendingWorld({
+  const {layout, win, opened} = await openTabOnPendingWorld({
     windows: [restoredWin],
   });
   try {
-    // A restored twin can materialize after the attach block — the module
-    // reacts to SessionStore's per-restored-tab notification instead of polling
-    // for it (ESR 140, 2026-10-01), so drive that notification here, after the
-    // fresh open already happened.
-    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
     assert.ok(opened, 'a fresh updater tab opens in the current window');
     assert.equal(
       restoredWin.openedTabs.length,
@@ -696,69 +686,7 @@ test('twin-tab guard: a restored tab (other window) is forgotten and replaced by
   }
 });
 
-test('a twin materializing after the attach is forgotten on the per-tab restore notification', async () => {
-  // The 2026-10-01 ESR 140 CI order: this module initialized AFTER
-  // sessionstore-windows-restored had already fired (non-window startup order),
-  // so that observer never ran; the restored tab then appeared next to the
-  // fresh one. SessionStore's PER-TAB notification is the hook that still
-  // arrives, whatever the module's startup ordering — no timer involved.
-  const restoredWin = makeFakeWindow();
-  const win = makeFakeWindow();
-  // The enumerator must see BOTH windows, the way Services.wm does in Firefox
-  // (the guard looks for the marked fresh tab session-wide), and it is
-  // MRU-ordered: `win` is the window the user is on, so the fresh tab — which
-  // this test asserts on `win` — belongs there.
-  const windows = [win, restoredWin];
-  const {sandbox} = loadUpdater({store: {}, windows});
-  const layout = makeProfileLayout(sandbox);
-  const routes = seedPendingWorld(layout);
-  sandbox.Services.io = makeIo(routes);
-  sandbox.initScriptsUpdater(win); // no notify(): the event already happened
-  try {
-    assert.ok(await waitFor(() => win.openedTabs.length > 0), 'the fresh tab opened');
-    const lateTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
-    restoredWin.gBrowser.tabs.push(lateTab);
-    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
-    assert.ok(!restoredWin.openedTabs.includes(lateTab), 'the late twin is forgotten');
-    assert.ok(makeSsCalls.length >= 1, 'and purged from the recently-closed list');
-    // Every notification is honoured, not just the first one.
-    const secondLateTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
-    restoredWin.gBrowser.tabs.push(secondLateTab);
-    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
-    assert.ok(!restoredWin.openedTabs.includes(secondLateTab), 'the next twin is forgotten too');
-    // No marked tab left = no twin: an unmarked updater tab is then the ONLY
-    // one (a user's own open, or the E2E driver's) and must be left alone.
-    win.openedTabs.length = 0;
-    const loneTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
-    restoredWin.gBrowser.tabs.push(loneTab);
-    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
-    assert.ok(
-      restoredWin.openedTabs.includes(loneTab),
-      "only DUPLICATES of the session's own fresh tab are removed"
-    );
-  } finally {
-    layout.cleanup();
-  }
-});
-
-test("the twin guard is registered on SessionStore's per-tab notification, not on a timer", async () => {
-  // The event-driven contract: the module observes the topic that fires when a
-  // restored tab actually materializes, and creates no repeating sweep timer
-  // for it (the old 6 × 2 s window is gone).
-  const {sandbox} = loadUpdater({store: {}, windows: []});
-  sandbox.initScriptsUpdater(makeFakeWindow());
-  assert.ok(
-    sandbox.Services.obs._observers['sessionstore-one-or-no-tab-restored']?.length === 1,
-    'one observer on sessionstore-one-or-no-tab-restored'
-  );
-  assert.equal(
-    ccTimers.filter(t => t._delay === 2000).length,
-    0,
-    'no repeating 2 s sweep timer is created any more'
-  );
-});
-
-test('twin-tab guard: a restored tab in the SAME window is forgotten too — exactly one fresh tab', async () => {
+test('a restored tab in the SAME window is forgotten too — exactly one fresh tab', async () => {
   // Always-fresh (#384 follow-up): even in the current window a restored tab
   // is removed + purged, then ONE fresh tab is opened. A restored chrome page
   // may never run its engine (lazily restored page); the fresh tab is the
@@ -774,17 +702,15 @@ test('twin-tab guard: a restored tab in the SAME window is forgotten too — exa
   const restoredBrowser = makeBrowser();
   restoredBrowser.currentURI = {spec: TAB_URI}; // already restored/loaded
   // A restored tab never carries the scheduler's mark — only THIS session's
-  // fresh open is marked. The forget pass therefore removes it (and, since the
-  // skip-marked rule, would skip a marked one: that shape belongs to the
-  // duplicate guard, not the attach block's scan).
+  // fresh open is marked. The forget pass therefore removes it, while a marked
+  // tab (this session's own fresh open) is left alone.
   const restoredTab = {_uri: TAB_URI, linkedBrowser: restoredBrowser};
   win.gBrowser.tabs.push(restoredTab);
   try {
     sandbox.initScriptsUpdater(win);
     sandbox.Services.obs.notify('sessionstore-windows-restored');
     // The attach block's scan sees the seeded restored tab only if it landed
-    // BEFORE init; a late-materialized one is swept by the restore-sweep
-    // timer (play its tick here — same race the ESR 140 run exposed).
+    // BEFORE init — which is the shape a restored session has.
     assert.ok(
       await waitFor(() => win.openedTabs.some(x => x._uri === TAB_URI && x !== restoredTab)),
       'a fresh tab was opened'
@@ -801,7 +727,7 @@ test('twin-tab guard: a restored tab in the SAME window is forgotten too — exa
   }
 });
 
-test('twin-tab guard tolerates a tab whose browser is mid-teardown', async () => {
+test('a tab whose browser is mid-teardown is skipped, not fatal', async () => {
   const restoredWin = makeFakeWindow();
   restoredWin.gBrowser.tabs.push({
     get linkedBrowser() {

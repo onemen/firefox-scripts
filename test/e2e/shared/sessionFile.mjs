@@ -1,7 +1,7 @@
 // test/e2e/shared/sessionFile.mjs — mock sessionstore.jsonlz4 builder (#384
 // follow-up). Lets the updater E2E restore a multi-window previous session
-// whose updater tab lives in a NON-active window — the shape the twin-tab
-// guard's all-windows scan must handle.
+// whose updater tab lives in a NON-active window — the shape the attach block's
+// all-windows scan must handle.
 //
 // Format: Firefox's session files are "mozLz40" containers — 8-byte magic
 // "mozLz40\0", 4-byte little-endian uncompressed size, then an LZ4 *block*.

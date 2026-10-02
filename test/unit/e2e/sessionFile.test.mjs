@@ -103,7 +103,7 @@ test('mozLz4: emits pure UTF-8, so non-ASCII titles survive the container', () =
 // ── Payload: the restore shape scenario 11 depends on ─────────────────────
 
 test('buildSession: the updater tab sits in a NON-selected window, unselected there', () => {
-  // The whole point of the fixture: the twin guard must find the restored
+  // The whole point of the fixture: the attach block must find the restored
   // updater tab in a window that is not the active one, and not the selected
   // tab of that window — the user's reported restore shape (#384).
   const session = buildSession({

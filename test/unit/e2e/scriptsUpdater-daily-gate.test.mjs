@@ -271,8 +271,8 @@ function loadUpdater({store = {}, routes = {}, captureExports = false} = {}) {
       dirsvc: {get: () => ({path: dirs['fx-folder']})},
       io: makeIo(routes),
       scriptSecurityManager: {getSystemPrincipal: () => ({})},
-      // The #384 twin-tab guard enumerates all browser windows; this suite's
-      // fake window is the only one the module ever needs to see.
+      // The attach block enumerates all browser windows; this suite's fake
+      // window is the only one the module ever needs to see.
       obs: {
         _observers: {},
         addObserver(cb, topic) {

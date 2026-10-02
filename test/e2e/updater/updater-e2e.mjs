@@ -207,11 +207,11 @@ try {
       } catch (e) {}
     },
   });
-  // SessionStore's restore notifications, mirrored so a scenario can assert the
-  // module's event-driven twin guard has a real trigger on this engine (it
-  // reacts to sessionstore-one-or-no-tab-restored; the old implementation
-  // polled). Purely observational here — the module observes the same topics
-  // itself, in its own module scope.
+  // SessionStore's restore notifications, mirrored as restore-progress
+  // diagnostics: the per-restored-tab notice landing during teardown is how a
+  // restore that never finished shows up (the filler-URL lesson in
+  // sessionFile.mjs). Purely observational here — nothing asserts on these
+  // lines.
   try {
     const obsSvc = Cc['@mozilla.org/observer-service;1'].getService(Ci.nsIObserverService);
     const obsSentinel = {observe: (subject, topic) => writeUtf8('SS-NOTIFY ' + topic + '\\n')};
@@ -263,9 +263,8 @@ try {
           }
           // The whole updater-tab SET on every change (not a once-only
           // "opened" flag): the session-restore scenario asserts a FINAL state
-          // of exactly one tab, and the road there can legitimately include a
-          // transient twin (restored tab materializing after the guard's
-          // scan, then removed on SessionStore's per-restored-tab notice).
+          // of exactly one tab, and the road there legitimately passes through
+          // other sets while SessionStore finishes inserting the restored tabs.
           const tabSet = updaterSpecs.join(' | ') || '(none)';
           if (tabSet !== lastTabSet) {
             lastTabSet = tabSet;
@@ -293,10 +292,9 @@ try {
           // at the shutdown flush, so the LIVE value is the only timely
           // signal). The watcher keeps polling after it (once per engine, not
           // once per poll): scenario 11 asserts the FINAL tab set, which can
-          // still change after the engine — a late twin materializing and the
-          // guard removing it on the next notice both land after ENGINE-DONE,
-          // and a cancelled watcher would freeze the last TAB_SET and hide
-          // exactly the race under test (2026-10-01 ESR 140 CI run).
+          // still change after the engine — SessionStore can keep inserting
+          // restored tabs — and a cancelled watcher would freeze the last
+          // TAB_SET and hide exactly that race (2026-10-01 ESR 140 CI run).
           try {
             const shownDay = Services.prefs.getCharPref(
               'extensions.firefox-scripts.lastScriptsCheckDate',
@@ -4137,15 +4135,15 @@ function buildStaleUtilsManifest(snapshotDir, staleTreeDir) {
  * The session-restore scenario (#384 follow-up): relaunch on a profile whose
  * previous session (generated at runtime by sessionFile.mjs) holds the updater
  * tab in a NON-selected window, backgrounded inside that window, with a
- * different window selected — the exact restore shape the all-windows twin-tab
- * guard must survive.
+ * different window selected — the exact restore shape the attach block's
+ * all-windows scan must handle.
  *
  * Assertions: both windows restore (WINDOW-COUNT), exactly ONE updater tab
- * exists across all windows (the guard found the restored one instead of
- * opening a duplicate into the active window), the restored tab's engine
+ * exists across all windows (the always-fresh attach forgot the restored one
+ * and opened a fresh tab into the active window), the fresh tab's engine
  * re-checked (lastScriptsCheckDate), and no AsyncTabSwitcher schemeIs error
  * (the deferred-selection contract). Stale-utils manifest ⇒ a pending update ⇒
- * the restored tab's re-check is real, not a no-op.
+ * the engine's re-check is real, not a no-op.
  *
  * The payload: 2 windows, selectedWindow 2, updater tab backgrounded in window
  *
@@ -4275,9 +4273,8 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       restoredWindows ? '' : 'the session fixture never restored a second window'
     );
     // Wait for the engine FIRST, then assert the FINAL tab set: asserting the
-    // first recorded set would false-fail on a transient twin the guard removes
-    // moments later AND false-pass when a twin appears after the check (review
-    // on #343, 2026-10-01). The fresh tab's engine re-check needs wall time after
+    // first recorded set would false-pass when a second tab appears after the
+    // check (review on #343, 2026-10-01). The fresh tab's engine re-check needs wall time after
     // the tab opens, and its pref only reaches prefs.js at the shutdown flush —
     // closing on WINDOW-COUNT would assert the harness's haste, not the engine
     // (the same trap scenario 12 hit before its ENGINE-DONE wait: the 8/9 run
@@ -4298,12 +4295,9 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       label
     );
     // The set must then stay at exactly one tab for TAB_SET_QUIET_MS before it
-    // is called final: the module's guard removes a late twin a moment after
-    // SessionStore announces it, and that removal RESETS the set — asserting
-    // the first post-ENGINE-DONE line would pass over a twin that lands a
-    // second later (or fail on one that landed a second earlier and is removed
-    // right after). The watcher records a TAB_SET line on every change, so "the
-    // line is quiet" is exactly "no tab appeared or disappeared".
+    // is called final: a restored tab can still land after the engine finishes,
+    // and the watcher records a TAB_SET line on every change — so "the line is
+    // quiet" is exactly "no tab appeared or disappeared".
     const TAB_SET_QUIET_MS = 6000;
     const readFinalTabSet = () => {
       const line = readMirror(seeded.profileDir)
@@ -4328,24 +4322,10 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
     check(
       counter,
       Boolean(finalTabSet) && !finalTabSet.line.includes(' | '),
-      `final updater-tab set is exactly one, stable for ${TAB_SET_QUIET_MS / 1000}s (always-fresh guard; transient twins tolerated) (${label})`,
+      `final updater-tab set is exactly one, stable for ${TAB_SET_QUIET_MS / 1000}s (always-fresh attach) (${label})`,
       finalTabSet?.line.includes(' | ') ?
-        `a SECOND updater tab SURVIVED the guard (stable ${(finalTabSet.ageMs / 1000).toFixed(1)}s): ${finalTabSet.line}`
+        `a SECOND updater tab is open (stable ${(finalTabSet.ageMs / 1000).toFixed(1)}s): ${finalTabSet.line}`
       : 'no updater tab was ever seen after restore'
-    );
-    // The twin guard is event-driven: it reacts to SessionStore's per-restored-
-    // tab notification. That topic firing AFTER the attach is the whole point
-    // (observed on ESR 140: the fresh tab opened, then the restore kept
-    // notifying) — if an engine ever stops emitting it, the guard silently
-    // degrades to the attach block's scan alone, so assert the trigger exists.
-    const restoreNotices = readMirror(seeded.profileDir)
-      .split('\n')
-      .filter(l => l.includes('SS-NOTIFY sessionstore-one-or-no-tab-restored')).length;
-    check(
-      counter,
-      restoreNotices >= 1,
-      `SessionStore fired its per-restored-tab notification (${restoreNotices}, ${label})`,
-      'the event-driven twin guard would have no trigger on this engine'
     );
     const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
     check(
@@ -4663,12 +4643,12 @@ async function run() {
       {
         id: '11',
         run: async () => {
-          // Session restore across windows (#384 follow-up): the checked-in,
-          // Firefox-authored fixture restores the updater tab in a NON-focused
-          // window, backgrounded inside that window. The all-windows twin-tab
-          // guard must keep the restored tab (no duplicate) and its engine
-          // must re-check. FXS_E2E_SESSION_FILE overrides the fixture with
-          // any Firefox-authored sessionstore.jsonlz4.
+          // Session restore across windows (#384 follow-up): the generated
+          // fixture restores the updater tab in a NON-focused window,
+          // backgrounded inside that window. The attach block must end with
+          // exactly one updater tab, and a fresh tab's engine must re-check.
+          // FXS_E2E_SESSION_FILE overrides the fixture with any
+          // Firefox-authored sessionstore.jsonlz4.
           await runSessionRestoreScenario(counter, opts, snapshotDir, 'session-restore');
         },
       },
