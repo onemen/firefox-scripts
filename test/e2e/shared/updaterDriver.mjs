@@ -340,30 +340,58 @@ export async function attachDriver(browser, timeoutMs = 15_000) {
  * @param {number} [timeoutMs]
  * @returns {Promise<import('puppeteer-core').Page | null>}
  */
+/**
+ * Every BiDi page currently showing the updater tab (the first one is what
+ * findUpdaterPage returns).
+ *
+ * A list, not a single page, because a page target OUTLIVES the tab it belongs
+ * to: right after a tab closes, its document is still evaluable for a while, so
+ * "the updater page" can be a tab that is already going away. Callers that need
+ * THIS run's tab must pick by rendered state instead of by position (see the
+ * install-applies step: it clicked the dying tab on zen · windows-latest,
+ * 2026-10-02, and the install never started).
+ *
+ * @param {import('puppeteer-core').Browser} browser
+ * @returns {Promise<import('puppeteer-core').Page[]>}
+ */
+export async function updaterPages(browser) {
+  let pages;
+  try {
+    pages = await browser.pages();
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const candidate of pages) {
+    try {
+      const isUpdaterTab = await candidate.evaluate(
+        () =>
+          typeof window.UpdaterEngine?.init === 'function' &&
+          typeof window.UpdaterE2EDriver === 'undefined'
+      );
+      if (isUpdaterTab) found.push(candidate);
+    } catch {
+      // Not an evaluable context (or a document still loading).
+    }
+  }
+  return found;
+}
+
+/**
+ * The first updater page, polling until one exists (or the deadline passes).
+ *
+ * @param {import('puppeteer-core').Browser} browser
+ * @param {number} [timeoutMs] Default is `15_000`
+ * @returns {Promise<import('puppeteer-core').Page | null>}
+ */
 export async function findUpdaterPage(browser, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    let pages = [];
-    try {
-      pages = await browser.pages();
-    } catch {
-      /* browser not ready yet */
-    }
-    for (const candidate of pages) {
-      try {
-        const isUpdaterTab = await candidate.evaluate(
-          () =>
-            typeof window.UpdaterEngine?.init === 'function' &&
-            typeof window.UpdaterE2EDriver === 'undefined'
-        );
-        if (isUpdaterTab) return candidate;
-      } catch {
-        // Not an evaluable context (or a document still loading).
-      }
-    }
+  for (;;) {
+    const [first] = await updaterPages(browser);
+    if (first) return first;
+    if (Date.now() >= deadline) return null;
     await new Promise(r => setTimeout(r, 250));
   }
-  return null;
 }
 
 /**

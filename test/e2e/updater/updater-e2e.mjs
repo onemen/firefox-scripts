@@ -93,6 +93,7 @@ import {
   openDriverTab,
   attachDriver,
   findUpdaterPage,
+  updaterPages,
 } from '../shared/updaterDriver.mjs';
 import {buildSession, mozLz4} from '../shared/sessionFile.mjs';
 
@@ -1125,25 +1126,142 @@ async function readBadgeState(page) {
   }
 }
 
+/** Does a badge snapshot match `variant`'s expected stale/ok combination? */
+function badgeStateMatches(s, variant) {
+  if (!s || !s.title) return false;
+  const want = expectedStaleState(variant);
+  return (
+    s.utils.update === want.utilsStale &&
+    s.utils.ok === !want.utilsStale &&
+    s.config.update === want.configStale &&
+    s.config.ok === !want.configStale
+  );
+}
+
 /** Poll until the tab renders `variant`'s expected state (or timeout). */
 async function waitForStaleState(page, variant, timeoutMs = 20_000) {
-  const want = expectedStaleState(variant);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const s = await readBadgeState(page);
-    if (
-      s &&
-      s.title &&
-      s.utils.update === want.utilsStale &&
-      s.utils.ok === !want.utilsStale &&
-      s.config.update === want.configStale &&
-      s.config.ok === !want.configStale
-    ) {
-      return true;
-    }
+    if (badgeStateMatches(await readBadgeState(page), variant)) return true;
     await new Promise(r => setTimeout(r, 500));
   }
   return false;
+}
+
+/**
+ * The updater page that has actually rendered `variant`'s state, re-resolved on
+ * every poll.
+ *
+ * findUpdaterPage() returns the first page whose `UpdaterEngine.init` exists,
+ * and that can be the tab a scenario just closed: a BiDi page target outlives
+ * its tab, so the document is still evaluable (with its previous card rendered)
+ * for a moment. Acting on it is how `zen · windows-latest` (2026-10-02) clicked
+ * Update in a dying tab: `card rendered` passed 6 ms after the tab opened
+ * (impossible for a fresh engine — it has to fetch the manifest and hash the
+ * trees), the install never started, and nothing on disk changed. Waiting for
+ * the fixture's OWN rendered state cannot be satisfied by a stale document, and
+ * re-resolving lets a correct page win as soon as it appears.
+ *
+ * @param {import('puppeteer-core').Browser} browser
+ * @param {string} variant
+ * @param {number} [timeoutMs] Default is `30000`
+ * @returns {Promise<import('puppeteer-core').Page | null>}
+ */
+async function findRenderedUpdaterPage(browser, variant, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let seen = 0;
+  for (;;) {
+    const pages = await updaterPages(browser);
+    seen = Math.max(seen, pages.length);
+    for (const candidate of pages) {
+      if (badgeStateMatches(await readBadgeState(candidate), variant)) return candidate;
+    }
+    if (Date.now() >= deadline) {
+      console.log(
+        `  [diag] no updater page rendered the ${variant} state within ${timeoutMs / 1000}s (updater pages seen: ${seen})`
+      );
+      return null;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
+
+/**
+ * Click Update for `kinds` and prove the engine ACCEPTED the command.
+ *
+ * Two silent failure modes are closed here:
+ *
+ * - a click on a DISABLED button does nothing at all, and the old assertion
+ *   returned true regardless of `btn.disabled` (the Snap branch checked it, the
+ *   standard one did not);
+ * - a click in a document that is going away (see findRenderedUpdaterPage) leaves
+ *   no trace either.
+ *
+ * The engine's acceptance is observable: both install flows call
+ * sendProgress(5, 'Downloading …zip…') BEFORE their first await, so the
+ * progress bar becomes visible and its step leaves the initial markup. That is
+ * what this waits for (bounded), with one retry.
+ *
+ * @param {import('puppeteer-core').Page} page
+ * @param {string[]} kinds checkbox ids to install
+ * @param {string} label scenario label for the logs
+ * @returns {Promise<{ok: boolean; why: string}>}
+ */
+async function clickInstall(page, kinds, label) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const clicked = await page
+      .evaluate(ids => {
+        const btn = document.getElementById('btn-install');
+        if (!btn) return {ok: false, why: 'no Update button'};
+        const boxes = ids.map(id => document.getElementById(id));
+        if (boxes.some(b => !b)) return {ok: false, why: 'a package checkbox is missing'};
+        for (const cb of boxes) {
+          if (!cb.checked) cb.click();
+        }
+        if (btn.disabled) {
+          return {
+            ok: false,
+            why: `Update button disabled after checking (checked: ${boxes.map(b => b.checked).join(',')})`,
+          };
+        }
+        btn.click();
+        return {ok: true, why: ''};
+      }, kinds)
+      .catch(err => ({ok: false, why: `evaluate failed: ${err?.message}`}));
+    if (clicked.ok) {
+      const accepted = await installCommandAccepted(page);
+      if (accepted) return {ok: true, why: ''};
+      console.log(
+        `  [diag] install-applies (#${attempt}): the engine did not report progress within 5s — retrying the click (${label})`
+      );
+      continue;
+    }
+    console.log(
+      `  [diag] install-applies (#${attempt}): click rejected — ${clicked.why} (${label})`
+    );
+    // A disabled button usually means the card is mid-render (the engine's own
+    // check has not finished); give it one poll cycle before retrying.
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  return {ok: false, why: 'the Update click never reached the engine (see [diag] above)'};
+}
+
+/** Did the engine report the first progress step of an install flow? */
+async function installCommandAccepted(page, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const accepted = await page
+      .evaluate(() => {
+        const bar = document.getElementById('card-progress');
+        if (bar && !bar.hidden) return true;
+        const step = document.getElementById('card-progress-step')?.textContent || '';
+        return step !== '' && step !== 'Preparing...';
+      })
+      .catch(() => false);
+    if (accepted) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise(r => setTimeout(r, 250));
+  }
 }
 
 /**
@@ -1657,19 +1775,20 @@ async function runFoldedInstallApplies(counter, ctx) {
     'install-applies: the check opens the updater tab',
     JSON.stringify(installCheck)
   );
-  const page = await findUpdaterPage(browser, 15_000);
+  // Bind to the page whose engine has actually rendered THIS fixture's state:
+  // `card-title` alone is satisfied by a tab that is closing (see
+  // findRenderedUpdaterPage for the zen · windows-latest 2026-10-02 failure).
+  const page = await findRenderedUpdaterPage(browser, 'both-stale');
   if (!page) {
-    check(counter, false, 'install-applies: card tab available', 'no updater page enumerable');
+    check(
+      counter,
+      false,
+      'install-applies: card rendered',
+      'no updater page rendered the both-stale state this fixture seeds'
+    );
     return;
   }
-  const cardRendered = await waitForCondition(
-    page,
-    () => Boolean(document.getElementById('card-title')?.textContent),
-    15_000,
-    'card rendered'
-  );
-  check(counter, cardRendered, 'install-applies: card rendered');
-  if (!cardRendered) return;
+  check(counter, true, 'install-applies: card rendered');
 
   if (isSnap) {
     // Snap: config never offered in-tab — the checkbox is hidden and the amber
@@ -1691,16 +1810,8 @@ async function runFoldedInstallApplies(counter, ctx) {
     check(counter, cfg.bandShown, 'install-applies: manual guidance band shown (snap)');
     check(counter, cfg.utilsCheckbox, 'install-applies: utils checkbox present (snap)');
 
-    const clicked = await page.evaluate(() => {
-      const cb = document.getElementById('chk-utils');
-      const btn = document.getElementById('btn-install');
-      if (!cb || !btn) return false;
-      if (!cb.checked) cb.click();
-      if (btn.disabled) return false;
-      btn.click();
-      return true;
-    });
-    check(counter, clicked, 'install-applies: install clicked (utils only, snap)');
+    const clicked = await clickInstall(page, ['chk-utils'], 'install-applies (snap)');
+    check(counter, clicked.ok, 'install-applies: install clicked (utils only, snap)', clicked.why);
     const completed = await waitForTreeHash(utilsFiles, seeded.chromeUtils, utilsHash, 30_000);
     check(counter, completed, 'install-applies: utils install completes in tab (snap)');
     const configManualStill = await page
@@ -1731,18 +1842,8 @@ async function runFoldedInstallApplies(counter, ctx) {
   } else {
     // Standard install: check BOTH checkboxes (utils + config stale), click
     // install. handleInstallCommand installs config first, then utils.
-    const clicked = await page.evaluate(() => {
-      const btn = document.getElementById('btn-install');
-      if (!btn) return false;
-      for (const kind of ['chk-config', 'chk-utils']) {
-        const cb = document.getElementById(kind);
-        if (!cb) return false;
-        if (!cb.checked) cb.click();
-      }
-      btn.click();
-      return true;
-    });
-    check(counter, clicked, 'install-applies: install clicked');
+    const clicked = await clickInstall(page, ['chk-config', 'chk-utils'], 'install-applies');
+    check(counter, clicked.ok, 'install-applies: install clicked', clicked.why);
     // Disk hash is the completion ground truth: both installed trees must
     // re-hash to the manifest (config first, then utils).
     const completed =
@@ -2653,12 +2754,12 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       return seeded.profileDir;
     }
 
-    const rendered = await waitForCondition(
-      page,
-      () => Boolean(document.getElementById('card-title')?.textContent),
-      15_000,
-      'card rendered'
-    );
+    // Bind to the page whose engine rendered THIS fixture. `card-title` alone
+    // is satisfied by any updater document, including a tab that is closing
+    // (see findRenderedUpdaterPage); the launched scenario seeds both-stale, so
+    // that is the state the page must show.
+    page = (await findRenderedUpdaterPage(browser, 'both-stale')) || page;
+    const rendered = badgeStateMatches(await readBadgeState(page), 'both-stale');
     check(counter, rendered, `card rendered (${label})`);
     if (!rendered) return seeded.profileDir;
 
@@ -2682,18 +2783,8 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       check(counter, cfg.bandShown, `manual guidance band shown (snap, ${label})`);
       check(counter, cfg.utilsCheckbox, `utils checkbox present (snap, ${label})`);
 
-      const clicked = await page.evaluate(() => {
-        const cb = document.getElementById('chk-utils');
-        const btn = document.getElementById('btn-install');
-        if (!cb || !btn) return false;
-        // The Update button is disabled until a checkbox is checked — tick
-        // utils first, then click once the button enables.
-        if (!cb.checked) cb.click();
-        if (btn.disabled) return false;
-        btn.click();
-        return true;
-      });
-      check(counter, clicked, `install clicked (utils only, ${label})`);
+      const clicked = await clickInstall(page, ['chk-utils'], `install-applies (snap, ${label})`);
+      check(counter, clicked.ok, `install clicked (utils only, ${label})`, clicked.why);
 
       // Completion: the installed utils TREE re-hashes to the manifest — the
       // ground truth, waited on directly (waitForTreeHash) instead of polling
@@ -2762,18 +2853,12 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       // Standard install: check BOTH checkboxes (utils + config stale), then
       // click install. handleInstallCommand installs config first, then utils,
       // and refreshPackageState flips each badge to OK as it finishes.
-      const clicked = await page.evaluate(() => {
-        const btn = document.getElementById('btn-install');
-        if (!btn) return false;
-        for (const kind of ['chk-config', 'chk-utils']) {
-          const cb = document.getElementById(kind);
-          if (!cb) return false;
-          if (!cb.checked) cb.click();
-        }
-        btn.click();
-        return true;
-      });
-      check(counter, clicked, `install clicked (${label})`);
+      const clicked = await clickInstall(
+        page,
+        ['chk-config', 'chk-utils'],
+        `install-applies (${label})`
+      );
+      check(counter, clicked.ok, `install clicked (${label})`, clicked.why);
 
       // Completion: BOTH installed trees re-hash to the manifest (utils then
       // config — the tab installs config first). Disk hash is the completion

@@ -377,6 +377,44 @@ test('a driver realm that dies mid-session degrades the folded phases, never fai
   }
 });
 
+test('install-applies binds to the page that rendered the fixture state, not the first updater page', () => {
+  const source = fs.readFileSync(UPDATER_E2E, 'utf-8');
+
+  // A BiDi page target OUTLIVES its tab, so findUpdaterPage (first page whose
+  // UpdaterEngine.init exists) can hand back the tab closeUpdaterTabs just
+  // closed — its card is still rendered, which is why the old
+  // `card-title`-only wait passed 6 ms after the fresh tab opened. On
+  // zen · windows-latest (2026-10-02) the install was clicked in that dying
+  // document: nothing was installed, no progress was ever reported, and six
+  // dependent assertions failed 30 s later.
+  assert.match(
+    source,
+    /async function findRenderedUpdaterPage\(/,
+    'the harness needs a page resolver that requires the fixture\u2019s rendered state'
+  );
+  assert.match(
+    source,
+    /findRenderedUpdaterPage\(browser, 'both-stale'\)/,
+    'install-applies must resolve its page by the both-stale state it seeds'
+  );
+  assert.doesNotMatch(
+    source,
+    /install-applies: card tab available/,
+    'the weak "a page exists" gate must not come back'
+  );
+
+  // A click on a disabled button is swallowed silently and the old standard
+  // branch returned true regardless (the Snap branch checked it); the engine\u2019s
+  // own first progress step is the acceptance proof.
+  assert.match(source, /async function clickInstall\(/, 'the click must be verified');
+  assert.match(source, /async function installCommandAccepted\(/, 'acceptance must be observed');
+  assert.match(
+    source,
+    /if \(btn\.disabled\) \{\n\s+return \{\n\s+ok: false,/,
+    'a disabled Update button must be reported, not clicked'
+  );
+});
+
 test('the driver page is a harness artifact, never a shipped package file', () => {
   const shipped = path.join(REPO_ROOT, 'core', 'chrome', 'utils');
   const strays = [];
