@@ -62,6 +62,10 @@ function makePrefs(store) {
     clearUserPref: key => {
       delete store[key];
     },
+    // Bool prefs carry the DEBUG switches (extensions.firefox-scripts.debug.*);
+    // an absent key must fall back to the caller's default, which is how the
+    // module pins "absent = shipped shape".
+    getBoolPref: (key, d = false) => (key in store ? store[key] : d),
   };
 }
 
@@ -517,8 +521,8 @@ function restoredUpdaterBrowser() {
  * the OTHER windows the enumerator must report (after the current one),
  * `mostRecent` overrides the mediator's answer (default: the current window).
  */
-async function openTabOnPendingWorld({windows = [], mostRecent} = {}) {
-  const store = {};
+async function openTabOnPendingWorld({windows = [], mostRecent, prefs = {}} = {}) {
+  const store = {...prefs};
   // The enumerator (and the mediator's answer) is MRU-ordered in Firefox, so
   // the init/current window goes FIRST and the caller's other windows follow.
   const enumeratorWindows = [];
@@ -878,6 +882,93 @@ test('the purge and the restore gate both resolve SessionStore through the lazy 
       makeSsCalls.length >= 1,
       'forgetUpdaterTab reached lazy.SessionStore.getClosedTabDataForWindow/forgetClosedTab'
     );
+  } finally {
+    layout.cleanup();
+  }
+});
+
+/* ------------- the probe-mode debug switches (absent = shipped shape) ------------- */
+//
+// The E2E probe mode (docs/e2e-tests.md) re-tests a timing workaround by
+// switching the pre-fix behaviour BACK ON and repeating until the race is hit or
+// ruled out. That only works if the switches really move the code — a switch
+// that silently does nothing would "prove" the workaround unnecessary. These
+// tests pin the switches themselves, and their defaults, for the same reason the
+// 5 s restore bound is pinned: an unnoticed flip turns every probe into a lie.
+
+test('debug switches: the defaults are the shipped shape', () => {
+  // Two of the three are switchable only by timing (the unit sandbox resolves
+  // SessionStore.promiseAllWindowsRestored immediately, so the restore gate
+  // never actually waits here), so their defaults are pinned at the read site.
+  const source = fs.readFileSync(MODULE_PATH, 'utf-8');
+  assert.match(
+    source,
+    /getBoolPref\(PREF_DEBUG_SYNC_SELECT, false\)/,
+    'syncSelect defaults OFF (the deferred selection is the shipped behaviour)'
+  );
+  assert.match(
+    source,
+    /getBoolPref\(PREF_DEBUG_SKIP_RESTORE_WAIT, false\)/,
+    'skipRestoreWait defaults OFF (the attach still waits for the restore)'
+  );
+  assert.match(
+    source,
+    /getBoolPref\(PREF_DEBUG_TWIN_GUARD, true\)/,
+    'the duplicate-tab guard defaults ON'
+  );
+  // …and the restore-gate bypass is wired to it, not merely declared.
+  assert.match(
+    source,
+    /if \(!debugSkipRestoreWait\(\)\) \{\s*await sessionRestoredWait\(\);/,
+    'skipRestoreWait actually skips the gate'
+  );
+});
+
+test('debug.syncSelect=true restores the pre-#384 synchronous selection', async () => {
+  // The #384 wedge was a synchronous `selectedTab = tab` right after
+  // addTrustedTab, before the browser had committed its load — so the probe must
+  // be able to select BEFORE the load, not merely "early".
+  const {layout, win, opened} = await openTabOnPendingWorld({
+    prefs: {'extensions.firefox-scripts.debug.syncSelect': true},
+  });
+  try {
+    assert.ok(opened, 'the updater tab was opened');
+    const tab = win.openedTabs[0];
+    assert.equal(
+      win._selected,
+      tab,
+      'selected synchronously, BEFORE the browser commits the updater URI'
+    );
+    assert.equal(tab.linkedBrowser.focusCalls, 0, 'the pre-#384 shape moved no focus');
+  } finally {
+    layout.cleanup();
+  }
+});
+
+test('debug.twinGuard=false leaves a late twin in place (the pre-guard shape)', async () => {
+  // Guard OFF has to mean the guard is off: the twin that materializes after the
+  // attach must SURVIVE, which is exactly what the probe's "final updater-tab
+  // set is exactly one" assertion watches for on a real engine.
+  const restoredWin = makeFakeWindow();
+  const win = makeFakeWindow();
+  const {sandbox} = loadUpdater({
+    store: {'extensions.firefox-scripts.debug.twinGuard': false},
+    windows: [win, restoredWin],
+  });
+  const layout = makeProfileLayout(sandbox);
+  const routes = seedPendingWorld(layout);
+  sandbox.Services.io = makeIo(routes);
+  sandbox.initScriptsUpdater(win);
+  try {
+    assert.ok(await waitFor(() => win.openedTabs.length > 0), 'the fresh tab opened');
+    const lateTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
+    restoredWin.gBrowser.tabs.push(lateTab);
+    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
+    assert.ok(
+      restoredWin.openedTabs.includes(lateTab),
+      'the twin SURVIVED — the guard really is disabled'
+    );
+    assert.equal(makeSsCalls.length, 0, 'and nothing was purged from the recently-closed list');
   } finally {
     layout.cleanup();
   }

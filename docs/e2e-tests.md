@@ -290,6 +290,59 @@ node test/e2e/updater/updater-e2e.mjs --scenario 11 \
   --firefox "$HOME/Documents/FireFox/portable/nightly/firefox.exe"
 ```
 
+### Probe mode — re-testing a timing workaround
+
+Some of the updater's code guards against conditions that are rare and load-dependent: the #384
+selection wedge, a duplicate updater tab surviving a restore, an attach that runs before
+SessionStore has finished. A single run cannot say whether such a guard is still needed — the race
+either fires or it does not, and "it did not fire" is not the same as "it cannot fire". Probe mode
+is the harness argument for settling that with evidence instead of opinion: the same scenarios, told
+to switch the pre-fix behaviour back on and repeat until the race is either hit or ruled out.
+
+```bash
+node test/e2e/updater/updater-e2e.mjs --firefox <path> --snapshot dist/<snap> \
+  --scenario 11 --repeat 20 --load 8 \
+  --debug twinGuard=0 --probe "final updater-tab set" --probe "schemeIs"
+```
+
+- `--debug <name>[=<value>]` sets the module's debug prefs (`extensions.firefox-scripts.debug.*`),
+  comma-separated. The names are the module's own switch names: `syncSelect` (select the fresh tab
+  synchronously — the pre-#384 shape), `skipRestoreWait` (attach without waiting for SessionStore),
+  `twinGuard=0` (disable the duplicate-updater-tab guard). An unknown name fails loudly, and all of
+  them default to the shipped behaviour. `test/unit/e2e/scriptsUpdater-tab-attach.test.mjs` pins
+  both the defaults and the switches' effect, because a switch that silently does nothing would turn
+  every probe into a false negative.
+- `--load <n>` pins `n` CPU cores for the whole run (spinners are killed in a `finally` and on
+  process exit). These are scheduling races: without contention the window closes before it opens.
+- `--probe <label substring>` tallies the matching assertions across every `--repeat` pass and
+  prints a `PROBE REPORT`. It is **report-only** — it never changes the exit code, so a run that
+  deliberately re-enables a defect finishes green while printing exactly which assertions caught it.
+  A pattern matching nothing prints `NO MATCHING ASSERTION`, never a comfortable `0/0`.
+- `--repeat <n>` re-runs the scenario selection with a fresh profile per pass. It predates probe
+  mode; it is what turns the tally into a distribution rather than a data point.
+
+Two limits worth knowing. `--debug` copies the worktree's scheduler into every seeded profile (the
+snapshot's copy predates the run, so a pref set on it would never be read) — that makes the
+profile's utils tree differ from the snapshot manifest, so the **variant session (scenario 1)** then
+reports utils as permanently stale. Its first variant — where the startup tab-open happens — is
+unaffected, and the later variants fail identically in every arm, so the probe tally stays
+meaningful; scenario 11 copies the scheduler from source anyway and is unaffected entirely. And a
+probe is a distribution, not a proof: `--repeat 20` with 0 failures bounds the rate only as far as
+running on the same machine, under the same load, on the same day can.In CI the probe runs on the
+`updater E2E · <firefox-esr-NNN> · windows-latest (advisory)` leg through the `updater_probe_args`
+dispatch input (see `docs/ci-inventory.md`). It is deliberately dispatch-only: a probe measures
+rather than gates, so it must never be what a PR is judged on — and the ESR legs only run on a
+`browser=firefox-esr` dispatch anyway.
+
+The input is interpolated into the step's shell command as a fragment, so anything containing spaces
+has to be quoted by the operator (`--probe "final updater-tab set"`). That is acceptable only
+because `workflow_dispatch` requires write access; a probe is never reachable from a PR.
+
+```bash
+gh workflow run e2e.yml --ref <branch> -f browser=firefox-esr \
+  -f updater_probe_args='--repeat 20 --load 8 --debug twinGuard=0 --probe "final updater-tab set"'
+```
+
 ### Configuration
 
 Copy `test/e2e/shared/config.example.mjs` to `e2e.config.mjs` at the repo root (gitignored) and

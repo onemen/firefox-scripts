@@ -162,6 +162,51 @@ const MANIFEST_TIMEOUT_MS = 15000; // dead manifest host -> failed check, not a 
 const PREF_LAST_CHECK = 'extensions.firefox-scripts.lastScriptsCheckDate';
 const PREF_SKIP_PREFIX = 'extensions.firefox-scripts.skippedHash.';
 
+/* ---------------- experiment-only debug switches ----------------
+ *
+ * NOT user-facing configuration: these exist so the E2E harness can reproduce,
+ * on demand, the two failure modes the updater works around. Both default to
+ * the SHIPPED behaviour; setting one only ever makes the module misbehave the
+ * way it did before the workaround landed.
+ *
+ * - debug.syncSelect: select the fresh updater tab synchronously right after
+ *   addTrustedTab (the pre-#384 shape) instead of deferring the selection to
+ *   the tab's own load. Reproduces the AsyncTabSwitcher schemeIs wedge.
+ * - debug.twinGuard: 0 disables the duplicate-updater-tab guard, so a restored
+ *   tab that materializes after the startup attach scan survives next to the
+ *   fresh one (the pre-guard shape).
+ */
+const PREF_DEBUG_SYNC_SELECT = 'extensions.firefox-scripts.debug.syncSelect';
+const PREF_DEBUG_SKIP_RESTORE_WAIT = 'extensions.firefox-scripts.debug.skipRestoreWait';
+const PREF_DEBUG_TWIN_GUARD = 'extensions.firefox-scripts.debug.twinGuard';
+
+/** True when the harness asked for the pre-#384 synchronous tab selection. */
+function debugSyncSelect() {
+  try {
+    return Services.prefs.getBoolPref(PREF_DEBUG_SYNC_SELECT, false);
+  } catch {
+    return false;
+  }
+}
+
+/** True when the harness asked to attach before SessionStore finished restoring. */
+function debugSkipRestoreWait() {
+  try {
+    return Services.prefs.getBoolPref(PREF_DEBUG_SKIP_RESTORE_WAIT, false);
+  } catch {
+    return false;
+  }
+}
+
+/** False when the harness asked to disable the duplicate-updater-tab guard. */
+function debugTwinGuardEnabled() {
+  try {
+    return Services.prefs.getBoolPref(PREF_DEBUG_TWIN_GUARD, true);
+  } catch {
+    return true;
+  }
+}
+
 /* ---------------- publish channels (ADR 0026) ----------------
  *
  * A dev install's generated config points exclusively at its dev-build branch.
@@ -441,6 +486,11 @@ function isUnmarkedUpdaterTab(tab) {
  * tab with a fresh one.
  */
 function forgetDuplicateUpdaterTabs() {
+  if (!debugTwinGuardEnabled()) {
+    // Experiment-only: leave a late twin alive so the harness can observe the
+    // race the guard exists to remove.
+    return;
+  }
   try {
     const twins = [];
     let freshTabLive = false;
@@ -698,7 +748,9 @@ export async function checkForUpdates() {
   // finished restoring (see gSessionRestored). Bounded: proceed after 30 s
   // even if the event never fires (no saved session, or restore disabled) —
   // attaching late is cosmetic, attaching early duplicates tabs (#384).
-  await sessionRestoredWait();
+  if (!debugSkipRestoreWait()) {
+    await sessionRestoredWait();
+  }
 
   {
     // A restored session can hold an updater tab from the previous session —
@@ -762,7 +814,17 @@ export async function checkForUpdates() {
   // and the pending update stayed hidden for the whole session (#384).
   // Deferring to load/pageshow keeps the "updater tab selected" behavior on
   // the healthy path while the load itself can never be killed by it.
-  selectWhenLoaded(liveWin, tab);
+  if (debugSyncSelect()) {
+    // Experiment-only: the pre-#384 synchronous selection — the forced async
+    // tab switch races this browser's still-null currentURI.
+    try {
+      liveWin.gBrowser.selectedTab = tab;
+    } catch {
+      // Nothing to select into.
+    }
+  } else {
+    selectWhenLoaded(liveWin, tab);
+  }
   // A restored twin can materialize between the two SessionStore notifications
   // and this attach (and, on a profile where the module initialized after both
   // already fired, only this call sees the set at all — the 2026-10-01 ESR 140
