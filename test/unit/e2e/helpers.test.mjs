@@ -16,9 +16,16 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const helpersUrl = pathToFileURL(path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'helpers.mjs')).href;
-const {pollUntil, withLockRetrySync, readFileSyncWithRetry, writeFileSyncWithRetry} = await import(
-  helpersUrl
-);
+const {
+  pollUntil,
+  tempDir,
+  rmDir,
+  sweepLiveTempRoots,
+  pruneStaleTempRoots,
+  withLockRetrySync,
+  readFileSyncWithRetry,
+  writeFileSyncWithRetry,
+} = await import(helpersUrl);
 
 test('pollUntil: returns the first truthy value', async () => {
   let calls = 0;
@@ -169,5 +176,154 @@ test('read/writeFileSyncWithRetry: round-trip the real fs (unlocked path)', () =
     assert.equal(readFileSyncWithRetry(file).toString('utf-8'), '// probe\n');
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+// ── Temp-root hygiene ───────────────────────────────────────────
+// The E2E mkdtemps a ~50 MB profile per scenario into the OS temp dir and the
+// per-scenario `finally` only covers the success path — a Ctrl-C or a hard kill
+// stranded 11 of them (412 MB) in the user's Temp on 2026-10-02. Two layers
+// reclaim them: the live-root registry swept on every way out of the process,
+// and an age-based prune at the start of the next run.
+
+const HOUR = 60 * 60 * 1000;
+
+/** A sandbox temp dir holding the given dir names (each with one file). */
+function makeSandbox(names) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-hyg-sandbox-'));
+  for (const name of names) {
+    fs.mkdirSync(path.join(root, name), {recursive: true});
+    fs.writeFileSync(path.join(root, name, 'marker'), 'x');
+  }
+  return root;
+}
+
+test('tempDir registers its root and sweepLiveTempRoots reclaims it', () => {
+  const dir = tempDir('fxs-hyg-sweep');
+  fs.writeFileSync(path.join(dir, 'payload'), 'x');
+  assert.ok(fs.existsSync(dir));
+  const removed = sweepLiveTempRoots();
+  assert.ok(removed >= 1, 'the registered root is swept');
+  assert.equal(fs.existsSync(dir), false);
+});
+
+test('rmDir removes the tree and clears the registration', () => {
+  const dir = tempDir('fxs-hyg-rmdir');
+  fs.writeFileSync(path.join(dir, 'payload'), 'x');
+  rmDir(dir);
+  assert.equal(fs.existsSync(dir), false);
+  // A removed root is not swept again (it is already gone).
+  const before = sweepLiveTempRoots();
+  assert.equal(fs.existsSync(dir), false);
+  assert.equal(typeof before, 'number');
+});
+
+test('pruneStaleTempRoots removes aged harness roots, keeps everything else', () => {
+  const prefix = 'fxs-hyg-prune-';
+  const sandbox = makeSandbox([
+    `${prefix}old1`,
+    `${prefix}old2`,
+    'fxs-hyg-other-dir',
+    'unrelated-tool-dir',
+  ]);
+  try {
+    // Pretend the tree is 10h old: the two harness roots age out, the 24h-old
+    // junk would too but is not ours, and the foreign dir is never touched.
+    const {removed, kept} = pruneStaleTempRoots({
+      minAgeMs: 6 * HOUR,
+      prefixes: [prefix],
+      tmp: sandbox,
+      now: Date.now() + 10 * HOUR,
+      log: () => {},
+    });
+    assert.deepEqual(removed.map(d => path.basename(d)).sort(), [`${prefix}old1`, `${prefix}old2`]);
+    // `kept` lists harness roots that were considered but kept; entries the
+    // prefix list does not claim are never even looked at.
+    assert.deepEqual(kept, []);
+    assert.equal(fs.existsSync(path.join(sandbox, `${prefix}old1`)), false);
+    assert.equal(fs.existsSync(path.join(sandbox, 'unrelated-tool-dir')), true);
+  } finally {
+    fs.rmSync(sandbox, {recursive: true, force: true});
+  }
+});
+
+test('pruneStaleTempRoots keeps a fresh root (a run in flight)', () => {
+  const prefix = 'fxs-hyg-fresh-';
+  const sandbox = makeSandbox([`${prefix}live`]);
+  try {
+    const {removed, kept} = pruneStaleTempRoots({
+      minAgeMs: 6 * HOUR,
+      prefixes: [prefix],
+      tmp: sandbox,
+      log: () => {},
+    });
+    assert.deepEqual(removed, []);
+    assert.deepEqual(
+      kept.map(d => path.basename(d)),
+      [`${prefix}live`]
+    );
+  } finally {
+    fs.rmSync(sandbox, {recursive: true, force: true});
+  }
+});
+
+test('pruneStaleTempRoots never removes a root this process still holds', () => {
+  const prefix = 'fxs-hyg-owned-';
+  const dir = tempDir(prefix.slice(0, -1)); // mkdtemp appends its own suffix
+  try {
+    assert.ok(path.basename(dir).startsWith(prefix), dir);
+    const {removed, kept} = pruneStaleTempRoots({
+      minAgeMs: 0, // everything looks aged out
+      prefixes: [prefix],
+      now: Date.now() + 10 * HOUR,
+      log: () => {},
+    });
+    assert.deepEqual(removed, []);
+    assert.deepEqual(kept, [dir]);
+    assert.equal(fs.existsSync(dir), true);
+  } finally {
+    rmDir(dir);
+  }
+});
+
+test('pruneStaleTempRoots tolerates a missing temp dir', () => {
+  assert.deepEqual(
+    pruneStaleTempRoots({tmp: path.join(os.tmpdir(), 'fxs-hyg-does-not-exist'), log: () => {}}),
+    {removed: [], kept: []}
+  );
+});
+
+test('rmDir: an unremovable tree the harness does not own is not logged as leaked', () => {
+  // rmDir is also called on trees this harness never created (a caller's own
+  // scratch dir). Reporting those in dist/e2e-leaked-temp.txt would name
+  // foreign litter as ours. Force a failure the only portable way: make the
+  // parent read-only so the remove cannot succeed (skipped as root/Windows
+  // where that does not apply).
+  if (
+    process.platform === 'win32' ||
+    (typeof process.getuid === 'function' && process.getuid() === 0)
+  ) {
+    return;
+  }
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-hyg-foreign-'));
+  const foreign = path.join(parent, 'not-ours');
+  fs.mkdirSync(foreign);
+  fs.writeFileSync(path.join(foreign, 'payload'), 'x');
+  const breadcrumb = path.join(REPO_ROOT, 'dist', 'e2e-leaked-temp.txt');
+  const before = fs.existsSync(breadcrumb) ? fs.readFileSync(breadcrumb, 'utf-8') : null;
+  try {
+    fs.chmodSync(parent, 0o500); // r-x: cannot unlink its children
+    rmDir(foreign);
+    if (fs.existsSync(foreign)) {
+      const after = fs.existsSync(breadcrumb) ? fs.readFileSync(breadcrumb, 'utf-8') : null;
+      assert.equal(
+        after,
+        before,
+        'a foreign tree that fails to remove must not be recorded as leaked'
+      );
+    }
+  } finally {
+    fs.chmodSync(parent, 0o700);
+    fs.rmSync(parent, {recursive: true, force: true});
   }
 });

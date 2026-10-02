@@ -174,7 +174,7 @@ install dir) — the installer is never executed, so there is no Add/Remove Prog
 ```bash
 pnpm e2e:portable nightly                    # or: firefox, firefox-dev, a fork
 #   → ✓ nightly ready: /c/Users/you/Documents/FireFox/portable/nightly/firefox.exe
-pnpm e2e:portable nightly --dir /c/tmp/portable-nightly   # explicit destination
+pnpm e2e:portable nightly --dir ./dist/portable/nightly   # explicit destination
 
 export FIREFOX_BINARY="/c/Users/you/Documents/FireFox/portable/nightly/firefox.exe"
 pnpm snapshot:dev              # build the snapshot for this branch
@@ -184,6 +184,22 @@ pnpm test:e2e                                # installer + updater
 
 The snapshot is the newest `dist/` one (`--snapshot <dir>` picks explicitly, `--no-branch-check`
 accepts a snapshot from any branch — the direct script never branch-checks).
+
+**Where the run's files live.** The harness stages a ~50 MB Firefox profile per scenario in the OS
+temp dir, and nothing outside the OS reclaims them (Windows prunes temp files only after ~30 days),
+so three rules keep that bounded:
+
+- every root the harness creates is removed however the process ends (Ctrl-C, an agent timeout, a
+  failed check, `process.exit`); a root that survives is listed in `dist/e2e-leaked-temp.txt`. On
+  Windows a _parent's_ `child.kill()` is `TerminateProcess`, which no handler can intercept — only
+  the prune below reclaims what that leaves;
+- every run starts by pruning harness-prefixed roots (`fxs-*`) older than 6h;
+- a `fxs-*` entry older than 24h in the OS temp dir fails `pnpm test` (`test-hygiene.test.mjs`).
+  `FXS_TEMP_KEEP=<name>` marks a deliberately long-lived one.
+
+Cached installers land in the OS temp dir too and are pruned after 7 days; point `BROWSER_DL_DIR` at
+a persistent dir to keep them warm. `pnpm e2e:portable` refuses a browser install inside the OS temp
+dir (`--allow-temp-dir` overrides) — use the default or `--dir ./dist/portable/<browser>`.
 
 `--keep-profile` keeps each scenario's profile for inspection, `--repeat 2` runs the whole selection
 twice (determinism check), `--scenario 1,7,9` narrows the run, and `--no-fail-fast` runs every
@@ -297,7 +313,8 @@ adjust:
   auto-detect).
 - `branchCheck`: `'strict'` (default — snapshot must match the current branch) or `'off'`.
 - `headless`: launch Firefox headless (Linux CI uses `xvfb-run` instead).
-- `keepProfile`: keep temp profiles after a run for debugging.
+- `keepProfile`: keep temp profiles after a run for debugging (they are recorded in
+  `dist/e2e-leaked-temp.txt` and reclaimed by the next run's prune once they age out).
 
 CLI flags win over environment variables, which win over the config file.
 

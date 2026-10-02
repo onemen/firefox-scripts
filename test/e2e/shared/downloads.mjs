@@ -291,6 +291,92 @@ export function downloadDir() {
 }
 
 /**
+ * Extensions an installer download can have. Multi-part ones are included, so
+ * this list is matched as a SUFFIX list (`endsWith`), never through
+ * `path.extname` — which returns only the last extension.
+ */
+const INSTALLER_EXTS = ['.exe', '.dmg', '.pkg', '.AppImage', '.tar.gz', '.tar.xz', '.tar.bz2'];
+
+/**
+ * Is this a cached installer file? Both halves are literal — no regex — so the
+ * "known shape" rule stays cheap and unambiguous: the name carries the recipe's
+ * `-setup` marker (`<browser>-setup`, `<browser>-portable-setup`, or a
+ * versioned `…-setup-1.0.exe`) and the extension is one a browser ships as.
+ */
+function isCachedInstallerFile(name) {
+  // endsWith over the suffix list, not `INSTALLER_EXTS.has(path.extname(name))`:
+  // extname returns only the LAST extension, so `.tar.xz` read as `.xz` and the
+  // three multi-part entries could never match — an aged
+  // `firefox-setup.tar.xz` stayed in the cache forever.
+  return name.includes('-setup') && INSTALLER_EXTS.some(ext => name.endsWith(ext));
+}
+
+const DL_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Drop installer files the local download cache has not touched in a week.
+ *
+ * The cache is what makes a repeat local run cheap, but its default home is the
+ * OS temp dir: without this the installers are permanent litter there (two 73
+ * MB Firefox setups sat in the user's Temp on 2026-10-02, from runs on
+ * 2026-09-30 alone). Age, not "is it this run's file": only entries older than
+ * `maxAgeMs` go, so a concurrently running leg's download is never touched.
+ *
+ * @param {{
+ *   maxAgeMs?: number;
+ *   dir?: string;
+ *   now?: number;
+ *   log?: (msg: string) => void;
+ * }} [opts]
+ *   test seams
+ * @returns {{removed: string[]; kept: string[]}}
+ */
+export function pruneStaleDownloadCache({
+  maxAgeMs = 7 * DL_DAY_MS,
+  dir = downloadDir(),
+  now = Date.now(),
+  log = console.log,
+} = {}) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, {withFileTypes: true});
+  } catch {
+    return {removed: [], kept: []};
+  }
+  const removed = [];
+  const kept = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !isCachedInstallerFile(entry.name)) {
+      continue;
+    }
+    const full = path.join(dir, entry.name);
+    let stat;
+    try {
+      stat = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    if (now - stat.mtimeMs < maxAgeMs) {
+      kept.push(full);
+      continue;
+    }
+    try {
+      fs.rmSync(full, {force: true});
+      removed.push(full);
+    } catch {
+      kept.push(full);
+    }
+  }
+  if (removed.length) {
+    log(
+      `  [downloads] pruned ${removed.length} cached installer(s) older than ` +
+        `${Math.round(maxAgeMs / DL_DAY_MS)}d: ${removed.map(f => path.basename(f)).join(', ')}`
+    );
+  }
+  return {removed, kept};
+}
+
+/**
  * Resolve a browser's download URL for a platform (the recipe's tarball,
  * installer URL, or latest-resolved URL) — used to key the CI download cache,
  * since the URL embeds the release version. `latest` recipes query their
@@ -1339,6 +1425,7 @@ function requireBinary(browser) {
  * @returns {Promise<string>} absolute path to the browser binary
  */
 export async function installBrowser(browser, platform = process.platform) {
+  pruneStaleDownloadCache();
   const key = platformKey(platform);
   const def = downloadsEntry(browser);
   if (!def) {
