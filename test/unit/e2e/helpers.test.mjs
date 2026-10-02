@@ -82,7 +82,7 @@ test('pollUntil: a hanging callback cannot extend the budget', async () => {
   assert.ok(Date.now() - started < 5000, 'the deadline must cap a hanging attempt');
 });
 
-// ── Temp-root hygiene (ADR 0038) ───────────────────────────────────────────
+// ── Temp-root hygiene ───────────────────────────────────────────
 // The E2E mkdtemps a ~50 MB profile per scenario into the OS temp dir and the
 // per-scenario `finally` only covers the success path — a Ctrl-C or a hard kill
 // stranded 11 of them (412 MB) in the user's Temp on 2026-10-02. Two layers

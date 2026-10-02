@@ -1,5 +1,4 @@
-// test/unit/e2e/scriptsUpdaterUiTemp.test.mjs — the updater's temp-dir hygiene
-// (ADR 0038).
+// test/unit/e2e/scriptsUpdaterUiTemp.test.mjs — the updater's temp-dir hygiene.
 //
 // ensureUpdaterUi() stages updater-ui.zip in PathUtils.tempDir and removes the
 // staging dir in a `finally` — which never runs when the browser is killed

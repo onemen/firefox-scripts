@@ -56,7 +56,7 @@ const PREF_OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
 // unique when processID is unavailable (never on a shipped build).
 const UI_TMP_DIR_PREFIX = 'fxs-updater-ui';
 
-/** A dir older than this is nobody's: reclaim it (ADR 0038). */
+/** A dir older than this is nobody's: reclaim it. */
 const UI_TMP_STALE_MS = 24 * 60 * 60 * 1000;
 
 /**

@@ -98,7 +98,7 @@ Run before the step-6 summary — every item is a one-command verification:
       dumps, probe outputs) was deleted when the action consuming it finished; anything left is
       swept at session end. Scratch lives in the repo's gitignored `dist/scratch/`, never bare
       `/tmp` (= the user's Temp on this machine; a `fxs-*` entry older than 24h there fails
-      `pnpm test` — ADR 0038).
+      `pnpm test`).
 - [ ] **No orphan branches** — every batch branch is either pushed with an open PR or deleted; no
       unpushed local batch branch lingers.
 - [ ] **Main checkout clean** — `git status --short` shows no uncommitted duplicates of work that

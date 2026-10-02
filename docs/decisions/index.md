@@ -119,10 +119,6 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0037](./0037-snap-e2e-cross-revision-cache-seed.md) — Snap Firefox E2E leg: cross-revision cache
   seed + single install track (offline-from-cache only); store outages degrade to an older revision
   instead of a hard fail (#291)
-- [0038](./0038-os-temp-residency-and-reclamation.md) — The OS temp dir is an allowed home with an
-  owner: every creator registers its roots, the E2E harness sweeps them on every way out of the
-  process and prunes stranded ones by age, the shipped updater reclaims its own staging dir, and
-  unowned `fxs-*` litter older than 24h fails the hygiene gate
 
 ## Historical
 

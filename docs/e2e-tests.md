@@ -130,16 +130,15 @@ pnpm test:e2e                                # installer + updater
 The snapshot is the newest `dist/` one (`--snapshot <dir>` picks explicitly, `--no-branch-check`
 accepts a snapshot from any branch — the direct script never branch-checks).
 
-**Where the run's files may live (ADR 0038).** The E2E harness stages ~50 MB Firefox profiles in the
-OS temp dir per scenario, and nothing outside the OS reclaims them — Windows only prunes temp files
-after ~30 days. Three rules keep that bounded:- every temp root the harness creates is registered
-and removed however the process ends (Ctrl-C, an agent timeout, a failed check, `process.exit`); a
-root that survives is listed in `dist/e2e-leaked-temp.txt`. On Windows a _parent's_ `child.kill()`
-is `TerminateProcess`, which no handler can intercept — only the prune below reclaims what that
-leaves;
+**Where the run's files live.** The harness stages a ~50 MB Firefox profile per scenario in the OS
+temp dir, and nothing outside the OS reclaims them (Windows prunes temp files only after ~30 days),
+so three rules keep that bounded:
 
-- every run starts by pruning harness-prefixed roots (`fxs-*`) older than 6h — the backstop for a
-  hard kill or a machine crash that skips the sweep;
+- every root the harness creates is removed however the process ends (Ctrl-C, an agent timeout, a
+  failed check, `process.exit`); a root that survives is listed in `dist/e2e-leaked-temp.txt`. On
+  Windows a _parent's_ `child.kill()` is `TerminateProcess`, which no handler can intercept — only
+  the prune below reclaims what that leaves;
+- every run starts by pruning harness-prefixed roots (`fxs-*`) older than 6h;
 - a `fxs-*` entry older than 24h in the OS temp dir fails `pnpm test` (`test-hygiene.test.mjs`).
   `FXS_TEMP_KEEP=<name>` marks a deliberately long-lived one.
 

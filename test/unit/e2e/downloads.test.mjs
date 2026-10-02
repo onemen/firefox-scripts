@@ -1000,7 +1000,7 @@ test('findCachedInstaller: null on a missing dir, prefix filters foreign files',
   }
 });
 
-// ── pruneStaleDownloadCache (ADR 0038) ────────────────────────────────────
+// ── pruneStaleDownloadCache ────────────────────────────────────
 // The local download cache defaults to the OS temp dir, so an unpruned cache
 // makes every installer permanent litter there (two 73 MB Firefox setups were
 // still in the user's Temp on 2026-10-02). Age — never "is it mine" — is the

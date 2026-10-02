@@ -364,7 +364,7 @@ export async function screenshotPrivileged(page, outPath) {
  * timeout, a `process.exit()` on a failed check or a machine crash all strand
  * one (on 2026-10-02 the user's Temp held 11 of them, 412 MB). The registry
  * plus the exit/signal sweep below reclaims them however the run ends; the
- * age-based prune (ADR 0038) is the backstop for whatever escapes it.
+ * age-based prune is the backstop for whatever escapes it.
  */
 const liveTempRoots = new Set();
 
