@@ -195,3 +195,38 @@ test('pruneStaleTempRoots tolerates a missing temp dir', () => {
     {removed: [], kept: []}
   );
 });
+
+test('rmDir: an unremovable tree the harness does not own is not logged as leaked', () => {
+  // rmDir is also called on trees this harness never created (a caller's own
+  // scratch dir). Reporting those in dist/e2e-leaked-temp.txt would name
+  // foreign litter as ours. Force a failure the only portable way: make the
+  // parent read-only so the remove cannot succeed (skipped as root/Windows
+  // where that does not apply).
+  if (
+    process.platform === 'win32' ||
+    (typeof process.getuid === 'function' && process.getuid() === 0)
+  ) {
+    return;
+  }
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-hyg-foreign-'));
+  const foreign = path.join(parent, 'not-ours');
+  fs.mkdirSync(foreign);
+  fs.writeFileSync(path.join(foreign, 'payload'), 'x');
+  const breadcrumb = path.join(REPO_ROOT, 'dist', 'e2e-leaked-temp.txt');
+  const before = fs.existsSync(breadcrumb) ? fs.readFileSync(breadcrumb, 'utf-8') : null;
+  try {
+    fs.chmodSync(parent, 0o500); // r-x: cannot unlink its children
+    rmDir(foreign);
+    if (fs.existsSync(foreign)) {
+      const after = fs.existsSync(breadcrumb) ? fs.readFileSync(breadcrumb, 'utf-8') : null;
+      assert.equal(
+        after,
+        before,
+        'a foreign tree that fails to remove must not be recorded as leaked'
+      );
+    }
+  } finally {
+    fs.chmodSync(parent, 0o700);
+    fs.rmSync(parent, {recursive: true, force: true});
+  }
+});

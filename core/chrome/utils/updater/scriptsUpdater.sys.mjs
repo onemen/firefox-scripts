@@ -49,11 +49,10 @@ const {CONFIG} = ChromeUtils.importESModule(
 // and break the staleness check.
 const PREF_OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
 
-// Staging dir for the updater-ui package, under the OS temp dir. Named per
-// browser PROCESS (not per check) so the handful of checks one session runs
-// reuse one dir — and two browser processes never fight over it — while the
-// name still sorts into the sweep below. Session id keeps the extract dir
-// unique when processID is unavailable (never on a shipped build).
+// Staging dir for the updater-ui package, under the OS temp dir. The name
+// carries the shared prefix the sweep below matches, plus a per-check suffix
+// (process id + timestamp) so concurrent checks cannot collide — see
+// uiTempDirName's callers.
 const UI_TMP_DIR_PREFIX = 'fxs-updater-ui';
 
 /** A dir older than this is nobody's: reclaim it. */
@@ -112,10 +111,19 @@ export async function sweepStaleUpdaterUiTempDirs({
   return removed;
 }
 
-/** This process's staging dir name under PathUtils.tempDir. */
+/**
+ * This check's staging dir name under PathUtils.tempDir.
+ *
+ * Unique by construction: process id keeps two browsers apart, the timestamp
+ * keeps two checks apart across sessions, and the counter keeps two checks in
+ * the SAME millisecond apart (clock granularity makes Date.now() alone
+ * insufficient). Module-private — the tests reach it through the sandbox.
+ */
+let uiTmpCounter = 0;
 function uiTempDirName() {
   const pid = Services.appinfo.processID;
-  return `${UI_TMP_DIR_PREFIX}-${typeof pid === 'number' && pid > 0 ? pid : Date.now()}`;
+  uiTmpCounter += 1;
+  return `${UI_TMP_DIR_PREFIX}-${typeof pid === 'number' && pid > 0 ? pid : 'x'}-${Date.now()}-${uiTmpCounter}`;
 }
 
 function configValue(key) {
@@ -679,11 +687,14 @@ export async function ensureUpdaterUi(info) {
     return true; // already current
   }
 
+  // A UNIQUE dir per check, not one per process: checkForUpdates has no
+  // in-flight guard (window churn at initScriptsUpdater, the daily timer and a
+  // startup call can all overlap), so a shared dir would let one check delete
+  // another check's staging tree mid-extract. The unique name costs nothing —
+  // the `finally` below removes it, and the startup sweep reclaims whatever a
+  // killed browser strands (ADR 0038's reclaim layer).
   const tmpDir = PathUtils.join(PathUtils.tempDir, uiTempDirName());
   try {
-    // Reuse of this process's staging dir: clear whatever a previous check (or
-    // a check killed mid-flight) left, so the extract below starts empty.
-    await IOUtils.remove(tmpDir, {recursive: true, ignoreAbsent: true});
     const zipUrl = `${getUiBaseUrl()}/updater-ui${getAssetSuffix()}.zip`;
     const zipPath = PathUtils.join(tmpDir, 'updater-ui.zip');
     await Downloads.fetch(zipUrl, zipPath);

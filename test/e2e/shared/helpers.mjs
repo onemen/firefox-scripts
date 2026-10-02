@@ -483,13 +483,21 @@ export function tempDir(prefix = 'fxs-e2e') {
 }
 
 /**
- * Delete a directory tree recursively (best-effort, no throw). A tree that
- * refuses to go stays registered so the exit sweep gets a second try, and is
- * then recorded in dist/e2e-leaked-temp.txt.
+ * Delete a directory tree recursively (best-effort, no throw).
+ *
+ * Only roots THIS process created are tracked: an owned tree that refuses to go
+ * stays registered for the exit sweep's second try and is then recorded in
+ * dist/e2e-leaked-temp.txt. rmDir() also gets called on trees the harness did
+ * not create here (a caller's own scratch dir), and those must not be reported
+ * as ours — the breadcrumb file exists to name OUR litter.
  */
 export function rmDir(dir) {
-  if (removeTree(dir)) liveTempRoots.delete(dir);
-  else noteLeakedTempRoot(dir);
+  const owned = liveTempRoots.has(dir);
+  if (removeTree(dir)) {
+    liveTempRoots.delete(dir);
+  } else if (owned) {
+    noteLeakedTempRoot(dir);
+  }
 }
 
 /**

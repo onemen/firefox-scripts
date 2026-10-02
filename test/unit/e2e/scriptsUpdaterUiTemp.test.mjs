@@ -95,7 +95,7 @@ function makeTempFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-ui-temp-'));
   tempRoots.push(root);
   const stale = path.join(root, 'fxs-updater-ui-1700000000000');
-  const live = path.join(root, 'fxs-updater-ui-4242');
+  const live = path.join(root, 'fxs-updater-ui-4242-1700000000001-1');
   for (const dir of [stale, live]) {
     fs.mkdirSync(path.join(dir, 'extracted'), {recursive: true});
     fs.writeFileSync(path.join(dir, 'updater-ui.zip'), 'zip');
@@ -152,24 +152,24 @@ test('sweepStaleUpdaterUiTempDirs: maxAgeMs is the only knob, and it is forgivin
   );
 });
 
-test('the staging dir name is per process, so one session reuses one dir', () => {
+test('the staging dir name is unique per check, so concurrent checks cannot collide', () => {
   const {root} = makeTempFixture();
   const sandbox = loadUpdater(root);
   // Module-private, but stripping `export ` leaves it a sandbox global — the
   // same trick scriptsUpdater-hash.test.mjs uses.
-  assert.equal(sandbox.uiTempDirName(), 'fxs-updater-ui-4242');
-  assert.equal(
-    sandbox.uiTempDirName(),
-    sandbox.uiTempDirName(),
-    'stable within a process: repeated checks reuse (and re-clear) one dir'
-  );
+  //
+  // checkForUpdates has no in-flight guard, so two checks CAN overlap (window
+  // churn + the daily timer + the startup call). A shared per-process dir would
+  // let one delete the other's tree mid-extract — hence the timestamp suffix.
+  const first = sandbox.uiTempDirName();
+  const second = sandbox.uiTempDirName();
+  assert.match(first, /^fxs-updater-ui-4242-\d+-\d+$/, 'process id + timestamp + counter');
+  assert.notEqual(first, second, 'two calls in the same process must not share a staging dir');
 });
 
-test('without a process id the staging name falls back to a unique-per-check suffix', () => {
+test('without a process id the staging name still carries the per-check suffix', () => {
   const {root} = makeTempFixture();
   const sandbox = loadUpdater(root);
   sandbox.Services.appinfo.processID = undefined;
-  const first = sandbox.uiTempDirName();
-  assert.match(first, /^fxs-updater-ui-\d+$/);
-  assert.notEqual(first, 'fxs-updater-ui-4242');
+  assert.match(sandbox.uiTempDirName(), /^fxs-updater-ui-x-\d+-\d+$/);
 });
