@@ -349,6 +349,9 @@ const DEBUG_SWITCHES = {
 /** Applied to every seeded profile; empty outside --debug. */
 let gDebugPrefs = {};
 let gDebugWarned = false;
+/** --probe patterns and --repeat, kept at module scope so a signal can report. */
+let gProbes = [];
+let gRepeats = 1;
 
 /** {label, ok} for every assertion run, in order — the raw material for --probe. */
 const PROBE_RECORDS = [];
@@ -418,6 +421,27 @@ function stopCpuLoad() {
     }
   }
   loadChildren.length = 0;
+}
+
+/**
+ * One running-tally line per completed repeat pass.
+ *
+ * The final PROBE REPORT only prints after the LAST pass, so a batch that hits
+ * the CI job's timeout loses every tally it accumulated — observed on the first
+ * real probe dispatch (ESR legs cancelled at 20 min, 17 completed passes and
+ * nothing but raw PASS lines to read). A batch is exactly the thing that runs
+ * long enough to be cancelled, so the tally is emitted as it accrues.
+ *
+ * @param {number} pass - the pass that just finished
+ * @param {number} repeats - total passes
+ */
+function logProbeProgress(pass, repeats) {
+  const parts = gProbes.map(pattern => {
+    const hits = PROBE_RECORDS.filter(record => record.label.includes(pattern));
+    const failed = hits.filter(record => !record.ok).length;
+    return `${pattern}: ${hits.length - failed}/${hits.length}`;
+  });
+  console.log(`  [probe] pass ${pass}/${repeats} — ${parts.join(' · ')}`);
 }
 
 /**
@@ -4568,6 +4592,8 @@ async function run() {
   // Probe mode: the debug switches ride in every seeded profile (see
   // seedProfile) and the CPU load is held for the whole run.
   gDebugPrefs = opts.debug || {};
+  gProbes = opts.probes || [];
+  gRepeats = opts.repeat ?? 1;
   if (opts.probes?.length) {
     console.log(
       `  probe mode: ${
@@ -4882,6 +4908,7 @@ async function run() {
         }
         await step.run();
       }
+      if (gProbes.length > 0) logProbeProgress(pass, repeat);
     }
   } finally {
     if (!opts.keepProfile) {
@@ -4912,6 +4939,9 @@ process.on('exit', stopCpuLoad);
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     stopCpuLoad();
+    // A cancelled batch still owes its evidence: the runner's timeout arrives
+    // as a signal, so report what was collected before exiting.
+    if (gProbes.length > 0) reportProbeResults(gProbes, gRepeats);
     process.exit(130);
   });
 }

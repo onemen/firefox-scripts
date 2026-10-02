@@ -321,6 +321,14 @@ node test/e2e/updater/updater-e2e.mjs --firefox <path> --snapshot dist/<snap> \
 - `--repeat <n>` re-runs the scenario selection with a fresh profile per pass. It predates probe
   mode; it is what turns the tally into a distribution rather than a data point.
 
+Two limits worth knowing, both learned on the first real CI probe. A batch is emitted as it accrues:
+every completed pass prints a running `[probe] pass n/N — …` tally, and a signal (the runner's job
+timeout) prints the full PROBE REPORT before exiting — because a batch is exactly the thing that
+runs long enough to be cancelled, and the first dispatch was cancelled at 20 minutes with 17
+finished passes and only raw `PASS:` lines to read. And a pass is not cheap on a runner: roughly 60
+s per session-restore pass on an ESR leg carrying `--load 4`, so a 20-minute leg fits ~12–14 repeats
+including the browser install — `--repeat 20` there is cancelled, not failed.
+
 Two limits worth knowing. `--debug` copies the worktree's scheduler into every seeded profile (the
 snapshot's copy predates the run, so a pref set on it would never be read) — that makes the
 profile's utils tree differ from the snapshot manifest, so the **variant session (scenario 1)** then
