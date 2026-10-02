@@ -6,36 +6,44 @@
  * updater.html) renders the correct state for every package-status combination
  * and all user actions work:
  *
- * Scenario 1 (stale-variants, merged session per #197): one browser session
- * renders all three stale combinations — utils-stale → config-stale →
- * both-stale — by mutating the stale fixtures on disk between tab reloads (the
- * tab re-hashes from disk on every load, so no re-seed or relaunch is needed).
- * Full card assertions per variant: identity, all 8 buttons, checkbox wiring,
- * skip checkbox, no page/console errors, screenshot Scenario 4 (up-to-date):
- * tab does NOT open (no state to surface) Scenario 5 (skipped): skip pref
- * suppresses the tab entirely Scenario 6 (install-applies): click btn-install
- * and assert the packages are actually copied to disk (issue #37); under Snap
- * the config package is never offered in-tab — the checkbox is hidden and the
- * manual-install band shown, so the run installs utils only and asserts the
- * config files stay untouched Scenario 7 (manual-install-upgrade): a
- * hand-installed utils.zip brings the updater — no tab with a pre-updater
- * utils, tab after replacing it (issue #53) Scenario 8 (manual-install-no-ui):
- * a hand-installed utils.zip ships NO ui folder (the tab UI lives in the
- * separate updater-ui.zip); after a fresh check the scheduler self-installs the
- * ui (ensureUpdaterUi) and the tab is visible (issue #102) Scenario 9
- * (helper-checksum-win, Windows-only): ACL-write-denies GreD so the config
- * install falls through to the elevated-copy helper, and asserts the downloaded
- * helper's checksum verification PASSES before the (headless-doomed) elevation
- * step — the PR #271 mojibake regression net. Requires a user-owned GreD (CI's
- * portable installs; skips on admin-owned dirs like Program Files, which cannot
- * be denied without elevation)
+ * Scenario 1 (variant session, merged per #197 and #309): ONE browser drives
+ * every state-only variant — utils-stale → config-stale → both-stale →
+ * up-to-date → skipped — by mutating the fixtures on disk and in prefs between
+ * in-browser orchestrator calls (driver mode: the harness calls the exported
+ * checkForUpdates() from a privileged page; see
+ * test/e2e/shared/updaterDriver.mjs). The browser launch is kept for the
+ * startup wiring itself (autoconfig → userChrome.js → observer →
+ * initScriptsUpdater → the tab the stale seed asks for); every variant after
+ * that asserts what ITS check did — the scheduler's tab-open decision, the
+ * daily-gate write on the up-to-date path, and the card the resulting tab
+ * renders (identity, all 8 buttons, checkbox wiring, skip checkbox, no
+ * page/console errors, screenshot). The ids 4/5 (up-to-date, skipped) are
+ * aliases of this session — they are its last two variants now, and where the
+ * driver realm cannot come up the session falls back to the pre-#309 path for
+ * each part: the stale trio re-renders in-tab (assertStaleTrioInTab), while
+ * up-to-date/skipped run as their own launches (runNoTabScenario). Scenario 6
+ * (install-applies): click btn-install and assert the packages are actually
+ * copied to disk (issue #37); under Snap the config package is never offered
+ * in-tab — the checkbox is hidden and the manual-install band shown, so the run
+ * installs utils only and asserts the config files stay untouched Scenario 7
+ * (manual-install-upgrade): a hand-installed utils.zip brings the updater — no
+ * tab with a pre-updater utils, tab after replacing it (issue #53) Scenario 8
+ * (manual-install-no-ui): a hand-installed utils.zip ships NO ui folder (the
+ * tab UI lives in the separate updater-ui.zip); after a fresh check the
+ * scheduler self-installs the ui (ensureUpdaterUi) and the tab is visible
+ * (issue #102) Scenario 9 (helper-checksum-win, Windows-only): ACL-write-denies
+ * GreD so the config install falls through to the elevated-copy helper, and
+ * asserts the downloaded helper's checksum verification PASSES before the
+ * (headless-doomed) elevation step — the PR #271 mojibake regression net.
+ * Requires a user-owned GreD (CI's portable installs; skips on admin-owned dirs
+ * like Program Files, which cannot be denied without elevation)
  *
- * Each scenario: fresh temp profile → seed utils + fx-folder → modify files to
- * force desired state → launch Firefox → wait for tab (or assert none) → run
- * assertions → close. The merged stale session (scenario 1) keeps ONE session
- * across its three variants (#197); a startup flake there would fail all three
- * at once, so it is wrapped in a retry-once-with-fresh-profile guard ([retry]
- * logged separately — a real regression still fails the leg).
+ * Each remaining scenario: fresh temp profile → seed utils + fx-folder → modify
+ * files to force desired state → launch Firefox → wait for tab (or assert none)
+ * → run assertions → close. The variant session (scenario 1) keeps ONE session
+ * across all five variants; a startup flake there would fail them all at once,
+ * so it is wrapped in a retry-once-with-fresh-profile guard ([retry] logged
+ * separately — a real regression still fails the leg).
  *
  * Usage: node test/e2e/updater/updater-e2e.mjs --firefox <path> --snapshot<dir>
  */
@@ -78,8 +86,17 @@ import {
   killStrayProcesses,
   removeProfileCompatibilityIni,
 } from '../shared/processHygiene.mjs';
+import {
+  UPDATER_URL,
+  DRIVER_URL,
+  installDriverPage,
+  openDriverTab,
+  attachDriver,
+  findUpdaterPage,
+  updaterPages,
+} from '../shared/updaterDriver.mjs';
+import {buildSession, mozLz4} from '../shared/sessionFile.mjs';
 
-const UPDATER_URL = 'chrome://firefox-scripts/content/ui/updater.html';
 const FORCE_UTILS_STALE = 'RDFDataSource.sys.mjs';
 const FORCE_UTILS_STALE_MARKER = '\n// e2e-test: forced stale\n';
 const FORCE_CONFIG_STALE_MARKER = '// e2e-test\n';
@@ -190,29 +207,104 @@ try {
       } catch (e) {}
     },
   });
+  // SessionStore's restore notifications, mirrored as restore-progress
+  // diagnostics: the per-restored-tab notice landing during teardown is how a
+  // restore that never finished shows up (the filler-URL lesson in
+  // sessionFile.mjs). Purely observational here — nothing asserts on these
+  // lines.
+  try {
+    const obsSvc = Cc['@mozilla.org/observer-service;1'].getService(Ci.nsIObserverService);
+    const obsSentinel = {observe: (subject, topic) => writeUtf8('SS-NOTIFY ' + topic + '\\n')};
+    obsSvc.addObserver(obsSentinel, 'sessionstore-one-or-no-tab-restored');
+    obsSvc.addObserver(obsSentinel, 'sessionstore-windows-restored');
+  } catch (e) {}
   // Watch for the updater tab and record the moment it appears — WebDriver
   // BiDi cannot reliably enumerate trusted chrome:// tabs on CI.
   let polls = 0;
+  let lastCount = 0;
+  let tabSeen = false;
+  let lastTabSet = '';
+  let engineDone = false;
   const watcher = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
   watcher.initWithCallback(
     {
       notify() {
         try {
-          // 30 s of polls comfortably exceeds the 15 s test deadline below.
-          if (++polls > 30) {
+          // Long-lived watch (4 min of 1 s polls): scenario 11 awaits up to
+          // 45 s + 30 s of mirror lines while the restore settles. The probe
+          // dies with the browser either way; the scenario's own timeouts
+          // govern.
+          if (++polls > 240) {
             watcher.cancel();
             return;
           }
-          const win = Services.wm.getMostRecentWindow('navigator:browser');
-          for (const tab of win?.gBrowser?.tabs || []) {
-            const spec = tab.linkedBrowser?.currentURI?.spec || '';
-            if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
-              const line = 'TAB_OPENED ' + new Date().toISOString() + ' ' + spec + '\\n';
-              writeUtf8(line);
-              watcher.cancel();
-              return;
+          // All windows (#384): a restored session can hold the updater tab
+          // in a NON-focused window, which a most-recent-window scan never
+          // sees. WINDOW-COUNT on change is the both-windows-restored proof
+          // the session-restore scenario (11) asserts.
+          let wcount = 0;
+          const wins = Services.wm.getEnumerator('navigator:browser');
+          const updaterSpecs = [];
+          while (wins.hasMoreElements()) {
+            wcount++;
+            const w = wins.getNext();
+            for (const tab of w?.gBrowser?.tabs || []) {
+              const spec = tab.linkedBrowser?.currentURI?.spec || '';
+              if (spec.startsWith('chrome://firefox-scripts/content/ui/')) {
+                // '*' = scheduler-marked startup tab — the TAB_SET lines then
+                // say WHICH tab survived a twin race, not just how many.
+                updaterSpecs.push(tab._scriptsUpdateTab ? spec + '*' : spec);
+              }
             }
           }
+          if (wcount !== lastCount) {
+            lastCount = wcount;
+            writeUtf8('WINDOW-COUNT ' + wcount + '\\n');
+          }
+          // The whole updater-tab SET on every change (not a once-only
+          // "opened" flag): the session-restore scenario asserts a FINAL state
+          // of exactly one tab, and the road there legitimately passes through
+          // other sets while SessionStore finishes inserting the restored tabs.
+          const tabSet = updaterSpecs.join(' | ') || '(none)';
+          if (tabSet !== lastTabSet) {
+            lastTabSet = tabSet;
+            writeUtf8('TAB_SET ' + new Date().toISOString() + ' ' + tabSet + '\\n');
+          }
+          if (updaterSpecs.length > 0 && !tabSeen) {
+            tabSeen = true;
+            // First-seen marker (scenario 1/12's fast tab proof and
+            // mirrorSaysTabOpened's BiDi-grace decision still read it).
+            writeUtf8(
+              'TAB_OPENED ' +
+                new Date().toISOString() +
+                ' ' +
+                updaterSpecs.join(' | ') +
+                '\\n'
+            );
+          }
+          // The tab ENGINE's re-check (updater.js engineInit) writes the daily
+          // pref once its check completes — that lands AFTER the tab appears,
+          // so this probe must run on EVERY poll, not only the first-seen one
+          // (a first-poll-only check would never see the late write, and every
+          // ENGINE-DONE await would run its full 30 s for nothing). Mirror it
+          // as ENGINE-DONE so scenario 11 awaits the engine instead of
+          // guessing a sleep (the pref only reaches prefs.js
+          // at the shutdown flush, so the LIVE value is the only timely
+          // signal). The watcher keeps polling after it (once per engine, not
+          // once per poll): scenario 11 asserts the FINAL tab set, which can
+          // still change after the engine — SessionStore can keep inserting
+          // restored tabs — and a cancelled watcher would freeze the last
+          // TAB_SET and hide exactly that race (2026-10-01 ESR 140 CI run).
+          try {
+            const shownDay = Services.prefs.getCharPref(
+              'extensions.firefox-scripts.lastScriptsCheckDate',
+              ''
+            );
+            if (shownDay && !engineDone) {
+              engineDone = true;
+              writeUtf8('ENGINE-DONE ' + shownDay + String.fromCharCode(10));
+            }
+          } catch (e) {}
         } catch (e) {}
       },
     },
@@ -239,7 +331,11 @@ function parseArgs() {
       opts.scenarios = args[++i].split(',').map(s => s.trim());
     else if (args[i] === '--help') {
       console.log(
-        'Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,4,5] [--repeat 2]'
+        'Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,6,9] [--repeat 2]\n' +
+          '  Scenarios: 1 variant session (stale trio + up-to-date + skipped; 4/5 are aliases),\n' +
+          '             6 install-applies, 7 manual-install-upgrade, 8 manual-install-no-ui,\n' +
+          '             9 helper-checksum-win, 10 daily-recheck-timer,\n' +
+          '             11 session-restore (#384).'
       );
       process.exit(0);
     }
@@ -342,9 +438,9 @@ function seedProfile(
 /**
  * Set the per-package skip prefs (extensions.firefox-scripts.skippedHash.<pkg>
  * = remote hash) from the snapshot's own manifest. Shared by seedProfile and
- * the launch-reuse hand-off (scenario 4 → 5): launch prefs re-inject on every
- * start, so a reused profile needs the same pref deltas a fresh seed would have
- * written, sourced from the same manifest.
+ * the launch-reuse hand-off of the fallback path (up-to-date → skipped): launch
+ * prefs re-inject on every start, so a reused profile needs the same pref
+ * deltas a fresh seed would have written, sourced from the same manifest.
  *
  * @param {Record<string, string>} prefs launch prefs (mutated)
  * @param {string} snapshotDir
@@ -553,7 +649,11 @@ function assertBakedLocalIdentity(snapshotDir) {
     if (!fs.existsSync(cfgPath)) throw new Error('updater-config.sys.mjs not in utils zip');
     const cfg = fs.readFileSync(cfgPath, 'utf-8');
     const isLocal = /^\s*IS_LOCAL: true,/m.test(cfg);
-    const localPath = cfg.match(/LOCAL_DIST_PATH: '([^']*)'/)?.[1] || '';
+    // Whitespace-tolerant: the generator wraps `KEY: 'value',` onto two lines
+    // once the line passes prettier's printWidth (long snapshot paths), so the
+    // single-line spelling is not the only legal rendering (helpers.mjs's
+    // localConfigOverrides already reads it this way).
+    const localPath = cfg.match(/LOCAL_DIST_PATH:\s*'([^']*)'/)?.[1] || '';
     // The baked path must name THIS snapshot, not just any local one — a stale
     // generator run bakes a valid-looking but foreign dist path (review:batch
     // finding, PR #329). Basename-only: cross-OS legs see a different parent.
@@ -658,11 +758,7 @@ function dumpConsoleLog(profileDir) {
 
 /** True when the probe's mirror log contains the given marker. */
 function mirrorHasMarker(profileDir, marker) {
-  try {
-    return fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8').includes(marker);
-  } catch {
-    return false;
-  }
+  return readMirror(profileDir).includes(marker);
 }
 
 /** True when the probe's watcher has recorded TAB_OPENED in the mirror log. */
@@ -672,9 +768,17 @@ function mirrorSaysTabOpened(profileDir) {
 
 /**
  * BiDi keeps polling this long after the mirror proves the tab before giving
- * up.
+ * up. The probe's watcher polls once a second, so the mirror routinely reaches
+ * the harness BEFORE BiDi enumerates the trusted tab: at 2 s the variant
+ * session lost its page handle to that race often enough to fall back to "BiDi
+ * cannot attach" (observed locally 2026-09-27 — the same session attached on
+ * the next run). The wait is still bounded by the caller's deadline, and the
+ * mirror only proves the tab exists — the handle is what the card assertions
+ * and the #309 driver need, so the grace buys their assertions for a couple of
+ * seconds of bounded waiting.
  */
 const TAB_OPEN_BIDI_GRACE_MS = 2_000;
+const DRIVER_BIDI_GRACE_MS = 15_000;
 
 /**
  * Shared tab-open wait for the scenarios that poll BiDi AND the probe's
@@ -694,11 +798,19 @@ const TAB_OPEN_BIDI_GRACE_MS = 2_000;
  * @param {import('puppeteer-core').Browser} browser
  * @param {string} profileDir - seeded profile dir (probe mirror log location)
  * @param {number} deadlineMs - epoch ms bounding the whole wait
+ * @param {number} [graceMs] - how long BiDi keeps looking after the mirror
+ *   signal (default TAB_OPEN_BIDI_GRACE_MS; the driver session passes the
+ *   longer DRIVER_BIDI_GRACE_MS because it cannot run without the page handle)
  * @returns {Promise<import('puppeteer-core').Page | null>} the updater page
  *   once BiDi enumerates it, or null when only the mirror proved the tab (or
  *   nothing did) — callers treat null as "use the disk/pref proof"
  */
-async function waitForUpdaterTabOpen(browser, profileDir, deadlineMs) {
+async function waitForUpdaterTabOpen(
+  browser,
+  profileDir,
+  deadlineMs,
+  graceMs = TAB_OPEN_BIDI_GRACE_MS
+) {
   let mirrorAt = 0;
   while (Date.now() < deadlineMs) {
     try {
@@ -719,9 +831,9 @@ async function waitForUpdaterTabOpen(browser, profileDir, deadlineMs) {
         '  [diag] mirror recorded TAB_OPENED — polling BiDi for a short grace window only'
       );
     }
-    if (mirrorAt && Date.now() - mirrorAt >= TAB_OPEN_BIDI_GRACE_MS) {
+    if (mirrorAt && Date.now() - mirrorAt >= graceMs) {
       console.log(
-        `  [diag] BiDi did not attach within ${TAB_OPEN_BIDI_GRACE_MS / 1000}s of the mirror ` +
+        `  [diag] BiDi did not attach within ${graceMs / 1000}s of the mirror ` +
           'signal — ending the wait; the scenario falls back to its disk/pref activation proof'
       );
       return null;
@@ -872,16 +984,74 @@ function greShownToday(profileDir) {
 }
 
 /**
- * One stale variant's tab state as the UI must show it.
+ * Every variant the driver session drives (#309): the DISK fixture applied
+ * before the check, and the tab state the resulting UI must render.
+ *
+ * The two differ for `skipped`: the disk is genuinely stale (that is what the
+ * skip pref has to suppress), while the UI — which renders the check's
+ * decision, not the disk — must show both packages OK.
+ *
+ * @type {Record<
+ *   string,
+ *   {
+ *     disk: {utilsStale: boolean; configStale: boolean};
+ *     ui: {utilsStale: boolean; configStale: boolean};
+ *     skipUtils: boolean;
+ *   }
+ * >}
+ */
+const VARIANT_SPECS = {
+  'utils-stale': {
+    disk: {utilsStale: true, configStale: false},
+    ui: {utilsStale: true, configStale: false},
+    skipUtils: false,
+  },
+  'config-stale': {
+    disk: {utilsStale: false, configStale: true},
+    ui: {utilsStale: false, configStale: true},
+    skipUtils: false,
+  },
+  'both-stale': {
+    disk: {utilsStale: true, configStale: true},
+    ui: {utilsStale: true, configStale: true},
+    skipUtils: false,
+  },
+  'up-to-date': {
+    disk: {utilsStale: false, configStale: false},
+    ui: {utilsStale: false, configStale: false},
+    skipUtils: false,
+  },
+  'skipped': {
+    disk: {utilsStale: true, configStale: false},
+    ui: {utilsStale: false, configStale: false},
+    skipUtils: true,
+  },
+};
+
+/** The three disk-stale variants — the part of the session driver mode drives. */
+const STALE_VARIANTS = ['utils-stale', 'config-stale', 'both-stale'];
+
+/**
+ * @param {string} variant
+ * @returns {{
+ *   disk: {utilsStale: boolean; configStale: boolean};
+ *   ui: {utilsStale: boolean; configStale: boolean};
+ *   skipUtils: boolean;
+ * }}
+ */
+function variantSpec(variant) {
+  const spec = VARIANT_SPECS[variant];
+  if (!spec) throw new Error(`unknown variant: ${variant}`);
+  return spec;
+}
+
+/**
+ * One variant's tab state as the UI must show it.
  *
  * @returns {{utilsStale: boolean; configStale: boolean}}
  */
 function expectedStaleState(variant) {
-  return {
-    'utils-stale': {utilsStale: true, configStale: false},
-    'config-stale': {utilsStale: false, configStale: true},
-    'both-stale': {utilsStale: true, configStale: true},
-  }[variant];
+  return variantSpec(variant).ui;
 }
 
 /**
@@ -898,7 +1068,7 @@ function expectedStaleState(variant) {
  * exists).
  */
 function applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig) {
-  const {utilsStale, configStale} = expectedStaleState(variant);
+  const {utilsStale, configStale} = variantSpec(variant).disk;
   const utilsFile = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
   const utilsMarked = fs.readFileSync(utilsFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER);
   if (utilsStale && !utilsMarked) {
@@ -954,34 +1124,151 @@ async function readBadgeState(page) {
   }
 }
 
+/** Does a badge snapshot match `variant`'s expected stale/ok combination? */
+function badgeStateMatches(s, variant) {
+  if (!s || !s.title) return false;
+  const want = expectedStaleState(variant);
+  return (
+    s.utils.update === want.utilsStale &&
+    s.utils.ok === !want.utilsStale &&
+    s.config.update === want.configStale &&
+    s.config.ok === !want.configStale
+  );
+}
+
 /** Poll until the tab renders `variant`'s expected state (or timeout). */
 async function waitForStaleState(page, variant, timeoutMs = 20_000) {
-  const want = expectedStaleState(variant);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const s = await readBadgeState(page);
-    if (
-      s &&
-      s.title &&
-      s.utils.update === want.utilsStale &&
-      s.utils.ok === !want.utilsStale &&
-      s.config.update === want.configStale &&
-      s.config.ok === !want.configStale
-    ) {
-      return true;
-    }
+    if (badgeStateMatches(await readBadgeState(page), variant)) return true;
     await new Promise(r => setTimeout(r, 500));
   }
   return false;
 }
 
 /**
- * Run the full stale-variant card assertions against one live updater tab.
- * Shared by the merged session (all three variants over reloads) and by the
- * retry attempt (single variant, fresh profile) — the assertion set is the same
- * either way (per-variant labels keep the output attributable). `pageErrors` is
- * owned by the caller (attached before the reload that triggered this variant's
- * render) and only read here.
+ * The updater page that has actually rendered `variant`'s state, re-resolved on
+ * every poll.
+ *
+ * findUpdaterPage() returns the first page whose `UpdaterEngine.init` exists,
+ * and that can be the tab a scenario just closed: a BiDi page target outlives
+ * its tab, so the document is still evaluable (with its previous card rendered)
+ * for a moment. Acting on it is how `zen · windows-latest` (2026-10-02) clicked
+ * Update in a dying tab: `card rendered` passed 6 ms after the tab opened
+ * (impossible for a fresh engine — it has to fetch the manifest and hash the
+ * trees), the install never started, and nothing on disk changed. Waiting for
+ * the fixture's OWN rendered state cannot be satisfied by a stale document, and
+ * re-resolving lets a correct page win as soon as it appears.
+ *
+ * @param {import('puppeteer-core').Browser} browser
+ * @param {string} variant
+ * @param {number} [timeoutMs] Default is `30000`
+ * @returns {Promise<import('puppeteer-core').Page | null>}
+ */
+async function findRenderedUpdaterPage(browser, variant, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let seen = 0;
+  for (;;) {
+    const pages = await updaterPages(browser);
+    seen = Math.max(seen, pages.length);
+    for (const candidate of pages) {
+      if (badgeStateMatches(await readBadgeState(candidate), variant)) return candidate;
+    }
+    if (Date.now() >= deadline) {
+      console.log(
+        `  [diag] no updater page rendered the ${variant} state within ${timeoutMs / 1000}s (updater pages seen: ${seen})`
+      );
+      return null;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
+
+/**
+ * Click Update for `kinds` and prove the engine ACCEPTED the command.
+ *
+ * Two silent failure modes are closed here:
+ *
+ * - a click on a DISABLED button does nothing at all, and the old assertion
+ *   returned true regardless of `btn.disabled` (the Snap branch checked it, the
+ *   standard one did not);
+ * - a click in a document that is going away (see findRenderedUpdaterPage) leaves
+ *   no trace either.
+ *
+ * The engine's acceptance is observable: both install flows call
+ * sendProgress(5, 'Downloading …zip…') BEFORE their first await, so the
+ * progress bar becomes visible and its step leaves the initial markup. That is
+ * what this waits for (bounded), with one retry.
+ *
+ * @param {import('puppeteer-core').Page} page
+ * @param {string[]} kinds checkbox ids to install
+ * @param {string} label scenario label for the logs
+ * @returns {Promise<{ok: boolean; why: string}>}
+ */
+async function clickInstall(page, kinds, label) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const clicked = await page
+      .evaluate(ids => {
+        const btn = document.getElementById('btn-install');
+        if (!btn) return {ok: false, why: 'no Update button'};
+        const boxes = ids.map(id => document.getElementById(id));
+        if (boxes.some(b => !b)) return {ok: false, why: 'a package checkbox is missing'};
+        for (const cb of boxes) {
+          if (!cb.checked) cb.click();
+        }
+        if (btn.disabled) {
+          return {
+            ok: false,
+            why: `Update button disabled after checking (checked: ${boxes.map(b => b.checked).join(',')})`,
+          };
+        }
+        btn.click();
+        return {ok: true, why: ''};
+      }, kinds)
+      .catch(err => ({ok: false, why: `evaluate failed: ${err?.message}`}));
+    if (clicked.ok) {
+      const accepted = await installCommandAccepted(page);
+      if (accepted) return {ok: true, why: ''};
+      console.log(
+        `  [diag] install-applies (#${attempt}): the engine did not report progress within 5s — retrying the click (${label})`
+      );
+      continue;
+    }
+    console.log(
+      `  [diag] install-applies (#${attempt}): click rejected — ${clicked.why} (${label})`
+    );
+    // A disabled button usually means the card is mid-render (the engine's own
+    // check has not finished); give it one poll cycle before retrying.
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  return {ok: false, why: 'the Update click never reached the engine (see [diag] above)'};
+}
+
+/** Did the engine report the first progress step of an install flow? */
+async function installCommandAccepted(page, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const accepted = await page
+      .evaluate(() => {
+        const bar = document.getElementById('card-progress');
+        if (bar && !bar.hidden) return true;
+        const step = document.getElementById('card-progress-step')?.textContent || '';
+        return step !== '' && step !== 'Preparing...';
+      })
+      .catch(() => false);
+    if (accepted) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise(r => setTimeout(r, 250));
+  }
+}
+
+/**
+ * Run the full variant card assertions against one live updater tab. Shared by
+ * every variant of the driver session (the stale trio, up-to-date and skipped —
+ * each in the tab its own check produced or the driver opened) and by the
+ * fallback launches; the assertion set is the same everywhere (per-variant
+ * labels keep the output attributable). `pageErrors` is owned by the caller
+ * (attached before the render it belongs to) and only read here.
  */
 async function assertStaleCard(counter, page, variant, pageErrors) {
   const {utilsStale, configStale} = expectedStaleState(variant);
@@ -1094,21 +1381,696 @@ async function assertStaleCard(counter, page, variant, pageErrors) {
 }
 
 /**
- * #197 — the three stale variants (utils-stale / config-stale / both-stale)
- * share ONE browser session: seed once (utils stale + GreD probe installed),
- * then per variant mutate the stale fixtures on disk and reload the tab (the
- * engine re-hashes from disk on every load). Two Firefox launches per leg
- * become one; only the disk state changes between variants.
+ * One variant of the driver session: apply the disk fixture and the skip-pref
+ * input, run the production check once, assert the decision (tab opened or not,
+ * the day recorded), then assert the card in an updater tab.
  *
- * Wrapped in a retry-once guard with a fresh profile: a browser-internal
- * startup race (observed live on waterfox, run 35460461221 —
- * NS_ERROR_NOT_INITIALIZED from the URL-classifier service) would otherwise
- * fail all three variants at once. The retry is logged on its own [retry] lines
- * so a real regression cannot hide behind it; a second failure fails the leg.
+ * The card surface is the scheduler's OWN tab for the stale variants (that is
+ * the production path: addTrustedTab → the tab's engineInit → the rendered
+ * card), and a driver-opened tab when the decision was "nothing to do" (the UI
+ * must still render the decision's truth — both packages OK, no skip toggles).
+ *
+ * @param {{passed: number; failed: number}} counter
+ * @param {{
+ *   driver: object;
+ *   browser: object;
+ *   firefoxBin: string;
+ *   seeded: object;
+ *   variant: string;
+ *   expectTab: boolean;
+ *   pristineConfig: Buffer;
+ *   utilsHash: string;
+ * }} ctx
+ * @returns {Promise<boolean>} false when the variant failed (stop the session)
  */
-async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
-  const label = variants.join('+');
-  console.log(`\n## Scenario: stale variants (${label}) — one session (#197)`);
+async function runOneVariant(
+  counter,
+  {driver, browser, firefoxBin, seeded, variant, expectTab, pristineConfig, utilsHash}
+) {
+  const {skipUtils} = variantSpec(variant);
+  const today = new Date().toISOString().slice(0, 10);
+
+  // The realm can die between variants (the same mid-session death the folded
+  // phases degrade on). Probe BEFORE mutating the fixture: a gone realm is the
+  // caller's signal to defer what is left, never this variant's failure.
+  if (!(await driverAlive(driver))) {
+    throw new DriverLostError(`variant ${variant}: pre-check`);
+  }
+
+  try {
+    applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig);
+  } catch (err) {
+    // Disk mutation failed (e.g. GreD became unwritable): record it as the
+    // variant's failed check with a readable message and stop the session — the
+    // harness still fails fast, so the remaining scenarios are skipped.
+    check(counter, false, `variant fixture update (${variant})`, err.message);
+    return false;
+  }
+
+  // The other input this variant differs in: the per-package skip pref. '' means
+  // "no skip" for the check (getCharPref(prefix, '') → falsy).
+  await driverCall(driver, `${variant}: setSkip`, () =>
+    driver.setSkip('utils', skipUtils ? utilsHash : '')
+  );
+
+  const result = await driverCall(driver, `${variant}: check`, () => driver.check());
+  if (expectTab) {
+    check(
+      counter,
+      result.opened === 1,
+      `${variant}: the check opens the updater tab`,
+      JSON.stringify(result)
+    );
+  } else {
+    check(
+      counter,
+      result.opened === 0,
+      `${variant}: the check opens no tab`,
+      JSON.stringify(result)
+    );
+    // The up-to-date path's only writer (#333): a COMPLETED check that found
+    // nothing to do records the day. Asserted here, before the card tab below
+    // writes it too, so only the scheduler's own write can satisfy it.
+    check(
+      counter,
+      result.gate === today,
+      `${variant}: the completed check records the day (#333)`,
+      `expected ${today}, got ${JSON.stringify(result.gate)}`
+    );
+  }
+
+  if (!expectTab) {
+    // No tab was opened (correctly): render the card in a tab the harness opens,
+    // so the decision is asserted through the real UI, not only through prefs.
+    await driverCall(driver, `${variant}: open tab`, () => driver.openUpdaterTab());
+  }
+  const page = await findUpdaterPage(browser, 15_000);
+  if (!page) {
+    check(counter, false, `card tab available (${variant})`, 'no updater page was enumerable');
+    return false;
+  }
+
+  // Errors are collected for the tab that renders this variant's state.
+  const pageErrors = [];
+  const onErr = err => pageErrors.push(err.message);
+  page.on('pageerror', onErr);
+  let ok = false;
+  try {
+    ok = await assertStaleCard(counter, page, variant, pageErrors);
+  } catch (err) {
+    // A card assertion that throws (evaluate failure, page torn down mid-poll)
+    // is this variant's failure, not a harness crash that aborts the run.
+    check(counter, false, `card assertions (${variant})`, err.message);
+  } finally {
+    page.off('pageerror', onErr);
+  }
+
+  // Leave no updater tab behind: the next variant's count must measure what its
+  // own check opened. Best-effort on a realm that just died: the variant's
+  // assertions are already in the tally, and the degrade path re-seeds a fresh
+  // profile anyway — swallowing the sentinel here keeps the completed variant
+  // completed instead of deferring it a second time. The driverCall wrapper is
+  // what PRODUCES that sentinel: a bare call on a dead realm rejects with a raw
+  // protocol error (no .driverLost), which would rethrow, escape the session
+  // and abort the leg — the exact opposite of the degrade this path exists for
+  // (CodeRabbit on #343, 2026-09-30).
+  await driverCall(driver, `${variant}: close tabs`, () => driver.closeUpdaterTabs()).catch(err => {
+    if (!err?.driverLost) throw err;
+  });
+  return ok;
+}
+
+/**
+ * The stale trio as the pre-#309 session asserted it, against the tab the
+ * startup check opened: apply the variant's disk fixture → re-render through
+ * the engine's own re-check entry point → assert the card.
+ *
+ * Fallback for a host where BiDi CAN evaluate the updater tab but the driver
+ * page's realm never came up (the driver tab did not commit, its script did not
+ * run), or for a realm that died after some driver variants already ran: in
+ * both cases driver mode cannot drive the orchestrator, so the trio keeps
+ * exactly the coverage it had before #309 — which is the point. The coverage
+ * collapse is a structure/speed win and must never drop a variant; `variants`
+ * names the subset that still needs asserting (defaults to the whole trio).
+ *
+ * @param {{passed: number; failed: number}} counter
+ * @param {{
+ *   page: import('puppeteer-core').Page;
+ *   firefoxBin: string;
+ *   seeded: object;
+ *   pristineConfig: Buffer;
+ *   variants?: string[];
+ * }} ctx
+ * @returns {Promise<boolean>} false when a variant failed (stop the trio)
+ */
+async function assertStaleTrioInTab(counter, {page, firefoxBin, seeded, pristineConfig, variants}) {
+  for (const variant of variants ?? STALE_VARIANTS) {
+    // Errors are collected per variant, attached BEFORE the reload that
+    // triggers this variant's render (same net as the driver path).
+    const pageErrors = [];
+    const onErr = err => pageErrors.push(err.message);
+    page.on('pageerror', onErr);
+    try {
+      applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig);
+      // Re-render through the production path: UpdaterEngine.init() re-runs the
+      // fresh hash check (manifest fetch + local re-hash) and pushes state
+      // in-document. A page.reload() was tried first — BiDi cannot observe
+      // chrome:// navigations (its waiter times out and the evaluation channel
+      // wedges), so the engine's own re-check entry point is the reliable
+      // in-document equivalent.
+      await page.evaluate(() => window.UpdaterEngine.init());
+      if (!(await assertStaleCard(counter, page, variant, pageErrors))) return false;
+    } catch (err) {
+      // The startup tab's frame can be torn down mid-assertion when the driver
+      // realm died with it ("Attempted to use detached Frame" — the tab's own
+      // session, not the driver page, is the dead peer in this degrade path).
+      // The assertions are NOT lost: this variant goes back to the launch path
+      // with the up-to-date/skipped decisions, so a false failure is impossible
+      // — record it as a degrade, not a card failure.
+      if (/detached Frame/i.test(String(err?.message))) {
+        console.log(
+          `  [driver] the startup tab's frame died with the realm (${variant}) — deferring to its launch path`
+        );
+        return false;
+      }
+      // Disk mutation failed (e.g. GreD became unwritable): this variant's
+      // failure, not a harness crash.
+      check(counter, false, `card assertions (${variant})`, err.message);
+      return false;
+    } finally {
+      page.off('pageerror', onErr);
+    }
+  }
+  return true;
+}
+
+/**
+ * The state-only scenarios that used to pay their own browser launch, folded
+ * into this session (#309 follow-up): install-applies (#37) and
+ * manual-install-no-ui (#102).
+ *
+ * Both differ from the five variants only in fixture state — a disk flip (stale
+ * markers, a removed ui dir) plus, for the no-ui case, the release topology
+ * expressed as override prefs — and neither changes the module graph, so
+ * neither needs its own process. The driver page drives them exactly as it
+ * drives a variant: clear the gate, call the exported checkForUpdates(), assert
+ * the decision and the card.
+ *
+ * Isolation is preserved where it matters: install-applies MUTATES the seeded
+ * trees and the GreD config, so it runs AFTER the five variants (which assert
+ * those trees), and the no-ui phase re-establishes its own fixture (utils
+ * re-staled, ui removed) instead of inheriting the install's fresh state.
+ *
+ * helper-checksum-win (#271) deliberately stays a separate launch, and run()
+ * still runs it as one: it only runs on Windows, where the CI legs cannot
+ * attach BiDi to the trusted tab — driver mode is unavailable there, so the
+ * session falls back and folding it would save nothing in CI while dragging a
+ * scratch-snapshot stand-in helper into every variant's wiring.
+ *
+ * @param {{passed: number; failed: number}} counter
+ * @param {{
+ *   driver: object;
+ *   browser: object;
+ *   firefoxBin: string;
+ *   seeded: object;
+ *   snapshotDir: string;
+ *   greDir: string;
+ *   pristineConfig: Buffer;
+ * }} ctx
+ * @returns {Promise<{ok: boolean}>} false when a folded scenario failed (stop
+ *   the session — the failure is deterministic, like a variant failure)
+ */
+/** Sentinel: the driver realm died mid-session — a degrade, not a test failure. */
+class DriverLostError extends Error {
+  constructor(where) {
+    super(`driver realm unavailable (${where})`);
+    this.name = 'DriverLostError';
+    this.driverLost = true;
+  }
+}
+
+/**
+ * Liveness probe for the driver realm. Cheap (one evaluate) and BOUNDED: a dead
+ * realm, a torn-down tab or a wedged BiDi session all answer `false` instead of
+ * hanging the leg for the protocol timeout.
+ */
+async function driverAlive(driver, timeoutMs = 3_000) {
+  let timer;
+  try {
+    const probe = driver.page
+      .evaluate(() => window.UpdaterE2EDriver?.ready() === true)
+      .then(
+        v => v === true,
+        () => false
+      );
+    const cap = new Promise(resolve => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    });
+    return await Promise.race([probe, cap]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Run a driver command, converting a realm that is gone — before the call or
+ * during it — into a DriverLostError. Any other error propagates: a real bug
+ * must still fail the leg.
+ */
+async function driverCall(driver, where, fn) {
+  if (!(await driverAlive(driver))) throw new DriverLostError(where);
+  try {
+    return await fn();
+  } catch (err) {
+    if (await driverAlive(driver)) throw err;
+    throw new DriverLostError(`${where}: realm died`);
+  }
+}
+
+/** Bounded poll on an in-page condition (the tab's own re-render is async). */
+async function foldedUiCondition(page, fn, what) {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const v = await page.evaluate(fn).catch(() => false);
+    if (v) return true;
+    if (Date.now() >= deadline) {
+      console.log(`  [diag] UI condition not reached within 10s: ${what}`);
+      return false;
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+}
+
+/**
+ * The folded state-only scenarios, in the order they run. Shared with run()'s
+ * launch fallback: whatever this list still holds when the session ends is run
+ * as its own launch, so the collapse is a speed win, never a coverage trade.
+ */
+const FOLDED_SCENARIOS = ['install-applies', 'manual-install-no-ui'];
+
+/**
+ * Coordinator for the folded scenarios: clear their inputs, run each phase in
+ * the session's browser, and DEGRADE instead of failing when the driver realm
+ * dies half-way through. A realm that is gone before a phase, or that dies
+ * during one, hands that phase (and every phase after it) back to run()'s
+ * launch path via `remaining` — the launched scenario seeds its own profile, so
+ * a half-applied in-session fixture cannot corrupt it.
+ *
+ * Assertion failures are NOT degraded: they land in the counter exactly as they
+ * did before and fail the leg.
+ *
+ * @returns {Promise<{
+ *   driverLost: boolean;
+ *   completed: string[];
+ *   remaining: string[];
+ * }>}
+ */
+async function runSessionExtras(counter, ctx) {
+  const completed = [];
+  try {
+    if (!(await driverAlive(ctx.driver))) {
+      console.log(
+        '  [driver] the realm is already gone — deferring the folded scenarios to their launch path'
+      );
+      return {driverLost: true, completed, remaining: [...FOLDED_SCENARIOS]};
+    }
+
+    // The last variant of the plan is `skipped`, which SET the per-package skip
+    // pref (that is how it suppresses the tab). It must not leak into the folded
+    // scenarios: the scheduler treats a skipped package as not-update-needed, so
+    // with the pref left on, install-applies would silently install config only
+    // and the no-ui check would decide "up to date" (reproduced 2026-09-30).
+    await driverCall(ctx.driver, 'clear skip prefs', async () => {
+      await ctx.driver.setSkip('utils', '');
+      // The config package's key is `fx-folder` (addSkipPrefs writes
+      // skippedHash.fx-folder; the shipped scheduler reads the same key) —
+      // 'config' here would write an unused pref and never clear the real
+      // config skip (CodeRabbit on #343, 2026-09-30).
+      await ctx.driver.setSkip('fx-folder', '');
+    });
+
+    await runFoldedInstallApplies(counter, ctx);
+    completed.push('install-applies');
+    await runFoldedNoUi(counter, ctx);
+    completed.push('manual-install-no-ui');
+    return {driverLost: false, completed, remaining: []};
+  } catch (err) {
+    if (!err?.driverLost) throw err;
+    const remaining = FOLDED_SCENARIOS.filter(scenario => !completed.includes(scenario));
+    console.log(
+      `  [driver] ${err.message} — deferring ${remaining.join(', ') || 'nothing'} to its launch path`
+    );
+    return {driverLost: true, completed, remaining};
+  }
+}
+
+/** Folded #37 — install-applies, in the session's browser. */
+async function runFoldedInstallApplies(counter, ctx) {
+  const {driver, browser, firefoxBin, seeded, snapshotDir, greDir, pristineConfig} = ctx;
+  // Snap (strict confinement): the config package lives in /etc/firefox and the
+  // confined browser can never write it, so the UI hides the config checkbox
+  // and shows the manual-install band — Update installs utils only.
+  const isSnap = firefoxBin.includes('/snap/');
+  const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, 'hashes.json'), 'utf-8'));
+  const utilsHash = manifest.utils?.hash;
+  const utilsFiles = manifest.utils?.files;
+  const configHash = manifest['fx-folder']?.hash;
+  const configFiles = manifest['fx-folder']?.files;
+  if (!utilsHash || !Array.isArray(utilsFiles) || !configHash || !Array.isArray(configFiles)) {
+    check(counter, false, 'manifest has both package hashes+files (folded scenarios)');
+    return;
+  }
+
+  // ── Folded: install-applies (#37) ────────────────────────────────────────
+  // Both packages stale → the tab's Update button copies config then utils and
+  // the installed trees re-hash to the manifest. The fixture is the variant
+  // session's own (utils marker + GreD probe).
+  console.log('\n  ── folded in-session: install-applies (#37) ──');
+  try {
+    applyStaleVariantOnDisk(firefoxBin, seeded, 'both-stale', pristineConfig);
+  } catch (err) {
+    check(counter, false, 'install-applies fixture update', err.message);
+    return;
+  }
+  check(
+    counter,
+    computeInstalledHash(utilsFiles, seeded.chromeUtils) !== utilsHash,
+    'pre-install utils hash differs from manifest (install-applies)'
+  );
+  check(
+    counter,
+    computeInstalledHash(configFiles, greDir) !== configHash,
+    'pre-install config hash differs from manifest (install-applies)'
+  );
+
+  await driverCall(driver, 'install-applies: close tabs', () => driver.closeUpdaterTabs());
+  const installCheck = await driverCall(driver, 'install-applies: check', () => driver.check());
+  check(
+    counter,
+    installCheck.opened === 1,
+    'install-applies: the check opens the updater tab',
+    JSON.stringify(installCheck)
+  );
+  // Bind to the page whose engine has actually rendered THIS fixture's state:
+  // `card-title` alone is satisfied by a tab that is closing (see
+  // findRenderedUpdaterPage for the zen · windows-latest 2026-10-02 failure).
+  const page = await findRenderedUpdaterPage(browser, 'both-stale');
+  if (!page) {
+    check(
+      counter,
+      false,
+      'install-applies: card rendered',
+      'no updater page rendered the both-stale state this fixture seeds'
+    );
+    return;
+  }
+  check(counter, true, 'install-applies: card rendered');
+
+  if (isSnap) {
+    // Snap: config never offered in-tab — the checkbox is hidden and the amber
+    // manual band explains the manual paths instead.
+    const cfg = await page.evaluate(() => {
+      const chk = document.getElementById('chk-config');
+      const band = document.getElementById('config-manual');
+      return {
+        configCheckboxHidden: chk ? chk.hidden : null,
+        bandShown: band ? !band.hidden : false,
+        utilsCheckbox: Boolean(document.getElementById('chk-utils')),
+      };
+    });
+    check(
+      counter,
+      cfg.configCheckboxHidden === true,
+      'install-applies: config checkbox hidden (snap)'
+    );
+    check(counter, cfg.bandShown, 'install-applies: manual guidance band shown (snap)');
+    check(counter, cfg.utilsCheckbox, 'install-applies: utils checkbox present (snap)');
+
+    const clicked = await clickInstall(page, ['chk-utils'], 'install-applies (snap)');
+    check(counter, clicked.ok, 'install-applies: install clicked (utils only, snap)', clicked.why);
+    const completed = await waitForTreeHash(utilsFiles, seeded.chromeUtils, utilsHash, 30_000);
+    check(counter, completed, 'install-applies: utils install completes in tab (snap)');
+    const configManualStill = await page
+      .evaluate(() => {
+        const upd = document.getElementById('config-badge-update');
+        const ok = document.getElementById('config-badge-ok');
+        const band = document.getElementById('config-manual');
+        const chk = document.getElementById('chk-config');
+        const banner = document.getElementById('success-banner');
+        return {
+          stillManual: Boolean(
+            upd && !upd.hidden && ok && ok.hidden && band && !band.hidden && chk && chk.hidden
+          ),
+          successBannerHidden: banner ? banner.hidden : null,
+        };
+      })
+      .catch(() => ({}));
+    check(
+      counter,
+      configManualStill.stillManual === true,
+      'install-applies: config still manual (snap)'
+    );
+    check(
+      counter,
+      configManualStill.successBannerHidden !== false,
+      'install-applies: success banner hidden while config pending (snap)'
+    );
+  } else {
+    // Standard install: check BOTH checkboxes (utils + config stale), click
+    // install. handleInstallCommand installs config first, then utils.
+    const clicked = await clickInstall(page, ['chk-config', 'chk-utils'], 'install-applies');
+    check(counter, clicked.ok, 'install-applies: install clicked', clicked.why);
+    // Disk hash is the completion ground truth: both installed trees must
+    // re-hash to the manifest (config first, then utils).
+    const completed =
+      (await waitForTreeHash(utilsFiles, seeded.chromeUtils, utilsHash, 30_000)) &&
+      (await waitForTreeHash(configFiles, greDir, configHash, 30_000));
+    check(counter, completed, 'install-applies: install completes in tab');
+    if (!completed) {
+      const dom = await page
+        .evaluate(() => {
+          const prog = document.getElementById('card-progress');
+          const err = document.getElementById('card-progress-error');
+          return {
+            progress: prog?.textContent?.trim() ?? null,
+            progressError: err?.textContent?.trim() ?? null,
+          };
+        })
+        .catch(() => null);
+      console.log(`  [diag:install-applies] tab at completion timeout: ${JSON.stringify(dom)}`);
+      dumpConsoleLog(seeded.profileDir);
+    }
+    // The realm can also die between the copies and this assertion. A dead realm
+    // is a deferral, not a failed render — probe first, or the evaluates below
+    // fail, the conditions read false, and the leg fails on a false negative.
+    if (!(await driverAlive(driver))) throw new DriverLostError('install-applies: UI reflection');
+
+    // UI reflection: poll, don't read once — the tab's refreshPackageState runs
+    // after the last copy.
+    const successShown = await foldedUiCondition(
+      page,
+      () => !document.getElementById('success-banner')?.hidden,
+      'success banner'
+    );
+    check(counter, successShown, 'install-applies: success banner shown after install');
+    const badgesOk = await foldedUiCondition(
+      page,
+      () => {
+        const ok = id => {
+          const el = document.getElementById(id);
+          return Boolean(el && !el.hidden);
+        };
+        return ok('utils-badge-ok') && ok('config-badge-ok');
+      },
+      'badges OK'
+    );
+    check(counter, badgesOk, 'install-applies: badges show OK after install');
+  }
+
+  // ── install-applies: on-disk assertions (node side) ──
+  const staleFile = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
+  check(
+    counter,
+    fs.existsSync(staleFile) &&
+      !fs.readFileSync(staleFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER),
+    'install-applies: stale marker replaced by install'
+  );
+  check(
+    counter,
+    computeInstalledHash(utilsFiles, seeded.chromeUtils) === utilsHash,
+    'install-applies: installed utils re-hashes to the manifest'
+  );
+  const greConfig = path.join(greDir, 'config.js');
+  if (isSnap) {
+    check(
+      counter,
+      fs.existsSync(greConfig) && fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+      'install-applies: config probe NOT replaced (snap manual)'
+    );
+    check(
+      counter,
+      computeInstalledHash(configFiles, greDir) !== configHash,
+      'install-applies: config dir still differs from the manifest (snap manual)'
+    );
+  } else {
+    check(
+      counter,
+      fs.existsSync(greConfig) && !fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+      'install-applies: config probe replaced by install'
+    );
+    check(
+      counter,
+      computeInstalledHash(configFiles, greDir) === configHash,
+      'install-applies: installed config re-hashes to the manifest'
+    );
+  }
+  rmDir(path.join(seeded.chromeUtils, 'updater', 'ui'));
+  await driverCall(driver, 'install-applies: close tabs', () => driver.closeUpdaterTabs());
+}
+
+/** Folded #102 — manual-install-no-ui, in the session's browser. */
+async function runFoldedNoUi(counter, ctx) {
+  const {driver, browser, seeded, snapshotDir} = ctx;
+
+  // ── Folded: manual-install-no-ui (#102) ──────────────────────────────────
+  // The release topology: ZIP_BASE_URL points at a dir with NO updater-ui.zip
+  // (the released state this scenario must catch); the ui zip comes from the
+  // manifest's own host (UI_BASE_URL = the snapshot). A pre-fix scheduler
+  // fetched it from ZIP_BASE_URL and 404'd silently — exactly what fails here.
+  console.log('\n  ── folded in-session: manual-install-no-ui (#102) ──');
+  const uiDir = path.join(seeded.chromeUtils, 'updater', 'ui');
+  let releaseDir;
+  try {
+    releaseDir = buildReleaseLayout(snapshotDir);
+    const base = pathToFileURL(releaseDir).href.replace(/\/$/, '');
+    await driverCall(driver, 'no-ui: set release topology', async () => {
+      await driver.setPref('extensions.firefox-scripts.override.ZIP_BASE_URL', base);
+      await driver.setPref('extensions.firefox-scripts.override.HELPER_BASE_URL', base);
+    });
+
+    // The user modified a utils file by hand and this profile has no ui on disk
+    // (install-applies replaced the trees, so re-stale utils explicitly).
+    fs.appendFileSync(path.join(seeded.chromeUtils, FORCE_UTILS_STALE), FORCE_UTILS_STALE_MARKER);
+    check(
+      counter,
+      !fs.existsSync(path.join(uiDir, 'updater.html')),
+      'no-ui: no ui folder on disk before the check'
+    );
+
+    await driverCall(driver, 'no-ui: close tabs', () => driver.closeUpdaterTabs());
+    const uiCheck = await driverCall(driver, 'no-ui: check', () => driver.check());
+    check(
+      counter,
+      uiCheck.opened === 1,
+      'no-ui: the check opens the updater tab',
+      JSON.stringify(uiCheck)
+    );
+
+    // Disk proof (survives a BiDi-missed chrome tab): ensureUpdaterUi extracted
+    // updater-ui.zip into chrome/utils/updater/ui.
+    check(
+      counter,
+      fs.existsSync(path.join(uiDir, 'updater.html')),
+      'no-ui: ui folder auto-installed',
+      'ensureUpdaterUi never extracted updater-ui.zip into chrome/utils/updater/ui'
+    );
+    const uiPage = await findUpdaterPage(browser, 15_000);
+    check(
+      counter,
+      Boolean(uiPage),
+      'no-ui: ui tab opened (card rendered from the re-installed ui)'
+    );
+    if (uiPage) {
+      const rendered = await waitForCondition(
+        uiPage,
+        () => Boolean(document.getElementById('card-title')?.textContent),
+        15_000,
+        'card rendered'
+      );
+      check(counter, rendered, 'no-ui: card rendered');
+    }
+  } finally {
+    // Restore the baked topology so nothing downstream inherits the override.
+    // Best effort, and only while the realm answers: these overrides live in
+    // the running browser (never user.js), so a realm that died here needs no
+    // unwinding — the session's browser is about to close anyway.
+    if (await driverAlive(driver)) {
+      await driver.clearPref('extensions.firefox-scripts.override.ZIP_BASE_URL').catch(() => {});
+      await driver.clearPref('extensions.firefox-scripts.override.HELPER_BASE_URL').catch(() => {});
+    }
+    if (releaseDir) rmDir(releaseDir);
+  }
+
+  await driverCall(driver, 'no-ui: close tabs', () => driver.closeUpdaterTabs());
+}
+
+/**
+ * The variant session — driver mode (#309, formerly scenarios 1 + 4 + 5).
+ *
+ * ONE browser covers five variants that differ only in seed state: the stale
+ * trio (utils-stale / config-stale / both-stale), up-to-date, and skipped. The
+ * harness seeds a stale profile (utils stale + the GreD probe, which is what
+ * makes the startup check open the tab), launches once, and from there drives
+ * the production orchestrator in-browser through the #309 driver page
+ * (test/e2e/shared/updaterDriver.mjs):
+ *
+ * mutate the disk fixture (+ skip pref) → clear the daily gate → call the
+ * exported checkForUpdates() → assert what it did (tab opened or not, the day
+ * recorded, the cards the tab renders).
+ *
+ * The launcher count is what this buys: variants no longer pay a browser start
+ * (the step where the flake class lives — the TargetCloseError retry machinery
+ * exists only to survive it), and each stale variant now asserts the
+ * SCHEDULER's own decision (addTrustedTab + a fresh engineInit) instead of a
+ * harness-forced re-render of the startup tab.
+ *
+ * What stays launch-driven: the startup wiring itself (autoconfig →
+ * userChrome.js → observer → initScriptsUpdater → the tab the seed asked for)
+ * and the startup-race retry, unchanged. Where driver mode cannot run, the
+ * session degrades by capability, never by coverage: BiDi can still evaluate
+ * the updater tab → the stale trio runs the pre-#309 in-tab re-render loop
+ * (assertStaleTrioInTab); BiDi cannot attach to the trusted tab at all → only
+ * the tab-open proof is observable there, which is exactly what the pre-#309
+ * session could assert in that environment too. Either way the caller
+ * additionally runs up-to-date / skipped as their own launches with the local
+ * manifest server (see run()'s scenarioSteps).
+ *
+ * The folded scenarios degrade the same way when the realm dies MID-session:
+ * runSessionExtras re-probes before every phase, and whatever it could not
+ * finish is reported back in `extrasRemaining` so the caller launches exactly
+ * those, and a phase that already passed is never run twice. The VARIANT loop
+ * has the same contract: every runOneVariant driver command goes through
+ * driverCall, a sentinel between variants re-asserts the deferred STALE cards
+ * in-tab (the engine re-checks on init() — no driver needed), and whatever
+ * still could not run is reported in `variantsRemaining` for run() to launch.
+ *
+ * Wrapped in the same retry-once guard as before: a browser-internal startup
+ * race (observed live on waterfox, run 35460461221 — NS_ERROR_NOT_INITIALIZED
+ * from the URL-classifier service) would otherwise fail every variant at once.
+ * The retry is logged on its own [retry] lines so a real regression cannot hide
+ * behind it; a second failure fails the leg.
+ *
+ * @returns {Promise<{
+ *   profiles: string[];
+ *   driverAvailable: boolean;
+ *   extrasRemaining?: string[];
+ *   variantsRemaining?: string[];
+ * }>}
+ *   the created profiles (centralized cleanup), whether the in-browser driver
+ *   came up in this environment, and the work the caller still has to launch:
+ *   `extrasRemaining` (the folded scenarios) plus `variantsRemaining`
+ *   (up-to-date / skipped, and the stale variants whose in-tab re-assertion
+ *   could not run either) — present only when driver mode is unavailable or the
+ *   realm died mid-session
+ */
+async function runVariantSession(counter, opts, snapshotDir) {
+  const label = 'variants';
+  console.log(
+    `\n## Scenario: variant session (${[...STALE_VARIANTS, 'up-to-date', 'skipped'].join(', ')})` +
+      ' — one browser (#309)'
+  );
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) throw new Error(missingFirefoxMessage());
 
@@ -1118,20 +2080,32 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
   // returned for run()'s centralized cleanup; a retry's first profile also
   // stays on disk until then for post-mortem.
   const createdProfiles = [];
+  let driverAvailable = false;
+
+  /** Seed a profile + GreD for one attempt (shared by attempt 1 and the retry). */
+  const seedAttempt = () => {
+    const state = seedProfile(snapshotDir, {forceUtilsStale: true});
+    createdProfiles.push(state.profileDir);
+    // The driver page goes into the profile's chrome/utils/updater dir (the
+    // chrome.manifest content root) BEFORE launch, so the realm is loadable the
+    // moment the harness needs it. Hash-invisible: only manifest-listed files
+    // are hashed, so the seeded utils state stays byte-identical to the fixture.
+    installDriverPage(state.chromeUtils);
+    return state;
+  };
 
   // Seed: first variant's state (utils stale; config stale comes from the GreD
   // probe, which is installed for every variant — the marker toggles it).
-  let seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
-  createdProfiles.push(seeded.profileDir);
+  let seeded = seedAttempt();
   phases.seed = Date.now() - t0;
 
   const greDir = findGreDir(firefoxBin);
   const greSeed = installFxFolder(snapshotDir, greDir);
   check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
-  if (!greSeed.ok) return createdProfiles;
+  if (!greSeed.ok) return {profiles: createdProfiles, driverAvailable};
 
-  // Capture the pristine config.js BEFORE the probe lands on it — variant 1
-  // (config OK) restores exactly these bytes.
+  // Capture the pristine config.js BEFORE the probe lands on it — the variants
+  // whose config must be OK restore exactly these bytes.
   let pristineConfig = fs.readFileSync(path.join(greDir, 'config.js'));
 
   appendConfigProbe(greDir);
@@ -1149,9 +2123,8 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
         console.log('  [retry] browser startup race, e.g. waterfox run 35460461221). A');
         console.log('  [retry] second failure fails the leg — the retry never masks regressions.');
         // Fresh profile: the previous attempt's seeded trees stay behind for
-        // post-mortem; seedProfile makes a new temp dir each call.
-        seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
-        createdProfiles.push(seeded.profileDir);
+        // post-mortem; seedAttempt makes a new temp dir each call.
+        seeded = seedAttempt();
         const greSeed2 = installFxFolder(snapshotDir, greDir);
         check(counter, greSeed2.ok, `seed GreD (retry ${label})`, greSeed2.error);
         if (!greSeed2.ok) break;
@@ -1167,31 +2140,21 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
       attachProcessLogging(browser, attemptLabel);
       phases.launch = Date.now() - launchStart;
 
-      // Wait on both channels: BiDi page enumeration (needed for UI assertions)
-      // and the probe's TAB_OPENED mirror line (fast, BiDi-independent).
-      const deadline = Date.now() + 15_000;
-      let sawMirrorLine = false;
-      let page = null;
-      while (Date.now() < deadline && !page && !sawMirrorLine) {
-        try {
-          page =
-            (await browser.pages()).find(p => {
-              try {
-                return p.url().startsWith(UPDATER_URL);
-              } catch {
-                return false;
-              }
-            }) || null;
-        } catch {
-          /* browser not ready yet */
-        }
-        if (!page && mirrorSaysTabOpened(seeded.profileDir)) {
-          sawMirrorLine = true;
-          break;
-        }
-        if (!page) await new Promise(r => setTimeout(r, 500));
-      }
+      // Wait on both channels: BiDi page enumeration (the driver needs the page
+      // handle, and so does every card assertion) and the probe's TAB_OPENED
+      // mirror line (fast, BiDi-independent). waitForUpdaterTabOpen() gives BiDi
+      // a grace window after the mirror signal: the probe polls every second and
+      // routinely beats browsingContext enumeration to it, so breaking on the
+      // mirror alone degraded whole sessions to "BiDi cannot attach" — losing
+      // every card assertion to a race the mirror was only meant to bound.
+      const page = await waitForUpdaterTabOpen(
+        browser,
+        seeded.profileDir,
+        Date.now() + 30_000,
+        DRIVER_BIDI_GRACE_MS
+      );
       const viaPref = greShownToday(seeded.profileDir);
+      const sawMirrorLine = mirrorSaysTabOpened(seeded.profileDir);
       const tabOpened = Boolean(page) || viaPref || sawMirrorLine;
 
       if (!page && tabOpened) {
@@ -1201,14 +2164,17 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
         // race, so a retry cannot help. Record the tab-open proof with the
         // limitation spelled out in the label (the historical CI contract for
         // these legs, previously silent); full card assertions run where BiDi
-        // attaches (locally, other runners).
+        // attaches (locally, other runners). Coverage parity with the pre-#309
+        // session: with no tab handle it could not assert a card either — here
+        // the trio's observable is the tab-open proof above, and the caller
+        // still runs the up-to-date / skipped decisions as their own launches.
         check(
           counter,
           true,
           `tab opens (${attemptLabel}; no card assertions — BiDi cannot attach to the trusted tab in this environment)`
         );
         console.log('  [diag] probe/pref verified the tab; BiDi missed the handle');
-        return createdProfiles;
+        return {profiles: createdProfiles, driverAvailable};
       }
 
       if (!tabOpened) {
@@ -1218,7 +2184,7 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
         // scenarios even if attempt 2 succeeded).
         if (attempted < 2) {
           console.log(
-            `  [diag] tab never opened within 15 s (attempt ${attempted}) — retrying with a fresh profile`
+            `  [diag] tab never opened within the startup window (attempt ${attempted}) — retrying with a fresh profile`
           );
           try {
             await closeBrowser(browser);
@@ -1241,59 +2207,223 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
       }
 
       console.log(`  tab URL: ${page.url()}`);
+      check(counter, true, `startup check opens the updater tab (${attemptLabel})`);
 
-      // ── Per-variant: mutate disk → re-render → assert ──
+      // ── Bootstrap driver mode (#309) ──
+      // The startup tab is the only privileged realm reachable here (a content
+      // tab cannot be navigated to chrome://), so the driver tab is opened FROM
+      // it; from there the harness drives the orchestrator directly.
+      await openDriverTab(page, DRIVER_URL);
+      const driver = await attachDriver(browser);
+      if (!driver) {
+        // The driver realm never came up (the driver tab did not commit, or its
+        // script did not run) while BiDi CAN evaluate the updater tab. A retry
+        // cannot help — this is a host property. The trio must not lose its
+        // coverage to the #309 collapse, so assert it the pre-#309 way, in the
+        // tab the startup check already opened; only the up-to-date / skipped
+        // DECISIONS need their own launches, which run() then performs.
+        check(
+          counter,
+          true,
+          `driver mode unavailable (${attemptLabel}; stale trio via the pre-#309 in-tab re-render loop)`
+        );
+        console.log(
+          '  [driver] unavailable — the stale trio falls back to the in-tab re-render loop;' +
+            ' up-to-date/skipped keep their own launches'
+        );
+        const trioOk = await assertStaleTrioInTab(counter, {
+          page,
+          firefoxBin,
+          seeded,
+          pristineConfig,
+        });
+        if (trioOk) {
+          // The trio re-rendered the real card through the engine's init():
+          // close the net — no console errors from the updater scripts.
+          assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
+        } else {
+          console.log('  [driver] the in-tab trio assertions failed — deterministic, not retrying');
+        }
+        await dumpPages(browser);
+        return {
+          profiles: createdProfiles,
+          driverAvailable: false,
+          extrasRemaining: [...FOLDED_SCENARIOS],
+          variantsRemaining: ['up-to-date', 'skipped'],
+        };
+      }
+      driverAvailable = true;
+
+      // Chrome ES modules are per-global: the driver page's own
+      // scriptsUpdater instance starts uninitialized (no gWindow), so the
+      // driver initializes it exactly the way BootstrapLoader.js initializes
+      // the browser's — same entry point, same production code path.
+      // A realm death HERE (before any variant ran) degrades like every other
+      // realm death: hand ALL the work back to run()'s launch path instead of
+      // failing the leg — the contract is "degrades by capability, never by
+      // coverage" (review on #343, 2026-10-01).
+      try {
+        await driverCall(driver, `${attemptLabel}: init scheduler`, () => driver.initScheduler());
+
+        // The startup tab was the proof, not a fixture: close it so every count
+        // below measures what THAT variant's check opened (the scheduler's own
+        // addTrustedTab decision), never something inherited from the seed.
+        await driverCall(driver, `${attemptLabel}: close startup tabs`, () =>
+          driver.closeUpdaterTabs()
+        );
+        check(
+          counter,
+          (await driver.updaterTabCount().catch(() => -1)) === 0,
+          `driver governs the updater tabs (${attemptLabel})`
+        );
+      } catch (err) {
+        if (!err?.driverLost) throw err;
+        console.log(
+          `  [driver] ${err.message} at bootstrap — the whole session degrades to the launch paths`
+        );
+        assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
+        phases.total = Date.now() - t0;
+        logScenarioTime(attemptLabel, t0, phases);
+        return {
+          profiles: createdProfiles,
+          driverAvailable,
+          extrasRemaining: [...FOLDED_SCENARIOS],
+          variantsRemaining: [...STALE_VARIANTS, 'up-to-date', 'skipped'],
+        };
+      }
+
+      const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, 'hashes.json'), 'utf-8'));
+      const utilsHash = manifest.utils?.hash || '';
+      if (!utilsHash) {
+        check(counter, false, `manifest has a utils hash (${label})`);
+        return {profiles: createdProfiles, driverAvailable};
+      }
+
+      // ── One launch, five variants: flip the inputs → run → assert ──
+      const plan = [
+        ...STALE_VARIANTS.map(variant => ({variant, expectTab: true})),
+        {variant: 'up-to-date', expectTab: false},
+        {variant: 'skipped', expectTab: false},
+      ];
       let variantFailure = false;
-      for (const variant of variants) {
-        // Errors are collected per variant, attached BEFORE the reload that
-        // triggers this variant's render.
-        const pageErrors = [];
-        const onErr = err => pageErrors.push(err.message);
-        page.on('pageerror', onErr);
-        try {
-          applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig);
-          // Re-render through the production path: UpdaterEngine.init() re-runs
-          // the fresh hash check (manifest fetch + local re-hash) and pushes
-          // state in-document. A page.reload() was tried first — BiDi cannot
-          // observe chrome:// navigations (its waiter times out and the
-          // evaluation channel wedges), so the engine's own re-check entry
-          // point is the reliable in-document equivalent.
-          await page.evaluate(() => window.UpdaterEngine.init());
-          const ok = await assertStaleCard(counter, page, variant, pageErrors);
+      let variantsRun = 0;
+      let remainingVariants = [];
+      try {
+        for (const {variant, expectTab} of plan) {
+          const ok = await runOneVariant(counter, {
+            driver,
+            browser,
+            firefoxBin,
+            seeded,
+            variant,
+            expectTab,
+            pristineConfig,
+            utilsHash,
+          });
+          variantsRun++;
           if (!ok) {
             variantFailure = true;
             break;
           }
-        } catch (err) {
-          // Disk mutation failed (e.g. GreD became unwritable): record it as
-          // the variant's failed check with a readable message and stop — the
-          // harness keeps running the remaining scenarios via fail-fast.
-          check(counter, false, `variant fixture update (${variant})`, err.message);
-          variantFailure = true;
-          break;
-        } finally {
-          page.off('pageerror', onErr);
         }
+      } catch (err) {
+        if (!err?.driverLost) throw err;
+        // The realm died between variants (the same mid-session death the
+        // folded phases degrade on): the variants that already ran keep their
+        // assertions in the tally; everything else is deferrable. The stale
+        // variants among the remainder are re-asserted IN THIS TAB below (the
+        // pre-#309 shape — the engine re-checks on init(), no driver needed);
+        // the up-to-date/skipped decisions and the folded phases go to run()'s
+        // launch path. A realm death is a speed loss, never a coverage loss
+        // and never a false failure.
+        remainingVariants = plan.slice(variantsRun).map(entry => entry.variant);
+        console.log(
+          `  [driver] ${err.message} — the remaining variants (${remainingVariants.join(', ')}) fall back to the in-tab / launch paths`
+        );
       }
 
       if (!variantFailure) {
-        // The variants re-rendered the real card through the engine's init():
-        // close the net — no console errors from the updater scripts during
-        // the whole stale-variants session.
+        // The deferred stale variants keep their launch path: the startup tab
+        // was closed before the variant loop, so there is no in-tab frame left
+        // to re-assert them in (a realm death took that frame with it — the
+        // launch path is the only coverage left, and run()'s dispatch runs
+        // every remaining variant name).
+        const staleLeft = remainingVariants.filter(v => STALE_VARIANTS.includes(v));
+        if (staleLeft.length > 0) {
+          console.log(
+            `  [driver] the deferred stale variants (${staleLeft.join(', ')}) keep their launch path`
+          );
+        }
+
+        // ── Folded state-only scenarios (#309 follow-up) ──
+        // install-applies + manual-install-no-ui run in THIS browser, after the
+        // variants: they mutate the seeded trees and the GreD config, so they
+        // must run last (the variants assert those trees). A failure here is
+        // deterministic — fail the session, never retry it.
+        const extras = await runSessionExtras(counter, {
+          driver,
+          browser,
+          firefoxBin,
+          seeded,
+          snapshotDir,
+          greDir,
+          pristineConfig,
+        });
+        if (extras.driverLost) {
+          // Degrade, never fail (#309 follow-up): the folded phases that did not
+          // finish are handed back to run()'s launch path, which runs them as
+          // their own launches. The variants that DID run keep their assertions
+          // in the tally, so this is a speed regression at worst — never
+          // missing coverage, and never a false failure.
+          assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
+          phases.total = Date.now() - t0;
+          logScenarioTime(attemptLabel, t0, phases);
+          return {
+            profiles: createdProfiles,
+            driverAvailable,
+            extrasRemaining: extras.remaining,
+            variantsRemaining: remainingVariants,
+          };
+        }
+        // Every variant and folded scenario ran the production orchestrator
+        // against the real tab: close the net — no console errors from the
+        // updater scripts for the whole session.
         assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
         phases.total = Date.now() - t0;
         logScenarioTime(attemptLabel, t0, phases);
-        return createdProfiles;
+        return {profiles: createdProfiles, driverAvailable, extrasRun: true};
       }
+      // A realm death was degraded in-session; the deferred work goes to
+      // run()'s launch path. Stale variants keep their name in
+      // variantsRemaining when (and only when) the in-tab re-assertion could
+      // not run — their tab died with the realm — so the caller launches them.
+      const staleDeferred = remainingVariants.filter(v => STALE_VARIANTS.includes(v));
+      if (staleDeferred.length > 0) {
+        console.log(
+          `  [driver] deferring the stale variants (${staleDeferred.join(', ')}) to their launch path`
+        );
+      }
+      if (remainingVariants.length > 0) {
+        assertNoUpdaterConsoleErrors(counter, seeded.profileDir, attemptLabel);
+        phases.total = Date.now() - t0;
+        logScenarioTime(attemptLabel, t0, phases);
+        return {
+          profiles: createdProfiles,
+          driverAvailable,
+          extrasRemaining: [...FOLDED_SCENARIOS],
+          variantsRemaining: remainingVariants,
+        };
+      }
+
       // Assertion failure: retry only makes sense for startup-shaped failures;
-      // a card assertion failure is deterministic (bad fixture/code), so do
-      // not burn the retry on it — fail fast.
+      // a card/decision assertion failure is deterministic (bad fixture/code),
+      // so do not burn the retry on it — fail fast.
       console.log(
-        `  [retry] card assertions failed on attempt ${attempted} — deterministic, not retrying`
+        `  [retry] variant assertions failed on attempt ${attempted} — deterministic, not retrying`
       );
       break;
     }
-    return createdProfiles;
+    return {profiles: createdProfiles, driverAvailable};
   } finally {
     try {
       await closeBrowser(browser);
@@ -1304,8 +2434,90 @@ async function runStaleVariantsScenario(counter, opts, snapshotDir, variants) {
 }
 
 /**
+ * Launch ONE stale variant the pre-#309 way: seed the profile, launch, and wait
+ * for the tab the startup check opens — the same observable the in-session
+ * driver path asserts, used when a mid-session realm death defers a stale
+ * variant and its startup tab is gone with it.
+ *
+ * Returns the profile dir for run()'s centralized cleanup.
+ *
+ * @param {{passed: number; failed: number}} counter
+ * @param {object} opts
+ * @param {string} snapshotDir
+ * @param {string} variant - a member of STALE_VARIANTS
+ * @returns {Promise<string>} the created profile dir
+ */
+async function runLaunchedStaleVariantScenario(counter, opts, snapshotDir, variant) {
+  const label = variant;
+  console.log(`\n## Scenario: ${label} (deferred by the dead driver realm)`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
+
+  // Per-variant staleness — NOT the blanket "both stale": utils-stale must
+  // ship a PRISTINE config and config-stale a pristine utils tree, or the card
+  // shows one badge more than the variant expects (reproduced 2026-09-30).
+  const want = expectedStaleState(variant);
+  const seeded = seedProfile(snapshotDir, {forceUtilsStale: want.utilsStale});
+  const greDir = findGreDir(firefoxBin);
+  const greSeed = installFxFolder(snapshotDir, greDir);
+  check(counter, greSeed.ok, `seed GreD (${label})`, greSeed.error);
+  if (!greSeed.ok) return seeded.profileDir;
+  if (want.configStale) {
+    check(counter, appendConfigProbe(greDir), `config probe appended (${label})`);
+  }
+
+  let browser;
+  try {
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+    });
+    attachProcessLogging(browser, label);
+    const page = await waitForUpdaterTabOpen(browser, seeded.profileDir, Date.now() + 30_000);
+    const viaPref = greShownToday(seeded.profileDir);
+    const sawMirror = mirrorSaysTabOpened(seeded.profileDir);
+    check(
+      counter,
+      Boolean(page) || viaPref || sawMirror,
+      `tab opens (${label})`,
+      'scheduler never reached addTrustedTab'
+    );
+    // Card assertions need a BiDi handle; where BiDi cannot attach, the tab-open
+    // proof above is the same observable the pre-#309 session had.
+    if (page) {
+      const pageErrors = [];
+      const onErr = err => pageErrors.push(err.message);
+      page.on('pageerror', onErr);
+      try {
+        await assertStaleCard(counter, page, variant, pageErrors);
+      } catch (err) {
+        check(counter, false, `card assertions (${label})`, err.message);
+      } finally {
+        page.off('pageerror', onErr);
+      }
+      assertNoUpdaterConsoleErrors(counter, seeded.profileDir, label);
+    }
+  } finally {
+    try {
+      await closeBrowser(browser);
+    } catch {
+      /* ignore */
+    }
+    if (!opts.keepProfile) rmDir(seeded.profileDir);
+    else console.log(`  [keep] profile: ${seeded.profileDir}`);
+  }
+  return seeded.profileDir;
+}
+
+/**
  * Launch Firefox with both packages up to date (or skipped), assert the updater
  * tab does NOT open within the timeout.
+ *
+ * The pre-#309 shape of the up-to-date / skipped variants, kept as the fallback
+ * for environments where driver mode cannot run (BiDi cannot evaluate inside a
+ * privileged page, so the harness cannot call the orchestrator in-browser) —
+ * see run()'s scenarioSteps. In-session, the same decisions are asserted from
+ * the driver page instead (runOneVariant).
  *
  * Uses a local manifest server for fast, deterministic "no update" checks: the
  * scheduler fetches HASHES_URL from localhost instead of the network, so the
@@ -1336,14 +2548,15 @@ async function runNoTabScenario(
       skipConfig,
     });
   if (reuseState) {
-    // Launch-reuse hand-off (scenario 4 → 5): the profile already holds the
-    // seeded utils + GreD state; scenario 5's deltas are applied on top —
+    // Launch-reuse hand-off (fallback up-to-date → skipped): the profile already
+    // holds the seeded utils + GreD state; the skipped variant's deltas are
+    // applied on top —
     // (a) forceUtilsStale is the disk marker below, (b) skipUtils is a launch
     // pref (addSkipPrefs — extraPrefsFirefox re-injects every start, so no
     // user.js write), (c) the GreD is re-seeded for byte-identical state.
     // The daily gate is already cleared by the seeded prefs on every launch.
     console.log(
-      "  [reuse] continuing on scenario 4's profile (profile + utils state reused; GreD re-seeded for byte-identical state)"
+      '  [reuse] continuing on the up-to-date profile (profile + utils state reused; GreD re-seeded for byte-identical state)'
     );
     if (forceUtilsStale) {
       const stale = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
@@ -1456,12 +2669,12 @@ async function runNoTabScenario(
     );
   }
 
-  // Launch-reuse hand-off (scenario 4 → 5): return the full seeded state so
-  // step 5 can continue on this profile. `chromeUtils` + `prefs` are what the
-  // reuse path mutates (stale marker, skip prefs); the daily-gate clears stay
-  // in `prefs` so the second launch re-runs the check. The `'profileDir' in
-  // state` unwrap in run() still routes the profile into `profiles` for
-  // centralized cleanup.
+  // Launch-reuse hand-off: return the full seeded state so the skipped variant
+  // can continue on this profile. `chromeUtils` + `prefs` are what the reuse
+  // path mutates (stale marker, skip prefs); the daily-gate clears stay in
+  // `prefs` so the second launch re-runs the check. The `'profileDir' in state`
+  // unwrap in run() still routes the profile into `profiles` for centralized
+  // cleanup.
   return {
     profileDir: seeded.profileDir,
     chromeUtils: seeded.chromeUtils,
@@ -1539,12 +2752,12 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       return seeded.profileDir;
     }
 
-    const rendered = await waitForCondition(
-      page,
-      () => Boolean(document.getElementById('card-title')?.textContent),
-      15_000,
-      'card rendered'
-    );
+    // Bind to the page whose engine rendered THIS fixture. `card-title` alone
+    // is satisfied by any updater document, including a tab that is closing
+    // (see findRenderedUpdaterPage); the launched scenario seeds both-stale, so
+    // that is the state the page must show.
+    page = (await findRenderedUpdaterPage(browser, 'both-stale')) || page;
+    const rendered = badgeStateMatches(await readBadgeState(page), 'both-stale');
     check(counter, rendered, `card rendered (${label})`);
     if (!rendered) return seeded.profileDir;
 
@@ -1568,18 +2781,8 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       check(counter, cfg.bandShown, `manual guidance band shown (snap, ${label})`);
       check(counter, cfg.utilsCheckbox, `utils checkbox present (snap, ${label})`);
 
-      const clicked = await page.evaluate(() => {
-        const cb = document.getElementById('chk-utils');
-        const btn = document.getElementById('btn-install');
-        if (!cb || !btn) return false;
-        // The Update button is disabled until a checkbox is checked — tick
-        // utils first, then click once the button enables.
-        if (!cb.checked) cb.click();
-        if (btn.disabled) return false;
-        btn.click();
-        return true;
-      });
-      check(counter, clicked, `install clicked (utils only, ${label})`);
+      const clicked = await clickInstall(page, ['chk-utils'], `install-applies (snap, ${label})`);
+      check(counter, clicked.ok, `install clicked (utils only, ${label})`, clicked.why);
 
       // Completion: the installed utils TREE re-hashes to the manifest — the
       // ground truth, waited on directly (waitForTreeHash) instead of polling
@@ -1648,18 +2851,12 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
       // Standard install: check BOTH checkboxes (utils + config stale), then
       // click install. handleInstallCommand installs config first, then utils,
       // and refreshPackageState flips each badge to OK as it finishes.
-      const clicked = await page.evaluate(() => {
-        const btn = document.getElementById('btn-install');
-        if (!btn) return false;
-        for (const kind of ['chk-config', 'chk-utils']) {
-          const cb = document.getElementById(kind);
-          if (!cb) return false;
-          if (!cb.checked) cb.click();
-        }
-        btn.click();
-        return true;
-      });
-      check(counter, clicked, `install clicked (${label})`);
+      const clicked = await clickInstall(
+        page,
+        ['chk-config', 'chk-utils'],
+        `install-applies (${label})`
+      );
+      check(counter, clicked.ok, `install clicked (${label})`, clicked.why);
 
       // Completion: BOTH installed trees re-hash to the manifest (utils then
       // config — the tab installs config first). Disk hash is the completion
@@ -2833,6 +4030,368 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+/**
+ * Read the console mirror written by the config probe (empty when absent),
+ * scoped to the CURRENT browser session: the probe opens the file append-only
+ * and writes a `MIRROR-OPEN` marker the moment config.js runs, so the text from
+ * the LAST marker on is exactly this launch's output.
+ *
+ * Without the scope a launch the harness KILLED leaves its lines behind for the
+ * next launch in the same profile. The wedged-attempt retry (#384) then reads
+ * the dead attempt's state: on the 2026-10-02 firefox-dev Windows leg the
+ * killed attempt's ENGINE-DONE satisfied the engine wait — the retry's engine
+ * was never actually awaited, its pref never reached prefs.js, and the scenario
+ * failed an assertion the killed run had already passed in memory. Every
+ * mirror-based poll (WINDOW-COUNT, TAB_SET, ENGINE-DONE, TAB_OPENED, SS-NOTIFY)
+ * inherits the scope through this one reader.
+ */
+function readMirror(profileDir) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(profileDir, 'e2e-console.log'), 'utf-8');
+  } catch {
+    return '';
+  }
+  const at = text.lastIndexOf('MIRROR-OPEN');
+  return at === -1 ? text : text.slice(at);
+}
+
+/** lastScriptsCheckDate persisted in prefs.js, or ''. */
+function readPrefsGate(profileDir) {
+  try {
+    // prefs.js is CRLF on Windows: normalize before splitting, or every line
+    // ends with a stray \r and the $-anchored match below never fires.
+    const line = fs
+      .readFileSync(path.join(profileDir, 'prefs.js'), 'utf-8')
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .find(l => l.includes('extensions.firefox-scripts.lastScriptsCheckDate'));
+    const m = line && line.match(/"([^"]*)"\);$/);
+    return m ? m[1] : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * TEMP diagnostic (#384 follow-up): breadcrumb the seeded profile's updater.js
+ * engineInit — engine entry, twin-tab outcome, and the checkCompleted value it
+ * gates the shown-day write on. logStringMessage routes through the console
+ * service into the mirror (console.* from the page would not).
+ *
+ * @param {string} chromeUtils - the seeded profile's chrome/utils dir
+ */
+/**
+ * TEMP diagnostic for the session-restore scenario: breadcrumb the seeded
+ * profile updater UI. Inserted code NEVER contains a backslash escape (the
+ * previous attempt produced "invalid escape sequence" SyntaxErrors in the page,
+ * which killed the whole updater.js/updater-ui.js parse) — line breaks come
+ * from String.fromCharCode(10) at page runtime.
+ *
+ * @param {string} chromeUtils - the seeded profile chrome/utils dir
+ */
+
+/**
+ * Overwrite the seeded profile's scheduler with the CURRENT source (the
+ * snapshot's utils.zip may predate an in-review fix — scenario 10 sets the same
+ * precedent). Fails loudly when the source file is missing.
+ *
+ * @param {string} chromeUtils - the seeded profile's chrome/utils dir
+ */
+function overwriteSchedulerFromSource(chromeUtils) {
+  const repoSched = path.join(
+    REPO_ROOT,
+    'core',
+    'chrome',
+    'utils',
+    'updater',
+    'scriptsUpdater.sys.mjs'
+  );
+  fs.copyFileSync(repoSched, path.join(chromeUtils, 'updater', 'scriptsUpdater.sys.mjs'));
+}
+
+/**
+ * Tree manifest over the extracted utils with one stale marker byte flipped:
+ * every check sees a pending utils update (shared by the new scenarios).
+ */
+function buildStaleUtilsManifest(snapshotDir, staleTreeDir) {
+  const utilsZipPath = findZip(snapshotDir, ['utils.zip', 'utils-dev.zip']);
+  if (!utilsZipPath) throw new Error(`no utils zip found in ${snapshotDir}`);
+  extractZip(utilsZipPath, staleTreeDir);
+  const stale = path.join(staleTreeDir, FORCE_UTILS_STALE);
+  fs.appendFileSync(stale, FORCE_UTILS_STALE_MARKER);
+  // The snapshot manifest keeps its REAL fx-folder/updater-ui entries and only
+  // the utils entry is re-hashed over the staled tree. Both user-facing
+  // packages then compare on every check, so the updater tab engine re-check
+  // is allowed to own the day (ADR 0012) — buildTreeManifest's empty
+  // fx-folder entry would make that re-check correctly pref-silent.
+  const manifestPath = path.join(snapshotDir, 'hashes.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+  manifest['utils'] = buildTreeManifest(staleTreeDir)['utils'];
+  return manifest;
+}
+
+/**
+ * The session-restore scenario (#384 follow-up): relaunch on a profile whose
+ * previous session (generated at runtime by sessionFile.mjs) holds the updater
+ * tab in a NON-selected window, backgrounded inside that window, with a
+ * different window selected — the exact restore shape the attach block's
+ * all-windows scan must handle.
+ *
+ * Assertions: both windows restore (WINDOW-COUNT), exactly ONE updater tab
+ * exists across all windows (the always-fresh attach forgot the restored one
+ * and opened a fresh tab into the active window), the fresh tab's engine
+ * re-checked (lastScriptsCheckDate), and no AsyncTabSwitcher schemeIs error
+ * (the deferred-selection contract). Stale-utils manifest ⇒ a pending update ⇒
+ * the engine's re-check is real, not a no-op.
+ *
+ * The payload: 2 windows, selectedWindow 2, updater tab backgrounded in window
+ *
+ * 1. Its privileged entry carries the serialized system principal — what a real
+ *    updater entry stores — so the restored chrome:// tab is actually LOADABLE;
+ *    without it SessionStore restores the entry from a null principal and the
+ *    chrome:// load is blocked (a shape the fixture used to replay by accident,
+ *    see sessionFile.SERIALIZED_SYSTEM_PRINCIPAL). FXS_E2E_SESSION_FILE
+ *    overrides the generated payload with any Firefox-authored file.
+ */
+/**
+ * The generated session file: buildSession's payload (2 windows, updater tab
+ * backgrounded in the non-selected one) wrapped in the mozLz4 container with
+ * the same `version: ['sessionrestore', 1]` array shape a real Firefox write
+ * carries — every watched engine parses it (the esr-140 probe connects in ~2 s
+ * with this payload vs never with the 159-authored fixture).
+ *
+ * @returns {Buffer} sessionstore.jsonlz4 bytes
+ */
+function buildSessionBuffer() {
+  const session = buildSession({
+    windows: 2,
+    updaterInWindow: 1,
+    updaterUrl: UPDATER_URL,
+  });
+  session.version = ['sessionrestore', 1];
+  return mozLz4(session);
+}
+
+async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
+  console.log(`\n## Scenario: ${label}`);
+  const firefoxBin = opts.firefox || discoverFirefoxBinary();
+  if (!firefoxBin) throw new Error(missingFirefoxMessage());
+  const t0 = Date.now();
+  // The session is GENERATED at runtime (sessionFile.mjs), not checked in:
+  // the original hand-authored fixture came from a Firefox 159 profile, and
+  // its 159-era fields (isAIWindow, splitViews, zIndex, …) wedge ESR 140's
+  // SessionStore at startup — the launch never completed (puppeteer
+  // handshake timed out, twice, esr-140 Windows 2026-10-01). The generated
+  // payload carries only long-stable session fields, so every engine from
+  // the oldest watched ESR to Nightly parses it. FXS_E2E_SESSION_FILE still
+  // overrides it with any Firefox-authored file for a hand-shaped session.
+  const fixture = process.env.FXS_E2E_SESSION_FILE || '';
+  if (fixture && !fs.existsSync(fixture)) {
+    check(counter, false, `session fixture exists (${label})`, `missing: ${fixture}`);
+    return null;
+  }
+  const seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
+  const greDir11 = findGreDir(firefoxBin);
+  const greSeed11 = installFxFolder(snapshotDir, greDir11);
+  check(counter, greSeed11.ok, `seed GreD (${label})`, greSeed11.error);
+  appendConfigProbe(greDir11);
+  // SessionStore reads previous.jsonlz4 for "Restore previous session"; the
+  // root copy covers the legacy-migration read path. Seeded BEFORE launch:
+  // startup.page=3 makes restore-on-startup read it at init. The generated
+  // session (below) mirrors the reported shape: the updater tab in a
+  // NON-active window and NOT that window's selected tab.
+  fs.mkdirSync(path.join(seeded.profileDir, 'sessionstore-backups'), {recursive: true});
+  const sessionBytes = fixture ? fs.readFileSync(fixture) : buildSessionBuffer();
+  fs.writeFileSync(
+    path.join(seeded.profileDir, 'sessionstore-backups', 'previous.jsonlz4'),
+    sessionBytes
+  );
+  fs.writeFileSync(path.join(seeded.profileDir, 'sessionstore.jsonlz4'), sessionBytes);
+  overwriteSchedulerFromSource(seeded.chromeUtils);
+  // Seed the updater UI from the snapshot (self-consistent with the
+  // manifest): the scenario asserts the engine re-check on a RESTORED tab,
+  // not a ensureUpdaterUi download. Also gives the breadcrumb patch a file
+  // to work on.
+  const uiZip11 = findZip(snapshotDir, ['updater-ui.zip', 'updater-ui-dev.zip']);
+  if (uiZip11) {
+    extractZip(uiZip11, path.join(seeded.chromeUtils, 'updater', 'ui'));
+  }
+  // The snapshot's tab UI predates the PR's updater.js edits (Xray-safe twin
+  // guard). Overwrite it with the worktree source, exactly like
+  // overwriteSchedulerFromSource does for the scheduler — the scenario tests
+  // THIS branch's behavior on every engine.
+  fs.copyFileSync(
+    path.join(REPO_ROOT, 'tools', 'publish', 'remote-ui', 'updater.js'),
+    path.join(seeded.chromeUtils, 'updater', 'ui', 'updater.js')
+  );
+  const staleTreeDir = fs.mkdtempSync(path.join(REPO_ROOT, 'dist', 'fxs-session-stale-'));
+  const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
+    multiRequest: true,
+    manifestOverride: buildStaleUtilsManifest(snapshotDir, staleTreeDir),
+  });
+  Object.assign(seeded.prefs, serverOverridePrefs(server.url));
+  // Restore the authored session at startup, eagerly (restore_on_demand=false
+  // loads background tabs too — the restored updater tab is NOT selected in
+  // its window, so lazy restore would leave a placeholder with no engine).
+  seeded.prefs['browser.startup.page'] = 3;
+  seeded.prefs['browser.sessionstore.resume_session_once'] = true;
+  seeded.prefs['browser.sessionstore.restore_on_demand'] = false;
+  let browser;
+  try {
+    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
+      headless: opts.headless,
+      extraPrefsFirefox: seeded.prefs,
+      // Restoring a 2-window session with EAGER background tabs is the heaviest
+      // startup any scenario launches, so the stock 20 s handshake deadline is
+      // not the right bound here: on a busy runner the start can outlive it
+      // (esr-140 Windows 2026-10-01 — attempt AND retry both killed at exactly
+      // 20 s; firefox-dev Windows 2026-10-02 — attempt killed at 20 s), and the
+      // failure then lands on whatever the killed attempt left behind instead
+      // of on the assertions. These bounds were added for that reason and were
+      // dropped by accident in the #384 rework; restored, and pinned by
+      // test/unit/e2e/launchPrefs.test.mjs so it cannot happen silently again.
+      launchDeadlineMs: 60_000,
+      protocolTimeoutMs: 120_000,
+    });
+    attachProcessLogging(browser, label);
+    const restoredWindows = await pollUntil(
+      () => {
+        const counts = [...readMirror(seeded.profileDir).matchAll(/WINDOW-COUNT (\d+)/g)].map(m =>
+          Number(m[1])
+        );
+        return counts.some(c => c >= 2) ? Math.max(...counts) : null;
+      },
+      45_000,
+      500,
+      label
+    );
+    check(
+      counter,
+      (restoredWindows ?? 0) >= 2,
+      `both windows restored (WINDOW-COUNT ${restoredWindows ?? 0}, ${label})`,
+      restoredWindows ? '' : 'the session fixture never restored a second window'
+    );
+    // Wait for the engine FIRST, then assert the FINAL tab set: asserting the
+    // first recorded set would false-pass when a second tab appears after the
+    // check (review on #343, 2026-10-01). The fresh tab's engine re-check needs wall time after
+    // the tab opens, and its pref only reaches prefs.js at the shutdown flush —
+    // closing on WINDOW-COUNT would assert the harness's haste, not the engine
+    // (the same trap scenario 12 hit before its ENGINE-DONE wait: the 8/9 run
+    // of 2026-10-01 closed the browser ~4 s in, before a healthy engine under
+    // the operator's concurrent load had finished). The probe watcher mirrors
+    // ENGINE-DONE the moment the pref goes non-empty (live Services.prefs
+    // read); bounded, so a wedged engine still fails the gate assertion below
+    // instead of hanging the scenario.
+    await pollUntil(
+      () => {
+        const line = readMirror(seeded.profileDir)
+          .split('\n')
+          .find(l => l.includes('ENGINE-DONE'));
+        return line || null;
+      },
+      30_000,
+      500,
+      label
+    );
+    // The set must then stay at exactly one tab for TAB_SET_QUIET_MS before it
+    // is called final: a restored tab can still land after the engine finishes,
+    // and the watcher records a TAB_SET line on every change — so "the line is
+    // quiet" is exactly "no tab appeared or disappeared".
+    const TAB_SET_QUIET_MS = 6000;
+    const readFinalTabSet = () => {
+      const line = readMirror(seeded.profileDir)
+        .split('\n')
+        .filter(l => l.includes('TAB_SET'))
+        .pop();
+      if (!line) {
+        return null;
+      }
+      const stamp = Date.parse(line.slice('TAB_SET '.length, line.indexOf('Z') + 1));
+      return {line, ageMs: Number.isFinite(stamp) ? Date.now() - stamp : TAB_SET_QUIET_MS};
+    };
+    const finalTabSet = await pollUntil(
+      () => {
+        const set = readFinalTabSet();
+        return set && set.ageMs >= TAB_SET_QUIET_MS ? set : null;
+      },
+      30_000,
+      500,
+      label
+    );
+    // The mirror writes the whole SET — `(none)` when empty, ` | `-joined when
+    // several are open — so "exactly one" has to be asserted as exactly one
+    // ENTRY. Testing only for the separator also accepted `(none)`: a final
+    // state with ZERO updater tabs (the fresh tab closing after its engine
+    // already wrote the day) passed as "exactly one, stable for 6s".
+    const finalTabs =
+      finalTabSet === null ? '' : finalTabSet.line.slice(finalTabSet.line.indexOf('Z') + 1).trim();
+    const finalTabCount = finalTabs && finalTabs !== '(none)' ? finalTabs.split(' | ').length : 0;
+    let tabSetFailure = '';
+    if (finalTabCount !== 1) {
+      if (finalTabSet === null) {
+        tabSetFailure = `no TAB_SET line stayed quiet for ${TAB_SET_QUIET_MS / 1000}s (the tab set never settled)`;
+      } else if (finalTabCount === 0) {
+        tabSetFailure = `no updater tab was open for the whole ${TAB_SET_QUIET_MS / 1000}s quiet window: ${finalTabSet.line}`;
+      } else {
+        tabSetFailure = `a SECOND updater tab is open (stable ${(finalTabSet.ageMs / 1000).toFixed(1)}s): ${finalTabSet.line}`;
+      }
+    }
+    check(
+      counter,
+      finalTabCount === 1,
+      `final updater-tab set is exactly one, stable for ${TAB_SET_QUIET_MS / 1000}s (always-fresh attach) (${label})`,
+      tabSetFailure
+    );
+    const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
+    check(
+      counter,
+      !schemeIs,
+      `restore produced no AsyncTabSwitcher schemeIs crash (#384) (${label})`,
+      'the selection race (#384) fired during restore'
+    );
+    console.log(`  [timing] ${label} wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  } finally {
+    try {
+      await closeBrowser(browser);
+    } catch {
+      /* ignore */
+    }
+    await server.close().catch(() => {});
+    try {
+      fs.rmSync(staleTreeDir, {recursive: true, force: true});
+    } catch {
+      /* ignore */
+    }
+  }
+  // The daily pref is flushed to prefs.js at shutdown (lazy while live), and
+  // the flush can land a moment AFTER the browser process exits — read through
+  // it with a short poll instead of a single racy read (the ziOHlE run wrote
+  // the pref ~100 ms after the first read saw the old value).
+  const today = new Date().toISOString().slice(0, 10);
+  let gate = '';
+  await pollUntil(
+    () => {
+      gate = readPrefsGate(seeded.profileDir);
+      return gate === today || null;
+    },
+    10_000,
+    500,
+    label
+  );
+  check(
+    counter,
+    gate === today,
+    `restored tab engine re-checked (lastScriptsCheckDate=${gate || '(none)'}, ${label})`
+  );
+  if (!opts.keepProfile) {
+    rmDir(seeded.profileDir);
+  } else {
+    console.log(`  [keep] profile: ${seeded.profileDir}`);
+  }
+  return null;
+}
+
 async function run() {
   const opts = parseArgs();
   const counter = createCounter();
@@ -2904,15 +4463,14 @@ async function run() {
   // the trusted tab. What a headless CI run still cannot reach is elevation
   // itself — the helper's byte-level gate is covered deterministically by
   // test/unit/publish/branchPagesContract.test.mjs on every OS.
-  const scenarios = opts.scenarios || ['1', '4', '5', '6', '7', '8', '9', '10'];
+  // Default selection. The state-only families are ONE step now (#309 + the
+  // fold): step 1 carries the stale trio, the up-to-date/skipped decisions and
+  // the folded install-applies / manual-install-no-ui scenarios, and the ids
+  // 4/5/6/8 are its aliases (--scenario 6 still runs the whole session). The
+  // default list names them only for back-compat with existing invocations.
+  const scenarios = opts.scenarios || ['1', '6', '7', '8', '9', '10', '11'];
 
   const profiles = [];
-  // Scenario 7 → 8 state hand-off (launch-reuse prototype). Populated by
-  // step 7 when it runs; consumed (and cleared) by step 8 in the same pass.
-  let handoff = null;
-  // Scenario 4 → 5 state hand-off (same prototype): the no-tab legs re-seed
-  // identical profiles, so step 5 can continue on step 4's.
-  let noTabHandoff = null;
 
   // Save GreD config before we overwrite it (see issue #4)
   const savedGre = saveGreConfig(findGreDir(firefoxBin));
@@ -2927,39 +4485,114 @@ async function run() {
     const scenarioSteps = [
       {
         id: '1',
+        // The variant session (#309, formerly the separate steps 1/4/5, and the
+        // home of the folded install-applies / manual-install-no-ui): the stale
+        // trio, up-to-date and skipped, and the two state-only scenarios, in ONE
+        // browser. `--scenario 4` / `5` / `6` / `8` still select it (the variants
+        // are no longer separable: they share the session).
+        alias: ['4', '5', '6', '8'],
         run: async () => {
-          profiles.push(
-            ...(await runStaleVariantsScenario(counter, opts, snapshotDir, [
-              'utils-stale',
-              'config-stale',
-              'both-stale',
-            ]))
+          const session = await runVariantSession(counter, opts, snapshotDir);
+          profiles.push(...session.profiles);
+
+          if (session.driverAvailable) {
+            // A realm death was degraded in-session (the stale cards the dead
+            // realm deferred were re-asserted in-tab; see runVariantSession):
+            // only the decisions + folded phases it could not finish need a
+            // launch. Coverage is complete either way — this is the degraded
+            // shape, not a failed leg.
+            const remaining = session.extrasRemaining ?? [];
+            const remainingVariants = session.variantsRemaining ?? [];
+            if (remaining.length === 0 && remainingVariants.length === 0) return;
+            console.log(
+              `\n  [driver] resuming out-of-session: ${[...remainingVariants, ...remaining].join(', ')}`
+            );
+            if (remaining.includes('install-applies')) {
+              profiles.push(
+                await runInstallAppliesScenario(counter, opts, snapshotDir, 'install-applies')
+              );
+            }
+            if (remaining.includes('manual-install-no-ui')) {
+              profiles.push(
+                await runManualInstallNoUiScenario(
+                  counter,
+                  opts,
+                  snapshotDir,
+                  'manual-install-no-ui'
+                )
+              );
+            }
+            // Stale variants the dead realm deferred (its in-tab re-assertion
+            // could not run either): they launch in the trio order, each its
+            // own scenario — the pre-#309 shape for exactly those variants.
+            const staleToLaunch = remainingVariants.filter(v => STALE_VARIANTS.includes(v));
+            for (const variant of staleToLaunch) {
+              profiles.push(
+                await runLaunchedStaleVariantScenario(counter, opts, snapshotDir, variant)
+              );
+            }
+            if (remainingVariants.includes('up-to-date')) {
+              const upToDate = await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
+                skipUtils: false,
+                skipConfig: false,
+              });
+              profiles.push(handoffProfileDir(upToDate));
+              // Only a FULL state carries the reuse fields; an early-exit string
+              // (or partial object) leaves the reuse null and the skipped step
+              // seeds its own profile instead of consuming undefined chromeUtils.
+              if (remainingVariants.includes('skipped')) {
+                const reuse = fullHandoffState(upToDate);
+                profiles.push(
+                  handoffProfileDir(
+                    await runNoTabScenario(
+                      counter,
+                      opts,
+                      snapshotDir,
+                      'skipped',
+                      {skipUtils: true, forceUtilsStale: true},
+                      reuse
+                    )
+                  )
+                );
+              }
+            } else if (remainingVariants.includes('skipped')) {
+              // skipped without up-to-date: no reuse source, seed fresh.
+              profiles.push(
+                handoffProfileDir(
+                  await runNoTabScenario(counter, opts, snapshotDir, 'skipped', {
+                    skipUtils: true,
+                    forceUtilsStale: true,
+                  })
+                )
+              );
+            }
+            return;
+          }
+
+          // Driver mode is unavailable in this environment (BiDi cannot evaluate
+          // inside a privileged page — a limitation, not a startup race): run the
+          // folded scenarios AND the up-to-date/skipped decisions as their own
+          // launches, the pre-#309 way. The collapse is a structure/speed win,
+          // never a coverage trade.
+          console.log(
+            '\n  [driver] falling back to the launch-per-scenario path for install-applies,' +
+              ' manual-install-no-ui, up-to-date/skipped'
           );
-        },
-      },
-      {
-        id: '4',
-        run: async () => {
-          // When 5 follows in the same selection, hand 4's end state to 5
-          // (launch-reuse prototype): one profile, one GreD seed, one fewer
-          // fresh-profile build. Scenario 4's standalone behavior and
-          // assertions are unchanged.
-          const state = await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
+          profiles.push(
+            await runInstallAppliesScenario(counter, opts, snapshotDir, 'install-applies')
+          );
+          profiles.push(
+            await runManualInstallNoUiScenario(counter, opts, snapshotDir, 'manual-install-no-ui')
+          );
+          const upToDate = await runNoTabScenario(counter, opts, snapshotDir, 'up-to-date', {
             skipUtils: false,
             skipConfig: false,
           });
-          profiles.push(handoffProfileDir(state));
+          profiles.push(handoffProfileDir(upToDate));
           // Only a FULL state carries the reuse fields; an early-exit string
-          // (or partial object) leaves noTabHandoff null and step 5 seeds its
-          // own profile instead of consuming undefined chromeUtils/prefs.
-          noTabHandoff = fullHandoffState(state);
-        },
-      },
-      {
-        id: '5',
-        run: async () => {
-          const reuse = scenarios.includes('4') ? noTabHandoff : null;
-          noTabHandoff = null;
+          // (or partial object) leaves the reuse null and the skipped step
+          // seeds its own profile instead of consuming undefined chromeUtils.
+          const reuse = fullHandoffState(upToDate);
           profiles.push(
             handoffProfileDir(
               await runNoTabScenario(
@@ -2975,20 +4608,11 @@ async function run() {
         },
       },
       {
-        id: '6',
-        run: async () => {
-          profiles.push(
-            await runInstallAppliesScenario(counter, opts, snapshotDir, 'install-applies')
-          );
-        },
-      },
-      {
         id: '7',
         run: async () => {
-          // When 8 follows in the same selection, hand 7's end state to 8
-          // (launch-reuse prototype): one profile, one GreD seed, one fewer
-          // full browser launch chain. Scenario 7's standalone behavior and
-          // assertions are unchanged.
+          // Phases 1 + 2 of issue #53 in two launches — the one scenario whose
+          // restart is the point (a hand-installed utils.zip needs a fresh
+          // browser to register its chrome mapping), so it keeps both.
           const state = await runManualInstallScenario(
             counter,
             opts,
@@ -2996,26 +4620,6 @@ async function run() {
             'manual-install-upgrade'
           );
           profiles.push(handoffProfileDir(state));
-          // Full state only — same guard as scenario 4 (see fullHandoffState).
-          handoff = fullHandoffState(state);
-        },
-      },
-      {
-        id: '8',
-        run: async () => {
-          const reuse = scenarios.includes('7') ? handoff : null;
-          handoff = null;
-          profiles.push(
-            handoffProfileDir(
-              await runManualInstallNoUiScenario(
-                counter,
-                opts,
-                snapshotDir,
-                'manual-install-no-ui',
-                reuse
-              )
-            )
-          );
         },
       },
       {
@@ -3052,6 +4656,18 @@ async function run() {
           await runTimerRegressionScenario(counter, opts, snapshotDir, 'daily-recheck-timer');
         },
       },
+      {
+        id: '11',
+        run: async () => {
+          // Session restore across windows (#384 follow-up): the generated
+          // fixture restores the updater tab in a NON-focused window,
+          // backgrounded inside that window. The attach block must end with
+          // exactly one updater tab, and a fresh tab's engine must re-check.
+          // FXS_E2E_SESSION_FILE overrides the fixture with any
+          // Firefox-authored sessionstore.jsonlz4.
+          await runSessionRestoreScenario(counter, opts, snapshotDir, 'session-restore');
+        },
+      },
     ];
 
     // --repeat <n> re-runs the whole scenario selection (fresh profile per
@@ -3061,7 +4677,9 @@ async function run() {
       if (repeat > 1) console.log(`\n===== repeat pass ${pass}/${repeat} =====`);
 
       for (const step of scenarioSteps) {
-        if (!scenarios.includes(step.id)) continue;
+        const selected =
+          scenarios.includes(step.id) || (step.alias || []).some(id => scenarios.includes(id));
+        if (!selected) continue;
         if ((opts.failFast ?? true) && counter.failed > 0) {
           console.log(`\n  SKIP scenario ${step.id}: fail-fast after earlier failure`);
           continue;
