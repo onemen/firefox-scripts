@@ -29,6 +29,9 @@
  *   stop it are to install, or check "Don't show again for this update"
  *   (per-package skip prefs). Terminal actions (install / skip / restart)
  *   re-record the day via recordUserDecision.
+ * - The module installs this tab, so this tab must also run against whatever
+ *   module it finds installed: exports that postdate the oldest self-installing
+ *   module are feature-detected at the seam below (issue #383).
  * - Every tab re-runs the real hash check on init (the module performs no
  *   tab-data handoff), so a tab restored from a session (manual browser restart
  *   with the tab left open) or a direct chrome:// visit renders the truth
@@ -39,18 +42,18 @@ const {Downloads} = ChromeUtils.importESModule('resource://gre/modules/Downloads
 const {Subprocess} = ChromeUtils.importESModule('resource://gre/modules/Subprocess.sys.mjs');
 const {AppConstants} = ChromeUtils.importESModule('resource://gre/modules/AppConstants.sys.mjs');
 
+const scriptsUpdater = ChromeUtils.importESModule(
+  'chrome://firefox-scripts/content/scriptsUpdater.sys.mjs'
+);
 const {
   computeFilesHash,
   checkScriptsUpdateNeeded,
-  fxFolderDir,
   extractZipFlatten,
   copyFileList,
   fetchBytes,
   getZipBaseUrl,
   getHelperBaseUrl,
-  getAssetSuffix,
-  getChannelState,
-} = ChromeUtils.importESModule('chrome://firefox-scripts/content/scriptsUpdater.sys.mjs');
+} = scriptsUpdater;
 
 // URL/path configuration — generated from config/installer.conf at publish
 // time (tools/publish/generateUpdaterConfig.mjs).  Single source of truth.
@@ -58,15 +61,67 @@ const {CONFIG} = ChromeUtils.importESModule(
   'chrome://firefox-scripts/content/updater-config.sys.mjs'
 );
 
-// Resolved through scriptsUpdater.sys.mjs so tests can override the URLs via
-// extensions.firefox-scripts.override.<KEY> prefs without touching hashed
-// files (the config ships inside utils.zip).
+// Backward-compatibility seam (issue #383).
+//
+// This tab (updater-ui.zip) is installed BY scriptsUpdater.sys.mjs, and the
+// module can only be replaced BY the tab — so a tab that hard-requires an
+// export the installed module lacks deadlocks the user: the tab crashes on
+// load, and nothing can install the module that would fix it. Every export
+// used below must therefore either predate the oldest self-installing module
+// (ADR 0007) or be feature-detected here. The tab is deliberately the
+// tolerant side of the seam; the module and the UI client stay strict.
+//
+// The fallbacks reproduce the behaviour of the older module such an install
+// carries (pre-ADR 0026), so it renders and can install the current utils.
+//
+// The guarded names are fxFolderDir (added with #142, 2026-09-06) and
+// getAssetSuffix / getChannelState (added with ADR 0026, #189, 2026-09-12) —
+// each landed in the module and in its first tab-side consumer together. Any
+// install older than those dates can still be out there, and this tab is the
+// only way out of it.
 
-// Asset-name suffix ('' everywhere since #282's suffix drop). The indirection
-// and the base URL are resolved per call through the module so a dev install
-// that migrated to the stable channel (dead dev-build branch, ADR 0026) — or
-// one whose generated config still carries '-dev' from before the drop —
-// fetches the asset names its channel actually serves.
+/**
+ * Asset-name suffix ('' everywhere since #282's suffix drop).
+ *
+ * Resolved through the module so a dev install that migrated to the stable
+ * channel (dead dev-build branch, ADR 0026) — or one whose generated config
+ * still carries '-dev' from before the drop — fetches the asset names its
+ * channel actually serves. Without the module's resolver, the generated
+ * config's own suffix is the answer, exactly as the pre-ADR-0026 tab had it.
+ */
+const getAssetSuffix =
+  typeof scriptsUpdater.getAssetSuffix === 'function' ?
+    scriptsUpdater.getAssetSuffix
+  : () => CONFIG.ASSET_SUFFIX || '';
+
+/**
+ * Channel state for the migration banner: which channel the URLs above resolve
+ * against, and whether this session's check migrated from dev.
+ *
+ * A module without the resolver predates the channel machinery entirely: it has
+ * no channels and no dead-branch fallback, so it can never have migrated. 'dev'
+ * keeps the banner off (it shows only for channel === 'stable').
+ */
+const getChannelState =
+  typeof scriptsUpdater.getChannelState === 'function' ?
+    scriptsUpdater.getChannelState
+  : () => ({channel: 'dev', migratedFromDev: false});
+
+/**
+ * The config install dir: /etc/firefox on Snap, else GreD — the module's own
+ * resolver, or the same rule locally for modules that predate it.
+ */
+const fxFolderDir =
+  typeof scriptsUpdater.fxFolderDir === 'function' ? scriptsUpdater.fxFolderDir : legacyFxFolderDir;
+
+/** @returns {string} */
+function legacyFxFolderDir() {
+  return isSnapInstall() ? '/etc/firefox' : Services.dirsvc.get('GreD', Ci.nsIFile).path;
+}
+
+// The base URLs are also resolved per call through scriptsUpdater.sys.mjs so
+// tests can override them via extensions.firefox-scripts.override.<KEY> prefs
+// without touching hashed files (the config ships inside utils.zip).
 const FX_FOLDER_URL = () => `${getZipBaseUrl()}/fx-folder${getAssetSuffix()}.zip`;
 const UTILS_URL = () => `${getZipBaseUrl()}/utils${getAssetSuffix()}.zip`;
 

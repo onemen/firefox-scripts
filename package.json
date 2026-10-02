@@ -38,6 +38,7 @@
     "publish:dev": "node tools/publish/release.mjs --mode=dev --include=all",
     "publish:all": "node tools/publish/release.mjs --include=all",
     "publish:packages": "node tools/publish/release.mjs --include=packages",
+    "publish:updater-ui": "node tools/publish/release.mjs --include=updater-ui",
     "publish:installer": "node tools/publish/release.mjs --include=installer",
     "publish:helper": "node tools/publish/release.mjs --include=helper",
     "release:stage": "node --env-file-if-exists=.env tools/publish/release.mjs --stage",

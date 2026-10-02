@@ -11,7 +11,9 @@ import assert from 'node:assert/strict';
 const {
   INCLUDE_ROLES,
   devBranchStrandWarning,
+  devTabOnlyWarning,
   noBinaryScope,
+  packageInScope,
   pagesCommitMessage,
   parseInclude,
   scopeFor,
@@ -51,7 +53,10 @@ test('parseInclude: --include=all expands to every role', () => {
 
 test('parseInclude: an unknown role fails loud with the expected list', () => {
   assert.throws(() => parseInclude(['--include=binaries']), /Unknown --include role 'binaries'/);
-  assert.throws(() => parseInclude(['--include=binaries']), /packages\|installer\|helper\|all/);
+  assert.throws(
+    () => parseInclude(['--include=binaries']),
+    /packages\|updater-ui\|installer\|helper\|all/
+  );
 });
 
 test('parseInclude: an empty value is rejected, never silently a full publish', () => {
@@ -64,6 +69,7 @@ test('scopeFor: an empty set (the old implicit default) is not reachable via the
   // produce it — the flag is required.
   assert.deepEqual(scopeFor(), {
     packages: false,
+    updaterUi: false,
     installer: false,
     helper: false,
   });
@@ -72,24 +78,90 @@ test('scopeFor: an empty set (the old implicit default) is not reachable via the
 test('scopeFor: each included role flips only its own flag', () => {
   assert.deepEqual(scopeFor(parseInclude(['--include=installer'])), {
     packages: false,
+    updaterUi: false,
     installer: true,
     helper: false,
   });
   assert.deepEqual(scopeFor(parseInclude(['--include=packages'])), {
     packages: true,
+    updaterUi: false,
+    installer: false,
+    helper: false,
+  });
+  assert.deepEqual(scopeFor(parseInclude(['--include=updater-ui'])), {
+    packages: false,
+    updaterUi: true,
     installer: false,
     helper: false,
   });
   assert.deepEqual(scopeFor(parseInclude(['--include=installer,helper'])), {
     packages: false,
+    updaterUi: false,
     installer: true,
     helper: true,
   });
   assert.deepEqual(scopeFor(parseInclude(['--include=all'])), {
     packages: true,
+    updaterUi: true,
     installer: true,
     helper: true,
   });
+});
+
+test('packageInScope: packages covers all three zips, updater-ui only the tab', () => {
+  const full = scopeFor(parseInclude(['--include=packages']));
+  for (const name of ['utils', 'fx-folder', 'updater-ui']) {
+    assert.equal(packageInScope(full, name), true, `packages must cover ${name}`);
+  }
+
+  // The tab-only role (issue #383): utils/fx-folder stay frozen, so they must
+  // read as out of scope or a "tab hotfix" would re-upload them too.
+  const tabOnly = scopeFor(parseInclude(['--include=updater-ui']));
+  assert.equal(packageInScope(tabOnly, 'updater-ui'), true);
+  assert.equal(packageInScope(tabOnly, 'utils'), false);
+  assert.equal(packageInScope(tabOnly, 'fx-folder'), false);
+
+  // A binary-only run stages no zips at all.
+  const binaries = scopeFor(parseInclude(['--include=installer,helper']));
+  for (const name of ['utils', 'fx-folder', 'updater-ui']) {
+    assert.equal(packageInScope(binaries, name), false, `${name} must be out of scope`);
+  }
+});
+
+test('devTabOnlyWarning: silent unless the tab is published without `packages`', () => {
+  assert.equal(devTabOnlyWarning(parseInclude(['--include=packages'])), '');
+  assert.equal(devTabOnlyWarning(parseInclude(['--include=packages,updater-ui'])), '');
+  assert.equal(devTabOnlyWarning(parseInclude(['--include=all'])), '');
+  // A binary role alongside the tab does NOT make the branch complete — the zips
+  // are still missing — so the warning must stay.
+  assert.match(
+    devTabOnlyWarning(parseInclude(['--include=updater-ui,installer']), {branchExists: false}),
+    /WARNING/
+  );
+});
+
+test('devTabOnlyWarning: a NEW dev branch carrying only the tab is a hard warning', () => {
+  const text = devTabOnlyWarning(parseInclude(['--include=updater-ui']), {branchExists: false});
+  assert.match(text, /WARNING/);
+  assert.match(text, /CREATES its dev-build branch/);
+  // The zips the installer needs are exactly what is missing.
+  assert.match(text, /utils\.zip \/ fx-folder\.zip/);
+  assert.match(text, /--include=packages/);
+});
+
+test('devTabOnlyWarning: an existing dev branch keeps its zips serving', () => {
+  const text = devTabOnlyWarning(parseInclude(['--include=updater-ui']), {branchExists: true});
+  assert.match(text, /NOTE/);
+  assert.match(text, /only the tab moves/);
+  assert.doesNotMatch(text, /WARNING/);
+});
+
+test('devBranchStrandWarning: the tab role counts as a package role', () => {
+  // A branch that carries the tab is not the "no zips at all" strand shape.
+  assert.equal(
+    devBranchStrandWarning(parseInclude(['--include=updater-ui']), {branchExists: false}),
+    ''
+  );
 });
 
 test('noBinaryScope: true only when both binary roles are left out', () => {
@@ -111,6 +183,17 @@ test('includeBanner: names the included roles, the held-back ones and the frozen
   assert.match(banner, /Held back \(not built, scanned or uploaded\): installer, helper/);
   assert.match(banner, /hashes\.json entries stay frozen/);
   assert.match(banner, /#157/);
+});
+
+test('includeBanner: a packages run does not claim the tab is held back (it ships with it)', () => {
+  const banner = includeBanner(parseInclude(['--include=packages,installer']), {mode: 'prod'});
+  assert.doesNotMatch(banner, /updater-ui/);
+});
+
+test('includeBanner: a tab-only run names the packages role as held back', () => {
+  const banner = includeBanner(parseInclude(['--include=updater-ui']), {mode: 'prod'});
+  assert.match(banner, /publishing: updater-ui/);
+  assert.match(banner, /Held back \(not built, scanned or uploaded\): packages, installer, helper/);
 });
 
 test('includeBanner: --local explains the snapshot variant instead', () => {

@@ -168,8 +168,10 @@ import {
 import {isWorkflowRun, runProdCiGuard} from './prodCiGuard.mjs';
 import {
   devBranchStrandWarning,
+  devTabOnlyWarning,
   includeBanner,
   noBinaryScope,
+  packageInScope,
   pagesCommitMessage,
   parseInclude,
   scopeFor,
@@ -397,21 +399,31 @@ function snapshotDir() {
  * entries.
  */
 /**
- * Package names staged for release/Pages upload: the packages scope always
- * builds every zip (issue #354), so this is the full set. Any other scope
+ * Package names staged for release/Pages upload. The `packages` scope always
+ * builds every zip (issue #354), so that is the full set; the `updater-ui`
+ * scope stages the tab alone, which is what makes a tab-only hotfix possible
+ * (issue #383) — the other two are not rebuilt, re-staged or re-uploaded, and
+ * their manifest entries stay frozen. A run with no package role in scope
  * stages no zips at all — falling back to `builtZips` (always empty there)
  * keeps an installer/helper-only run from readFileSync-ing files that were
  * never staged (CodeRabbit on #355).
  */
 function stagedZipNames(builtZips) {
-  return SCOPE.packages ? PACKAGES.map(p => p.name) : builtZips;
+  const scoped = PACKAGES.filter(p => packageInScope(SCOPE, p.name)).map(p => p.name);
+  return scoped.length > 0 ? scoped : builtZips;
 }
 
-async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns) {
+async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns, scope) {
   const updated = {};
   const built = [];
 
   for (const {name, dir} of PACKAGES) {
+    // A package outside the scope is not hashed, not rebuilt and contributes
+    // no manifest entry — its stored entry stays frozen (the role contract).
+    if (!packageInScope(scope, name)) {
+      info(`  ${bold(name.padEnd(10))} ${dim('held back (not in --include)')}`);
+      continue;
+    }
     // NOTE: the zip is created for EVERY package in scope, changed or not
     // (issue #354): the release surfaces must always carry the complete set
     // (ADR 0019), so a run that rebuilds only one zip still stages the other
@@ -447,8 +459,9 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns)
         `${dim(shortHash(hash))}${reason ? `  ${dim(reason)}` : ''}`
     );
 
-    // Always stage the zip (issue #354 — the release surfaces re-upload the
-    // complete set); `built` above stays the change signal.
+    // Always stage the zip (issue #354 — within the packages scope the release
+    // surfaces re-upload the complete set); `built` above stays the change
+    // signal. A tab-only run stages the one zip its scope covers.
     await createZip.createZip(
       dir,
       zipPath(name),
@@ -1087,8 +1100,8 @@ function writeSnapshot({merged, platforms, dir, label, scope, builtInstallers = 
       fs.copyFileSync(src, dst);
     }
   };
-  if (scope.packages) {
-    for (const {name} of PACKAGES) reuse(zipFileName(name), zipPath(name));
+  for (const {name} of PACKAGES) {
+    if (packageInScope(scope, name)) reuse(zipFileName(name), zipPath(name));
   }
   for (const p of platforms) {
     if (scope.installer) reuse(installerAssetName(p), installerPath(p));
@@ -1099,7 +1112,9 @@ function writeSnapshot({merged, platforms, dir, label, scope, builtInstallers = 
   // into the SAME folder: drop a held-back role's artifacts from it, or a stale
   // binary from an earlier full run would misrepresent this partial one.
   const stale = [];
-  if (!scope.packages) for (const {name} of PACKAGES) stale.push(zipFileName(name));
+  for (const {name} of PACKAGES) {
+    if (!packageInScope(scope, name)) stale.push(zipFileName(name));
+  }
   for (const p of platforms) {
     if (!scope.installer) stale.push(installerAssetName(p), installerShaAssetName(p));
     if (!scope.helper) stale.push(helperAssetName(p), helperShaAssetName(p));
@@ -1341,6 +1356,13 @@ async function main() {
         }
       }
       warn(devBranchStrandWarning(INCLUDE, {branchExists: exists}));
+      // The tab-only variant is dev-only, like the warning above it: prod keeps
+      // utils.zip / fx-folder.zip on the existing `latest` release + gh-pages, so
+      // a prod tab-only run strands nothing (its banner already names the
+      // held-back roles).
+      if (PUBLISH_MODE === 'dev') {
+        warn(devTabOnlyWarning(INCLUDE, {branchExists: exists}));
+      }
     }
 
     // Load createZip.mjs: its top-level block regenerates the untracked
@@ -1356,12 +1378,13 @@ async function main() {
     section('Packages');
     let zipUpdated = {};
     let builtZips = [];
-    if (SCOPE.packages) {
+    if (SCOPE.packages || SCOPE.updaterUi) {
       ({updated: zipUpdated, built: builtZips} = await buildPackages(
         createZip,
         storedHashes,
         zipPatterns,
-        hashPatterns
+        hashPatterns,
+        SCOPE
       ));
     } else {
       warn('packages not in --include — their hashes.json entries stay frozen');
