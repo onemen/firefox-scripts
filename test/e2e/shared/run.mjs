@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-import {REPO_ROOT, check, createCounter} from './helpers.mjs';
+import {REPO_ROOT, check, createCounter, pruneStaleTempRoots} from './helpers.mjs';
 import {findSnapshot} from './browsers.mjs';
 
 const CONFIG_PATH = path.join(REPO_ROOT, 'e2e.config.mjs');
@@ -148,6 +148,10 @@ async function main() {
   const opts = parseArgs();
   const cfg = await resolveConfig(opts);
   const counter = createCounter();
+
+  // Reclaim temp roots stranded by earlier runs before this one starts (the
+  // suites are spawned as children, so they would only see their own).
+  pruneStaleTempRoots();
 
   console.log('Firefox Scripts E2E');
   console.log('===================\n');

@@ -67,6 +67,8 @@ import {
   rmDir,
   summary,
   localConfigOverrides,
+  pruneStaleTempRoots,
+  noteLeakedTempRoot,
 } from '../shared/helpers.mjs';
 import {
   startLocalManifestServer,
@@ -4039,7 +4041,10 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
     }
   } finally {
     if (!opts.keepProfile) rmDir(seeded.profileDir);
-    else console.log(`  [keep] profile: ${seeded.profileDir}`);
+    else {
+      console.log(`  [keep] profile: ${seeded.profileDir}`);
+      noteLeakedTempRoot(seeded.profileDir);
+    }
   }
   return null;
 }
@@ -4412,6 +4417,11 @@ async function run() {
   const opts = parseArgs();
   const counter = createCounter();
 
+  // Reclaim profiles stranded by an earlier killed run (every scenario mkdtemps
+  // one, and the per-scenario `finally` never runs when the process is
+  // interrupted). Also safe when the suite is launched directly.
+  pruneStaleTempRoots();
+
   const snapshotDir = opts.snapshot || findSnapshot({branchCheck: false})?.dir;
   if (!snapshotDir) {
     console.error('No snapshot found. Run `pnpm snapshot:dev` first.');
@@ -4712,7 +4722,13 @@ async function run() {
       }
     }
   } finally {
-    if (!opts.keepProfile) {
+    if (opts.keepProfile) {
+      // A deliberately kept profile is still litter: record it so the next run's
+      // age prune reclaims it instead of it lingering forever.
+      for (const p of profiles) {
+        if (p) noteLeakedTempRoot(p);
+      }
+    } else {
       for (const p of profiles) {
         if (p) rmDir(p);
       }

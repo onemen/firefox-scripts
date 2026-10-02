@@ -1,0 +1,192 @@
+// test/unit/e2e/scriptsUpdaterUiTemp.test.mjs — the updater's temp-dir hygiene.
+//
+// ensureUpdaterUi() stages updater-ui.zip in PathUtils.tempDir and removes the
+// staging dir in a `finally` — which never runs when the browser is killed
+// mid-swap (a shutdown during the copy, an OS crash). Four such dirs, each
+// still holding updater-ui.zip plus the extracted tree, were sitting in the
+// user's Temp on 2026-10-02. Two defences are pinned here:
+//
+//   1. the staging dir is named per CHECK (uiTempDirName: `fxs-updater-ui-<pid>`
+//      + timestamp + counter), so two checks — in one process or two — can never
+//      collide over one dir, and nothing is cleared before use;
+//   2. sweepStaleUpdaterUiTempDirs() reclaims dirs older than a day, which is
+//      every stranded one and never a live session's (minutes old).
+//
+// The module is evaluated in a vm sandbox (same approach as
+// scriptsUpdater-hash.test.mjs) so the real PathUtils/IOUtils surface can be
+// backed by the real filesystem in a temp dir. Arrays it returns are sandbox
+// arrays: spread them into this realm before deepEqual (the prototype differs).
+
+import {test, after} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import vm from 'node:vm';
+import {fileURLToPath} from 'node:url';
+import {comparePlatformVersions, resolveSandboxLazyModule} from '../../shared/sandboxServices.mjs';
+
+const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+const MODULE_PATH = path.join(
+  REPO_ROOT,
+  'core',
+  'chrome',
+  'utils',
+  'updater',
+  'scriptsUpdater.sys.mjs'
+);
+
+const tempRoots = [];
+after(() => {
+  for (const root of tempRoots) {
+    try {
+      fs.rmSync(root, {recursive: true, force: true});
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+/** Real-fs IOUtils over a sandbox temp dir. */
+function makeIoUtils() {
+  return {
+    getChildren: async dir => fs.readdirSync(dir),
+    stat: async p => fs.statSync(p),
+    remove: async (p, {recursive = false, ignoreAbsent = false} = {}) => {
+      try {
+        fs.rmSync(p, {recursive, force: true});
+      } catch (err) {
+        if (!ignoreAbsent) throw err;
+      }
+    },
+  };
+}
+
+/** Evaluate scriptsUpdater.sys.mjs with just enough sandbox to reach the sweep. */
+function loadUpdater(tempDir) {
+  const source = fs
+    .readFileSync(MODULE_PATH, 'utf-8')
+    .replace(/\r\n/g, '\n')
+    .replace(/^export /gm, '');
+  const sandbox = {
+    ChromeUtils: {
+      generateQI: () => () => {},
+      // The module resolves every lazy module through its one
+      // defineESModuleGetters block, including the version-conditional
+      // SessionStore spec — routed through the shared dispatcher, so a spec this
+      // suite does not know about fails loudly instead of arriving undefined.
+      defineESModuleGetters: (target, getters) => {
+        for (const [name, spec] of Object.entries(getters)) {
+          target[name] =
+            String(spec).includes('Timer') ?
+              (cb, ms) => setTimeout(cb, ms)
+            : resolveSandboxLazyModule(name, spec);
+        }
+      },
+      importESModule: () => ({CONFIG: {HASHES_URL: '', ZIP_BASE_URL: '', UI_BASE_URL: ''}}),
+    },
+    Services: {
+      prefs: {getCharPref: () => '', getStringPref: () => '', setStringPref: () => {}},
+      appinfo: {OS: 'WINNT', processID: 4242, platformVersion: '140.0'},
+      // The module's version-conditional SessionStore lazy block runs at load
+      // and resolves its spec through Services.vc — without the stub, loading
+      // the module throws before any test body runs.
+      vc: {compare: comparePlatformVersions},
+    },
+    PathUtils: {tempDir, profileDir: tempDir, join: path.join},
+    IOUtils: makeIoUtils(),
+    Cc: {},
+    Ci: new Proxy({}, {get: () => ({})}),
+    console: {log() {}, warn() {}, error() {}, debug() {}},
+    TextEncoder,
+    TextDecoder,
+    atob,
+    queueMicrotask,
+  };
+  vm.runInContext(source, vm.createContext(sandbox), {filename: 'scriptsUpdater.sys.mjs'});
+  return sandbox;
+}
+
+/** A temp dir plus two staging dirs inside it; {root, stale, live}. */
+function makeTempFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-ui-temp-'));
+  tempRoots.push(root);
+  const stale = path.join(root, 'fxs-updater-ui-1700000000000');
+  const live = path.join(root, 'fxs-updater-ui-4242-1700000000001-1');
+  for (const dir of [stale, live]) {
+    fs.mkdirSync(path.join(dir, 'extracted'), {recursive: true});
+    fs.writeFileSync(path.join(dir, 'updater-ui.zip'), 'zip');
+    fs.writeFileSync(path.join(dir, 'extracted', 'updater.html'), '<html>');
+  }
+  // A foreign temp entry that must never be touched.
+  fs.mkdirSync(path.join(root, 'someone-elses-dir'), {recursive: true});
+  return {root, stale, live};
+}
+
+/** Backdate a tree's mtime (the sweep reads mtime, not ctime). */
+function backdate(dir, ms) {
+  const when = new Date(Date.now() - ms);
+  fs.utimesSync(dir, when, when);
+}
+
+test('sweepStaleUpdaterUiTempDirs: removes a stranded staging dir, keeps a live one', async () => {
+  const {root, stale, live} = makeTempFixture();
+  backdate(stale, 48 * 60 * 60 * 1000);
+  const sandbox = loadUpdater(root);
+
+  const removed = await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: root});
+
+  assert.deepEqual([...removed], ['fxs-updater-ui-1700000000000']);
+  assert.equal(fs.existsSync(stale), false);
+  assert.equal(fs.existsSync(live), true, "this session's staging dir stays");
+  assert.equal(fs.existsSync(path.join(root, 'someone-elses-dir')), true);
+});
+
+test('sweepStaleUpdaterUiTempDirs: a fresh dir is never swept', async () => {
+  const {root, live} = makeTempFixture();
+  const sandbox = loadUpdater(root);
+
+  assert.deepEqual([...(await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: root}))], []);
+  assert.equal(fs.existsSync(live), true);
+});
+
+test('sweepStaleUpdaterUiTempDirs: maxAgeMs is the only knob, and it is forgiving', async () => {
+  const {root, stale} = makeTempFixture();
+  backdate(stale, 30 * 60 * 1000); // 30 minutes
+  const sandbox = loadUpdater(root);
+
+  assert.deepEqual([...(await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: root}))], []);
+  assert.deepEqual(
+    [...(await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: root, maxAgeMs: 60 * 1000}))],
+    ['fxs-updater-ui-1700000000000']
+  );
+
+  // A temp dir that cannot be listed must degrade to "removed nothing", never
+  // to a thrown rejection (init calls this fire-and-forget).
+  assert.deepEqual(
+    [...(await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: path.join(root, 'nope')}))],
+    []
+  );
+});
+
+test('the staging dir name is unique per check, so concurrent checks cannot collide', () => {
+  const {root} = makeTempFixture();
+  const sandbox = loadUpdater(root);
+  // Module-private, but stripping `export ` leaves it a sandbox global — the
+  // same trick scriptsUpdater-hash.test.mjs uses.
+  //
+  // checkForUpdates has no in-flight guard, so two checks CAN overlap (window
+  // churn + the daily timer + the startup call). A shared per-process dir would
+  // let one delete the other's tree mid-extract — hence the timestamp suffix.
+  const first = sandbox.uiTempDirName();
+  const second = sandbox.uiTempDirName();
+  assert.match(first, /^fxs-updater-ui-4242-\d+-\d+$/, 'process id + timestamp + counter');
+  assert.notEqual(first, second, 'two calls in the same process must not share a staging dir');
+});
+
+test('without a process id the staging name still carries the per-check suffix', () => {
+  const {root} = makeTempFixture();
+  const sandbox = loadUpdater(root);
+  sandbox.Services.appinfo.processID = undefined;
+  assert.match(sandbox.uiTempDirName(), /^fxs-updater-ui-x-\d+-\d+$/);
+});
