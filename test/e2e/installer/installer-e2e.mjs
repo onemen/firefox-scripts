@@ -965,7 +965,29 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     // Detection must see both copies as distinct rows (strong cmdline profile
     // match; rows selected by profile path — C returns the cmdline value
     // verbatim, immune to GetModuleFileName casing/short-path differences).
+    //
+    // Rescan, don't just poll: the installer scans ONCE at startup and
+    // /api/browsers serves that snapshot ("Return cached browser list — do NOT
+    // rescan", installer/src/main.c). A copy still doing its first-run profile
+    // setup is invisible to that scan, and nothing would ever refresh it — so a
+    // runner where the installer starts a beat late (1.5s on the loaded macOS
+    // runner of #391, against 9ms when green) left RS-05 re-reading the same
+    // "Found 0" for its whole 20s budget and then failing the whole layer.
+    // /api/rescan exists for exactly this case (a browser that appeared after
+    // the installer started); the assertion itself is unchanged.
+    let lastRescan = 0;
     const rows = await pollUntil(async () => {
+      if (Date.now() - lastRescan > 2_000) {
+        lastRescan = Date.now();
+        try {
+          await fetch(`${base}/api/rescan${tq}`, {
+            method: 'POST',
+            signal: AbortSignal.timeout(3000),
+          });
+        } catch {
+          // Server not up yet — the /api/browsers read below reports that.
+        }
+      }
       try {
         const res = await fetch(`${base}/api/browsers`, {signal: AbortSignal.timeout(3000)});
         const arr = JSON.parse(await res.text());
@@ -976,10 +998,19 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
         return null;
       }
     }, 20_000);
+    // A dead copy and a stale scan look identical to the poll above; say which
+    // one it was, because the fix for them is completely different.
+    const stillAlive =
+      (firefoxPidsForProfile(workDir, profA) || []).length > 0 &&
+      (firefoxPidsForProfile(workDir, profB) || []).length > 0;
     check(
       counter,
       Boolean(rows),
-      'RS-05 installer detected both installs as distinct rows (same image name, different binary paths)'
+      'RS-05 installer detected both installs as distinct rows (same image name, different binary paths)',
+      rows ? ''
+      : stillAlive ?
+        "both copies are alive but absent from the installer's browser list after repeated /api/rescan"
+      : 'at least one copy exited before the installer could detect it'
     );
     if (!rows) throw new Error('installer did not detect both copies');
     check(
