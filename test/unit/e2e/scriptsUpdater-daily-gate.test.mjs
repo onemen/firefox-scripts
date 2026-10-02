@@ -27,6 +27,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import vm from 'vm';
 import {fileURLToPath} from 'node:url';
+import {comparePlatformVersions, resolveSandboxLazyModule} from '../../shared/sandboxServices.mjs';
 
 // Temp-leak hygiene (see buildEpoch.test.mjs): the PathUtils profile dir seeded
 // per loadUpdater() registers here and one sweep removes them all after the
@@ -219,11 +220,18 @@ const updaterConfig = () => ({
  * `tempRoots` (swept once after the file's tests finish — see the import
  * block).
  */
-function loadUpdater({store = {}, routes = {}} = {}) {
-  const source = fs
+function loadUpdater({store = {}, routes = {}, captureExports = false} = {}) {
+  let source = fs
     .readFileSync(MODULE_PATH, 'utf-8')
     .replace(/\r\n/g, '\n')
     .replace(/^export /gm, '');
+  if (captureExports) {
+    // The E2E driver's view of the module: the exports it imports by name.
+    // (loadUpdater strips `export ` so the vm can run the body; this puts the
+    // namespace back on the sandbox global, exactly as a privileged importer
+    // would see it.)
+    source += '\n;globalThis.__moduleExports = {checkForUpdates, initScriptsUpdater};\n';
+  }
   const dirs = {
     'utils': os.tmpdir(),
     'fx-folder': os.tmpdir(),
@@ -232,6 +240,19 @@ function loadUpdater({store = {}, routes = {}} = {}) {
   const sandbox = {
     ChromeUtils: {
       generateQI: () => () => {},
+      defineESModuleGetters: (target, getters) => {
+        for (const [name, spec] of Object.entries(getters)) {
+          if (String(spec).includes('Timer')) {
+            target[name] = cb => setTimeout(cb, 0);
+          } else {
+            // SessionStore (version-conditional spec) and Downloads come from
+            // the shared dispatcher — one place that knows the module's lazy
+            // set, with the real namespaces' shape so sessionRestoredWait()
+            // resolves instead of burning its 10 s fallback on a TypeError.
+            target[name] = resolveSandboxLazyModule(name, spec);
+          }
+        }
+      },
       importESModule(spec) {
         if (spec.includes('updater-config')) {
           return {CONFIG: updaterConfig()};
@@ -241,10 +262,41 @@ function loadUpdater({store = {}, routes = {}} = {}) {
     },
     Services: {
       prefs: makePrefs(store),
-      appinfo: {OS: process.platform === 'win32' ? 'WINNT' : 'Linux', version: '140.0'},
+      appinfo: {
+        OS: process.platform === 'win32' ? 'WINNT' : 'Linux',
+        version: '140.0',
+        platformVersion: '140.0',
+      },
+      vc: {compare: comparePlatformVersions},
       dirsvc: {get: () => ({path: dirs['fx-folder']})},
       io: makeIo(routes),
       scriptSecurityManager: {getSystemPrincipal: () => ({})},
+      // The attach block enumerates all browser windows; this suite's fake
+      // window is the only one the module ever needs to see.
+      obs: {
+        _observers: {},
+        addObserver(cb, topic) {
+          this._observers[topic] = this._observers[topic] || [];
+          this._observers[topic].push(cb);
+        },
+        removeObserver(cb, topic) {
+          this._observers[topic] = (this._observers[topic] || []).filter(o => o !== cb);
+        },
+        /** Test seam: fire a topic exactly like Services.obs.notifyObservers. */
+        notify(topic) {
+          for (const cb of this._observers[topic] || []) cb(null, topic);
+        },
+      },
+      wm: {
+        getEnumerator: () => {
+          let i = 0;
+          const wins = [];
+          return {
+            hasMoreElements: () => i < wins.length,
+            getNext: () => wins[i++],
+          };
+        },
+      },
     },
     Cc: makeCc(),
     Ci: new Proxy({}, {get: () => ({})}),
@@ -267,6 +319,7 @@ function loadUpdater({store = {}, routes = {}} = {}) {
       makeDirectory: async (p, opts) =>
         fs.mkdirSync(p, {recursive: Boolean(opts?.ignoreExisting ?? opts?.recursive)}),
     },
+    setTimeout,
     console,
     TextEncoder,
     TextDecoder,
@@ -366,6 +419,7 @@ test('up-to-date check records the day, so new sessions do not re-run it', async
   writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     const settled = await waitFor(() => store[PREF_LAST_CHECK] === TODAY);
     assert.ok(settled, 'the daily pref was not written on the up-to-date path');
     assert.equal(store[PREF_LAST_SHOWN], undefined, 'the retired shown pref stays dead');
@@ -382,6 +436,7 @@ test('same-day re-check after a recorded day is a no-op (manifest not refetched)
   writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     assert.ok(await waitFor(() => store[PREF_LAST_CHECK] === TODAY));
     const fetchesAfterFirst = sandbox.Services.io._state.fetches;
     assert.ok(fetchesAfterFirst >= 1, 'the first check fetched the manifest');
@@ -389,6 +444,7 @@ test('same-day re-check after a recorded day is a no-op (manifest not refetched)
     // A "new session": init runs again the same day. The gate must exit BEFORE
     // the fetch — zero additional manifest fetches, nothing else observable.
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(
       sandbox.Services.io._state.fetches,
@@ -407,6 +463,7 @@ test('the daily pref from earlier today skips the check entirely', async () => {
   writeUpToDateWorld(sandbox.Services.io, layout);
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(sandbox.Services.io._state.fetches, 0, 'no manifest fetch');
   } finally {
@@ -425,6 +482,7 @@ test('unreachable manifest: NO pref written — the next session re-checks', asy
   fs.writeFileSync(path.join(layout.utilsDir, 'updater.js'), 'real code');
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     // Give the failing check ample time to settle, then assert the negative.
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(
@@ -448,6 +506,7 @@ test('malformed manifest: NO pref written — a broken publish must not consume 
   fs.writeFileSync(path.join(layout.utilsDir, 'updater.js'), 'real code');
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(
       store[PREF_LAST_CHECK],
@@ -481,6 +540,7 @@ test('incomplete manifest (fx-folder entry missing): NO pref written — skipped
   });
   try {
     sandbox.initScriptsUpdater(makeFakeWindow());
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(
       store[PREF_LAST_CHECK],
@@ -519,6 +579,7 @@ test('pending update: the scheduler writes NO pref, the tab opens (the tab recor
   const win = makeFakeWindow();
   try {
     sandbox.initScriptsUpdater(win);
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
     assert.ok(
       await waitFor(() => win.openedTabs.length > 0, 3000),
       'the update tab path should have been reached'
@@ -528,6 +589,67 @@ test('pending update: the scheduler writes NO pref, the tab opens (the tab recor
       undefined,
       'the shown day belongs to the TAB (updater.js engineInit), not the scheduler'
     );
+  } finally {
+    layout.cleanup();
+  }
+});
+
+test('driver seam: checkForUpdates is exported and re-decides on demand (#309)', async () => {
+  const store = {};
+  const {sandbox} = loadUpdater({store, captureExports: true});
+  const layout = makeProfileLayout(sandbox);
+  writeUpToDateWorld(sandbox.Services.io, layout);
+  const win = makeFakeWindow();
+  try {
+    sandbox.initScriptsUpdater(win);
+    sandbox.Services.obs.notify('sessionstore-windows-restored');
+    assert.ok(await waitFor(() => store[PREF_LAST_CHECK] === TODAY));
+    assert.equal(
+      typeof sandbox.__moduleExports?.checkForUpdates,
+      'function',
+      'the orchestrator must be exported — the E2E driver calls it by name'
+    );
+
+    // The driver's loop: same-day call first — the gate makes it a no-op, which
+    // is why driver mode has to be able to clear the gate (a user pref).
+    const fetchesAfterStartup = sandbox.Services.io._state.fetches;
+    await sandbox.__moduleExports.checkForUpdates();
+    assert.equal(
+      sandbox.Services.io._state.fetches,
+      fetchesAfterStartup,
+      "a same-day call stays gated — the daily pref is the driver's input knob"
+    );
+
+    // Clear the gate, flip the world to stale, call again: the exported entry
+    // point re-runs the whole decision and opens the tab, in-session. A current
+    // updater UI is installed first, so ensureUpdaterUi keeps it (no zip fetch)
+    // and the tab-open path is actually reached.
+    const uiDir = path.join(sandbox.PathUtils.profileDir, 'chrome', 'utils', 'updater', 'ui');
+    fs.mkdirSync(uiDir, {recursive: true});
+    fs.writeFileSync(path.join(uiDir, 'updater.html'), '<html></html>');
+    delete store[PREF_LAST_CHECK];
+    const files = ['updater.js'];
+    const manifest = {
+      'utils': {
+        hash: referenceFilesHash(files, layout.utilsDir) + 'stale',
+        files,
+        date: '2026-09-26',
+      },
+      'fx-folder': {
+        hash: referenceFilesHash(['config.js'], layout.greDir),
+        files: ['config.js'],
+        date: '2026-09-26',
+      },
+    };
+    Object.assign(sandbox.Services.io._state.routes, {
+      [MANIFEST_URL]: {status: 200, body: JSON.stringify(manifest)},
+    });
+    await sandbox.__moduleExports.checkForUpdates();
+    assert.ok(
+      sandbox.Services.io._state.fetches > fetchesAfterStartup,
+      'the re-run after clearing the gate must fetch the manifest again'
+    );
+    assert.ok(win.openedTabs.length > 0, 'the pending-update decision opens the tab');
   } finally {
     layout.cleanup();
   }
