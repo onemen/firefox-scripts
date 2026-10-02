@@ -6,9 +6,9 @@
 // still holding updater-ui.zip plus the extracted tree, were sitting in the
 // user's Temp on 2026-10-02. Two defences are pinned here:
 //
-//   1. the staging dir is named per browser PROCESS, so the several checks one
-//      session runs share one dir (cleared before each use) and two processes
-//      never collide over it;
+//   1. the staging dir is named per CHECK (uiTempDirName: `fxs-updater-ui-<pid>`
+//      + timestamp + counter), so two checks — in one process or two — can never
+//      collide over one dir, and nothing is cleared before use;
 //   2. sweepStaleUpdaterUiTempDirs() reclaims dirs older than a day, which is
 //      every stranded one and never a live session's (minutes old).
 //

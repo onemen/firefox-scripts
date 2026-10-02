@@ -1038,6 +1038,39 @@ test('pruneStaleDownloadCache: drops aged installers, keeps fresh and foreign fi
   }
 });
 
+test('pruneStaleDownloadCache: a multi-part installer extension counts (.tar.xz)', () => {
+  // `path.extname` returns only the LAST extension, so a `.tar.xz` name read as
+  // `.xz` and the list's multi-part entries never matched: an aged Linux tarball
+  // setup was invisible to the sweep. The `-setup` marker still gates it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-prune-tar-'));
+  try {
+    for (const name of ['firefox-setup.tar.xz', 'firefox-portable-setup.tar.gz', 'notes.tar.xz']) {
+      fs.writeFileSync(path.join(dir, name), 'x');
+    }
+    const {removed, kept} = pruneStaleDownloadCache({
+      dir,
+      maxAgeMs: 0,
+      now: Date.now() + 60_000,
+      log: () => {},
+    });
+    assert.deepEqual(removed.map(f => path.basename(f)).sort(), [
+      'firefox-portable-setup.tar.gz',
+      'firefox-setup.tar.xz',
+    ]);
+    assert.deepEqual(
+      kept.map(f => path.basename(f)),
+      [],
+      'kept reports only installers left behind — a foreign file is never considered'
+    );
+    assert.ok(
+      fs.existsSync(path.join(dir, 'notes.tar.xz')),
+      'a tarball without the -setup marker is never ours to delete'
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('pruneStaleDownloadCache: a just-downloaded installer survives (live leg)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-prune-fresh-'));
   try {

@@ -284,16 +284,12 @@ export function downloadDir() {
   return process.env.BROWSER_DL_DIR || os.tmpdir();
 }
 
-/** Extensions an installer download can have. */
-const INSTALLER_EXTS = new Set([
-  '.exe',
-  '.dmg',
-  '.pkg',
-  '.AppImage',
-  '.tar.gz',
-  '.tar.xz',
-  '.tar.bz2',
-]);
+/**
+ * Extensions an installer download can have. Multi-part ones are included, so
+ * this list is matched as a SUFFIX list (`endsWith`), never through
+ * `path.extname` — which returns only the last extension.
+ */
+const INSTALLER_EXTS = ['.exe', '.dmg', '.pkg', '.AppImage', '.tar.gz', '.tar.xz', '.tar.bz2'];
 
 /**
  * Is this a cached installer file? Both halves are literal — no regex — so the
@@ -302,7 +298,11 @@ const INSTALLER_EXTS = new Set([
  * versioned `…-setup-1.0.exe`) and the extension is one a browser ships as.
  */
 function isCachedInstallerFile(name) {
-  return name.includes('-setup') && INSTALLER_EXTS.has(path.extname(name));
+  // endsWith over the suffix list, not `INSTALLER_EXTS.has(path.extname(name))`:
+  // extname returns only the LAST extension, so `.tar.xz` read as `.xz` and the
+  // three multi-part entries could never match — an aged
+  // `firefox-setup.tar.xz` stayed in the cache forever.
+  return name.includes('-setup') && INSTALLER_EXTS.some(ext => name.endsWith(ext));
 }
 
 const DL_DAY_MS = 24 * 60 * 60 * 1000;
