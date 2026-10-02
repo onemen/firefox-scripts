@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
+import {comparePlatformVersions, resolveSandboxLazyModule} from '../../shared/sandboxServices.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const MODULE_PATH = path.join(
@@ -70,11 +71,27 @@ function loadUpdater(tempDir) {
   const sandbox = {
     ChromeUtils: {
       generateQI: () => () => {},
+      // The module resolves every lazy module through its one
+      // defineESModuleGetters block, including the version-conditional
+      // SessionStore spec — routed through the shared dispatcher, so a spec this
+      // suite does not know about fails loudly instead of arriving undefined.
+      defineESModuleGetters: (target, getters) => {
+        for (const [name, spec] of Object.entries(getters)) {
+          target[name] =
+            String(spec).includes('Timer') ?
+              (cb, ms) => setTimeout(cb, ms)
+            : resolveSandboxLazyModule(name, spec);
+        }
+      },
       importESModule: () => ({CONFIG: {HASHES_URL: '', ZIP_BASE_URL: '', UI_BASE_URL: ''}}),
     },
     Services: {
       prefs: {getCharPref: () => '', getStringPref: () => '', setStringPref: () => {}},
-      appinfo: {OS: 'WINNT', processID: 4242},
+      appinfo: {OS: 'WINNT', processID: 4242, platformVersion: '140.0'},
+      // The module's version-conditional SessionStore lazy block runs at load
+      // and resolves its spec through Services.vc — without the stub, loading
+      // the module throws before any test body runs.
+      vc: {compare: comparePlatformVersions},
     },
     PathUtils: {tempDir, profileDir: tempDir, join: path.join},
     IOUtils: makeIoUtils(),
