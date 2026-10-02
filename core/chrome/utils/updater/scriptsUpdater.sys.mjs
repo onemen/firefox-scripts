@@ -1353,7 +1353,64 @@ export async function extractZipFlatten(zipPath, destDir) {
   return base;
 }
 
-/** Copy files listed in the manifest from srcDir to dstDir (overwrite). */
+/**
+ * Gecko's names for the two Win32 holds the C installer already classifies as
+ * "locked" (`is_file_locked` in installer/src/detect_browser.c: a read that
+ * fails with ERROR_SHARING_VIOLATION or ERROR_ACCESS_DENIED). In the running
+ * browser the same holds arrive as result names: another process — Defender
+ * scanning the fresh file, the indexer, the browser still reading the module
+ * being replaced — is holding it for a moment. Matching on the names (plus the
+ * plain-language spellings) keeps this working without depending on a numeric
+ * result table this scope does not otherwise use.
+ */
+const TRANSIENT_FILE_HOLD_RE =
+  /NS_ERROR_FILE_IS_LOCKED|NS_ERROR_FILE_ACCESS_DENIED|NS_ERROR_FILE_DEVICE_TOO_BUSY|sharing violation|being used by another process/i;
+
+/**
+ * True when `err` is a transient file hold worth retrying (see above).
+ *
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isTransientFileHold(err) {
+  const text = `${err?.name || ''} ${err?.message || ''} ${err?.result ?? ''}`;
+  return TRANSIENT_FILE_HOLD_RE.test(text);
+}
+
+/**
+ * Run `op`, retrying ONLY a transient file hold with a short exponential
+ * backoff (4 tries / 150 ms base ≈ 1 s per file). Every other error — and a
+ * hold that outlives the budget — propagates unchanged, so a genuinely
+ * read-only or missing target still fails loudly instead of being masked.
+ *
+ * @template T
+ * @param {() => Promise<T>} op
+ * @param {{attempts?: number; delayMs?: number}} [opts]
+ * @returns {Promise<T>}
+ */
+async function withFileHoldRetry(op, {attempts = 4, delayMs = 150} = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await op();
+    } catch (e) {
+      lastErr = e;
+      if (!isTransientFileHold(e) || attempt === attempts) throw e;
+      await new Promise(resolve => lazy.setTimeout(resolve, delayMs * 2 ** (attempt - 1)));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Copy files listed in the manifest from srcDir to dstDir (overwrite).
+ *
+ * The destination is the LIVE browser's own chrome tree (ProfD/chrome/utils),
+ * so a Windows hold on a file mid-copy is expected rather than exceptional:
+ * without the retry the whole install aborts with a raw NS_ERROR and leaves a
+ * partially updated tree (observed as the E2E class in #396). Failure is still
+ * reported — with the path — once the hold outlives the retry.
+ */
 export async function copyFileList(files, srcDir, dstDir) {
   for (const rel of files) {
     if (isUnsafeZipEntryName(rel)) {
@@ -1362,10 +1419,19 @@ export async function copyFileList(files, srcDir, dstDir) {
     const parts = rel.split('/');
     const srcPath = PathUtils.join(srcDir, ...parts);
     const dstPath = PathUtils.join(dstDir, ...parts);
-    await IOUtils.makeDirectory(PathUtils.parent(dstPath), {
-      ignoreExisting: true,
-      createAncestors: true,
-    });
-    await IOUtils.copy(srcPath, dstPath, {noOverwrite: false});
+    try {
+      await withFileHoldRetry(async () => {
+        await IOUtils.makeDirectory(PathUtils.parent(dstPath), {
+          ignoreExisting: true,
+          createAncestors: true,
+        });
+        await IOUtils.copy(srcPath, dstPath, {noOverwrite: false});
+      });
+    } catch (e) {
+      // Name the file: "install failed" with no path is unactionable, and the
+      // tree is now partially updated (the caller reports and the next check
+      // still sees the package as stale, so a retry is the recovery).
+      throw new Error(`Could not install ${rel} into ${dstDir}: ${e.message || e}`, {cause: e});
+    }
   }
 }

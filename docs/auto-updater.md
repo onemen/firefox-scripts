@@ -247,6 +247,16 @@ The updater's staging dir is `fxs-updater-ui-<pid>-<timestamp>-<counter>` in `Pa
 one per check, removed in a `finally`. A browser killed mid-swap (shutdown during the copy, a crash)
 skips that `finally`, so startup also reclaims any `fxs-updater-ui-*` dir older than 24h.
 
+The final copy lands in the **live** browser's own tree (`ProfD/chrome/utils`, and GreD for the
+config package), so a transient Windows hold is expected rather than exceptional: Defender scanning
+the file just written, the search indexer, or the browser still reading the module being replaced.
+Gecko reports it as `NS_ERROR_FILE_IS_LOCKED` / `NS_ERROR_FILE_ACCESS_DENIED` — the same two Win32
+failures `is_file_locked()` treats as "locked" in `installer/src/detect_browser.c` — so
+`copyFileList()` rides the hold out per file with a short bounded retry (4 tries, 150 ms base). Only
+a hold that outlives the budget fails, and that failure names the file it could not install: the
+tree is then partially updated, and the next check still reports the package stale, so re-running
+the install is the recovery. Non-hold errors are never retried.
+
 ### 5.2 Self-update
 
 - The scheduler (`scriptsUpdater.sys.mjs`) ships inside `utils.zip`; a utils update replaces it on
