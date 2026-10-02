@@ -27,6 +27,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import {writeFileSyncWithRetry} from './helpers.mjs';
 
 /** The real updater tab (what the scheduler opens, what the twin guard counts). */
 export const UPDATER_URL = 'chrome://firefox-scripts/content/ui/updater.html';
@@ -244,8 +245,11 @@ const DRIVER_PAGE_SOURCE = `<!doctype html>
 export function installDriverPage(chromeUtils) {
   const dir = path.join(chromeUtils, 'updater');
   fs.mkdirSync(dir, {recursive: true});
-  fs.writeFileSync(path.join(dir, DRIVER_PAGE), DRIVER_PAGE_SOURCE);
-  fs.writeFileSync(path.join(dir, DRIVER_SCRIPT), DRIVER_SCRIPT_SOURCE);
+  // Written mid-session, into the very directory the running browser has open
+  // as its chrome.manifest content root — a Windows lock (the browser reading
+  // the module, or a scanner) would fail a bare writeFileSync. Retry it.
+  writeFileSyncWithRetry(path.join(dir, DRIVER_PAGE), DRIVER_PAGE_SOURCE);
+  writeFileSyncWithRetry(path.join(dir, DRIVER_SCRIPT), DRIVER_SCRIPT_SOURCE);
   return DRIVER_URL;
 }
 

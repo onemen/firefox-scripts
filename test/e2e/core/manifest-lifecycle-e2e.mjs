@@ -46,6 +46,7 @@ import {
   tempDir,
   rmDir,
   summary,
+  readFileSyncWithRetry,
   pruneStaleTempRoots,
   noteLeakedTempRoot,
 } from '../shared/helpers.mjs';
@@ -204,7 +205,9 @@ function saveGreState(greDir) {
   const saved = {};
   for (const rel of ['config.js', 'defaults/pref/config-prefs.js']) {
     const p = path.join(greDir, ...rel.split('/'));
-    saved[p] = fs.existsSync(p) ? fs.readFileSync(p) : null;
+    // Retry the read: the browser rewrote config.js at startup and a previous
+    // scenario's browser may still be releasing it (Windows EBUSY).
+    saved[p] = fs.existsSync(p) ? readFileSyncWithRetry(p) : null;
   }
   return saved;
 }
@@ -330,14 +333,15 @@ function probeChunk(profileDir, byteOffset) {
   const logPath = path.join(profileDir, 'chrome-probe.log');
   if (!fs.existsSync(logPath)) return {size: 0, chunk: ''};
   const size = fs.statSync(logPath).size;
-  return {size, chunk: fs.readFileSync(logPath, 'utf-8').slice(byteOffset)};
+  // Both logs are appended to by the LIVE browser while these readers poll
+  // them, so a Windows hold would throw out of the poll (EBUSY). Retry.
+  return {size, chunk: readFileSyncWithRetry(logPath, 'utf-8').slice(byteOffset)};
 }
 
 function countLifeLines(profileDir) {
   const p = path.join(profileDir, 'ext-lifecycle.log');
   if (!fs.existsSync(p)) return 0;
-  return fs
-    .readFileSync(p, 'utf-8')
+  return readFileSyncWithRetry(p, 'utf-8')
     .split('\n')
     .filter(l => l.trim()).length;
 }
@@ -520,7 +524,8 @@ async function main() {
     // `content testext file:///…/extensions/testext@example.com/content/` —
     // size + the package registration line prove it is the real rewrite, not
     // an empty leftover.
-    const canonicalContent = fs.existsSync(canonical) ? fs.readFileSync(canonical, 'utf-8') : '';
+    const canonicalContent =
+      fs.existsSync(canonical) ? readFileSyncWithRetry(canonical, 'utf-8') : '';
     const canonicalOk =
       afterS1.length === 1 &&
       afterS1[0] === 'chrome.manifest' &&

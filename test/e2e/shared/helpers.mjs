@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {killProcessesByCmdline, waitForProcessesGone} from './processHygiene.mjs';
+import {isFileLockError} from './downloads.mjs';
 
 export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -556,6 +557,82 @@ export function noteLeakedTempRoot(dir) {
   } catch {
     // ignore
   }
+}
+
+// ── Windows lock-tolerant file I/O ─────────────────────────────────────────
+//
+// The updater E2E reads and writes files a RUNNING browser also holds: the
+// profile's chrome/utils tree the in-tab install copies into and re-hashes,
+// GreD's config.js the browser rewrote at startup, and the driver page the
+// harness drops next to the updater module mid-session. Windows denies the
+// access with EBUSY ("resource busy or locked") — or EPERM while a scanner
+// holds the file — and a bare readFileSync/writeFileSync then reds a leg even
+// though the install itself succeeded (floorp portable leg, 2026-10-02: an
+// uncaught EBUSY out of computeInstalledHash). These wrappers ride out a
+// transient hold with bounded exponential backoff; only a PERSISTENT lock
+// rethrows. The lock signature stays in downloads.mjs, next to the installer
+// retry that first needed it, so the harness keeps ONE lock predicate.
+
+/** Synchronous sleep — the repo's retry idiom (see runInstallerWithRetry). */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Run `fn`, retrying ONLY the Windows file-lock signature (isFileLockError)
+ * with exponential backoff. Any other error is rethrown at once, and a lock
+ * that outlives every attempt is rethrown as-is. Default 5 attempts / 300 ms
+ * base = ~4.5 s of patience, enough for a browser-exit flush or an AV scan to
+ * release a file without stretching a polling caller's deadline.
+ *
+ * @template T
+ * @param {() => T} fn
+ * @param {object} [opts]
+ * @param {number} [opts.attempts] Total tries (default 5)
+ * @param {number} [opts.delayMs] First backoff, doubling each retry (default
+ *   300)
+ * @param {(ms: number) => void} [opts.sleep] Test seam
+ * @param {string} [opts.platform] Test seam (defaults to process.platform)
+ * @returns {T}
+ */
+export function withLockRetrySync(
+  fn,
+  {attempts = 5, delayMs = 300, sleep = sleepSync, platform} = {}
+) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isFileLockError(err, platform ? {platform} : {}) || attempt === attempts) throw err;
+      sleep(delayMs * 2 ** (attempt - 1));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * readFileSync with the lock retry (see withLockRetrySync).
+ *
+ * @param {string} file
+ * @param {BufferEncoding | {encoding?: BufferEncoding; flag?: string}} [options]
+ * @returns {string | Buffer}
+ */
+export function readFileSyncWithRetry(file, options) {
+  return withLockRetrySync(() => fs.readFileSync(file, options));
+}
+
+/**
+ * writeFileSync with the lock retry (see withLockRetrySync).
+ *
+ * @param {string} file
+ * @param {string | Buffer} data
+ * @param {BufferEncoding | {encoding?: BufferEncoding; flag?: string; mode?: number}} [options]
+ * @returns {void}
+ */
+export function writeFileSyncWithRetry(file, data, options) {
+  withLockRetrySync(() => fs.writeFileSync(file, data, options));
 }
 
 /** rm a tree, reporting whether it is gone. Never throws. */
