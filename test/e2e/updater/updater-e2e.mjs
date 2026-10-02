@@ -67,6 +67,9 @@ import {
   rmDir,
   summary,
   localConfigOverrides,
+  readFileSyncWithRetry,
+  writeFileSyncWithRetry,
+  withLockRetrySync,
 } from '../shared/helpers.mjs';
 import {
   startLocalManifestServer,
@@ -488,11 +491,17 @@ function greNotWritableReason(greDir) {
   }
 }
 
+/**
+ * Snapshot GreD's config files. The reads ride out a Windows lock (see
+ * readFileSyncWithRetry): the browser rewrote config.js at startup and can
+ * still hold it — via its own handle or an AV scanner — while the harness seeds
+ * the next scenario.
+ */
 function saveGreConfig(greDir) {
   const snapshot = {};
   for (const name of ['config.js', 'defaults/pref/config-prefs.js']) {
     const p = path.join(greDir, ...name.split('/'));
-    snapshot[p] = fs.existsSync(p) ? fs.readFileSync(p) : null;
+    snapshot[p] = fs.existsSync(p) ? readFileSyncWithRetry(p) : null;
   }
   return snapshot;
 }
@@ -549,13 +558,14 @@ function computeInstalledHash(files, dir) {
     // writing — the updater copies these very files into the tree, and the
     // browser can still be mid-copy (or mid-shutdown, flushing prefs) when the
     // hash lands. That surfaces here as EBUSY: "resource busy or locked, open
-    // <path>" and killed the floorp portable leg outright (2026-10-02). Treat a
-    // locked read as "tree not settled yet": the polling caller
-    // (waitForTreeHash) re-hashes and the value converges once the writer
-    // closes. Any other read error still throws.
+    // <path>" and killed the floorp portable leg outright (2026-10-02). The
+    // read rides out a short hold (readFileSyncWithRetry); a lock that outlives
+    // that is still not an error, just "tree not settled yet" — the polling
+    // caller (waitForTreeHash) re-hashes and the value converges once the
+    // writer closes. Any other read error still throws.
     let bytes;
     try {
-      bytes = fs.readFileSync(abs);
+      bytes = readFileSyncWithRetry(abs);
     } catch (err) {
       if (isFileLockError(err)) return null;
       throw err;
@@ -1085,15 +1095,18 @@ function expectedStaleState(variant) {
  */
 function applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig) {
   const {utilsStale, configStale} = variantSpec(variant).disk;
+  // The fixture mutates a tree the RUNNING browser owns (it just hashed it),
+  // and may still hold a module open — Windows would deny the write with EBUSY.
+  // Retry through the shared lock helpers, like the reads in computeInstalledHash.
   const utilsFile = path.join(seeded.chromeUtils, FORCE_UTILS_STALE);
-  const utilsMarked = fs.readFileSync(utilsFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER);
+  const utilsMarked = readFileSyncWithRetry(utilsFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER);
   if (utilsStale && !utilsMarked) {
-    fs.appendFileSync(utilsFile, FORCE_UTILS_STALE_MARKER);
+    withLockRetrySync(() => fs.appendFileSync(utilsFile, FORCE_UTILS_STALE_MARKER));
   } else if (!utilsStale && utilsMarked) {
     // Restore the pristine module bytes: strip the marker line. The marker is
     // exactly what seedProfile appends, so removing it restores the zip state.
-    const content = fs.readFileSync(utilsFile, 'utf-8');
-    fs.writeFileSync(utilsFile, content.replace(FORCE_UTILS_STALE_MARKER, ''));
+    const content = readFileSyncWithRetry(utilsFile, 'utf-8');
+    writeFileSyncWithRetry(utilsFile, content.replace(FORCE_UTILS_STALE_MARKER, ''));
   }
 
   const configJs = path.join(findGreDir(firefoxBin), 'config.js');
@@ -1101,9 +1114,13 @@ function applyStaleVariantOnDisk(firefoxBin, seeded, variant, pristineConfig) {
     pristineConfig.toString('utf-8') +
     (configStale ? `\n${CONFIG_PROBE_SNIPPET}${FORCE_CONFIG_STALE_MARKER}` : '');
   try {
-    fs.writeFileSync(configJs, configContent);
+    writeFileSyncWithRetry(configJs, configContent);
   } catch (err) {
-    if (err.code === 'EPERM' || err.code === 'EACCES') {
+    // The retry already rode out a transient hold; reaching here means the
+    // GreD genuinely refuses the write (read-only install, or a lock that
+    // outlived every attempt). EPERM/EACCES = a read-only dir; EBUSY = a
+    // process still holding config.js.
+    if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'EBUSY') {
       // Friendly message for the local-dev case (read-only GreD); in CI the
       // portable install's GreD is always writable and this never fires.
       throw new Error(
@@ -1910,7 +1927,7 @@ async function runFoldedInstallApplies(counter, ctx) {
   check(
     counter,
     fs.existsSync(staleFile) &&
-      !fs.readFileSync(staleFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER),
+      !readFileSyncWithRetry(staleFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER),
     'install-applies: stale marker replaced by install'
   );
   check(
@@ -1922,7 +1939,8 @@ async function runFoldedInstallApplies(counter, ctx) {
   if (isSnap) {
     check(
       counter,
-      fs.existsSync(greConfig) && fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+      fs.existsSync(greConfig) &&
+        readFileSyncWithRetry(greConfig, 'utf-8').includes('e2e-test probe'),
       'install-applies: config probe NOT replaced (snap manual)'
     );
     check(
@@ -1933,7 +1951,8 @@ async function runFoldedInstallApplies(counter, ctx) {
   } else {
     check(
       counter,
-      fs.existsSync(greConfig) && !fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+      fs.existsSync(greConfig) &&
+        !readFileSyncWithRetry(greConfig, 'utf-8').includes('e2e-test probe'),
       'install-applies: config probe replaced by install'
     );
     check(
