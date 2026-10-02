@@ -82,9 +82,10 @@ on:
         description: 'Pin the browser version (empty = resolve the newest)'
         type: string
         default: ''
-        # Deliberately separate from `version`: this one never touches the browser
-        # resolver, it only tells the updater E2E harness to re-test a timing
-        # workaround instead of asserting it.      updater_probe_args:
+      # Deliberately separate from `version`: this one never touches the browser
+      # resolver, it only tells the updater E2E harness to re-test a timing
+      # workaround instead of asserting it.
+      updater_probe_args:
         description: >-
           ESR portable legs only: extra arguments for the updater E2E probe batch. Interpolated as a
           shell fragment, so quote anything with spaces, e.g. --repeat 20 --load 8 --debug
