@@ -206,6 +206,17 @@ try {
       } catch (e) {}
     },
   });
+  // SessionStore's restore notifications, mirrored so a scenario can assert the
+  // module's event-driven twin guard has a real trigger on this engine (it
+  // reacts to sessionstore-one-or-no-tab-restored; the old implementation
+  // polled). Purely observational here — the module observes the same topics
+  // itself, in its own module scope.
+  try {
+    const obsSvc = Cc['@mozilla.org/observer-service;1'].getService(Ci.nsIObserverService);
+    const obsSentinel = {observe: (subject, topic) => writeUtf8('SS-NOTIFY ' + topic + '\\n')};
+    obsSvc.addObserver(obsSentinel, 'sessionstore-one-or-no-tab-restored');
+    obsSvc.addObserver(obsSentinel, 'sessionstore-windows-restored');
+  } catch (e) {}
   // Watch for the updater tab and record the moment it appears — WebDriver
   // BiDi cannot reliably enumerate trusted chrome:// tabs on CI.
   let polls = 0;
@@ -253,7 +264,7 @@ try {
           // "opened" flag): the session-restore scenario asserts a FINAL state
           // of exactly one tab, and the road there can legitimately include a
           // transient twin (restored tab materializing after the guard's
-          // scan, then swept by the sessionstore-windows-restored sweep).
+          // scan, then removed on SessionStore's per-restored-tab notice).
           const tabSet = updaterSpecs.join(' | ') || '(none)';
           if (tabSet !== lastTabSet) {
             lastTabSet = tabSet;
@@ -282,9 +293,9 @@ try {
           // signal). The watcher keeps polling after it (once per engine, not
           // once per poll): scenario 11 asserts the FINAL tab set, which can
           // still change after the engine — a late twin materializing and the
-          // bounded sweep removing it both land after ENGINE-DONE, and a
-          // cancelled watcher would freeze the last TAB_SET and hide exactly
-          // the race under test (2026-10-01 ESR 140 CI run).
+          // guard removing it on the next notice both land after ENGINE-DONE,
+          // and a cancelled watcher would freeze the last TAB_SET and hide
+          // exactly the race under test (2026-10-01 ESR 140 CI run).
           try {
             const shownDay = Services.prefs.getCharPref(
               'extensions.firefox-scripts.lastScriptsCheckDate',
@@ -4151,9 +4162,9 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       restoredWindows ? '' : 'the session fixture never restored a second window'
     );
     // Wait for the engine FIRST, then assert the FINAL tab set: asserting the
-    // first recorded set would false-fail on a transient twin the sweep removes
-    // later AND false-pass when a twin appears after the check (review on
-    // #343, 2026-10-01). The fresh tab's engine re-check needs wall time after
+    // first recorded set would false-fail on a transient twin the guard removes
+    // moments later AND false-pass when a twin appears after the check (review
+    // on #343, 2026-10-01). The fresh tab's engine re-check needs wall time after
     // the tab opens, and its pref only reaches prefs.js at the shutdown flush —
     // closing on WINDOW-COUNT would assert the harness's haste, not the engine
     // (the same trap scenario 12 hit before its ENGINE-DONE wait: the 8/9 run
@@ -4173,14 +4184,14 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       500,
       label
     );
-    // The set must then stay at exactly one tab for SWEEP_QUIET_MS before it is
-    // called final: the production sweep watches a bounded 12 s window from the
-    // attach (6 × 2 s) and a twin it removes RESETS the set — asserting the
-    // first post-ENGINE-DONE line would pass over a twin that lands two seconds
-    // later (or fail on one that lands two seconds earlier and is swept right
-    // after). The watcher records a TAB_SET line on every change, so "the line
-    // is quiet" is exactly "no tab appeared or disappeared".
-    const SWEEP_QUIET_MS = 6000;
+    // The set must then stay at exactly one tab for TAB_SET_QUIET_MS before it
+    // is called final: the module's guard removes a late twin a moment after
+    // SessionStore announces it, and that removal RESETS the set — asserting
+    // the first post-ENGINE-DONE line would pass over a twin that lands a
+    // second later (or fail on one that landed a second earlier and is removed
+    // right after). The watcher records a TAB_SET line on every change, so "the
+    // line is quiet" is exactly "no tab appeared or disappeared".
+    const TAB_SET_QUIET_MS = 6000;
     const readFinalTabSet = () => {
       const line = readMirror(seeded.profileDir)
         .split('\n')
@@ -4190,12 +4201,12 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
         return null;
       }
       const stamp = Date.parse(line.slice('TAB_SET '.length, line.indexOf('Z') + 1));
-      return {line, ageMs: Number.isFinite(stamp) ? Date.now() - stamp : SWEEP_QUIET_MS};
+      return {line, ageMs: Number.isFinite(stamp) ? Date.now() - stamp : TAB_SET_QUIET_MS};
     };
     const finalTabSet = await pollUntil(
       () => {
         const set = readFinalTabSet();
-        return set && set.ageMs >= SWEEP_QUIET_MS ? set : null;
+        return set && set.ageMs >= TAB_SET_QUIET_MS ? set : null;
       },
       30_000,
       500,
@@ -4204,10 +4215,24 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
     check(
       counter,
       Boolean(finalTabSet) && !finalTabSet.line.includes(' | '),
-      `final updater-tab set is exactly one, stable for ${SWEEP_QUIET_MS / 1000}s (always-fresh guard; transient twins tolerated) (${label})`,
+      `final updater-tab set is exactly one, stable for ${TAB_SET_QUIET_MS / 1000}s (always-fresh guard; transient twins tolerated) (${label})`,
       finalTabSet?.line.includes(' | ') ?
-        `a SECOND updater tab SURVIVED the sweep (stable ${(finalTabSet.ageMs / 1000).toFixed(1)}s): ${finalTabSet.line}`
+        `a SECOND updater tab SURVIVED the guard (stable ${(finalTabSet.ageMs / 1000).toFixed(1)}s): ${finalTabSet.line}`
       : 'no updater tab was ever seen after restore'
+    );
+    // The twin guard is event-driven: it reacts to SessionStore's per-restored-
+    // tab notification. That topic firing AFTER the attach is the whole point
+    // (observed on ESR 140: the fresh tab opened, then the restore kept
+    // notifying) — if an engine ever stops emitting it, the guard silently
+    // degrades to the attach block's scan alone, so assert the trigger exists.
+    const restoreNotices = readMirror(seeded.profileDir)
+      .split('\n')
+      .filter(l => l.includes('SS-NOTIFY sessionstore-one-or-no-tab-restored')).length;
+    check(
+      counter,
+      restoreNotices >= 1,
+      `SessionStore fired its per-restored-tab notification (${restoreNotices}, ${label})`,
+      'the event-driven twin guard would have no trigger on this engine'
     );
     const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
     check(

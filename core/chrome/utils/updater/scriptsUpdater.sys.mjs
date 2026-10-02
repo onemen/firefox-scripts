@@ -285,10 +285,6 @@ let gWindow = null;
 // checkForUpdates's attach block (sessionRestoredWait).
 let gSessionRestored = false;
 
-// Set while the bounded late-restore sweep is running, so the observer and the
-// attach block cannot stack two sweeps (sweepRestoredUpdaterTabs).
-let gSweepActive = false;
-
 /**
  * Initialize the updater. Called per browser window on startup by
  * BootstrapLoader.js / userChrome.js; idempotent so double-init is harmless.
@@ -322,12 +318,26 @@ export function initScriptsUpdater(win) {
       if (topic === 'sessionstore-windows-restored') {
         gSessionRestored = true;
         Services.obs.removeObserver(observe, topic);
-        sweepRestoredUpdaterTabs();
+        // The restore event means "the windows are up", not "every updater tab
+        // exists": a restored tab can still materialize after it (see
+        // forgetDuplicateUpdaterTabs).
+        forgetDuplicateUpdaterTabs();
       }
     }, 'sessionstore-windows-restored');
+    // Per restored tab, fired by SessionStore right after it finishes restoring
+    // one (and after SSTabRestored on that tab) — the event that tells the
+    // updater a restored tab has just MATERIALIZED, whatever the module's own
+    // startup ordering was. This replaces the old time-bounded sweep: no
+    // window, no heuristic, one notification per restore. SessionStore also
+    // fires it when there was no session at all, which is a cheap no-op.
+    Services.obs.addObserver(function observeTabRestored(subject, topic) {
+      if (topic === 'sessionstore-one-or-no-tab-restored') {
+        forgetDuplicateUpdaterTabs();
+      }
+    }, 'sessionstore-one-or-no-tab-restored');
   } catch {
-    // Observer registration failed (unusual): the bounded wait in the attach
-    // block falls back to a first-pass timer instead.
+    // Observer registration failed (unusual): the attach block's own scan and
+    // the tab engine's twin-tab guard still hold.
   }
 
   // Check on startup, then re-check daily for as long as the session lives.
@@ -408,85 +418,58 @@ function isUnmarkedUpdaterTab(tab) {
 }
 
 /**
- * Repeating, bounded (6 × 2 s) pass that forgets every unmarked updater tab in
- * every live window. A restored session's updater tab can MATERIALIZE after
- * both the attach block's scan and the sessionstore-windows-restored event
- * (SessionStore feeds windows in late; observed on ESR 140: the guard ran,
- * opened the fresh tab, and the restored tab then appeared next to it — two
- * engines, both self-closing on the twin-tab guard, no pref ever written).
+ * Forget every updater tab that DUPLICATES this session's own fresh one — run
+ * whenever a restored tab may just have materialized.
  *
- * Started from the event AND from the attach block: on a slow profile this
- * module initializes after the event has already fired, so the event alone
- * would leave the late twin unswept (the 2026-10-01 ESR 140 CI run). The tick
- * count is never cut short by "the last tick removed nothing" — a quiet tick
- * says nothing about the next one, and the whole window is cheap (a window/tab
- * scan every 2 s). Nothing awaits this sweep; it only normalizes the tab bar.
+ * Why it is needed at all: SessionStore can insert a restored updater tab AFTER
+ * both the attach block's scan and `sessionstore-windows-restored` (observed on
+ * ESR 140: the guard ran, opened the fresh tab, and the restored tab then
+ * appeared next to it — two engines, both self-closing on the twin-tab guard,
+ * no pref ever written). Callers are the two SessionStore notifications that
+ * mark exactly that moment (`sessionstore-one-or-no-tab-restored` per restored
+ * tab, `sessionstore-windows-restored` for the window set) plus the attach
+ * block — no timer, so the guard reacts to the materialization instead of
+ * polling for it.
  *
- * A tab is only swept when it DUPLICATES the session's own fresh tab (an
- * unmarked updater tab is forgotten only while a marked one is live somewhere):
- * the mark is what separates "a twin of the tab we opened" from "the only
- * updater tab around" — a user's own updater tab (or a test driver's) must
- * never be closed just for lacking an expando this module happens to set. The
- * attach block's own pass needs no such rule: it runs BEFORE the fresh tab
- * exists and its job is exactly to replace a restored tab with a fresh one.
+ * Scanned session-wide, not per window: the twin can land in a window other
+ * than the one holding the fresh tab. A tab is only forgotten while a MARKED
+ * tab is live somewhere: the mark is what separates "a twin of the tab we
+ * opened" from "the only updater tab around" — a user's own updater tab (or a
+ * test driver's) must never be closed just for lacking an expando this module
+ * happens to set. The attach block's own pre-open pass needs no such rule: it
+ * runs BEFORE the fresh tab exists and its job is exactly to replace a restored
+ * tab with a fresh one.
  */
-function sweepRestoredUpdaterTabs() {
-  if (gSweepActive) {
-    return;
-  }
+function forgetDuplicateUpdaterTabs() {
   try {
-    gSweepActive = true;
-    let ticks = 0;
-    const sweep = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
-    sweep.initWithCallback(
-      {
-        notify() {
-          try {
-            if (++ticks > 6) {
-              gSweepActive = false;
-              sweep.cancel();
-              return;
-            }
-            // Session-wide, not per window: the twin can materialize in a
-            // window other than the one holding the fresh tab.
-            const twins = [];
-            let freshTabLive = false;
-            for (const win of allBrowserWindows()) {
-              if (win.closed) {
-                continue;
-              }
-              for (const tab of [...win.gBrowser.tabs]) {
-                try {
-                  if (isUnmarkedUpdaterTab(tab)) {
-                    twins.push({win, tab});
-                  } else if (tab._scriptsUpdateTab) {
-                    // The MARK is the identity of this session's fresh tab, not
-                    // its URI: the sweep's first ticks run while that tab's
-                    // browser is still at about:blank (load not committed yet).
-                    freshTabLive = true;
-                  }
-                } catch {
-                  // A tab mid-teardown has no usable browser.
-                }
-              }
-            }
-            if (freshTabLive) {
-              for (const {win, tab} of twins) {
-                forgetUpdaterTab(win, tab);
-              }
-            }
-          } catch {
-            // Window churn mid-sweep: the next tick retries.
+    const twins = [];
+    let freshTabLive = false;
+    for (const win of allBrowserWindows()) {
+      if (win.closed) {
+        continue;
+      }
+      for (const tab of [...win.gBrowser.tabs]) {
+        try {
+          if (isUnmarkedUpdaterTab(tab)) {
+            twins.push({win, tab});
+          } else if (tab._scriptsUpdateTab) {
+            // The MARK is the identity of this session's fresh tab, not its URI:
+            // this runs while that tab's browser can still be at about:blank
+            // (load not committed yet).
+            freshTabLive = true;
           }
-        },
-      },
-      2000,
-      Ci.nsITimer.TYPE_REPEATING_SLACK
-    );
+        } catch {
+          // A tab mid-teardown has no usable browser.
+        }
+      }
+    }
+    if (freshTabLive) {
+      for (const {win, tab} of twins) {
+        forgetUpdaterTab(win, tab);
+      }
+    }
   } catch {
-    // Timer creation failed (unusual): the attach block's own guard and the tab
-    // engine's twin-tab guard still hold.
-    gSweepActive = false;
+    // Window churn mid-scan: the next notification re-runs it.
   }
 }
 
@@ -749,12 +732,12 @@ export async function checkForUpdates() {
   // Deferring to load/pageshow keeps the "updater tab selected" behavior on
   // the healthy path while the load itself can never be killed by it.
   selectWhenLoaded(liveWin, tab);
-  // The sweep must outlive a late-materializing restored twin even when the
-  // sessionstore-windows-restored event fired before this module initialized
-  // (non-window browser startup order — the 2026-10-01 ESR 140 CI run):
-  // starting it here as well makes the window start with the attach, not with
-  // the event. Idempotent while a sweep is already running.
-  sweepRestoredUpdaterTabs();
+  // A restored twin can materialize between the two SessionStore notifications
+  // and this attach (and, on a profile where the module initialized after both
+  // already fired, only this call sees the set at all — the 2026-10-01 ESR 140
+  // CI ordering). Cheap: the scan above already ran, this one skips everything
+  // unmarked.
+  forgetDuplicateUpdaterTabs();
 }
 
 /**

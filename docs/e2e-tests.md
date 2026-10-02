@@ -218,14 +218,19 @@ still caught (a cancelled watcher would freeze the last set and hide the race).
 
 A restored updater tab can MATERIALIZE after both the startup attach scan and the
 `sessionstore-windows-restored` event (SessionStore feeds windows in late — observed on ESR 140).
-The module therefore runs a bounded late-restore sweep (6 × 2 s), started from that event AND from
-the attach block (on a slow profile the module initializes after the event already fired), which
+The guard for that is **event-driven, not polled**: the module observes SessionStore's own
+`sessionstore-one-or-no-tab-restored` — fired once per restored tab, right after that tab's
+`SSTabRestored` — and re-runs its duplicate scan on each notification (plus once after the attach,
+which covers a profile where the module initialized after both notifications had already fired). It
 forgets an unmarked updater tab only while this session's own MARKED fresh tab is live: a tab with
 no marked twin is the only updater tab around (a user's own open, or the E2E driver's) and is left
-alone. The module also resolves `SessionStore` through its single `defineESModuleGetters` block with
-a version-conditional spec (`moz-src://` from 156.0a1, `resource:///modules` before it) — the
-resource alias is gone on Nightly, and moz-src does not exist on ESR 140. `Downloads` comes from
-that same block; only the generated `CONFIG` is still read with `ChromeUtils.importESModule`.
+alone. The e2e probe mirrors those notifications as `SS-NOTIFY <topic>` lines and the scenario
+asserts the per-restored-tab one fired, so an engine that stops emitting it fails the scenario
+instead of silently degrading the guard. The module also resolves `SessionStore` through its single
+`defineESModuleGetters` block with a version-conditional spec (`moz-src://` from 156.0a1,
+`resource:///modules` before it) — the resource alias is gone on Nightly, and moz-src does not exist
+on ESR 140. `Downloads` comes from that same block; only the generated `CONFIG` is still read with
+`ChromeUtils.importESModule`.
 
 Scenario 12 is the original repro: the same launch under self-expiring CPU hogs (default 4, ~40 s;
 opt-in via `FXS_E2E_STRESS=1`, `FXS_E2E_STRESS_HOGS` overrides the count — never in CI). It also

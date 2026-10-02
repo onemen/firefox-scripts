@@ -137,9 +137,9 @@ function makeCryptoHash() {
 /**
  * Timers registered through the sandbox's Cc are captured here (reset per
  * makeCc call, i.e. per loadUpdater) with their delay, so a test can fire
- * exactly the one it means: selectWhenLoaded's 10 s fallback, or the
- * late-restore sweep (the only repeating 2 s timer). The module's other timers
- * (withTimeout, the daily timer) must never fire.
+ * exactly the one it means: selectWhenLoaded's 10 s fallback. The module's
+ * other timers (withTimeout, the daily timer) must never fire, and the
+ * late-restore guard creates none at all — it is event-driven.
  */
 let ccTimers = [];
 
@@ -566,18 +566,15 @@ test('twin-tab guard: a restored tab (other window) is forgotten and replaced by
   // from the recently-closed list, then a fresh tab opens in the active window.
   const restoredWin = makeFakeWindow();
   restoredWin.gBrowser.tabs.push({linkedBrowser: {currentURI: {spec: TAB_URI}}});
-  const {layout, win, opened} = await openTabOnPendingWorld({
+  const {sandbox, layout, win, opened} = await openTabOnPendingWorld({
     windows: [restoredWin],
   });
   try {
-    // The restore-sweep timer runs after the attach block — the restored tab
-    // can materialize late (ESR 140, 2026-10-01), so the sweep fires on its
-    // own tick: play it here, after the fresh open already happened. Only the
-    // repeating sweep (2 s) is driven; firing the fetch timeout's one-shot
-    // would resolve the manifest await as a rejection.
-    const sweep = timerByDelay(2000);
-    assert.ok(sweep, 'the bounded restore sweep was started');
-    sweep.fire();
+    // A restored twin can materialize after the attach block — the module
+    // reacts to SessionStore's per-restored-tab notification instead of polling
+    // for it (ESR 140, 2026-10-01), so drive that notification here, after the
+    // fresh open already happened.
+    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
     assert.ok(opened, 'a fresh updater tab opens in the current window');
     assert.equal(
       restoredWin.openedTabs.length,
@@ -598,15 +595,16 @@ test('twin-tab guard: a restored tab (other window) is forgotten and replaced by
   }
 });
 
-test('a twin materializing after the attach is swept even when the restore event never reached the module', async () => {
+test('a twin materializing after the attach is forgotten on the per-tab restore notification', async () => {
   // The 2026-10-01 ESR 140 CI order: this module initialized AFTER
-  // sessionstore-windows-restored had already fired (non-window startup
-  // order), so the observer never ran and the restored tab appeared next to
-  // the fresh one. The attach block must therefore start the sweep itself.
+  // sessionstore-windows-restored had already fired (non-window startup order),
+  // so that observer never ran; the restored tab then appeared next to the
+  // fresh one. SessionStore's PER-TAB notification is the hook that still
+  // arrives, whatever the module's startup ordering — no timer involved.
   const restoredWin = makeFakeWindow();
   const win = makeFakeWindow();
   // The enumerator must see BOTH windows, the way Services.wm does in Firefox
-  // (the sweep looks for the marked fresh tab session-wide).
+  // (the guard looks for the marked fresh tab session-wide).
   const windows = [restoredWin, win];
   const {sandbox} = loadUpdater({store: {}, windows});
   const layout = makeProfileLayout(sandbox);
@@ -615,32 +613,46 @@ test('a twin materializing after the attach is swept even when the restore event
   sandbox.initScriptsUpdater(win); // no notify(): the event already happened
   try {
     assert.ok(await waitFor(() => win.openedTabs.length > 0), 'the fresh tab opened');
-    const sweep = timerByDelay(2000);
-    assert.ok(sweep, 'the attach block started the bounded sweep');
     const lateTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
     restoredWin.gBrowser.tabs.push(lateTab);
-    sweep.fire();
+    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
     assert.ok(!restoredWin.openedTabs.includes(lateTab), 'the late twin is forgotten');
     assert.ok(makeSsCalls.length >= 1, 'and purged from the recently-closed list');
-    // A quiet tick must NOT end the watch: the next twin still gets swept.
-    sweep.fire();
+    // Every notification is honoured, not just the first one.
     const secondLateTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
     restoredWin.gBrowser.tabs.push(secondLateTab);
-    sweep.fire();
-    assert.ok(!restoredWin.openedTabs.includes(secondLateTab), 'the sweep outlives a quiet tick');
+    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
+    assert.ok(!restoredWin.openedTabs.includes(secondLateTab), 'the next twin is forgotten too');
     // No marked tab left = no twin: an unmarked updater tab is then the ONLY
     // one (a user's own open, or the E2E driver's) and must be left alone.
     win.openedTabs.length = 0;
     const loneTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
     restoredWin.gBrowser.tabs.push(loneTab);
-    sweep.fire();
+    sandbox.Services.obs.notify('sessionstore-one-or-no-tab-restored');
     assert.ok(
       restoredWin.openedTabs.includes(loneTab),
-      "the sweep only removes DUPLICATES of the session's own fresh tab"
+      "only DUPLICATES of the session's own fresh tab are removed"
     );
   } finally {
     layout.cleanup();
   }
+});
+
+test("the twin guard is registered on SessionStore's per-tab notification, not on a timer", async () => {
+  // The event-driven contract: the module observes the topic that fires when a
+  // restored tab actually materializes, and creates no repeating sweep timer
+  // for it (the old 6 × 2 s window is gone).
+  const {sandbox} = loadUpdater({store: {}, windows: []});
+  sandbox.initScriptsUpdater(makeFakeWindow());
+  assert.ok(
+    sandbox.Services.obs._observers['sessionstore-one-or-no-tab-restored']?.length === 1,
+    'one observer on sessionstore-one-or-no-tab-restored'
+  );
+  assert.equal(
+    ccTimers.filter(t => t._delay === 2000).length,
+    0,
+    'no repeating 2 s sweep timer is created any more'
+  );
 });
 
 test('twin-tab guard: a restored tab in the SAME window is forgotten too — exactly one fresh tab', async () => {
@@ -660,8 +672,8 @@ test('twin-tab guard: a restored tab in the SAME window is forgotten too — exa
   restoredBrowser.currentURI = {spec: TAB_URI}; // already restored/loaded
   // A restored tab never carries the scheduler's mark — only THIS session's
   // fresh open is marked. The forget pass therefore removes it (and, since the
-  // skip-marked rule, would skip a marked one: that shape is the sweep's, not
-  // the attach block's).
+  // skip-marked rule, would skip a marked one: that shape belongs to the
+  // duplicate guard, not the attach block's scan).
   const restoredTab = {_uri: TAB_URI, linkedBrowser: restoredBrowser};
   win.gBrowser.tabs.push(restoredTab);
   try {
