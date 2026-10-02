@@ -334,7 +334,17 @@ export async function launchFirefox(
     // phase, not protocol commands.
     killProcessesByCmdline(tag, {log: console.log});
     console.log(`  [launch] wedged (${err?.message}) — retrying once`);
-    return launchOnce();
+    try {
+      return await launchOnce();
+    } catch (retryErr) {
+      // The retry's own tree must not outlive its failure either: the caller's
+      // `finally { closeBrowser(browser) }` has no Browser to close when the
+      // launch rejected (browser was never assigned), so a failed second
+      // attempt would leak a browser still holding the profileDir — and on
+      // Windows the next leg's profile lock (CodeRabbit on #343, 2026-10-02).
+      killProcessesByCmdline(tag, {log: console.log});
+      throw retryErr;
+    }
   }
   // closeBrowser's startup sweep keys off this (puppeteer's Browser keeps no
   // executable path of its own).

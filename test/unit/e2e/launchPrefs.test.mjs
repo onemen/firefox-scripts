@@ -69,7 +69,16 @@ test('launchFirefox bounds the handshake and retries once (#384)', () => {
   assert.match(source, /Promise\.race\(\[launchPromise, deadline\]\)/);
   assert.match(source, /launchPromise\.catch\(\(\) => \{\}\);/);
   assert.match(source, /killProcessesByCmdline\(tag/);
-  assert.match(source, /return launchOnce\(\);/);
+  // The retry's OWN failure must sweep the tag too: the caller's
+  // `finally { closeBrowser(browser) }` has no Browser to close when the launch
+  // rejected, so a second wedged start would leak a browser still holding the
+  // profileDir (CodeRabbit on #343, 2026-10-02).
+  assert.match(source, /return await launchOnce\(\);/);
+  assert.match(
+    source,
+    /catch \(retryErr\) \{[\s\S]*?killProcessesByCmdline\(tag, \{log: console\.log\}\);[\s\S]*?throw retryErr;/,
+    'a rejected retry must kill the tagged tree before rethrowing'
+  );
   assert.match(source, /protocolTimeout: protocolTimeoutMs \|\| 45_000/);
   assert.match(source, /Math\.max\(launchDeadlineMs, LAUNCH_DEADLINE_MS\)/);
 });
