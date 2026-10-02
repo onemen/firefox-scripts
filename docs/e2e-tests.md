@@ -224,7 +224,8 @@ forgets an unmarked updater tab only while this session's own MARKED fresh tab i
 no marked twin is the only updater tab around (a user's own open, or the E2E driver's) and is left
 alone. The module also resolves `SessionStore` through its single `defineESModuleGetters` block with
 a version-conditional spec (`moz-src://` from 156.0a1, `resource:///modules` before it) — the
-resource alias is gone on Nightly, and moz-src does not exist on ESR 140.
+resource alias is gone on Nightly, and moz-src does not exist on ESR 140. `Downloads` comes from
+that same block; only the generated `CONFIG` is still read with `ChromeUtils.importESModule`.
 
 Scenario 12 is the original repro: the same launch under self-expiring CPU hogs (default 4, ~40 s;
 opt-in via `FXS_E2E_STRESS=1`, `FXS_E2E_STRESS_HOGS` overrides the count — never in CI). It also

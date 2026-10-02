@@ -235,7 +235,12 @@ logic: the `generated-files` skill + `docs/DEVELOPING.md` + ADR
 ## Conventions
 
 - **Firefox privileged modules:** `.sys.mjs` ESM via `ChromeUtils.importESModule` /
-  `defineESModuleGetters` with full `chrome://` or `resource://` specifiers. Never bare paths.
+  `defineESModuleGetters` with full `chrome://` or `resource://` specifiers. Never bare paths. One
+  `defineESModuleGetters(lazy, …)` block per module carries every lazily-imported module — including
+  the version-conditional ones (`SessionStore`: `moz-src://` from 156.0a1, `resource:///modules`
+  before it); `importESModule` is only for a module read in module scope (the generated config). The
+  vm test suites resolve those getters through `test/shared/sandboxServices.mjs`, the single place
+  that knows the set.
 - **Window-context legacy JS:** plain `.js` with `'use strict';` loaded via
   `Services.scriptloader.loadSubScript`. No `innerHTML` in the updater tab (XML-parsed XHTML; toggle
   via `hidden`). Tab-script logging convention (2026-09-21): errors keep `console.error`;

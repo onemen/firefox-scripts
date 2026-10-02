@@ -123,8 +123,6 @@ export function getHelperBaseUrl() {
   return channelValue('HELPER_BASE_URL');
 }
 
-const {Downloads} = ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs');
-
 /** True when the running platform is `version` or newer (Services.vc.compare). */
 const isVersion = version => Services.vc.compare(Services.appinfo.platformVersion, version) >= 0;
 
@@ -132,11 +130,15 @@ const isVersion = version => Services.vc.compare(Services.appinfo.platformVersio
 // does not exist in ESM module scope (a bare reference throws — the #292
 // lesson), so the one deferred step that needs it comes from Timer.sys.mjs,
 // through the canonical lazy getters below — THE one defineESModuleGetters
-// block. Every conditional module lives here; importESModule is reserved for
-// top-level unconditional modules (CONFIG, Downloads), because a spec that
-// depends on the running version cannot be chosen in module scope.
+// block. Every module lives here; importESModule is reserved for CONFIG, the
+// generated file read in module scope, because a spec that depends on the
+// running version (SessionStore) cannot be chosen at module scope.
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  // The one top-level module the updater uses outside the browser chrome:
+  // resolved through this block too, so `ChromeUtils.importESModule` remains
+  // only for CONFIG — the generated file every entry point needs immediately.
+  Downloads: 'resource://gre/modules/Downloads.sys.mjs',
   setTimeout: 'resource://gre/modules/Timer.sys.mjs',
   // 156.0a1 moved SessionStore to moz-src:// — the resource:///modules alias
   // stops working after that, and moz-src:// does not exist before it. The
@@ -973,7 +975,7 @@ export async function ensureUpdaterUi(info) {
   try {
     const zipUrl = `${getUiBaseUrl()}/updater-ui${getAssetSuffix()}.zip`;
     const zipPath = PathUtils.join(tmpDir, 'updater-ui.zip');
-    await Downloads.fetch(zipUrl, zipPath);
+    await lazy.Downloads.fetch(zipUrl, zipPath);
 
     // Verify the manifest hash BEFORE extracting anything: a failed check must
     // not leave a single file behind (and a tampered archive must never get

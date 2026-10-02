@@ -24,7 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'vm';
 import {fileURLToPath} from 'node:url';
-import {comparePlatformVersions, makeSessionStoreStub} from '../../shared/sandboxServices.mjs';
+import {comparePlatformVersions, resolveSandboxLazyModule} from '../../shared/sandboxServices.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const MODULE_PATH = path.join(
@@ -231,11 +231,11 @@ function loadUpdater({config, store = {}, routes = {}} = {}) {
       // is only ever reachable through this block); the channel tests await
       // neither.
       defineESModuleGetters(target, getters) {
-        if (getters.setTimeout && String(getters.setTimeout).includes('Timer.sys.mjs')) {
-          target.setTimeout = cb => setTimeout(cb, 0);
-        }
-        if (getters.SessionStore && String(getters.SessionStore).includes('SessionStore')) {
-          target.SessionStore = makeSessionStoreStub();
+        for (const [name, spec] of Object.entries(getters)) {
+          target[name] =
+            String(spec).includes('Timer.sys.mjs') ?
+              cb => setTimeout(cb, 0)
+            : resolveSandboxLazyModule(name, spec);
         }
       },
     },

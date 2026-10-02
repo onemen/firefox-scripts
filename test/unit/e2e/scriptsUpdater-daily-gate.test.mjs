@@ -27,7 +27,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import vm from 'vm';
 import {fileURLToPath} from 'node:url';
-import {comparePlatformVersions, makeSessionStoreStub} from '../../shared/sandboxServices.mjs';
+import {comparePlatformVersions, resolveSandboxLazyModule} from '../../shared/sandboxServices.mjs';
 
 // Temp-leak hygiene (see buildEpoch.test.mjs): the PathUtils profile dir seeded
 // per loadUpdater() registers here and one sweep removes them all after the
@@ -244,11 +244,12 @@ function loadUpdater({store = {}, routes = {}, captureExports = false} = {}) {
         for (const [name, spec] of Object.entries(getters)) {
           if (String(spec).includes('Timer')) {
             target[name] = cb => setTimeout(cb, 0);
-          } else if (String(spec).includes('sessionstore/SessionStore.sys.mjs')) {
-            // Served through the lazy getter (its spec is version-conditional),
-            // with the real namespace's shape so sessionRestoredWait() resolves
-            // instead of burning its 10 s fallback on a TypeError.
-            target[name] = makeSessionStoreStub();
+          } else {
+            // SessionStore (version-conditional spec) and Downloads come from
+            // the shared dispatcher — one place that knows the module's lazy
+            // set, with the real namespaces' shape so sessionRestoredWait()
+            // resolves instead of burning its 10 s fallback on a TypeError.
+            target[name] = resolveSandboxLazyModule(name, spec);
           }
         }
       },

@@ -31,6 +31,47 @@ export function comparePlatformVersions(a, b) {
 }
 
 /**
+ * `Downloads.sys.mjs` as the sandboxes see it. The module only calls
+ * `fetch(url, path)` (inside ensureUpdaterUi's try/catch, which degrades to
+ * "keep the installed UI"): the sandboxes have no network, so the stub fails
+ * LOUDLY and the call site falls back exactly like a real missing package.
+ *
+ * @returns {object} a module-namespace-shaped stub
+ */
+export function makeDownloadsStub() {
+  return {
+    async fetch(url) {
+      throw new Error(`Downloads.fetch is not stubbed in this sandbox (${url})`);
+    },
+  };
+}
+
+/**
+ * Resolve one lazy getter the module asks for, by SPEC — the single place that
+ * knows the module's lazy module set. Every vm suite funnels its
+ * `ChromeUtils.defineESModuleGetters` stub through this, so a module added to
+ * the module's block cannot silently resolve to `undefined` in one harness and
+ * work in another (which is how a version-conditional import hides a bug).
+ * `Timer` is deliberately NOT handled here: each suite's timer stub is its own
+ * instrumented object.
+ *
+ * @param {string} name - the lazy getter's property name
+ * @param {string} spec - the specifier the module requested
+ * @param {{onForgetClosedTab?: (win: object, index: number) => void}} [hooks]
+ * @returns {unknown} the value the getter should produce
+ */
+export function resolveSandboxLazyModule(name, spec, {onForgetClosedTab} = {}) {
+  const text = String(spec);
+  if (text.includes('sessionstore/SessionStore.sys.mjs')) {
+    return makeSessionStoreStub(onForgetClosedTab);
+  }
+  if (text.includes('Downloads.sys.mjs')) {
+    return makeDownloadsStub();
+  }
+  throw new Error(`unhandled lazy ESM getter: ${name} -> ${spec}`);
+}
+
+/**
  * The SessionStore module namespace as the sandboxes see it. The module only
  * ever reaches SessionStore through its lazy getter (the spec is chosen from
  * the platform version), and the closed-tab purge needs the same API surface a

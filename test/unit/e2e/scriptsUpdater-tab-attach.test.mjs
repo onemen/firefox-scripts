@@ -24,7 +24,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import vm from 'vm';
 import {fileURLToPath} from 'node:url';
-import {comparePlatformVersions, makeSessionStoreStub} from '../../shared/sandboxServices.mjs';
+import {comparePlatformVersions, resolveSandboxLazyModule} from '../../shared/sandboxServices.mjs';
 
 const tempRoots = [];
 after(() => {
@@ -248,18 +248,19 @@ function loadUpdater({store = {}, routes = {}, windows = [], platformVersion = '
   const sandbox = {
     ChromeUtils: {
       generateQI: () => () => {},
-      // The module keeps ONE defineESModuleGetters block; anything else it
-      // tries to add (or any spec it invents) fails loudly here.
+      // The module keeps ONE defineESModuleGetters block; every spec but the
+      // instrumented Timer resolves through the shared dispatcher, so a module
+      // this suite does not know about fails loudly instead of arriving
+      // undefined (which is how a conditional import hides a bug).
       defineESModuleGetters: (target, getters) => {
         for (const [name, spec] of Object.entries(getters)) {
           lazySpecs[name] = String(spec);
-          if (String(spec).includes('Timer')) {
-            target[name] = cb => setTimeout(cb, 0);
-          } else if (String(spec).endsWith('/sessionstore/SessionStore.sys.mjs')) {
-            target[name] = makeSessionStoreStub((win, index) => makeSsCalls.push({win, index}));
-          } else {
-            throw new Error(`unexpected lazy ESM getter: ${name} -> ${spec}`);
-          }
+          target[name] =
+            String(spec).includes('Timer') ?
+              cb => setTimeout(cb, 0)
+            : resolveSandboxLazyModule(name, spec, {
+                onForgetClosedTab: (win, index) => makeSsCalls.push({win, index}),
+              });
         }
       },
       importESModule(spec) {
