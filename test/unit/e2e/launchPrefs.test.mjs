@@ -64,9 +64,9 @@ test('launchFirefox bounds the handshake and retries once (#384)', () => {
   // killed BY TAG (whole process tree — launcher-only kills orphan the
   // browser's children) and retried once. protocolTimeout (per protocol
   // command) defaults to 45_000 — this contract bounds the launch phase
-  // only. Both bounds are caller-extendable (never shortenable): the stress
-  // scenario (#384 repro) saturates the CPU before the handshake runs, and
-  // the stock bounds would kill healthy-but-slow starts every time.
+  // only. Both bounds are caller-extendable (never shortenable) for a start
+  // that is legitimately heavier than a plain launch — the deadline bounds a
+  // wedged start, it does not assert performance.
   assert.match(source, /const LAUNCH_DEADLINE_MS = [\d_]+;/);
   assert.match(source, /Promise\.race\(\[launchPromise, deadline\]\)/);
   assert.match(source, /launchPromise\.catch\(\(\) => \{\}\);/);

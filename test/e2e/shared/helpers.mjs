@@ -312,9 +312,10 @@ export async function launchFirefox(
     // A rejection after the deadline won the race must not become an unhandled
     // rejection (it would crash the harness) — firefoxPuppeteer.js shape.
     launchPromise.catch(() => {});
-    // Callers may extend the deadline (not shorten it): the stress scenario
-    // saturates the CPU BEFORE launching — the handshake itself starves, and
-    // the stock 20 s bound would kill healthy-but-slow starts every time.
+    // Callers may extend the deadline (not shorten it) for a start that is
+    // legitimately heavier than a plain launch; the stock bound is the
+    // default and the deadline exists to bound a wedged start, not to assert
+    // performance.
     const deadline = Math.max(launchDeadlineMs, LAUNCH_DEADLINE_MS);
     return raceLaunchDeadline(launchPromise, deadline, tag, console.log);
   };

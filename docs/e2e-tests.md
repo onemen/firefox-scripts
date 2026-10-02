@@ -96,7 +96,6 @@ present, checkbox wiring works, and no page/console errors appeared.
 | 9              | fx-folder in an ACL-write-denied GreD (Windows)                                                                                                                                                                                                                                                                                                             | tab-open proof, ACL block, and that nothing was copied without elevation                                                                                                                                                                                                                                   |
 | 10             | stale utils, one launch, timer observed                                                                                                                                                                                                                                                                                                                     | the daily in-session re-check timer fires (startup + ≥2 re-fetches)                                                                                                                                                                                                                                        |
 | 11             | session fixture GENERATED at runtime by `test/e2e/shared/sessionFile.mjs` (2 windows, the updater tab backgrounded in the NON-selected window; filler tabs on one inert static page; no checked-in binary — a Firefox-159-authored one wedged ESR 140's SessionStore at startup), `FXS_E2E_SESSION_FILE` overrides it with any Firefox-authored file — #384 | both windows restore, exactly ONE updater tab **stable for 6 s** (the always-fresh guard forgot the restored one and opened a fresh one; the event-driven twin guard removed a late-materializing twin), no AsyncTabSwitcher schemeIs error, and the fresh tab's engine re-checks (`lastScriptsCheckDate`) |
-| 12 (opt-in)    | stale utils + 4 self-expiring CPU hogs (~40 s) saturating the launch — `FXS_E2E_STRESS=1` (never in CI); `FXS_E2E_STRESS_HOGS` overrides the count — the #384 repro conditions                                                                                                                                                                              | under contention the updater tab still opens, its engine still re-checks, and no schemeIs error fires (deferred-selection contract)                                                                                                                                                                        |
 
 The state-only scenarios that touch neither the module graph nor the process boundary are folded
 into step 1 (`runSessionExtras`, after the five variants — they mutate the seeded trees, so they
@@ -191,25 +190,25 @@ The gate's byte-level contract is therefore covered deterministically on every O
 `test/unit/publish/branchPagesContract.test.mjs`, which evaluates the shipped gate expression
 against real PE/ELF/Mach-O headers and HTML payloads.
 
-### Updater E2E scenarios 11–12 (session restore, startup stress — #384)
+### Updater E2E scenario 11 (session restore — #384)
 
-Scenario 11 replays the #384 wedge shape without CPU stress: a session fixture (two windows,
-`selectedWindow 2`, the updater tab backgrounded in window 1) is seeded as
-`sessionstore-backups/previous.jsonlz4` + `sessionstore.jsonlz4`, restore-on-startup is forced
-(`browser.startup.page=3`, `resume_session_once`, `restore_on_demand=false` so the background tab
-carries a real engine), and the scheduler runs against a stale-utils manifest. The fixture is
-GENERATED per run (`test/e2e/shared/sessionFile.mjs`: `buildSession` + an LZ4 writer) rather than
-checked in: a Firefox-159-authored `jsonlz4` carries fields that wedge ESR 140's SessionStore at
-startup, and the launch then never reaches the puppeteer handshake. The filler tabs are plain
-`https://` entries on ONE inert static page, and both halves of that matter: a filler on a real
-content site runs its own scripts during the restore (mozilla.org's sentry bundle filled the mirror
-with JS timeouts), while an `about:`/`chrome://` filler — having no saved principal — is loaded from
-`moz-nullprincipal` and BLOCKED (`Security Error: … may not load or link to about:config`), which
-stalls the restore and pushes SessionStore's per-restored-tab notice into teardown, so the SS-NOTIFY
-assertion reads 0. `FXS_E2E_SESSION_FILE` still overrides it with any Firefox-authored file. The
-scenario also overwrites the seeded `updater/ui/updater.js` (and `overwriteSchedulerFromSource` the
-scheduler, elsewhere) with this branch's sources, so it tests THIS code on every engine, not the
-snapshot's older UI.
+Scenario 11 replays the #384 wedge shape: a session fixture (two windows, `selectedWindow 2`, the
+updater tab backgrounded in window 1) is seeded as `sessionstore-backups/previous.jsonlz4` +
+`sessionstore.jsonlz4`, restore-on-startup is forced (`browser.startup.page=3`,
+`resume_session_once`, `restore_on_demand=false` so the background tab carries a real engine), and
+the scheduler runs against a stale-utils manifest. The fixture is GENERATED per run
+(`test/e2e/shared/sessionFile.mjs`: `buildSession` + an LZ4 writer) rather than checked in: a
+Firefox-159-authored `jsonlz4` carries fields that wedge ESR 140's SessionStore at startup, and the
+launch then never reaches the puppeteer handshake. The filler tabs are plain `https://` entries on
+ONE inert static page, and both halves of that matter: a filler on a real content site runs its own
+scripts during the restore (mozilla.org's sentry bundle filled the mirror with JS timeouts), while
+an `about:`/`chrome://` filler — having no saved principal — is loaded from `moz-nullprincipal` and
+BLOCKED (`Security Error: … may not load or link to about:config`), which stalls the restore and
+pushes SessionStore's per-restored-tab notice into teardown, so the SS-NOTIFY assertion reads 0.
+`FXS_E2E_SESSION_FILE` still overrides it with any Firefox-authored file. The scenario also
+overwrites the seeded `updater/ui/updater.js` (and `overwriteSchedulerFromSource` the scheduler,
+elsewhere) with this branch's sources, so it tests THIS code on every engine, not the snapshot's
+older UI.
 
 The assertions pin the two #384 contracts: the **always-fresh guard** (the restored updater tab is
 removed and forgotten via `forgetClosedTab`; exactly one fresh tab opens into the current window,
@@ -243,19 +242,17 @@ instead of silently degrading the guard. The module also resolves `SessionStore`
 on ESR 140. `Downloads` comes from that same block; only the generated `CONFIG` is still read with
 `ChromeUtils.importESModule`.
 
-Scenario 12 is the original repro: the same launch under self-expiring CPU hogs (default 4, ~40 s;
-opt-in via `FXS_E2E_STRESS=1`, `FXS_E2E_STRESS_HOGS` overrides the count — never in CI). It also
-raises `launchDeadlineMs`/`protocolTimeoutMs` (60 s / 120 s) because hog saturation starves the
-puppeteer handshake itself, not just the browser.
+There is no longer a CPU-hog scenario. It existed to reproduce the pre-#384 shape, where the module
+opened and selected the updater tab without waiting for session restore; both fixes retired the
+condition it manufactured — `SessionStore.promiseAllWindowsRestored` gates the attach, and
+`selectWhenLoaded` defers the selection to the tab's load — and the deferred-selection contract is
+already pinned without a browser by `test/unit/e2e/scriptsUpdater-tab-attach.test.mjs`. Starving the
+machine on purpose now only tests that the machine can be starved.
 
 ```bash
 node test/e2e/updater/updater-e2e.mjs --scenario 11 \
   --firefox "$HOME/Documents/FireFox/portable/nightly/firefox.exe"
-FXS_E2E_STRESS=1 node test/e2e/updater/updater-e2e.mjs --scenario 12 \
-  --firefox "$HOME/Documents/FireFox/portable/nightly/firefox.exe"
 ```
-
-Scenario 11 is part of the default selection (CI's updater legs run it); scenario 12 is not.
 
 ### Configuration
 

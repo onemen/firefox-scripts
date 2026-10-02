@@ -543,6 +543,20 @@ test('a load event while the browser is still at about:blank does not select', a
   }
 });
 
+test('the session-restore gate is bounded at 5s (a pending promise cannot stall the attach)', () => {
+  // The attach awaits SessionStore.promiseAllWindowsRestored before it claims
+  // the tab set, so a promise that never settles must not wedge the attach
+  // forever: the race carries an explicit bound. 5 s is ~2-3x the observed
+  // restore (1-2 s) and the twin guard still catches a tab that lands after
+  // it, so the bound is policy, not implementation — pin the number.
+  const gate = fs.readFileSync(MODULE_PATH, 'utf-8');
+  const match = gate.match(
+    /withTimeout\(Promise\.resolve\(lazy\.SessionStore\.promiseAllWindowsRestored\), (\d+)\)/
+  );
+  assert.ok(match, 'the restore gate must race SessionStore with an explicit bound');
+  assert.equal(Number(match[1]), 5000, 'the restore gate waits at most 5 s');
+});
+
 test('selection falls back after the 10s timer when no load ever fires', async () => {
   const {layout, win, opened} = await openTabOnPendingWorld();
   try {

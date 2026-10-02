@@ -369,7 +369,7 @@ function todayStr() {
  * bounded fallback covers if it ever stays pending). Fallbacks: the module flag
  * set by the sessionstore-windows-restored observer, then a bounded nsITimer
  * poll — attaching late is cosmetic, attaching early duplicates tabs (#384).
- * The 10 s bound covers any anomaly (a pending promise burns the bound once per
+ * The 5 s bound covers any anomaly (a pending promise burns the bound once per
  * day at worst); setTimeout does not exist in module scope, so the poll steps
  * through an nsITimer.
  */
@@ -378,7 +378,7 @@ async function sessionRestoredWait() {
     return;
   }
   try {
-    await withTimeout(Promise.resolve(lazy.SessionStore.promiseAllWindowsRestored), 10000);
+    await withTimeout(Promise.resolve(lazy.SessionStore.promiseAllWindowsRestored), 5000);
     gSessionRestored = true;
     return;
   } catch {

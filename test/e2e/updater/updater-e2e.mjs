@@ -229,10 +229,10 @@ try {
     {
       notify() {
         try {
-          // Long-lived watch (4 min of 1 s polls): scenarios 11/12 await up to
-          // 45 s + 30 s of mirror lines, and under stress the engine's
-          // re-check lands tens of seconds after the tab. The probe dies with
-          // the browser either way; the scenarios' own timeouts govern.
+          // Long-lived watch (4 min of 1 s polls): scenario 11 awaits up to
+          // 45 s + 30 s of mirror lines while the restore settles. The probe
+          // dies with the browser either way; the scenario's own timeouts
+          // govern.
           if (++polls > 240) {
             watcher.cancel();
             return;
@@ -283,12 +283,12 @@ try {
             );
           }
           // The tab ENGINE's re-check (updater.js engineInit) writes the daily
-          // pref once its check completes — under stress that lands seconds
-          // AFTER the tab appears, so this probe must run on EVERY poll, not
-          // only the first-seen one (a first-poll-only check would never see
-          // the late write, and every ENGINE-DONE await would run its full 30 s
-          // for nothing). Mirror it as ENGINE-DONE so scenarios 11/12 await the
-          // engine instead of guessing a sleep (the pref only reaches prefs.js
+          // pref once its check completes — that lands AFTER the tab appears,
+          // so this probe must run on EVERY poll, not only the first-seen one
+          // (a first-poll-only check would never see the late write, and every
+          // ENGINE-DONE await would run its full 30 s for nothing). Mirror it
+          // as ENGINE-DONE so scenario 11 awaits the engine instead of
+          // guessing a sleep (the pref only reaches prefs.js
           // at the shutdown flush, so the LIVE value is the only timely
           // signal). The watcher keeps polling after it (once per engine, not
           // once per poll): scenario 11 asserts the FINAL tab set, which can
@@ -336,7 +336,7 @@ function parseArgs() {
           '  Scenarios: 1 variant session (stale trio + up-to-date + skipped; 4/5 are aliases),\n' +
           '             6 install-applies, 7 manual-install-upgrade, 8 manual-install-no-ui,\n' +
           '             9 helper-checksum-win, 10 daily-recheck-timer,\n' +
-          '             11 session-restore (#384), 12 stress-startup (opt-in: FXS_E2E_STRESS=1).'
+          '             11 session-restore (#384).'
       );
       process.exit(0);
     }
@@ -4307,151 +4307,6 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
   return null;
 }
 
-/**
- * Opt-in startup-stress scenario (env FXS_E2E_STRESS=1; never on by default —
- * it deliberately saturates the CPU): the #384 repro. Spawns self-expiring node
- * CPU hogs (FXS_E2E_STRESS_HOGS, default 4, ~40 s), launches the stale fixture
- * under that contention, and asserts the updater tab still opens, its engine
- * still re-checks (lastScriptsCheckDate), and no schemeIs error — the
- * deferred-selection contract under the exact conditions that wedged the
- * synchronous selection.
- */
-async function runStressStartupScenario(counter, opts, snapshotDir, label) {
-  console.log(`\n## Scenario: ${label}`);
-  const firefoxBin = opts.firefox || discoverFirefoxBinary();
-  if (!firefoxBin) throw new Error(missingFirefoxMessage());
-  const t0 = Date.now();
-  const hogCount = Number(process.env.FXS_E2E_STRESS_HOGS) || 4;
-  const {spawn} = await import('node:child_process');
-  const hogs = [];
-  for (let i = 0; i < hogCount; i++) {
-    try {
-      hogs.push(
-        spawn(process.execPath, ['-e', 'const t=Date.now()+40000;while(Date.now()<t){}'], {
-          stdio: 'ignore',
-        })
-      );
-    } catch {
-      /* a lost hog is fine — the stress is best-effort */
-    }
-  }
-  console.log(`  [stress] ${hogs.length} CPU hogs for ~40s`);
-  const seeded = seedProfile(snapshotDir, {forceUtilsStale: true});
-  const greDir12 = findGreDir(firefoxBin);
-  const greSeed12 = installFxFolder(snapshotDir, greDir12);
-  check(counter, greSeed12.ok, `seed GreD (${label})`, greSeed12.error);
-  appendConfigProbe(greDir12);
-  overwriteSchedulerFromSource(seeded.chromeUtils);
-  const staleTreeDir = fs.mkdtempSync(path.join(REPO_ROOT, 'dist', 'fxs-stress-stale-'));
-  const server = await startLocalManifestServer(snapshotDir, seeded.chromeUtils, {
-    // TWO fetches minimum: the scheduler's check AND the tab engine's
-    // re-check (engineInit). A single-request server 503s the second fetch,
-    // the re-check never completes, and the daily pref is never written —
-    // the engine re-check assertion would fail on harness plumbing, not on
-    // the wedge under test (same trap scenario 11 hit before multiRequest).
-    multiRequest: true,
-    manifestOverride: buildStaleUtilsManifest(snapshotDir, staleTreeDir),
-  });
-  Object.assign(seeded.prefs, serverOverridePrefs(server.url));
-  let browser;
-  try {
-    browser = await launchFirefox(firefoxBin, seeded.profileDir, {
-      headless: opts.headless,
-      extraPrefsFirefox: seeded.prefs,
-      // The hogs are already saturating the CPU when the handshake runs: the
-      // stock 20 s launch deadline kills healthy-but-slow starts, and the 45 s
-      // protocolTimeout starves on the handshake's getUserContexts command.
-      // 60 s / 120 s let the connect through with the safety nets intact.
-      launchDeadlineMs: 60_000,
-      protocolTimeoutMs: 120_000,
-    });
-    attachProcessLogging(browser, label);
-    // Poll, don't peek: under stress the tab opens seconds after launch, and a
-    // single immediate read + close would close the browser before the
-    // scheduler ever attached it (the scenario would then assert its own
-    // self-inflicted absence).
-    const tabLine = await pollUntil(
-      () => {
-        const line = readMirror(seeded.profileDir)
-          .split('\n')
-          .find(l => l.includes('TAB_OPENED'));
-        return line || null;
-      },
-      45_000,
-      500,
-      label
-    );
-    check(counter, Boolean(tabLine), `stress: updater tab seen (${label})`);
-    // The engine needs wall time to load the chrome page and run its re-check
-    // (its pref only reaches prefs.js at the shutdown flush), and under hog
-    // saturation a chrome load takes seconds. Closing at TAB_OPENED would
-    // assert nothing but the harness's own haste (the nsEbfx run: tab seen
-    // 0.8 s after start, browser closed ~1.3 s in, pref never written). Wait
-    // for the engine's own up-to-date check to complete, bounded.
-    await pollUntil(
-      () => {
-        const line = readMirror(seeded.profileDir)
-          .split('\n')
-          .find(l => l.includes('ENGINE-DONE'));
-        return line || null;
-      },
-      30_000,
-      500,
-      label
-    );
-    const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
-    check(
-      counter,
-      !schemeIs,
-      `stress: restore produced no AsyncTabSwitcher schemeIs crash (#384) (${label})`,
-      'the selection race (#384) fired under stress'
-    );
-    console.log(`  [timing] ${label} wall: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  } finally {
-    for (const hog of hogs) {
-      try {
-        hog.kill();
-      } catch {
-        /* self-expiring anyway */
-      }
-    }
-    try {
-      await closeBrowser(browser);
-    } catch {
-      /* ignore */
-    }
-    await server.close().catch(() => {});
-    try {
-      fs.rmSync(staleTreeDir, {recursive: true, force: true});
-    } catch {
-      /* ignore */
-    }
-  }
-  // The daily pref flushes to prefs.js at shutdown — and possibly a moment
-  // after the process exit (see the session-restore scenario) — poll for it.
-  const today = new Date().toISOString().slice(0, 10);
-  let gate = '';
-  await pollUntil(
-    () => {
-      gate = readPrefsGate(seeded.profileDir);
-      return gate === today || null;
-    },
-    10_000,
-    500,
-    label
-  );
-  check(
-    counter,
-    gate === today,
-    `stress: updater tab loaded and engine re-checked under CPU contention (lastScriptsCheckDate=${gate || '(none)'}, ${label})`
-  );
-  if (!opts.keepProfile) {
-    rmDir(seeded.profileDir);
-  } else {
-    console.log(`  [keep] profile: ${seeded.profileDir}`);
-  }
-  return null;
-}
 async function run() {
   const opts = parseArgs();
   const counter = createCounter();
@@ -4726,16 +4581,6 @@ async function run() {
           // must re-check. FXS_E2E_SESSION_FILE overrides the fixture with
           // any Firefox-authored sessionstore.jsonlz4.
           await runSessionRestoreScenario(counter, opts, snapshotDir, 'session-restore');
-        },
-      },
-      {
-        id: '12',
-        // Opt-in: set FXS_E2E_STRESS=1. Deliberately saturates the CPU to
-        // reproduce the #384 startup wedge conditions.
-        pre: () => (process.env.FXS_E2E_STRESS ? null : 'set FXS_E2E_STRESS=1 to opt in'),
-        skipLabel: 'stress-startup',
-        run: async () => {
-          await runStressStartupScenario(counter, opts, snapshotDir, 'stress-startup');
         },
       },
     ];
