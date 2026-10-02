@@ -4050,7 +4050,7 @@ function buildStaleUtilsManifest(snapshotDir, staleTreeDir) {
 
 /**
  * The session-restore scenario (#384 follow-up): relaunch on a profile whose
- * previous session (a checked-in, Firefox-authored fixture) holds the updater
+ * previous session (generated at runtime by sessionFile.mjs) holds the updater
  * tab in a NON-selected window, backgrounded inside that window, with a
  * different window selected — the exact restore shape the all-windows twin-tab
  * guard must survive.
@@ -4062,10 +4062,14 @@ function buildStaleUtilsManifest(snapshotDir, staleTreeDir) {
  * (the deferred-selection contract). Stale-utils manifest ⇒ a pending update ⇒
  * the restored tab's re-check is real, not a no-op.
  *
- * The fixture (test/e2e/fixtures/session-2win.jsonlz4) was authored by hand in
- * a throwaway Firefox profile: 2 windows, selectedWindow 2, updater tab
- * backgrounded in window 1 (about:config selected there). FXS_E2E_SESSION_FILE
- * overrides it with any Firefox-authored file.
+ * The payload: 2 windows, selectedWindow 2, updater tab backgrounded in window
+ *
+ * 1. Its privileged entry carries the serialized system principal — what a real
+ *    updater entry stores — so the restored chrome:// tab is actually LOADABLE;
+ *    without it SessionStore restores the entry from a null principal and the
+ *    chrome:// load is blocked (a shape the fixture used to replay by accident,
+ *    see sessionFile.SERIALIZED_SYSTEM_PRINCIPAL). FXS_E2E_SESSION_FILE
+ *    overrides the generated payload with any Firefox-authored file.
  */
 /**
  * The generated session file: buildSession's payload (2 windows, updater tab

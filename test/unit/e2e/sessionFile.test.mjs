@@ -19,9 +19,10 @@ import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
-const {buildSession, lz4LiteralBlock, mozLz4, writeSessionFile} = await import(
-  pathToFileURL(path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'sessionFile.mjs')).href
-);
+const {buildSession, lz4LiteralBlock, mozLz4, writeSessionFile, SERIALIZED_SYSTEM_PRINCIPAL} =
+  await import(
+    pathToFileURL(path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'sessionFile.mjs')).href
+  );
 
 const MAGIC = Buffer.from('mozLz40\0', 'latin1');
 const UPDATER_URL = 'chrome://firefox-scripts/content/ui/updater.html';
@@ -76,7 +77,11 @@ test('lz4LiteralBlock: every length decodes byte-identically, incl. the extensio
 });
 
 test('mozLz4: the container declares the JSON length and decodes back', () => {
-  const session = buildSession({windows: 2, updaterInWindow: 1, updaterUrl: UPDATER_URL});
+  const session = buildSession({
+    windows: 2,
+    updaterInWindow: 1,
+    updaterUrl: UPDATER_URL,
+  });
   const buf = mozLz4(session);
   assert.deepEqual(buf.subarray(0, 8), MAGIC);
   assert.ok(buf.readUInt32LE(8) > 0, 'declared size is written little-endian');
@@ -101,7 +106,11 @@ test('buildSession: the updater tab sits in a NON-selected window, unselected th
   // The whole point of the fixture: the twin guard must find the restored
   // updater tab in a window that is not the active one, and not the selected
   // tab of that window — the user's reported restore shape (#384).
-  const session = buildSession({windows: 2, updaterInWindow: 1, updaterUrl: UPDATER_URL});
+  const session = buildSession({
+    windows: 2,
+    updaterInWindow: 1,
+    updaterUrl: UPDATER_URL,
+  });
   assert.equal(session.windows.length, 2);
   assert.equal(session.selectedWindow, 2, 'the LAST window is the one selected at "shutdown"');
   const holder = session.windows[0];
@@ -119,15 +128,20 @@ test('buildSession: the updater tab sits in a NON-selected window, unselected th
 
 test('buildSession: filler tabs stay plain http(s) and land on an inert page', () => {
   // Two constraints, both learned the hard way.
-  // 1) http(s) ONLY. These entries carry no saved principal, so a restored
-  //    about:/chrome:// entry loads from moz-nullprincipal and is BLOCKED
+  // 1) http(s) ONLY. These entries carry no saved principal (only the updater
+  //    entry does — see the principal test below), so a restored
+  //    about:/chrome:// filler loads from moz-nullprincipal and is BLOCKED
   //    ("may not load or link to …"): the tabs never finish restoring, the
   //    per-restored-tab notice lands during teardown, and scenario 11's
   //    SS-NOTIFY assertion reads 0 (reproduced on ESR 140, 2026-10-02).
   // 2) An INERT target. With restore_on_demand=false every filler loads at
   //    startup; a real content site runs its own scripts mid-restore and fills
   //    the mirror with JS-timeout noise (mozilla.org's sentry bundle).
-  const session = buildSession({windows: 2, updaterInWindow: 1, updaterUrl: UPDATER_URL});
+  const session = buildSession({
+    windows: 2,
+    updaterInWindow: 1,
+    updaterUrl: UPDATER_URL,
+  });
   const filler = session.windows
     .flatMap(w => w.tabs)
     .map(t => t.entries[0].url)
@@ -143,6 +157,52 @@ test('buildSession: filler tabs stay plain http(s) and land on an inert page', (
   }
 });
 
+test('buildSession: the updater entry carries the SYSTEM principal; fillers carry none', () => {
+  // SessionStore's history restore deserializes the entry's
+  // triggeringPrincipal_base64 with a NULL-principal fallback (ESR 140,
+  // modules/sessionstore/SessionHistory.sys.mjs:556). A chrome:// entry restored
+  // from moz-nullprincipal is BLOCKED ("Security Error: Content at
+  // moz-nullprincipal:{…} may not load or link to chrome://…"), so the fixture
+  // replayed a restore shape it could never actually load: the privileged tab
+  // was always dead. {"3":{}} is what Firefox serializes for the system
+  // principal the module's own addTrustedTab entry was saved with — verified
+  // against the pre-#384 Firefox-159 dump.
+  const session = buildSession({
+    windows: 2,
+    updaterInWindow: 1,
+    updaterUrl: UPDATER_URL,
+  });
+  const updaterEntry = session.windows[0].tabs[0].entries[0];
+  assert.equal(updaterEntry.triggeringPrincipal_base64, SERIALIZED_SYSTEM_PRINCIPAL);
+  assert.equal(SERIALIZED_SYSTEM_PRINCIPAL, '{"3":{}}');
+  // Raw JSON, NOT base64: deserializePrincipal() branches on startsWith("{")
+  // and only the legacy formats go through atob(). A base64 blob here would be
+  // decoded twice and fail back to the null principal — silently, because the
+  // fixture would still "restore" (just into an unloadable tab).
+  assert.match(
+    updaterEntry.triggeringPrincipal_base64,
+    /^\{/,
+    'the serialized principal must be the raw JSON form'
+  );
+  assert.equal(Object.keys(JSON.parse(updaterEntry.triggeringPrincipal_base64))[0], '3');
+  // The fillers stay principal-less on purpose: they must keep exercising the
+  // null-principal fallback path, and http(s) loads fine from a null principal.
+  const fillers = session.windows
+    .flatMap(w => w.tabs)
+    .map(t => t.entries[0])
+    .filter(e => e.url !== UPDATER_URL);
+  assert.ok(fillers.length > 0);
+  for (const filler of fillers) {
+    assert.ok(
+      !('triggeringPrincipal_base64' in filler),
+      `${filler.url} must not carry a saved principal`
+    );
+  }
+  // updaterPrincipal: '' reproduces the pre-fix fixture (key absent, not empty).
+  const bare = buildSession({updaterUrl: UPDATER_URL, updaterPrincipal: ''});
+  assert.ok(!('triggeringPrincipal_base64' in bare.windows[0].tabs[0].entries[0]));
+});
+
 test('buildSession: only long-stable session fields (the cross-version contract)', () => {
   // The ESR 140 floor is the constraint: a field a newer engine writes and an
   // older one does not understand is what wedged the original 159 fixture.
@@ -151,9 +211,13 @@ test('buildSession: only long-stable session fields (the cross-version contract)
     session: new Set(['version', 'windows', 'selectedWindow']),
     window: new Set(['tabs', 'selected', '_closedTabs']),
     tab: new Set(['entries', 'index', 'hidden', 'attributes', 'extData']),
-    entry: new Set(['url', 'title']),
+    entry: new Set(['url', 'title', 'triggeringPrincipal_base64']),
   };
-  const session = buildSession({windows: 2, updaterInWindow: 1, updaterUrl: UPDATER_URL});
+  const session = buildSession({
+    windows: 2,
+    updaterInWindow: 1,
+    updaterUrl: UPDATER_URL,
+  });
   const offenders = [];
   const walk = (obj, allowed, where) => {
     for (const key of Object.keys(obj)) {
@@ -190,7 +254,11 @@ test('buildSession: rejects a missing updaterUrl and an out-of-range window', ()
 test('writeSessionFile: writes the mozLz4 container the scenario seeds', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-sessionfile-'));
   try {
-    const session = buildSession({windows: 2, updaterInWindow: 1, updaterUrl: UPDATER_URL});
+    const session = buildSession({
+      windows: 2,
+      updaterInWindow: 1,
+      updaterUrl: UPDATER_URL,
+    });
     const file = writeSessionFile(dir, session);
     assert.equal(path.basename(file), 'sessionstore.jsonlz4');
     assert.deepEqual(decodeMozLz4(fs.readFileSync(file)), session);

@@ -17,11 +17,43 @@
 // filler tabs point at one inert static page, so the file parses on every
 // watched engine (ESR 140 floor → Nightly) without loading real-world content
 // or any third-party script.
+//
+// The updater entry also carries the entry's saved principal
+// (`triggeringPrincipal_base64`), because WITHOUT one the restored chrome://
+// tab is unloadable and the fixture lies about the shape it claims to replay:
+// SessionStore's history restore reads that field through
+// `E10SUtils.deserializePrincipal(entry.triggeringPrincipal_base64, fallback)`
+// and the fallback is a freshly created NullPrincipal (ESR 140,
+// `modules/sessionstore/SessionHistory.sys.mjs:556` — "Every load must have a
+// triggeringPrincipal to load otherwise we prevent it"), which then cannot
+// load the privileged URL
+// (`Security Error: Content at moz-nullprincipal:{…} may not load or link to
+// chrome://firefox-scripts/content/ui/updater.html`). See
+// SERIALIZED_SYSTEM_PRINCIPAL below.
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 const MAGIC = Buffer.from('mozLz40\0', 'latin1');
+
+/**
+ * The serialized SYSTEM principal, byte-for-byte as Firefox writes it.
+ *
+ * `E10SUtils.serializePrincipal()` is `Services.scriptSecurityManager
+ * .principalToJSON(principal)` — a RAW JSON string, not base64, despite the
+ * `_base64` field suffix (`deserializePrincipal` branches on `startsWith("{")`
+ * before it tries the legacy base64/nsISerializable formats). `{"3":{}}` is the
+ * system principal's JSON: the `"3"` discriminator is the system kind, and the
+ * empty object stands for its (nonexistent) origin attributes.
+ *
+ * This is the principal a REAL updater entry carries: the module opens its tab
+ * with `addTrustedTab`/`openTrustedTab`, i.e. with the system principal as the
+ * triggering principal, and that is what SessionStore serializes back into the
+ * entry. Verified against the pre-#384 dump a Firefox 159 profile wrote (`git
+ * show 1bd1ca3^:test/e2e/fixtures/session-2win.jsonlz4`), whose chrome://
+ * updater entry stores exactly this value.
+ */
+export const SERIALIZED_SYSTEM_PRINCIPAL = '{"3":{}}';
 
 /**
  * Compress a Buffer as a valid single-sequence LZ4 block of pure literals
@@ -77,22 +109,29 @@ export function mozLz4(payload) {
  * @param {number} [opts.updaterInWindow=1] 1-based window holding the updater
  *   tab. Default is `1`
  * @param {string} opts.updaterUrl the chrome:// updater URL to restore
+ * @param {string} [opts.updaterPrincipal] the serialized principal the updater
+ *   entry was saved with. Defaults to SERIALIZED_SYSTEM_PRINCIPAL — the value
+ *   the module's own system-principal tab produces and the only thing that
+ *   makes the restored chrome:// entry loadable. Pass `''` for a principal-less
+ *   entry (the pre-fix fixture: a blocked moz-nullprincipal load).
  * @param {string[]} [opts.fillerUrls] ordinary tabs padding each window.
  *   Defaults to a single inert http(s) page, and it MUST stay http(s): these
- *   entries carry no saved principal, so a restored `about:`/`chrome://` entry
- *   is loaded from `moz-nullprincipal` and BLOCKED — `Security Error: Content
- *   at moz-nullprincipal:{…} may not load or link to about:config` — which
- *   breaks the restore itself: the blocked tabs never finish, so SessionStore's
- *   per-restored-tab notice lands during teardown and the scenario's SS-NOTIFY
- *   assertion reads 0 (reproduced on ESR 140, 2026-10-02, by "simplifying"
- *   these to about: pages). example.com is inert (static HTML, no scripts),
- *   unlike a real content site, so the restore does no third-party JS work.
+ *   entries carry no saved principal (unlike the updater entry), so a restored
+ *   `about:`/`chrome://` filler is loaded from `moz-nullprincipal` and BLOCKED
+ *   — `Security Error: Content at moz-nullprincipal:{…} may not load or link to
+ *   about:config` — which breaks the restore itself: the blocked tabs never
+ *   finish, so SessionStore's per-restored-tab notice lands during teardown and
+ *   the scenario's SS-NOTIFY assertion reads 0 (reproduced on ESR 140,
+ *   2026-10-02, by "simplifying" these to about: pages). example.com is inert
+ *   (static HTML, no scripts), unlike a real content site, so the restore does
+ *   no third-party JS work.
  * @returns {object} JSON-ready session object
  */
 export function buildSession({
   windows = 2,
   updaterInWindow = 1,
   updaterUrl,
+  updaterPrincipal = SERIALIZED_SYSTEM_PRINCIPAL,
   fillerUrls = ['https://example.com/', 'https://example.com/?tab=2'],
 }) {
   if (!updaterUrl) {
@@ -109,8 +148,15 @@ export function buildSession({
   for (let w = 1; w <= windows; w++) {
     const tabs = [];
     if (w === updaterInWindow) {
+      const entry = {url: updaterUrl, title: 'Firefox Scripts updater'};
+      // Omit the key entirely when the caller asks for a principal-less entry:
+      // an empty string deserializes to the same fallback, but leaving the key
+      // out is what the pre-fix fixture actually looked like.
+      if (updaterPrincipal) {
+        entry.triggeringPrincipal_base64 = updaterPrincipal;
+      }
       tabs.push({
-        entries: [{url: updaterUrl, title: 'Firefox Scripts updater'}],
+        entries: [entry],
         index: 1,
         hidden: false,
         attributes: {},
@@ -119,7 +165,12 @@ export function buildSession({
     }
     for (let t = 0; t < 2; t++) {
       tabs.push({
-        entries: [{url: fillerUrls[t % fillerUrls.length], title: `window ${w} tab ${t}`}],
+        entries: [
+          {
+            url: fillerUrls[t % fillerUrls.length],
+            title: `window ${w} tab ${t}`,
+          },
+        ],
         index: 1,
         hidden: false,
         attributes: {},
@@ -180,6 +231,14 @@ if (process.argv[1] && process.argv[1].endsWith('sessionFile.mjs')) {
     json.windows[1].selected !== 1
   ) {
     throw new Error('mozLz4 round-trip mismatch');
+  }
+  // The privileged entry must keep its saved system principal: without it
+  // SessionStore's restore falls back to a null principal and the chrome://
+  // tab is blocked instead of loaded (see SERIALIZED_SYSTEM_PRINCIPAL).
+  if (
+    json.windows[0].tabs[0].entries[0].triggeringPrincipal_base64 !== SERIALIZED_SYSTEM_PRINCIPAL
+  ) {
+    throw new Error('the updater entry lost its serialized principal');
   }
   console.log('sessionFile self-test OK:', buf.length, 'bytes container,', declared, 'bytes json');
 }
