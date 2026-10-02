@@ -343,6 +343,23 @@ test('killProcessesByCmdline: win32 branch matches the needle via .Contains and 
   assert.ok(ps.includes('C:\\temp\\fxs-e2e-ABC123'));
 });
 
+test('killProcessesByCmdline: an apostrophe in the needle is doubled for PowerShell', () => {
+  // A path like C:\Users\O'Brien\... would otherwise close the single-quoted
+  // PowerShell string early; the command fails to parse and the sweep reads the
+  // silence as "nothing matched". PowerShell escapes a quote by doubling it.
+  const seen = [];
+  killProcessesByCmdline("C:\\Users\\O'Brien\\fxs-e2e-ABC", {
+    platform: 'win32',
+    run: (cmd, args) => {
+      seen.push({cmd, args: [...args]});
+      return {status: 0, stdout: ''};
+    },
+  });
+  const ps = seen[0].args.at(-1);
+  assert.ok(ps.includes("O''Brien"), 'the apostrophe is doubled for PowerShell');
+  assert.ok(!ps.includes("O'Brien"), 'the raw apostrophe never reaches the command');
+});
+
 test('killProcessesByCmdline: POSIX branch escapes regex specials in the needle', () => {
   const seen = [];
   const killed = killProcessesByCmdline('/tmp/fxs-e2e-ABC (1)', {
@@ -472,6 +489,29 @@ test('waitForProcessesGone: win32 branch counts the matching processes', async (
   assert.equal(seen[0].cmd, 'powershell.exe');
   assert.match(seen[0].args.at(-1), /Measure-Object/);
   assert.ok(seen[0].args.at(-1).includes('C:\\Temp\\fxs-e2e-ABC'));
+});
+
+test('waitForProcessesGone: a failed probe is not "gone" on either platform', async () => {
+  // A probe that could not answer must keep waiting: reading it as gone lets
+  // the retry relaunch against a profile the killed browser still owns.
+  const logs = [];
+  const goneWin = await waitForProcessesGone('C:\\Temp\\fxs-e2e-ABC', {
+    platform: 'win32',
+    timeoutMs: 20,
+    intervalMs: 1,
+    log: m => logs.push(m),
+    run: () => ({status: 1, stdout: ''}), // PowerShell errored: count unparseable
+  });
+  assert.equal(goneWin, false, 'a failed win32 probe times out instead of reporting gone');
+  const gonePosix = await waitForProcessesGone('/tmp/fxs-e2e-ABC', {
+    platform: 'linux',
+    timeoutMs: 20,
+    intervalMs: 1,
+    log: m => logs.push(m),
+    run: () => ({status: 2, stdout: ''}), // pgrep error (1 is the no-match exit)
+  });
+  assert.equal(gonePosix, false, 'a failed pgrep probe times out instead of reporting gone');
+  assert.equal(logs.length, 2, 'both failures are logged loudly');
 });
 
 test('waitForProcessesGone: an empty needle is trivially gone (no spawn)', async () => {

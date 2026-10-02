@@ -4319,13 +4319,29 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       500,
       label
     );
+    // The mirror writes the whole SET — `(none)` when empty, ` | `-joined when
+    // several are open — so "exactly one" has to be asserted as exactly one
+    // ENTRY. Testing only for the separator also accepted `(none)`: a final
+    // state with ZERO updater tabs (the fresh tab closing after its engine
+    // already wrote the day) passed as "exactly one, stable for 6s".
+    const finalTabs =
+      finalTabSet === null ? '' : finalTabSet.line.slice(finalTabSet.line.indexOf('Z') + 1).trim();
+    const finalTabCount = finalTabs && finalTabs !== '(none)' ? finalTabs.split(' | ').length : 0;
+    let tabSetFailure = '';
+    if (finalTabCount !== 1) {
+      if (finalTabSet === null) {
+        tabSetFailure = `no TAB_SET line stayed quiet for ${TAB_SET_QUIET_MS / 1000}s (the tab set never settled)`;
+      } else if (finalTabCount === 0) {
+        tabSetFailure = `no updater tab was open for the whole ${TAB_SET_QUIET_MS / 1000}s quiet window: ${finalTabSet.line}`;
+      } else {
+        tabSetFailure = `a SECOND updater tab is open (stable ${(finalTabSet.ageMs / 1000).toFixed(1)}s): ${finalTabSet.line}`;
+      }
+    }
     check(
       counter,
-      Boolean(finalTabSet) && !finalTabSet.line.includes(' | '),
+      finalTabCount === 1,
       `final updater-tab set is exactly one, stable for ${TAB_SET_QUIET_MS / 1000}s (always-fresh attach) (${label})`,
-      finalTabSet?.line.includes(' | ') ?
-        `a SECOND updater tab is open (stable ${(finalTabSet.ageMs / 1000).toFixed(1)}s): ${finalTabSet.line}`
-      : 'no updater tab was ever seen after restore'
+      tabSetFailure
     );
     const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');
     check(

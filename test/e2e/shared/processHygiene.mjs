@@ -150,6 +150,21 @@ export async function killStrayProcesses({
 }
 
 /**
+ * Quote a value for interpolation into a PowerShell SINGLE-quoted string: the
+ * quote is the only character with meaning in there, and PowerShell escapes it
+ * by doubling. Without this, a needle carrying an apostrophe (a user path like
+ * `C:\Users\O'Brien\...`) closes the string early: the whole command fails to
+ * parse, and the silence reads as "nothing matched" — which in
+ * waitForProcessesGone means "gone".
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function psQuote(value) {
+  return `${value}`.replace(/'/g, "''");
+}
+
+/**
  * Kill every process whose command line contains `needle`. Only for
  * HARNESS-OWNED, unique needles: the match is a plain substring of the full
  * command line, so a non-unique needle could kill unrelated processes. Two
@@ -194,7 +209,7 @@ export function killProcessesByCmdline(
     // (a temp path can contain [ ] which -like reads as a character set).
     const ps =
       'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ' +
-      `$_.CommandLine.Contains('${needle}') } | ForEach-Object { ` +
+      `$_.CommandLine.Contains('${psQuote(needle)}') } | ForEach-Object { ` +
       'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; ' +
       '"$($_.ProcessId):$($_.Name)" }';
     const res = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
@@ -274,21 +289,29 @@ export async function waitForProcessesGone(
     if (platform === 'win32') {
       const ps =
         'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ' +
-        `$_.CommandLine.Contains('${needle}') } | Measure-Object | ` +
+        `$_.CommandLine.Contains('${psQuote(needle)}') } | Measure-Object | ` +
         'Select-Object -ExpandProperty Count';
       const res = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
         encoding: 'utf8',
         timeout: 30_000,
       });
-      if (res.error) return false;
-      return Number.parseInt(`${res.stdout ?? ''}`.trim(), 10) > 0;
+      if (res.error) return true;
+      const count = Number.parseInt(`${res.stdout ?? ''}`.trim(), 10);
+      // A probe that did not answer is "unknown", never "gone": a non-zero exit
+      // or an unparseable count would otherwise report the sweep clean and let
+      // the relaunch start against a profile the killed browser still owns —
+      // the exact wedge this wait exists to prevent.
+      if (res.status !== 0 || !Number.isFinite(count)) return true;
+      return count > 0;
     }
     const res = run('pgrep', ['-f', escaped.startsWith('-') ? `(${escaped})` : escaped], {
       encoding: 'utf8',
       timeout: 30_000,
     });
-    if (res.error) return false;
-    return res.status === 0;
+    if (res.error) return true;
+    // pgrep: 0 = matched (still running), 1 = nothing matched. Any other exit is
+    // a probe failure, and a failure must never read as "gone" either.
+    return res.status !== 1;
   };
   const deadline = Date.now() + timeoutMs;
   for (;;) {
