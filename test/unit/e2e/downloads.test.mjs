@@ -25,6 +25,7 @@ const {
   cacheFirstDecision,
   downloadDir,
   downloadTo,
+  downloadsEntry,
   findCachedInstaller,
   isFileLockError,
   isMozillaPortableInstall,
@@ -36,6 +37,7 @@ const {
   runInstallerWithRetry,
   runNsisInstallerWithRetry,
   unpackNsisCore,
+  pruneStaleDownloadCache,
 } = await import(downloadsUrl);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
@@ -683,6 +685,19 @@ test('isFileLockError: spawnSync-shape EBUSY (libuv sharing violation) matches o
   );
 });
 
+test('isFileLockError: a readFileSync EBUSY (file held by a writer) matches', () => {
+  // Node fs errors carry no stderr — the message/path is the whole signal. The
+  // updater E2E's tree-hash read sees this shape when the browser holds a file
+  // open while copying it (floorp portable leg, 2026-10-02), so the retry there
+  // depends on this classification.
+  const err = Object.assign(
+    new Error("EBUSY: resource busy or locked, open 'C:/Temp/chrome/utils/x.sys.mjs'"),
+    {code: 'EBUSY', syscall: 'open'}
+  );
+  assert.equal(isFileLockError(err, {platform: 'win32'}), true);
+  assert.equal(isFileLockError(err, {platform: 'linux'}), false);
+});
+
 test('runNsisInstallerWithRetry: retries spawnSync EBUSY then succeeds', () => {
   const attempts = [];
   const result = runNsisInstallerWithRetry('setup.exe', ['/S', '/D=C:\\x'], 'test installer', {
@@ -765,6 +780,25 @@ test('isMozillaPortableInstall: forks and snap keep their own paths', () => {
   assert.equal(isMozillaPortableInstall('firefox-snap', 'linux', dir), false, 'snap');
   // Unknown keys and platforms without a recipe stay on the system route.
   assert.equal(isMozillaPortableInstall('nope', 'win', dir), false, 'unknown browser');
+});
+
+test('isMozillaPortableInstall: ESR extracts like an official build, not /D=', () => {
+  const dir = '/p/portable';
+  // ESR has no static url (its major is dynamic and a retired one needs the
+  // version-embedded index); the mozillaPortable marker routes it to the 7z
+  // extract-only path. The forks' /D= mechanism must not claim it — the
+  // Mozilla installer ignores /D= and left an empty directory behind (the
+  // `pnpm e2e:portable firefox-esr-140` bug this guards).
+  for (const browser of ['firefox-esr-140', 'firefox-esr-153', 'firefox-esr']) {
+    const recipe = downloadsEntry(browser)?.install?.win;
+    assert.equal(recipe?.portable, undefined, `${browser} must not ride /D=`);
+    assert.equal(recipe?.mozillaPortable, true, `${browser} must extract`);
+    assert.equal(isMozillaPortableInstall(browser, 'win', dir), true, `${browser} win`);
+    assert.equal(isMozillaPortableInstall(browser, 'win', ''), false, `${browser} no dir`);
+  }
+  // LibreWolf is resolver-based too but NOT a Mozilla build: it must keep the
+  // system route, so the marker must not be inferred from `resolver` alone.
+  assert.equal(isMozillaPortableInstall('librewolf', 'win', dir), false, 'librewolf system route');
 });
 
 test('portableBinaryPath: launcher file per platform (not the top-level dir)', () => {
@@ -997,4 +1031,98 @@ test('findCachedInstaller: null on a missing dir, prefix filters foreign files',
     else process.env.BROWSER_DL_DIR = prevDir;
     fs.rmSync(tmp, {recursive: true, force: true});
   }
+});
+
+// ── pruneStaleDownloadCache ────────────────────────────────────
+// The local download cache defaults to the OS temp dir, so an unpruned cache
+// makes every installer permanent litter there (two 73 MB Firefox setups were
+// still in the user's Temp on 2026-10-02). Age — never "is it mine" — is the
+// signal, so a concurrently running leg's download is safe.
+
+test('pruneStaleDownloadCache: drops aged installers, keeps fresh and foreign files', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-prune-'));
+  try {
+    const files = [
+      'firefox-portable-setup.exe',
+      'firefox-esr-140-portable-setup.exe',
+      'zen-setup-1.0.exe',
+      'nightly.dmg',
+      'notes.txt', // not an installer: never ours to delete
+    ];
+    for (const name of files) fs.writeFileSync(path.join(dir, name), 'x');
+    fs.mkdirSync(path.join(dir, 'firefox-setup-2.0.exe')); // dir, not a file
+
+    const {removed, kept} = pruneStaleDownloadCache({
+      dir,
+      maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      now: Date.now() + 8 * 24 * 60 * 60 * 1000,
+      log: () => {},
+    });
+    assert.deepEqual(removed.map(f => path.basename(f)).sort(), [
+      'firefox-esr-140-portable-setup.exe',
+      'firefox-portable-setup.exe',
+      'zen-setup-1.0.exe',
+    ]);
+    assert.deepEqual(kept, []);
+    assert.equal(fs.existsSync(path.join(dir, 'notes.txt')), true);
+    assert.equal(fs.existsSync(path.join(dir, 'firefox-setup-2.0.exe')), true);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('pruneStaleDownloadCache: a multi-part installer extension counts (.tar.xz)', () => {
+  // `path.extname` returns only the LAST extension, so a `.tar.xz` name read as
+  // `.xz` and the list's multi-part entries never matched: an aged Linux tarball
+  // setup was invisible to the sweep. The `-setup` marker still gates it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-prune-tar-'));
+  try {
+    for (const name of ['firefox-setup.tar.xz', 'firefox-portable-setup.tar.gz', 'notes.tar.xz']) {
+      fs.writeFileSync(path.join(dir, name), 'x');
+    }
+    const {removed, kept} = pruneStaleDownloadCache({
+      dir,
+      maxAgeMs: 0,
+      now: Date.now() + 60_000,
+      log: () => {},
+    });
+    assert.deepEqual(removed.map(f => path.basename(f)).sort(), [
+      'firefox-portable-setup.tar.gz',
+      'firefox-setup.tar.xz',
+    ]);
+    assert.deepEqual(
+      kept.map(f => path.basename(f)),
+      [],
+      'kept reports only installers left behind — a foreign file is never considered'
+    );
+    assert.ok(
+      fs.existsSync(path.join(dir, 'notes.tar.xz')),
+      'a tarball without the -setup marker is never ours to delete'
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('pruneStaleDownloadCache: a just-downloaded installer survives (live leg)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-prune-fresh-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'firefox-portable-setup.exe'), 'x');
+    const {removed, kept} = pruneStaleDownloadCache({dir, log: () => {}});
+    assert.deepEqual(removed, []);
+    assert.deepEqual(
+      kept.map(f => path.basename(f)),
+      ['firefox-portable-setup.exe']
+    );
+    assert.equal(fs.existsSync(path.join(dir, 'firefox-portable-setup.exe')), true);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('pruneStaleDownloadCache: tolerates a missing cache dir', () => {
+  assert.deepEqual(
+    pruneStaleDownloadCache({dir: path.join(os.tmpdir(), 'dl-prune-missing'), log: () => {}}),
+    {removed: [], kept: []}
+  );
 });

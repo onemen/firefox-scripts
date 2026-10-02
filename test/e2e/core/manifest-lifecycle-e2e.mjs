@@ -46,6 +46,8 @@ import {
   tempDir,
   rmDir,
   summary,
+  pruneStaleTempRoots,
+  noteLeakedTempRoot,
 } from '../shared/helpers.mjs';
 import {
   findSnapshot,
@@ -437,6 +439,7 @@ async function runSession(firefoxBin, profileDir, prefs, label, sessionNo, opts)
 async function main() {
   const opts = parseArgs();
   const counter = createCounter();
+  pruneStaleTempRoots();
   const firefoxBin = opts.firefox || discoverFirefoxBinary();
   if (!firefoxBin) {
     console.error(missingFirefoxMessage());
@@ -568,7 +571,9 @@ async function main() {
       JSON.stringify(bedFiles(bedDir))
     );
   } finally {
-    if (!opts.keepProfile) {
+    if (opts.keepProfile) {
+      for (const p of profiles) if (p) noteLeakedTempRoot(p);
+    } else {
       for (const p of profiles) if (p) rmDir(p);
     }
     for (const error of restoreGreState(savedGre)) {

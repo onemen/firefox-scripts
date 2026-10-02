@@ -22,10 +22,16 @@
  * It prints the `FIREFOX_BINARY` value to export before the E2E run.
  *
  * `browser` is a `test/e2e/shared/downloads.mjs` key (firefox, firefox-dev,
- * nightly; the forks install portably on Windows too). Re-running is cheap: an
- * existing portable dir is reused instead of re-downloaded. The installer
- * itself lands in the OS temp dir (`BROWSER_DL_DIR` overrides) as downloads.mjs
- * does for every other browser.
+ * nightly, firefox-esr-<major>; the forks install portably on Windows too). An
+ * ESR key extracts like the official builds (its installer ignores `/D=`, so
+ * the forks' route left an empty directory). Re-running is cheap: an existing
+ * portable dir is reused instead of re-downloaded. The installer itself lands
+ * in the OS temp dir (`BROWSER_DL_DIR` overrides) as downloads.mjs does for
+ * every other browser; those files are pruned after a week
+ * (`pruneStaleDownloadCache`). The install destination must NOT be inside the
+ * OS temp dir (`--allow-temp-dir` overrides) — a browser there is never
+ * reclaimed. Point `PORTABLE_BROWSER_DIR` at the repo's gitignored
+ * `dist/portable/<browser>` if you want it next to the checkout.
  */
 
 import os from 'node:os';
@@ -35,9 +41,12 @@ import {installBrowser} from '../test/e2e/shared/downloads.mjs';
 
 const USAGE = `Usage: pnpm e2e:portable [browser] [--dir <path>]
 
-  browser        downloads.mjs key — firefox, firefox-dev, nightly, a fork
-                 (default: nightly)
+  browser        downloads.mjs key — firefox, firefox-dev, nightly, a fork,
+                 firefox-esr-<major> (default: nightly)
   --dir <path>   install destination (default: see defaultPortableDir)
+  --allow-temp-dir
+                 permit a destination inside the OS temp dir (refused by
+                 default: a ~400 MB browser there is never reclaimed)
 
 Installs the browser's OFFICIAL build into a directory this account owns, so the
 updater E2E can seed config.js into its GreD. Prints the FIREFOX_BINARY to use.`;
@@ -63,13 +72,22 @@ export function defaultPortableDir(browser, platform = process.platform, home = 
 
 /**
  * @param {string[]} argv
- * @returns {{help?: boolean; browser?: string; dir?: string}}
+ * @returns {{
+ *   help?: boolean;
+ *   browser?: string;
+ *   dir?: string;
+ *   allowTempDir?: boolean;
+ * }}
  */
 export function parseArgs(argv) {
-  const opts = {browser: '', dir: ''};
+  const opts = {browser: '', dir: '', allowTempDir: false};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') return {help: true};
+    if (arg === '--allow-temp-dir') {
+      opts.allowTempDir = true;
+      continue;
+    }
     if (arg === '--dir') {
       opts.dir = argv[++i] || '';
       if (!opts.dir) throw new Error('--dir needs a path');
@@ -82,6 +100,25 @@ export function parseArgs(argv) {
   return opts;
 }
 
+/**
+ * Is `dir` inside the OS temp dir?
+ *
+ * A portable browser is ~400 MB that nothing ever cleans: pointed at the OS
+ * temp dir it becomes permanent litter (one `fxs-portable` copy, 365 MB, was
+ * still there on 2026-10-02). Pure so unit tests can pin the rule.
+ *
+ * @param {string} dir absolute path
+ * @param {string} [tmp] temp root (os.tmpdir())
+ * @returns {boolean}
+ */
+export function isInsideTempDir(dir, tmp = os.tmpdir()) {
+  const root = path.resolve(tmp);
+  const target = path.resolve(dir);
+  if (target === root) return true;
+  const rel = path.relative(root, target);
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
@@ -91,6 +128,18 @@ async function main() {
 
   const browser = opts.browser || 'nightly';
   const dest = path.resolve(opts.dir || defaultPortableDir(browser));
+
+  // The temp dir is not a storage location: nothing reclaims a browser left
+  // there, and the OS only prunes files after ~30 days. Point at the repo's
+  // gitignored dist/ (or the default under Documents) instead.
+  if (!opts.allowTempDir && isInsideTempDir(dest)) {
+    throw new Error(
+      `refusing to install a browser into the OS temp dir: ${dest}\n` +
+        '  Use a persistent dir (the default, or --dir <repo>/dist/portable/' +
+        browser +
+        '), or pass --allow-temp-dir if you really mean it.'
+    );
+  }
 
   // installBrowser() reads this to pick the portable route (the 7z extract
   // path on Windows, the tarball/DMG elsewhere) instead of the system location.

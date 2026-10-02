@@ -219,12 +219,19 @@ export function platformKey(platform = process.platform) {
 const ESR_BROWSER_REGEXP = /^firefox-esr(?:-(\d+))?$/;
 
 /**
- * A generated ESR recipe: the official Mozilla NSIS installer installed
- * PORTABLY on Windows (fork-portable mechanism — `/D=` into
- * PORTABLE_BROWSER_DIR), so it never collides with the registered stable
- * install and needs no BROWSERS registry entry (the resolved binary is exported
- * as FIREFOX_BINARY directly). Windows-only: the ESR legs are advisory and
- * Windows is the platform the installer/updater actually admin-copies on.
+ * A generated ESR recipe: the official Mozilla NSIS installer, portably
+ * installed on Windows by EXTRACTION when PORTABLE_BROWSER_DIR is set (the same
+ * 7z `core` unpack firefox/dev/nightly use — see isMozillaPortableInstall) and
+ * by a silent registered install otherwise, so it never collides with the
+ * registered stable install and needs no BROWSERS registry entry (the resolved
+ * binary is exported as FIREFOX_BINARY directly).
+ *
+ * The Mozilla installer does NOT honor `/D=`, so ESR must NOT ride the forks'
+ * fork-portable mechanism: that route left an empty directory behind and then
+ * threw "no binary at … — does this installer honor /D=?" (`pnpm e2e:portable
+ * firefox-esr-140`). `mozillaPortable` is the marker that routes it to the
+ * extraction path instead. Windows-only: the ESR legs are advisory and Windows
+ * is the platform the installer/updater actually admin-copies on.
  *
  * @param {string} browser
  * @returns {{
@@ -232,8 +239,7 @@ const ESR_BROWSER_REGEXP = /^firefox-esr(?:-(\d+))?$/;
  *     win: {
  *       resolver: boolean;
  *       args: string[];
- *       portable: boolean;
- *       portableExe: string;
+ *       mozillaPortable: boolean;
  *     };
  *   };
  * }}
@@ -245,8 +251,8 @@ export function esrDownloadsEntry(browser) {
       win: {
         resolver: true,
         args: ['/S'],
-        portable: true, // /D= → PORTABLE_BROWSER_DIR/firefox.exe
-        portableExe: 'firefox.exe',
+        // Official Mozilla build → extract-only portable route (never /D=).
+        mozillaPortable: true,
       },
     },
   };
@@ -282,6 +288,92 @@ export function resolveBinary(browser) {
  */
 export function downloadDir() {
   return process.env.BROWSER_DL_DIR || os.tmpdir();
+}
+
+/**
+ * Extensions an installer download can have. Multi-part ones are included, so
+ * this list is matched as a SUFFIX list (`endsWith`), never through
+ * `path.extname` — which returns only the last extension.
+ */
+const INSTALLER_EXTS = ['.exe', '.dmg', '.pkg', '.AppImage', '.tar.gz', '.tar.xz', '.tar.bz2'];
+
+/**
+ * Is this a cached installer file? Both halves are literal — no regex — so the
+ * "known shape" rule stays cheap and unambiguous: the name carries the recipe's
+ * `-setup` marker (`<browser>-setup`, `<browser>-portable-setup`, or a
+ * versioned `…-setup-1.0.exe`) and the extension is one a browser ships as.
+ */
+function isCachedInstallerFile(name) {
+  // endsWith over the suffix list, not `INSTALLER_EXTS.has(path.extname(name))`:
+  // extname returns only the LAST extension, so `.tar.xz` read as `.xz` and the
+  // three multi-part entries could never match — an aged
+  // `firefox-setup.tar.xz` stayed in the cache forever.
+  return name.includes('-setup') && INSTALLER_EXTS.some(ext => name.endsWith(ext));
+}
+
+const DL_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Drop installer files the local download cache has not touched in a week.
+ *
+ * The cache is what makes a repeat local run cheap, but its default home is the
+ * OS temp dir: without this the installers are permanent litter there (two 73
+ * MB Firefox setups sat in the user's Temp on 2026-10-02, from runs on
+ * 2026-09-30 alone). Age, not "is it this run's file": only entries older than
+ * `maxAgeMs` go, so a concurrently running leg's download is never touched.
+ *
+ * @param {{
+ *   maxAgeMs?: number;
+ *   dir?: string;
+ *   now?: number;
+ *   log?: (msg: string) => void;
+ * }} [opts]
+ *   test seams
+ * @returns {{removed: string[]; kept: string[]}}
+ */
+export function pruneStaleDownloadCache({
+  maxAgeMs = 7 * DL_DAY_MS,
+  dir = downloadDir(),
+  now = Date.now(),
+  log = console.log,
+} = {}) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, {withFileTypes: true});
+  } catch {
+    return {removed: [], kept: []};
+  }
+  const removed = [];
+  const kept = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !isCachedInstallerFile(entry.name)) {
+      continue;
+    }
+    const full = path.join(dir, entry.name);
+    let stat;
+    try {
+      stat = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    if (now - stat.mtimeMs < maxAgeMs) {
+      kept.push(full);
+      continue;
+    }
+    try {
+      fs.rmSync(full, {force: true});
+      removed.push(full);
+    } catch {
+      kept.push(full);
+    }
+  }
+  if (removed.length) {
+    log(
+      `  [downloads] pruned ${removed.length} cached installer(s) older than ` +
+        `${Math.round(maxAgeMs / DL_DAY_MS)}d: ${removed.map(f => path.basename(f)).join(', ')}`
+    );
+  }
+  return {removed, kept};
 }
 
 /**
@@ -811,6 +903,12 @@ function runSilentInstaller(exe, args) {
  * ESR keys) should be installed into `PORTABLE_BROWSER_DIR` instead of the
  * system location.
  *
+ * The static official recipes carry a `url`; the resolver-based ESR keys have
+ * none (their major is dynamic and a retired one needs the version-embedded
+ * index), so they set `mozillaPortable` instead. LibreWolf is resolver-based
+ * too but is not an official Mozilla build — no marker, so it keeps the system
+ * route (it has no portable recipe).
+ *
  * The local updater E2E seeds `config.js` into the browser's install dir, so it
  * needs a GreD this account can write: CI's runners are admins and can use an
  * installed browser, a normal account cannot (`pnpm e2e:portable` installs a
@@ -834,7 +932,11 @@ export function isMozillaPortableInstall(
   if (!portableDir) return false;
   const recipe = downloadsEntry(browser)?.install?.[osKey];
   if (!recipe || recipe.portable || recipe.snap) return false;
-  if (osKey === 'win') return Boolean(recipe.url && recipe.args);
+  if (osKey === 'win') {
+    // `url` for the static official recipes; `mozillaPortable` for the
+    // resolver-based ESR keys, which still extract (see esrDownloadsEntry).
+    return Boolean((recipe.url || recipe.mozillaPortable) && recipe.args);
+  }
   return Boolean(recipe.tarball || recipe.url);
 }
 
@@ -1323,6 +1425,7 @@ function requireBinary(browser) {
  * @returns {Promise<string>} absolute path to the browser binary
  */
 export async function installBrowser(browser, platform = process.platform) {
+  pruneStaleDownloadCache();
   const key = platformKey(platform);
   const def = downloadsEntry(browser);
   if (!def) {
@@ -1357,7 +1460,15 @@ export async function installBrowser(browser, platform = process.platform) {
     return binary;
   }
   if (isMozillaPortableInstall(browser, key)) {
-    const url = recipe.tarball || recipe.url;
+    // Static recipes carry their url; the resolver-based ESR keys have none, so
+    // resolve one here — the same resolver chain the registered install below
+    // uses, which is what keeps a retired ESR major installable.
+    let url = recipe.tarball || recipe.url;
+    if (!url) {
+      const resolved = await resolveInstallerUrl(browser);
+      url = resolved.url;
+      console.log(`  ${browser} ${resolved.version} installer resolved from ${resolved.source}`);
+    }
     const binary = await installPortableFirefox(
       url,
       key === 'win' ? 'win32'

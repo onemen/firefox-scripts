@@ -141,8 +141,11 @@ background processes run — and never re-run a finished command just to "check 
   done (the API call returned, the log was read into the reply, the artifact was posted), delete the
   file right there; sweep anything left before the session ends (end of session = nothing is needed
   anymore — this backstop also covers whatever the judgment missed). Stage scratch in the repo's
-  gitignored `dist/`, never bare `/tmp` (on this machine /tmp IS the user's Temp — 13 stray files
-  proved it on 2026-09-30) — and never delete anything you did not create;
+  gitignored `dist/scratch/` (create it if missing), never bare `/tmp` (on this machine /tmp IS the
+  user's Temp — 13 stray files proved it on 2026-09-30, and ~762 MB of probe dirs proved it again on
+  2026-10-02: `fxs-manual-*`, `fxs-probe-*`, `fxs-tab-*`, `ss-probe`, `s9*.log` — none of them repo
+  code, all of them a `pnpm test` away from failing the hygiene gate) — and never delete anything
+  you did not create;
 - no unrelated files were modified;
 - failed/unavailable validation is reported;
 - when the PR is ready for review, run the ADR 0020 review step (see the `ai-review` skill);
