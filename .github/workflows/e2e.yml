@@ -82,16 +82,6 @@ on:
         description: 'Pin the browser version (empty = resolve the newest)'
         type: string
         default: ''
-      # Deliberately separate from `version`: this one never touches the browser
-      # resolver, it only tells the updater E2E harness to re-test a timing
-      # workaround instead of asserting it.
-      updater_probe_args:
-        description: >-
-          ESR portable legs only: extra arguments for the updater E2E probe batch. Interpolated as a
-          shell fragment, so quote anything with spaces, e.g. --repeat 20 --load 8 --debug
-          twinGuard=0 --probe "final updater-tab set". Empty = the normal run, unchanged.
-        type: string
-        default: ''
 
 concurrency:
   # Manual escapes get their own group: a routine push must never cancel a
@@ -1337,22 +1327,7 @@ jobs:
           name: dev-snapshot
           path: dist/
 
-      # Probe batch (dispatch-only escape): the same harness, told to re-enable
-      # a defect and repeat until it is either hit or ruled out — the way to
-      # re-test a timing workaround (the #384 selection wedge, the duplicate-tab
-      # guard, the session-restore gate) against real runner load instead of
-      # arguing about it. Its own report-only step because a deliberately
-      # re-enabled defect is SUPPOSED to trip assertions: the `PROBE REPORT`
-      # lines are the deliverable, and a red step would bury them. The input is
-      # operator-supplied and interpolated, which is acceptable only because
-      # workflow_dispatch requires write access to this repo.
-      - name: Run updater E2E probe batch
-        if: ${{ inputs.updater_probe_args != '' }}
-        continue-on-error: true
-        run: node test/e2e/updater/updater-e2e.mjs ${{ inputs.updater_probe_args }}
-
       - name: Run updater E2E
-        if: ${{ inputs.updater_probe_args == '' }}
         run: node test/e2e/updater/updater-e2e.mjs
 
       - name: Upload diagnostics

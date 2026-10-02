@@ -48,7 +48,7 @@
  * Usage: node test/e2e/updater/updater-e2e.mjs --firefox <path> --snapshot<dir>
  */
 
-import {execFileSync, spawn} from 'node:child_process';
+import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -57,7 +57,7 @@ import {
   REPO_ROOT,
   launchFirefox,
   attachProcessLogging,
-  check as checkRaw,
+  check,
   createCounter,
   findPageByUrl,
   waitForCondition,
@@ -316,161 +316,6 @@ try {
 } catch (e) {}
 `;
 
-// ── Probe mode (--debug / --load / --probe) ───────────────────────────────
-//
-// Re-testing a timing workaround (the #384 selection wedge, the duplicate-tab
-// guard, the session-restore gate) needs the three things a single run cannot
-// give you at once: the pre-fix behaviour switched back ON, real CPU load, and
-// enough repeats that a rare ordering is actually hit. The harness argument is
-// that arguments are cheap and reruns are not — so the mode is flags, not
-// skill.
-//
-//   --debug <name=value>[,<name=value>…]   set the module's experiment-only
-//                                          switches (default = shipped shape)
-//   --load <n>                             spawn n CPU spinners for the run
-//   --probe <label substring>              tally matching assertions across
-//                                          all --repeat passes (repeatable)
-//
-// `--probe` is REPORT-ONLY: it never changes the exit code, so a run that
-// deliberately re-enables a defect can finish green while printing exactly
-// which assertions caught it. Failures still fail; they are just summarized.
-//
-// The switches themselves live in scriptsUpdater.sys.mjs (debug.* prefs, all
-// defaulting to the shipped behaviour) — a single source of truth shared by the
-// module, the unit suite and this harness.
-
-/** name → the debug pref the module reads for it. */
-const DEBUG_SWITCHES = {
-  syncSelect: 'extensions.firefox-scripts.debug.syncSelect',
-  skipRestoreWait: 'extensions.firefox-scripts.debug.skipRestoreWait',
-  twinGuard: 'extensions.firefox-scripts.debug.twinGuard',
-};
-
-/** Applied to every seeded profile; empty outside --debug. */
-let gDebugPrefs = {};
-let gDebugWarned = false;
-/** --probe patterns and --repeat, kept at module scope so a signal can report. */
-let gProbes = [];
-let gRepeats = 1;
-
-/** {label, ok} for every assertion run, in order — the raw material for --probe. */
-const PROBE_RECORDS = [];
-
-/**
- * Assertion wrapper: records the label for --probe, then delegates.
- *
- * @param {object} counter - the shared pass/fail counter
- * @param {boolean} ok - the assertion outcome
- * @param {string} label - the assertion label
- * @param {string} [detail] - failure detail
- */
-function check(counter, ok, label, detail = '') {
-  PROBE_RECORDS.push({label, ok: Boolean(ok)});
-  checkRaw(counter, ok, label, detail);
-}
-
-/**
- * Parse one `--debug` value: `name`, `name=1`/`name=false`, comma-separated. An
- * unknown name fails loudly — a silently ignored switch would look like "the
- * workaround is unnecessary" when the workaround was never disabled.
- *
- * @param {string} spec
- * @returns {Record<string, boolean>}
- */
-function parseDebugSwitches(spec) {
-  const out = {};
-  for (const pair of spec.split(',')) {
-    if (!pair) continue;
-    const [name, rawValue] = pair.split('=');
-    if (!(name in DEBUG_SWITCHES)) {
-      throw new Error(
-        `unknown --debug switch "${name}" ` + `(known: ${Object.keys(DEBUG_SWITCHES).join(', ')})`
-      );
-    }
-    out[name] = rawValue === undefined || !['0', 'false', 'no'].includes(rawValue.toLowerCase());
-  }
-  return out;
-}
-
-/** CPU spinners held for the whole run; killed in run()'s finally. */
-const loadChildren = [];
-
-/**
- * Pin `n` cores for the duration of the run. The races this mode is for are
- * scheduling races: without contention the window closes before it opens.
- *
- * @param {number} n - spinner count
- */
-function startCpuLoad(n) {
-  for (let i = 0; i < n; i++) {
-    loadChildren.push(
-      spawn(process.execPath, ['-e', 'const end=Date.now()+7200000; while(Date.now()<end){}'], {
-        stdio: 'ignore',
-      })
-    );
-  }
-}
-
-/** Kill the spinners (idempotent; run()'s finally calls it). */
-function stopCpuLoad() {
-  for (const child of loadChildren) {
-    try {
-      child.kill();
-    } catch {
-      // Already gone.
-    }
-  }
-  loadChildren.length = 0;
-}
-
-/**
- * One running-tally line per completed repeat pass.
- *
- * The final PROBE REPORT only prints after the LAST pass, so a batch that hits
- * the CI job's timeout loses every tally it accumulated — observed on the first
- * real probe dispatch (ESR legs cancelled at 20 min, 17 completed passes and
- * nothing but raw PASS lines to read). A batch is exactly the thing that runs
- * long enough to be cancelled, so the tally is emitted as it accrues.
- *
- * @param {number} pass - the pass that just finished
- * @param {number} repeats - total passes
- */
-function logProbeProgress(pass, repeats) {
-  const parts = gProbes.map(pattern => {
-    const hits = PROBE_RECORDS.filter(record => record.label.includes(pattern));
-    const failed = hits.filter(record => !record.ok).length;
-    return `${pattern}: ${hits.length - failed}/${hits.length}`;
-  });
-  console.log(`  [probe] pass ${pass}/${repeats} — ${parts.join(' · ')}`);
-}
-
-/**
- * Print the per-assertion tally across every repeat pass.
- *
- * @param {string[]} patterns - label substrings from --probe
- * @param {number} repeats - --repeat value (for the header)
- */
-function reportProbeResults(patterns, repeats) {
-  console.log(`\n${'─'.repeat(60)}`);
-  console.log(`PROBE REPORT (${repeats} repeat${repeats === 1 ? '' : 's'})`);
-  const switches = Object.entries(gDebugPrefs);
-  console.log(
-    `  debug switches: ${switches.length ? switches.map(([k, v]) => `${k}=${v}`).join(', ') : '(none — shipped shape)'}`
-  );
-  for (const pattern of patterns) {
-    const hits = PROBE_RECORDS.filter(record => record.label.includes(pattern));
-    const failed = hits.filter(record => !record.ok).length;
-    if (hits.length === 0) {
-      console.log(`  ?    "${pattern}": NO MATCHING ASSERTION — checked nothing`);
-      continue;
-    }
-    console.log(
-      `  ${failed === 0 ? 'ok  ' : 'hit '} "${pattern}": ${hits.length - failed}/${hits.length} passed, ${failed} failed`
-    );
-  }
-  console.log('─'.repeat(60));
-}
-
 // ── Parse args ────────────────────────────────────────────────────────────
 
 function parseArgs() {
@@ -486,22 +331,13 @@ function parseArgs() {
       opts.repeat = Number(args[++i]);
     else if (args[i] === '--scenario' && args[i + 1])
       opts.scenarios = args[++i].split(',').map(s => s.trim());
-    else if (args[i] === '--debug' && args[i + 1])
-      Object.assign((opts.debug ||= {}), parseDebugSwitches(args[++i]));
-    else if (args[i] === '--load' && args[i + 1]) opts.load = Number(args[++i]);
-    else if (args[i] === '--probe' && args[i + 1]) (opts.probes ||= []).push(args[++i]);
     else if (args[i] === '--help') {
       console.log(
         'Usage: node updater-e2e.mjs --firefox <path> --snapshot <dir> [--scenario 1,6,9] [--repeat 2]\n' +
           '  Scenarios: 1 variant session (stale trio + up-to-date + skipped; 4/5 are aliases),\n' +
           '             6 install-applies, 7 manual-install-upgrade, 8 manual-install-no-ui,\n' +
           '             9 helper-checksum-win, 10 daily-recheck-timer,\n' +
-          '             11 session-restore (#384).\n' +
-          '  Probe mode (re-testing a timing workaround):\n' +
-          '    --debug <name=value>[,…]  ' +
-          `switches: ${Object.keys(DEBUG_SWITCHES).join(', ')}\n` +
-          '    --load <n>                n CPU spinners for the whole run\n' +
-          '    --probe <label substring> tally matching assertions (report-only; repeatable)'
+          '             11 session-restore (#384).'
       );
       process.exit(0);
     }
@@ -561,13 +397,6 @@ function seedProfile(
   };
   const chromeUtils = path.join(profileDir, 'chrome', 'utils');
 
-  // Probe mode (--debug): apply the module's experiment-only switches to every
-  // launch set. The scheduler copy itself has to wait for the utils extract
-  // below (its destination directory does not exist before that).
-  for (const [name, value] of Object.entries(gDebugPrefs)) {
-    prefs[DEBUG_SWITCHES[name]] = value;
-  }
-
   // Profile hygiene (issue #130): never reuse a previous run's GRE
   // compatibility state, even if a profile directory were ever reused.
   removeProfileCompatibilityIni(profileDir);
@@ -584,25 +413,6 @@ function seedProfile(
   // is part of the hashed utils file set). No-op when the paths already match.
   // Runs after the utils extract so the generated config file exists.
   Object.assign(prefs, localConfigOverrides(chromeUtils, snapshotDir));
-
-  // Probe mode (--debug): for a switch to be read at all the seeded scheduler
-  // must BE this worktree's — the copy inside the snapshot predates this run.
-  // Copying it makes the profile's utils tree differ from the snapshot
-  // manifest, so a scenario that compares against that manifest (the variant
-  // session) then sees utils as permanently stale; its FIRST variant — where
-  // the startup tab-open happens — is unaffected. See docs/e2e-tests.md →
-  // Probe mode. Copied BEFORE the stale marker below so the two run in either
-  // order without touching each other.
-  if (Object.keys(gDebugPrefs).length > 0) {
-    overwriteSchedulerFromSource(chromeUtils);
-    if (!gDebugWarned) {
-      gDebugWarned = true;
-      console.log(
-        '  [debug] probe mode: seeded scheduler replaced with the worktree source; scenarios\n' +
-          '  [debug] comparing against the snapshot manifest may now report utils stale.'
-      );
-    }
-  }
 
   // Force utils stale by changing a valid, non-startup module. Deleting a
   // shipped module can prevent the scheduler from running at all, which would
@@ -4589,26 +4399,6 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
 async function run() {
   const opts = parseArgs();
   const counter = createCounter();
-  // Probe mode: the debug switches ride in every seeded profile (see
-  // seedProfile) and the CPU load is held for the whole run.
-  gDebugPrefs = opts.debug || {};
-  gProbes = opts.probes || [];
-  gRepeats = opts.repeat ?? 1;
-  if (opts.probes?.length) {
-    console.log(
-      `  probe mode: ${
-        Object.keys(gDebugPrefs).length ?
-          Object.keys(gDebugPrefs)
-            .map(n => `${n}=${gDebugPrefs[n]}`)
-            .join(', ')
-        : '(shipped shape)'
-      } · repeat=${opts.repeat ?? 1} · load=${opts.load ?? 0}`
-    );
-  }
-  if (opts.load > 0) {
-    startCpuLoad(opts.load);
-    console.log(`  CPU load: ${opts.load} spinner(s)`);
-  }
 
   const snapshotDir = opts.snapshot || findSnapshot({branchCheck: false})?.dir;
   if (!snapshotDir) {
@@ -4908,7 +4698,6 @@ async function run() {
         }
         await step.run();
       }
-      if (gProbes.length > 0) logProbeProgress(pass, repeat);
     }
   } finally {
     if (!opts.keepProfile) {
@@ -4916,34 +4705,13 @@ async function run() {
         if (p) rmDir(p);
       }
     }
-    // Kill the spinners before anything else: a probe run that leaves the
-    // machine pinned would poison the next one.
-    stopCpuLoad();
     const restoreErrors = restoreGreConfig(savedGre);
     for (const error of restoreErrors) {
       check(counter, false, 'GreD configuration restored', error);
     }
   }
 
-  if (opts.probes?.length) {
-    reportProbeResults(opts.probes, opts.repeat ?? 1);
-  }
   if (!summary(counter)) process.exitCode = 1;
-}
-
-// Belt and braces for --load: run()'s finally kills the spinners, but an early
-// process.exit (no snapshot, unwritable GreD) or a signal would otherwise leave
-// the machine pinned for the rest of the session. SIGTERM/SIGINT get an explicit
-// handler because Node does not run 'exit' handlers for a default signal kill.
-process.on('exit', stopCpuLoad);
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    stopCpuLoad();
-    // A cancelled batch still owes its evidence: the runner's timeout arrives
-    // as a signal, so report what was collected before exiting.
-    if (gProbes.length > 0) reportProbeResults(gProbes, gRepeats);
-    process.exit(130);
-  });
 }
 
 run().catch(err => {
