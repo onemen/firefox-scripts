@@ -41,6 +41,7 @@ import {
   tempDir,
   rmDir,
   summary,
+  readFileSyncWithRetry,
 } from '../shared/helpers.mjs';
 import {
   findSnapshot,
@@ -1616,7 +1617,11 @@ async function run() {
   // "installer works" is what a real release build does too. Missing marker →
   // the build lost its --local flags; fix the Makefile CONFIG_GENERATOR
   // passthrough, not this assertion.
-  const binaryText = fs.readFileSync(bin, 'latin1');
+  // The installer was just downloaded/unpacked and is about to be executed:
+  // a Windows scanner can still hold it open, which is the same AV file-lock
+  // race runNsisInstallerWithRetry exists for. Retry the identity read rather
+  // than failing here before the installer has even run.
+  const binaryText = readFileSyncWithRetry(bin, 'latin1');
   // Linear-time scan (no nested quantifiers — the eslint unsafe-regex gate):
   // find every 'dist/<dir>/<basename>' chunk in the raw bytes, then trim each
   // candidate to its path-shaped tail. On a local-baked binary one candidate

@@ -368,7 +368,9 @@ function installFxFolder(snapshotDir, greDir) {
       }
       try {
         fs.mkdirSync(path.dirname(dst), {recursive: true});
-        fs.writeFileSync(dst, fs.readFileSync(src));
+        // Re-seeded for the retry attempt of a session whose previous browser
+        // may still be closing on the same GreD file — ride out the lock.
+        writeFileSyncWithRetry(dst, fs.readFileSync(src));
       } catch (err) {
         return {ok: false, error: `cannot write ${dst}: ${err.message}`};
       }
@@ -760,7 +762,11 @@ function dumpUpdaterPrefs(profileDir) {
 /** Append the diagnostic probe to the seeded GreD config.js. */
 function appendConfigProbe(greDir) {
   try {
-    fs.appendFileSync(path.join(greDir, 'config.js'), CONFIG_PROBE_SNIPPET);
+    // Also reached on the retry attempt, where the previous browser may still
+    // be releasing this GreD file (Windows EBUSY).
+    withLockRetrySync(() =>
+      fs.appendFileSync(path.join(greDir, 'config.js'), CONFIG_PROBE_SNIPPET)
+    );
     return true;
   } catch (err) {
     console.log(`  [diag] could not append config probe: ${err.message}`);
@@ -1986,8 +1992,12 @@ async function runFoldedNoUi(counter, ctx) {
     });
 
     // The user modified a utils file by hand and this profile has no ui on disk
-    // (install-applies replaced the trees, so re-stale utils explicitly).
-    fs.appendFileSync(path.join(seeded.chromeUtils, FORCE_UTILS_STALE), FORCE_UTILS_STALE_MARKER);
+    // (install-applies replaced the trees, so re-stale utils explicitly). The
+    // driver session's browser is LIVE here and just hashed this tree, so the
+    // append rides out a Windows lock like the other mid-session writes.
+    withLockRetrySync(() =>
+      fs.appendFileSync(path.join(seeded.chromeUtils, FORCE_UTILS_STALE), FORCE_UTILS_STALE_MARKER)
+    );
     check(
       counter,
       !fs.existsSync(path.join(uiDir, 'updater.html')),
@@ -2140,8 +2150,9 @@ async function runVariantSession(counter, opts, snapshotDir) {
   if (!greSeed.ok) return {profiles: createdProfiles, driverAvailable};
 
   // Capture the pristine config.js BEFORE the probe lands on it — the variants
-  // whose config must be OK restore exactly these bytes.
-  let pristineConfig = fs.readFileSync(path.join(greDir, 'config.js'));
+  // whose config must be OK restore exactly these bytes. Retried: on the retry
+  // attempt the previous browser may still be releasing this same file.
+  let pristineConfig = readFileSyncWithRetry(path.join(greDir, 'config.js'));
 
   appendConfigProbe(greDir);
 
@@ -2163,7 +2174,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
         const greSeed2 = installFxFolder(snapshotDir, greDir);
         check(counter, greSeed2.ok, `seed GreD (retry ${label})`, greSeed2.error);
         if (!greSeed2.ok) break;
-        pristineConfig = fs.readFileSync(path.join(greDir, 'config.js'));
+        pristineConfig = readFileSyncWithRetry(path.join(greDir, 'config.js'));
         appendConfigProbe(greDir);
       }
 
@@ -2991,7 +3002,7 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
   check(
     counter,
     fs.existsSync(staleFile) &&
-      !fs.readFileSync(staleFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER),
+      !readFileSyncWithRetry(staleFile, 'utf-8').includes(FORCE_UTILS_STALE_MARKER),
     `stale marker replaced by install (${label})`
   );
   check(
@@ -3005,7 +3016,8 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
     // the probe stays and the dir still differs from the manifest.
     check(
       counter,
-      fs.existsSync(greConfig) && fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+      fs.existsSync(greConfig) &&
+        readFileSyncWithRetry(greConfig, 'utf-8').includes('e2e-test probe'),
       `config probe NOT replaced (snap manual, ${label})`
     );
     check(
@@ -3016,7 +3028,8 @@ async function runInstallAppliesScenario(counter, opts, snapshotDir, label) {
   } else {
     check(
       counter,
-      fs.existsSync(greConfig) && !fs.readFileSync(greConfig, 'utf-8').includes('e2e-test probe'),
+      fs.existsSync(greConfig) &&
+        !readFileSyncWithRetry(greConfig, 'utf-8').includes('e2e-test probe'),
       `config probe replaced by install (${label})`
     );
     check(
