@@ -219,12 +219,19 @@ export function platformKey(platform = process.platform) {
 const ESR_BROWSER_REGEXP = /^firefox-esr(?:-(\d+))?$/;
 
 /**
- * A generated ESR recipe: the official Mozilla NSIS installer installed
- * PORTABLY on Windows (fork-portable mechanism — `/D=` into
- * PORTABLE_BROWSER_DIR), so it never collides with the registered stable
- * install and needs no BROWSERS registry entry (the resolved binary is exported
- * as FIREFOX_BINARY directly). Windows-only: the ESR legs are advisory and
- * Windows is the platform the installer/updater actually admin-copies on.
+ * A generated ESR recipe: the official Mozilla NSIS installer, portably
+ * installed on Windows by EXTRACTION when PORTABLE_BROWSER_DIR is set (the same
+ * 7z `core` unpack firefox/dev/nightly use — see isMozillaPortableInstall) and
+ * by a silent registered install otherwise, so it never collides with the
+ * registered stable install and needs no BROWSERS registry entry (the resolved
+ * binary is exported as FIREFOX_BINARY directly).
+ *
+ * The Mozilla installer does NOT honor `/D=`, so ESR must NOT ride the forks'
+ * fork-portable mechanism: that route left an empty directory behind and then
+ * threw "no binary at … — does this installer honor /D=?" (`pnpm e2e:portable
+ * firefox-esr-140`). `mozillaPortable` is the marker that routes it to the
+ * extraction path instead. Windows-only: the ESR legs are advisory and Windows
+ * is the platform the installer/updater actually admin-copies on.
  *
  * @param {string} browser
  * @returns {{
@@ -232,8 +239,7 @@ const ESR_BROWSER_REGEXP = /^firefox-esr(?:-(\d+))?$/;
  *     win: {
  *       resolver: boolean;
  *       args: string[];
- *       portable: boolean;
- *       portableExe: string;
+ *       mozillaPortable: boolean;
  *     };
  *   };
  * }}
@@ -245,8 +251,8 @@ export function esrDownloadsEntry(browser) {
       win: {
         resolver: true,
         args: ['/S'],
-        portable: true, // /D= → PORTABLE_BROWSER_DIR/firefox.exe
-        portableExe: 'firefox.exe',
+        // Official Mozilla build → extract-only portable route (never /D=).
+        mozillaPortable: true,
       },
     },
   };
@@ -811,6 +817,12 @@ function runSilentInstaller(exe, args) {
  * ESR keys) should be installed into `PORTABLE_BROWSER_DIR` instead of the
  * system location.
  *
+ * The static official recipes carry a `url`; the resolver-based ESR keys have
+ * none (their major is dynamic and a retired one needs the version-embedded
+ * index), so they set `mozillaPortable` instead. LibreWolf is resolver-based
+ * too but is not an official Mozilla build — no marker, so it keeps the system
+ * route (it has no portable recipe).
+ *
  * The local updater E2E seeds `config.js` into the browser's install dir, so it
  * needs a GreD this account can write: CI's runners are admins and can use an
  * installed browser, a normal account cannot (`pnpm e2e:portable` installs a
@@ -834,7 +846,11 @@ export function isMozillaPortableInstall(
   if (!portableDir) return false;
   const recipe = downloadsEntry(browser)?.install?.[osKey];
   if (!recipe || recipe.portable || recipe.snap) return false;
-  if (osKey === 'win') return Boolean(recipe.url && recipe.args);
+  if (osKey === 'win') {
+    // `url` for the static official recipes; `mozillaPortable` for the
+    // resolver-based ESR keys, which still extract (see esrDownloadsEntry).
+    return Boolean((recipe.url || recipe.mozillaPortable) && recipe.args);
+  }
   return Boolean(recipe.tarball || recipe.url);
 }
 
@@ -1357,7 +1373,15 @@ export async function installBrowser(browser, platform = process.platform) {
     return binary;
   }
   if (isMozillaPortableInstall(browser, key)) {
-    const url = recipe.tarball || recipe.url;
+    // Static recipes carry their url; the resolver-based ESR keys have none, so
+    // resolve one here — the same resolver chain the registered install below
+    // uses, which is what keeps a retired ESR major installable.
+    let url = recipe.tarball || recipe.url;
+    if (!url) {
+      const resolved = await resolveInstallerUrl(browser);
+      url = resolved.url;
+      console.log(`  ${browser} ${resolved.version} installer resolved from ${resolved.source}`);
+    }
     const binary = await installPortableFirefox(
       url,
       key === 'win' ? 'win32'
