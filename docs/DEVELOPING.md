@@ -469,6 +469,10 @@ per mode, LOCAL flag, dev/local overrides), `hashUtils.mjs` (directory/file-set 
 filtering, sorting), `embed.mjs` (generated C header via `--stdout`), and `browsers.mjs` (GreD path
 derivation, snapshot discovery, Firefox binary detection).
 
+A subset of the updater suites runs the privileged `scriptsUpdater.sys.mjs` itself, evaluated from
+source in a `node:vm` sandbox with faked browser globals — the how, the shared stubs and the
+deterministic-timer rules are in **[docs/unit-test-sandboxes.md](./unit-test-sandboxes.md)**.
+
 ## Test: E2E tests (`pnpm test:e2e`)
 
 Moved to its own page: **[docs/e2e-tests.md](./e2e-tests.md)** — installer HTTP API, elevated-copy

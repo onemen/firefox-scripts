@@ -849,12 +849,24 @@ async function engineInit() {
   }
 
   // Twin-tab guard (defense-in-depth; the module already keeps a single
-  // instance): if another updater tab is open, this one closes itself.
+  // instance): if another updater tab is open, exactly one must survive —
+  // the scheduler-marked startup tab (the fresh one the module opened and
+  // owns the daily pref) beats an unmarked tab (a restored one that
+  // materialized late, or a manual chrome:// visit). Both unmarked: this
+  // one closes itself (historical behavior). The mark is an expando set by
+  // the scheduler module on the tab element: through compartment Xrays it is
+  // invisible, so read it off wrappedJSObject (with the direct property as
+  // the same-realm fallback) — an Xray-blind guard would make BOTH twins
+  // self-close and no engine would ever complete its check (observed on
+  // ESR 140, 2026-10-01).
   if (updateTab && chromeWin?.gBrowser) {
-    const anotherOpen = chromeWin.gBrowser.tabs.some(
+    const isStartupTab = t =>
+      Boolean(t?.wrappedJSObject?._scriptsUpdateTab ?? t?._scriptsUpdateTab);
+    const otherUpdaterTabs = chromeWin.gBrowser.tabs.filter(
       t => t !== updateTab && t.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI
     );
-    if (anotherOpen) {
+    const otherStartupTab = otherUpdaterTabs.find(isStartupTab);
+    if (otherStartupTab || (!isStartupTab(updateTab) && otherUpdaterTabs.length > 0)) {
       closeUpdateTab();
       return;
     }

@@ -179,15 +179,21 @@ BootstrapLoader / userChrome imports scriptsUpdater.sys.mjs
         │
         ▼
 initScriptsUpdater(win)                     # idempotent; refreshes gWindow when the
-  ├─ checkForUpdates()                      #   first window closed (new window = tab target);
-  │                                         #   the refresh re-runs the check so an in-flight
-  │                                         #   check holding the dead window cannot strand
-  │                                         #   the notification; skipped when
+  ├─ checkForUpdates()                      #   first window closed (a new window = fallback
+  │                                         #   tab target); the refresh re-runs the check so
+  │                                         #   an in-flight check holding the dead window
+  │                                         #   cannot strand the notification; skipped when
   │                                         #   lastScriptsCheckDate == today (ADR 0012)
   └─ nsITimer daily re-check (TYPE_REPEATING_SLACK, session lifetime) — window
                                             #   timers don't exist in the ESM scope; same-day
-                                            #   re-checks are pref-gated no-ops; the tab opens
-                                            #   on the CURRENT gWindow (re-read after awaits)
+                                            #   re-checks are pref-gated no-ops. The tab opens
+                                            #   in the MOST-RECENT navigator:browser window
+                                            #   (Services.wm.getMostRecentWindow), resolved at
+                                            #   attach time — NOT the window
+                                            #   initScriptsUpdater() saw first: BootstrapLoader
+                                            #   fires per window, so a restored session would
+                                            #   otherwise open the tab in saved window 1 while
+                                            #   the user is on the re-selected one
         │
         ▼ (fetch manifest — with the ADR 0026 stable fallback on a dead dev channel,
         │   compute local hashes, apply skippedHash prefs)

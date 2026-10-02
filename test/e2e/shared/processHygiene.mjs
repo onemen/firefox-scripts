@@ -150,24 +150,197 @@ export async function killStrayProcesses({
 }
 
 /**
+ * Quote a value for interpolation into a PowerShell SINGLE-quoted string: the
+ * quote is the only character with meaning in there, and PowerShell escapes it
+ * by doubling. Without this, a needle carrying an apostrophe (a user path like
+ * `C:\Users\O'Brien\...`) closes the string early: the whole command fails to
+ * parse, and the silence reads as "nothing matched" — which in
+ * waitForProcessesGone means "gone".
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function psQuote(value) {
+  return `${value}`.replace(/'/g, "''");
+}
+
+/**
+ * Kill every process whose command line contains `needle`. Only for
+ * HARNESS-OWNED, unique needles: the match is a plain substring of the full
+ * command line, so a non-unique needle could kill unrelated processes. Two
+ * needle kinds are supported:
+ *
+ * - a unique mkdtemp profile path (launch-deadline cleanup, #384)
+ * - the per-launch tag (`--puppeteer-<ts>`, ported from the firefox-updater's
+ *   firefoxPuppeteer.js: tag every launch so a wedged one can be killed as a
+ *   TREE — killing only the launcher orphans the browser's child processes,
+ *   which is how a scratch tool leaked 158 firefox processes on 2026-09-30).
+ *
+ * Unit-test seam: `run` replaces the spawnSync call and `platform` selects the
+ * win32/POSIX branch, exactly like killStrayProcesses.
+ *
+ * @param {string} needle unique substring that must appear in the command line
+ * @param {{
+ *   log?: (msg: string) => void;
+ *   run?: typeof import('node:child_process').spawnSync;
+ *   platform?: string;
+ *   label?: string;
+ * }} [opts]
+ *   `label` names what is being swept in the log line. The launch-retry callers
+ *   pass their own wording — the default ("from a previous run") was plain
+ *   wrong there, reading as a leaked browser when the sweep was really
+ *   collecting the wedged attempt's own tree (the 2026-10-02 firefox-dev
+ *   Windows leg had to be read twice to rule out a process leak).
+ * @returns {number} number of processes killed (best-effort count; pkill on
+ *   POSIX does not report a count, so ≥1 is reported as 1)
+ */
+export function killProcessesByCmdline(
+  needle,
+  {
+    log = console.log,
+    run = spawnSync,
+    platform = process.platform,
+    label = 'stray processes from a previous run',
+  } = {}
+) {
+  if (!needle) return 0;
+  if (platform === 'win32') {
+    // .Contains(), not -like: plain string containment — no wildcard semantics
+    // (a temp path can contain [ ] which -like reads as a character set).
+    const ps =
+      'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ' +
+      `$_.CommandLine.Contains('${psQuote(needle)}') } | ForEach-Object { ` +
+      'Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; ' +
+      '"$($_.ProcessId):$($_.Name)" }';
+    const res = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    return report(res, log, label);
+  }
+  // POSIX: pkill -f takes an ERE — escape the specials a path can contain
+  // (dots at least).
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // pkill parses its argv with getopt, so a pattern that STARTS WITH A DASH is
+  // read as an option: `pkill -f --fxs-e2e-puppeteer-<ts>` printed usage and
+  // exited 2, silently killing NOTHING (the macOS nightly 2026-10-02 launch
+  // wedge: both attempts timed out at 20 s and the runner then had to terminate
+  // orphan `Firefox Nightly`/`firefox`/`crashhelper` processes — the retry ran
+  // against a profile the first attempt still held). Wrapping the pattern in a
+  // group keeps the same match and cannot be mistaken for an option.
+  const pattern = escaped.startsWith('-') ? `(${escaped})` : escaped;
+  const res = run('pkill', ['-f', pattern], {
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  if (res.error) {
+    log(`  [hygiene] cmdline sweep unavailable: ${res.error.message}`);
+    return 0;
+  }
+  if (res.status === 0) {
+    log('  [hygiene] killed ≥1 process matching the needle (pkill does not report the count)');
+    return 1;
+  }
+  if (res.status > 1) {
+    log(`  [hygiene] cmdline sweep failed (pkill exit ${res.status})`);
+  }
+  return 0;
+}
+
+/**
+ * Wait until no process's command line contains `needle`, up to `timeoutMs`.
+ *
+ * The kill primitives above are fire-and-forget: on POSIX pkill signals and
+ * returns, and the browser tree can take seconds to unwind (a BrowserParent
+ * teardown keeps the profile lock held). A retry that relaunches the moment the
+ * kill returns can therefore start against a profile the killed browser still
+ * owns — the macOS nightly 2026-10-02 launch wedge failed exactly that way,
+ * twice, at the same 20 s deadline. Waiting for the needle to disappear turns
+ * "the sweep did not work" into a bounded, logged delay.
+ *
+ * Unit-test seam: `run`/`platform` as in killProcessesByCmdline.
+ *
+ * @param {string} needle unique substring that must appear in the command line
+ * @param {{
+ *   log?: (msg: string) => void;
+ *   run?: typeof import('node:child_process').spawnSync;
+ *   platform?: string;
+ *   timeoutMs?: number;
+ *   intervalMs?: number;
+ *   label?: string;
+ * }} [opts]
+ * @returns {Promise<boolean>} true when nothing matches any more
+ */
+export async function waitForProcessesGone(
+  needle,
+  {
+    log = console.log,
+    run = spawnSync,
+    platform = process.platform,
+    timeoutMs = 10_000,
+    intervalMs = 250,
+    label = 'process(es) matching the sweep needle',
+  } = {}
+) {
+  if (!needle) return true;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  /** Still running? pkill/pgrep exit 1 = nothing matched; PowerShell counts. */
+  const stillRunning = () => {
+    if (platform === 'win32') {
+      const ps =
+        'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ' +
+        `$_.CommandLine.Contains('${psQuote(needle)}') } | Measure-Object | ` +
+        'Select-Object -ExpandProperty Count';
+      const res = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      if (res.error) return true;
+      const count = Number.parseInt(`${res.stdout ?? ''}`.trim(), 10);
+      // A probe that did not answer is "unknown", never "gone": a non-zero exit
+      // or an unparseable count would otherwise report the sweep clean and let
+      // the relaunch start against a profile the killed browser still owns —
+      // the exact wedge this wait exists to prevent.
+      if (res.status !== 0 || !Number.isFinite(count)) return true;
+      return count > 0;
+    }
+    const res = run('pgrep', ['-f', escaped.startsWith('-') ? `(${escaped})` : escaped], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    if (res.error) return true;
+    // pgrep: 0 = matched (still running), 1 = nothing matched. Any other exit is
+    // a probe failure, and a failure must never read as "gone" either.
+    return res.status !== 1;
+  };
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!stillRunning()) return true;
+    if (Date.now() >= deadline) {
+      log(`  [hygiene] ${label} still alive after ${timeoutMs}ms: ${needle}`);
+      return false;
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+}
+
+/**
  * Interpret the Windows sweep result for the log; returns the killed-process
  * count (the PowerShell loop prints one `PID:Name` line per killed process).
  */
-function report(res, log) {
+function report(res, log, label = 'stray processes from a previous run') {
   if (res.error) {
-    log(`  [hygiene] stray-process sweep unavailable: ${res.error.message}`);
+    log(`  [hygiene] sweep of ${label} unavailable: ${res.error.message}`);
     return 0;
   }
   const out = `${res.stdout ?? ''}`.trim();
   const count = out ? out.split('\n').filter(Boolean).length : 0;
   if (count > 0) {
-    log(
-      `  [hygiene] killed ${count} stray process(es) from a previous run: ${out.replaceAll('\n', ', ')}`
-    );
+    log(`  [hygiene] killed ${count} ${label}: ${out.replaceAll('\n', ', ')}`);
   } else if (res.status !== null && res.status > 1) {
-    log(`  [hygiene] stray-process sweep failed (exit ${res.status})`);
+    log(`  [hygiene] sweep of ${label} failed (exit ${res.status})`);
   } else {
-    log('  [hygiene] no stray processes from a previous run');
+    log(`  [hygiene] no ${label}`);
   }
   return count;
 }

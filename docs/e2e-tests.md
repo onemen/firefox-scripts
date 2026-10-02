@@ -67,6 +67,32 @@ scenario starts. To prove determinism, run the updater selection twice in a row 
 node test/e2e/updater/updater-e2e.mjs --snapshot dist/dev-main-abc1234 --repeat 2
 ```
 
+Killing a wedged process tree has one portability trap and one timing trap, both fixed after the
+2026-10-02 legs. **Portability:** POSIX kills go through `pkill -f <needle>`, and pkill parses its
+argv with getopt — a needle that STARTS WITH A DASH (the per-launch tag `--fxs-e2e-puppeteer-<ts>`)
+is read as an option, so pkill printed usage, exited 2, and killed nothing; the launch-retry kill
+was a silent no-op on every macOS/Ubuntu leg while the Windows branch (PowerShell `.Contains`,
+driven from `test/e2e/shared/processHygiene.mjs`) worked. The pattern is now group-wrapped when it
+would start with a dash, and the retry sweeps by the profile directory as a second needle.
+**Timing:** `pkill` signals and returns while the browser needs seconds to release the profile, so
+the retry also waits (`waitForProcessesGone`, bounded and logged) for the needle to disappear before
+relaunching — a retry that starts against a profile the killed browser still holds wedges on the
+profile lock (`nightly · macos-latest`, 2026-10-02: both attempts died at the 20 s launch deadline
+and the runner had to terminate orphan browser processes afterwards).
+
+An install click must be aimed at the page that rendered the fixture's state, and it must be
+verified. A WebDriver-BiDi page target OUTLIVES its tab, so "the first page whose `UpdaterEngine`
+exists" — and even "a page whose URL is the updater URL" — can be a tab that `closeUpdaterTabs()`
+just closed: its card is still rendered, so a `card-title`-only readiness wait passes instantly and
+the click lands in a dying document (the fingerprint: `card rendered` 6 ms after the tab opened,
+which no fresh engine can do — it has to fetch the manifest and hash the trees). The install-applies
+steps now resolve their page by the `both-stale` state they seed (`findRenderedUpdaterPage`, which
+re-resolves every poll so a correct page wins), click through `clickInstall` (which reports a
+disabled Update button instead of clicking it, and proves the engine accepted the command by waiting
+for the first progress step both install flows emit before their first `await`), and retry the click
+once with a `[diag]` line when acceptance never comes (`zen · windows-latest`, 2026-10-02: six
+dependent assertions failed 30 s after a click that had gone nowhere).
+
 ### Installer E2E
 
 Starts the installer in `--smoke-test` mode and exercises every state-changing `/api` route: token
@@ -82,27 +108,56 @@ plain second installer defers to the one already serving the default port withou
 The optional `--ui` flag launches a real Firefox instance and verifies the web UI renders browser
 cards with correct status badges, but this is slower and requires a display.
 
-### Updater E2E (6 scenarios)
+### Updater E2E
 
-Each scenario: fresh temp profile → seed `chrome/utils` from the snapshot → optionally delete files
-or modify prefs to force a specific state → launch Firefox via puppeteer-core + WebDriver BiDi →
-wait for the updater tab to auto-open → assert the card renders the expected status, all 8 buttons
-are present, checkbox wiring works, and no page/console errors appeared.
+Each step: fresh temp profile → seed `chrome/utils` from the snapshot → optionally delete files or
+modify prefs to force a specific state → launch Firefox via puppeteer-core + WebDriver BiDi → wait
+for the updater tab to auto-open → assert the card renders the expected status, all 8 buttons are
+present, checkbox wiring works, and no page/console errors appeared.
 
-| Scenario | Seed                                                                                                                                                 | Expected                                                |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| 1        | One session (#197): marker on `RDFDataSource.sys.mjs` + GreD probe; per-variant disk toggling + tab reload — utils stale → config stale → both stale | All three stale combinations, full card assertions each |
-| 4        | Unmodified utils + fx-folder                                                                                                                         | Tab does NOT open (nothing to surface)                  |
-| 5        | Set skip-pref to utils remote hash                                                                                                                   | Tab does NOT open (skip suppresses)                     |
+| Id             | Seed (fixture)                                                                                                                                                                                                                                                                                                                                                                                                                                    | Expected (assertions)                                                                                                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 (4, 5, 6, 8) | ONE browser, five state-only variants (#309 driver mode): marker on `RDFDataSource.sys.mjs` + GreD probe, then per variant a disk/pref flip — utils stale → config stale → both stale → up-to-date → skipped, THEN the folded install-applies + no-ui phases                                                                                                                                                                                      | each check's own decision (stale: the tab opens; up-to-date/skipped: no tab AND the day recorded, #333) + the full card set per variant; then `btn-install` copies both packages and the trees re-hash, and `ensureUpdaterUi` re-installs the ui from the manifest host |
+| 7              | hand-installed pre-updater `utils.zip` (no `updater/`), then the real one                                                                                                                                                                                                                                                                                                                                                                         | no tab with the old utils; tab after the manual replace                                                                                                                                                                                                                 |
+| 9              | fx-folder in an ACL-write-denied GreD (Windows)                                                                                                                                                                                                                                                                                                                                                                                                   | tab-open proof, ACL block, and that nothing was copied without elevation                                                                                                                                                                                                |
+| 10             | stale utils, one launch, timer observed                                                                                                                                                                                                                                                                                                                                                                                                           | the daily in-session re-check timer fires (startup + ≥2 re-fetches)                                                                                                                                                                                                     |
+| 11             | session fixture GENERATED at runtime by `test/e2e/shared/sessionFile.mjs` (2 windows, the updater tab backgrounded in the NON-selected window and carrying its saved SYSTEM principal so the restored `chrome://` entry is loadable; filler tabs on one inert static page; no checked-in binary — a Firefox-159-authored one wedged ESR 140's SessionStore at startup), `FXS_E2E_SESSION_FILE` overrides it with any Firefox-authored file — #384 | both windows restore, exactly ONE updater tab **stable for 6 s** (the attach block forgot the restored one and opened a fresh one), no AsyncTabSwitcher schemeIs error, and the fresh tab's engine re-checks (`lastScriptsCheckDate`)                                   |
 
-Scenario 1's merged session is wrapped in a retry-once guard with a fresh profile: a
-browser-internal startup race (observed on waterfox, run 35460461221) would otherwise fail all three
-variants at once. The retry logs its own `[retry]` lines; a second failure fails the leg.
-Card-assertion failures are deterministic and never retried. Full card assertions additionally
-require WebDriver BiDi to attach to the trusted chrome:// tab; on runners where it cannot (observed
-on Windows CI), the leg verifies the tab-open via the probe mirror / persisted pref and says so in
-the check label — the historical contract for these legs. Skip individual scenarios during iteration
-with `--scenario 1,4,5` (scenario 1 always runs all three variants — they share the session).
+The state-only scenarios that touch neither the module graph nor the process boundary are folded
+into step 1 (`runSessionExtras`, after the five variants — they mutate the seeded trees, so they
+must run last): install-applies (#37) and manual-install-no-ui (#102) reuse the driver page and just
+flip their own fixture. helper-checksum (#9) deliberately keeps its own launch: it runs only on
+Windows, where the CI legs cannot attach BiDi to the trusted tab, so driver mode is unavailable and
+folding it would save nothing while dragging a scratch-snapshot stand-in helper into every variant's
+wiring.
+
+Step 1 is one browser for five state-only variants (#309 driver mode): after the startup check opens
+the tab (the wiring under test), the harness opens a privileged in-browser driver page
+(`test/e2e/shared/updaterDriver.mjs`, seeded into the profile's `updater/` dir — never shipped, so
+no package hash changes) and drives the production orchestrator from there: clear the daily gate,
+mutate the disk fixture / skip pref, call the exported `checkForUpdates()`, and assert the decision
+(tab opened or not, the day recorded) plus the card the resulting tab renders. Behind the scenes:
+`checkForUpdates()`, the export added for this, and the daily-gate pref (a user pref, writable
+in-page — ADR 0012).
+
+Step 1 is wrapped in a retry-once guard with a fresh profile: a browser-internal startup race
+(observed on waterfox, run 35460461221) would otherwise fail every variant at once. The retry logs
+its own `[retry]` lines; a second failure fails the leg. Card-assertion failures are deterministic
+and never retried. Full card assertions additionally require WebDriver BiDi to attach to the trusted
+chrome:// tab; on runners where it cannot, the leg verifies the tab-open via the probe mirror /
+persisted pref and says so in the check label (the pre-#309 session could not assert a card there
+either). Where the tab _is_ attachable but the driver realm never comes up, the stale trio falls
+back to the pre-#309 in-tab re-render loop (`assertStaleTrioInTab`) and up-to-date / skipped /
+install-applies / manual-install-no-ui fall back to their own launches (`runNoTabScenario`,
+`runInstallAppliesScenario`, `runManualInstallNoUiScenario`) — driver mode degrades by capability,
+never by coverage. A realm that dies **mid-session** degrades the same way: the folded phases
+re-probe the realm before every driver call, and whatever could not finish is handed to its launch
+path, so the leg passes with the launches it would have had before the fold instead of failing on a
+false negative. A realm death between variants likewise defers the not-yet-run variants to their
+launch paths (the startup tab is closed before the loop, so there is no in-tab frame left to
+re-assert in). Assertion failures are never degraded — a check that genuinely fails still fails the
+leg. Skip individual steps during iteration with `--scenario 1,7,9` (step 1 includes all five
+variants and the folded scenarios; `--scenario 4` / `5` / `6` / `8` select the same session).
 
 ### Running the updater E2E locally (e.g. on Nightly, Windows)
 
@@ -131,7 +186,7 @@ The snapshot is the newest `dist/` one (`--snapshot <dir>` picks explicitly, `--
 accepts a snapshot from any branch — the direct script never branch-checks).
 
 `--keep-profile` keeps each scenario's profile for inspection, `--repeat 2` runs the whole selection
-twice (determinism check), `--scenario 1,4,5` narrows the run, and `--no-fail-fast` runs every
+twice (determinism check), `--scenario 1,7,9` narrows the run, and `--no-fail-fast` runs every
 scenario even after a failure.
 
 ### Updater E2E scenario 9 (helper-checksum-win, Windows)
@@ -160,6 +215,78 @@ trusted tab (elsewhere the leg says so in its check labels), and elevation never
 The gate's byte-level contract is therefore covered deterministically on every OS by
 `test/unit/publish/branchPagesContract.test.mjs`, which evaluates the shipped gate expression
 against real PE/ELF/Mach-O headers and HTML payloads.
+
+### Updater E2E scenario 11 (session restore — #384)
+
+Scenario 11 replays the #384 wedge shape: a session fixture (two windows, `selectedWindow 2`, the
+updater tab backgrounded in window 1) is seeded as `sessionstore-backups/previous.jsonlz4` +
+`sessionstore.jsonlz4`, restore-on-startup is forced (`browser.startup.page=3`,
+`resume_session_once`, `restore_on_demand=false` so the background tab carries a real engine), and
+the scheduler runs against a stale-utils manifest. The fixture is GENERATED per run
+(`test/e2e/shared/sessionFile.mjs`: `buildSession` + an LZ4 writer) rather than checked in: a
+Firefox-159-authored `jsonlz4` carries fields that wedge ESR 140's SessionStore at startup, and the
+launch then never reaches the puppeteer handshake. The filler tabs are plain `https://` entries on
+ONE inert static page, and both halves of that matter: a filler on a real content site runs its own
+scripts during the restore (mozilla.org's sentry bundle filled the mirror with JS timeouts), while
+an `about:`/`chrome://` filler — having no saved principal — is loaded from `moz-nullprincipal` and
+BLOCKED (`Security Error: … may not load or link to about:config`), which stalls the restore and
+pushes SessionStore's per-restored-tab notice into teardown, so the SS-NOTIFY assertion reads 0.
+`FXS_E2E_SESSION_FILE` still overrides it with any Firefox-authored file.
+
+The **updater entry is the exception**: it carries the saved principal a real entry has
+(`triggeringPrincipal_base64`, the raw-JSON system principal `{"3":{}}` — `serializePrincipal` is
+`principalToJSON`, and `deserializePrincipal` branches on `startsWith("{")` before the legacy base64
+forms). Without it the restore is a lie about its own shape: `SessionHistory.entryToSHEntry`
+deserializes the field with a **null-principal fallback** (ESR 140,
+`modules/sessionstore/SessionHistory.sys.mjs:556` — "Every load must have a triggeringPrincipal to
+load otherwise we prevent it"), and a null principal cannot load a `chrome://` URL, so the restored
+updater tab was permanently dead — the guard's own insert, not the bundle, decided the scenario's
+outcome. With the principal the restored tab really loads, which is the precondition for testing any
+"adopt the restored tab" behaviour honestly. The scenario also overwrites the seeded
+`updater/ui/updater.js` (and `overwriteSchedulerFromSource` the scheduler, elsewhere) with this
+branch's sources, so it tests THIS code on every engine, not the snapshot's older UI.
+
+The assertions pin the two #384 contracts: the **always-fresh guard** (the restored updater tab is
+removed and forgotten via `forgetClosedTab`; exactly one fresh tab opens into the current window,
+replaced by the fresh one) and the **deferred selection** (no `AsyncTabSwitcher schemeIs` error —
+the fresh tab is selected only on its load/pageshow, never synchronously after `addTrustedTab`). The
+GreD probe watcher mirrors WINDOW-COUNT / TAB_SET / TAB_OPENED / ENGINE-DONE lines into the e2e
+console mirror, where the assertions read them (no BiDi dependency on the trusted tab). The mirror
+is append-only across launch attempts and the probe writes a `MIRROR-OPEN` line per start, so every
+read is scoped to the CURRENT session from that marker: without it a launch the harness killed (the
+#384 launch retry) leaves its lines behind and satisfies the next attempt's polls — the killed
+attempt's ENGINE-DONE passed the engine wait while the retry's pref never reached `prefs.js`
+(firefox-dev Windows, 2026-10-02). The fresh tab's engine re-check needs wall time after the tab
+opens, and its pref only reaches prefs.js at the shutdown flush — the scenario waits for ENGINE-DONE
+(bounded) before closing, then asserts that the final updater-tab SET has been exactly one tab for 6
+s, so a tab that lands after the engine still fails the quiet window (a cancelled watcher would
+freeze the last set and hide the race).
+
+A restored updater tab can MATERIALIZE after the startup attach scan and the
+`sessionstore-windows-restored` event (SessionStore feeds windows in late — observed on ESR 140).
+The attach block does not try to catch that: it forgets every unmarked updater tab it can see, opens
+one fresh tab, and bails if its re-scan finds a survivor, so the tab the user gets is always this
+session's own — never a restored page whose engine may never run. A tab materializing after that
+scan is therefore a second updater tab until the next daily check; the event-driven guard that used
+to remove it is retired (issue #309), because ~105 guard-off runs across CI and local load never
+produced one. The e2e probe still mirrors SessionStore's notifications as `SS-NOTIFY <topic>` lines:
+a restore that never finished shows up as the per-restored-tab notice landing during teardown. The
+module also resolves `SessionStore` through its single `defineESModuleGetters` block with a
+version-conditional spec (`moz-src://` from 156.0a1, `resource:///modules` before it) — the resource
+alias is gone on Nightly, and moz-src does not exist on ESR 140. `Downloads` comes from that same
+block; only the generated `CONFIG` is still read with `ChromeUtils.importESModule`.
+
+There is no longer a CPU-hog scenario. It existed to reproduce the pre-#384 shape, where the module
+opened and selected the updater tab without waiting for session restore; both fixes retired the
+condition it manufactured — `SessionStore.promiseAllWindowsRestored` gates the attach, and
+`selectWhenLoaded` defers the selection to the tab's load — and the deferred-selection contract is
+already pinned without a browser by `test/unit/e2e/scriptsUpdater-tab-attach.test.mjs`. Starving the
+machine on purpose now only tests that the machine can be starved.
+
+```bash
+node test/e2e/updater/updater-e2e.mjs --scenario 11 \
+  --firefox "$HOME/Documents/FireFox/portable/nightly/firefox.exe"
+```
 
 ### Configuration
 
