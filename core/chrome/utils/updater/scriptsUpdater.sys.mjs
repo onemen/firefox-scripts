@@ -49,6 +49,75 @@ const {CONFIG} = ChromeUtils.importESModule(
 // and break the staleness check.
 const PREF_OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
 
+// Staging dir for the updater-ui package, under the OS temp dir. Named per
+// browser PROCESS (not per check) so the handful of checks one session runs
+// reuse one dir — and two browser processes never fight over it — while the
+// name still sorts into the sweep below. Session id keeps the extract dir
+// unique when processID is unavailable (never on a shipped build).
+const UI_TMP_DIR_PREFIX = 'fxs-updater-ui';
+
+/** A dir older than this is nobody's: reclaim it (ADR 0038). */
+const UI_TMP_STALE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Remove updater-ui staging dirs left behind by sessions that never reached
+ * their `finally` cleanup — a browser killed mid-download, an OS-level crash,
+ * or a shutdown during the swap. On 2026-10-02 four such dirs (each still
+ * holding updater-ui.zip + the extracted tree) sat in the user's Temp.
+ *
+ * Age is the liveness signal: the dir being written right now is minutes old,
+ * while every stranded one is older than the threshold.
+ *
+ * @param {{tempDir?: string; maxAgeMs?: number; now?: number}} [opts] test
+ *   seams
+ * @returns {Promise<string[]>} names removed
+ */
+export async function sweepStaleUpdaterUiTempDirs({
+  tempDir = PathUtils.tempDir,
+  maxAgeMs = UI_TMP_STALE_MS,
+  now = Date.now(),
+} = {}) {
+  let children;
+  try {
+    children = await IOUtils.getChildren(tempDir);
+  } catch (e) {
+    console.debug('Firefox Scripts: updater-ui temp sweep skipped', e);
+    return [];
+  }
+  const removed = [];
+  for (const name of children) {
+    if (!name.startsWith(UI_TMP_DIR_PREFIX)) continue;
+    const full = PathUtils.join(tempDir, name);
+    let stat;
+    try {
+      stat = await IOUtils.stat(full);
+    } catch {
+      continue; // vanished under us
+    }
+    if (now - stat.mtimeMs < maxAgeMs) continue;
+    try {
+      await IOUtils.remove(full, {recursive: true, ignoreAbsent: true});
+      removed.push(name);
+    } catch (e) {
+      // Another process (or the AV scanner) still holds it — try again on the
+      // next sweep instead of failing the check.
+      console.debug('Firefox Scripts: stale updater-ui temp dir kept', name, e);
+    }
+  }
+  if (removed.length) {
+    console.debug(
+      `Firefox Scripts: reclaimed ${removed.length} stale updater-ui temp dir(s): ${removed.join(', ')}`
+    );
+  }
+  return removed;
+}
+
+/** This process's staging dir name under PathUtils.tempDir. */
+function uiTempDirName() {
+  const pid = Services.appinfo.processID;
+  return `${UI_TMP_DIR_PREFIX}-${typeof pid === 'number' && pid > 0 ? pid : Date.now()}`;
+}
+
 function configValue(key) {
   try {
     const override = Services.prefs.getStringPref(PREF_OVERRIDE_PREFIX + key, '');
@@ -272,6 +341,12 @@ export function initScriptsUpdater(win) {
   gInitialized = true;
 
   gWindow = win;
+
+  // Reclaim staging dirs stranded by earlier sessions before this one writes
+  // anything; fire-and-forget (init must stay synchronous).
+  sweepStaleUpdaterUiTempDirs().catch(e =>
+    console.debug('Firefox Scripts: updater-ui temp sweep failed', e)
+  );
 
   // Check on startup, then re-check daily for as long as the session lives.
   // The daily pref (PREF_LAST_CHECK vs todayStr()) gates every invocation, so
@@ -604,8 +679,11 @@ export async function ensureUpdaterUi(info) {
     return true; // already current
   }
 
-  const tmpDir = PathUtils.join(PathUtils.tempDir, `fxs-updater-ui-${Date.now()}`);
+  const tmpDir = PathUtils.join(PathUtils.tempDir, uiTempDirName());
   try {
+    // Reuse of this process's staging dir: clear whatever a previous check (or
+    // a check killed mid-flight) left, so the extract below starts empty.
+    await IOUtils.remove(tmpDir, {recursive: true, ignoreAbsent: true});
     const zipUrl = `${getUiBaseUrl()}/updater-ui${getAssetSuffix()}.zip`;
     const zipPath = PathUtils.join(tmpDir, 'updater-ui.zip');
     await Downloads.fetch(zipUrl, zipPath);

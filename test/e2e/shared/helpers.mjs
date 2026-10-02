@@ -357,18 +357,202 @@ export async function screenshotPrivileged(page, outPath) {
 
 // ── Process / temp helpers ─────────────────────────────────────────────────
 
-/** Create a temp directory and return its path. */
-export function tempDir(prefix = 'fxs-e2e') {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix + '-'));
+/**
+ * Every temp root this process created and has not removed yet. The E2E legs
+ * mkdtemp a ~50 MB Firefox profile per scenario into the OS temp dir, and the
+ * per-scenario `finally` blocks only cover the SUCCESS path: a Ctrl-C, an agent
+ * timeout, a `process.exit()` on a failed check or a machine crash all strand
+ * one (on 2026-10-02 the user's Temp held 11 of them, 412 MB). The registry
+ * plus the exit/signal sweep below reclaims them however the run ends; the
+ * age-based prune (ADR 0038) is the backstop for whatever escapes it.
+ */
+const liveTempRoots = new Set();
+
+/**
+ * Starts-with prefixes of every OS-temp directory this harness creates (the
+ * mkdtemp call appends `-XXXXXX`). `pruneStaleTempRoots` sweeps exactly these
+ * and nothing else — the user's Temp belongs to every other tool on the box.
+ */
+export const E2E_TEMP_PREFIXES = [
+  'fxs-e2e',
+  'fxs-installer-ui',
+  'fxs-installer-surface',
+  'fxs-fx',
+  'fxs-ident',
+  'fxs-cfg',
+  'fxs-release',
+  'fxs-helper',
+  'fxs-legacy',
+];
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/** Breadcrumb file for roots that survived the sweep (gitignored, inside dist/). */
+function leakedRootsPath() {
+  return path.join(REPO_ROOT, 'dist', 'e2e-leaked-temp.txt');
 }
 
-/** Delete a directory tree recursively (best-effort, no throw). */
-export function rmDir(dir) {
+/**
+ * Record a temp root the sweep could not remove, so a human can see what was
+ * stranded (and the next run's prune clears it once it ages out). Best-effort:
+ * never throws, never affects the run.
+ *
+ * @param {string} dir absolute path
+ */
+export function noteLeakedTempRoot(dir) {
   try {
-    fs.rmSync(dir, {recursive: true, force: true});
+    fs.mkdirSync(path.dirname(leakedRootsPath()), {recursive: true});
+    fs.appendFileSync(leakedRootsPath(), `${new Date().toISOString()} ${dir}\n`);
   } catch {
     // ignore
   }
+}
+
+/** rm a tree, reporting whether it is gone. Never throws. */
+function removeTree(dir) {
+  try {
+    fs.rmSync(dir, {recursive: true, force: true, maxRetries: 3, retryDelay: 50});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remove every root still registered, whatever killed the run. Safe to call
+ * more than once; a root that will not go is recorded, not retried forever.
+ *
+ * @returns {number} roots removed
+ */
+export function sweepLiveTempRoots() {
+  let removed = 0;
+  for (const dir of [...liveTempRoots]) {
+    if (removeTree(dir)) {
+      liveTempRoots.delete(dir);
+      removed += 1;
+    } else {
+      noteLeakedTempRoot(dir);
+    }
+  }
+  return removed;
+}
+
+let sweepInstalled = false;
+
+/**
+ * Sweep on the ways a run can end without unwinding: exit, the interactive
+ * signals, and the two crash paths. Each handler sweeps and then reproduces
+ * Node's default disposition (`process.exit` with the conventional 128+signal
+ * code, or 1 for an uncaught error) so exit codes and stack traces are
+ * unchanged — the only new behaviour is that temp roots do not survive.
+ * Installed at most once per process.
+ *
+ * Windows caveat: a parent's `child.kill()` is TerminateProcess, which Node
+ * cannot intercept — no handler runs and only `pruneStaleTempRoots` can reclaim
+ * what it leaves. A real console Ctrl-C does deliver SIGINT and sweeps.
+ */
+function installTempSweep() {
+  if (sweepInstalled) return;
+  sweepInstalled = true;
+  process.on('exit', () => sweepLiveTempRoots());
+  for (const [signal, code] of [
+    ['SIGINT', 130],
+    ['SIGTERM', 143],
+    ['SIGHUP', 129],
+  ]) {
+    process.on(signal, () => {
+      sweepLiveTempRoots();
+      process.exit(code);
+    });
+  }
+  for (const event of ['uncaughtException', 'unhandledRejection']) {
+    process.on(event, err => {
+      sweepLiveTempRoots();
+      console.error(err);
+      process.exit(1);
+    });
+  }
+}
+
+/** Create a temp directory and return its path (registered for the sweep). */
+export function tempDir(prefix = 'fxs-e2e') {
+  installTempSweep();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix + '-'));
+  liveTempRoots.add(dir);
+  return dir;
+}
+
+/**
+ * Delete a directory tree recursively (best-effort, no throw). A tree that
+ * refuses to go stays registered so the exit sweep gets a second try, and is
+ * then recorded in dist/e2e-leaked-temp.txt.
+ */
+export function rmDir(dir) {
+  if (removeTree(dir)) liveTempRoots.delete(dir);
+  else noteLeakedTempRoot(dir);
+}
+
+/**
+ * Reclaim OS-temp roots stranded by earlier runs. Age is the whole liveness
+ * signal: a live leg's profile was created seconds ago, while every stranded
+ * root is older than the threshold — a stale `.parentlock` (which a killed run
+ * leaves behind) is exactly the case we WANT to reclaim, so it must not be read
+ * as "in use". Roots this process still holds are never touched.
+ *
+ * Called once per E2E invocation (test/e2e/shared/run.mjs and each suite's
+ * main), before the first profile is seeded.
+ *
+ * @param {{
+ *   minAgeMs?: number;
+ *   prefixes?: string[];
+ *   tmp?: string;
+ *   now?: number;
+ *   log?: (msg: string) => void;
+ * }} [opts]
+ * @returns {{removed: string[]; kept: string[]}}
+ */
+export function pruneStaleTempRoots({
+  minAgeMs = 6 * HOUR_MS,
+  prefixes = E2E_TEMP_PREFIXES,
+  tmp = os.tmpdir(),
+  now = Date.now(),
+  log = console.log,
+} = {}) {
+  let entries;
+  try {
+    entries = fs.readdirSync(tmp, {withFileTypes: true});
+  } catch {
+    return {removed: [], kept: []};
+  }
+  const removed = [];
+  const kept = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !prefixes.some(p => entry.name.startsWith(p))) continue;
+    const full = path.join(tmp, entry.name);
+    if (liveTempRoots.has(full)) {
+      kept.push(full);
+      continue;
+    }
+    let stat;
+    try {
+      stat = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    if (now - stat.mtimeMs < minAgeMs) {
+      kept.push(full);
+      continue;
+    }
+    if (removeTree(full)) removed.push(full);
+    else kept.push(full);
+  }
+  if (removed.length) {
+    log(
+      `  [temp] pruned ${removed.length} stranded E2E temp root(s) ` +
+        `(>${Math.round(minAgeMs / HOUR_MS)}h old): ${removed.map(d => path.basename(d)).join(', ')}`
+    );
+  }
+  return {removed, kept};
 }
 
 /** Wait for process exit with a timeout; returns exit info or null. */

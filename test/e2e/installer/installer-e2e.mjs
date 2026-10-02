@@ -41,6 +41,7 @@ import {
   tempDir,
   rmDir,
   summary,
+  pruneStaleTempRoots,
 } from '../shared/helpers.mjs';
 import {
   findSnapshot,
@@ -1544,6 +1545,10 @@ async function runUiLayer(counter, opts, snapshotDir) {
 async function run() {
   const opts = parseArgs();
   const counter = createCounter();
+
+  // Reclaim install/profile dirs stranded by an earlier killed run before any
+  // leg looks at the OS temp dir.
+  pruneStaleTempRoots();
 
   // Process hygiene (issue #130): a cancelled previous run can leave the
   // detached installer holding port 8777 — the HTTP layer below would then

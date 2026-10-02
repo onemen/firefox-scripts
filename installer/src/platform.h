@@ -199,9 +199,29 @@ static inline void sleep_ms(int ms) {
 #endif
 }
 
+/** Rotate the log once past this size, so a long-lived %TEMP% copy cannot
+ *  grow without bound (the OS only prunes files after ~30 days). */
+#define INSTALLER_LOG_MAX_BYTES (256 * 1024)
+
+/** Size of `path` in bytes, or -1 when it does not exist / cannot be read. */
+static inline long installer_log_size(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return -1;
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return -1;
+    }
+    long size = ftell(f);
+    fclose(f);
+    return size;
+}
+
 /**
  * Minimal file logging (Windows): appends to %TEMP%\installer_win.log.
  * Each translation unit keeps its own handle; appends are flushed per line.
+ * The first open of a too-large log rotates it to installer_win.log.1 (one
+ * generation — the previous .1 is replaced), then starts a fresh log.
  */
 static inline FILE *installer_log(void) {
 #ifdef _WIN32
@@ -211,6 +231,12 @@ static inline FILE *installer_log(void) {
         if (GetTempPathA(MAX_PATH_LEN, path) > 0 &&
             strlen(path) < MAX_PATH_LEN - 32) {
             strcat(path, "installer_win.log");
+            if (installer_log_size(path) > INSTALLER_LOG_MAX_BYTES) {
+                char rotated[MAX_PATH_LEN];
+                snprintf(rotated, sizeof(rotated), "%s.1", path);
+                DeleteFileA(rotated);
+                MoveFileA(path, rotated);
+            }
             f = fopen(path, "a");
         }
     }

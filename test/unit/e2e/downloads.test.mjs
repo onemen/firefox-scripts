@@ -36,6 +36,7 @@ const {
   runInstallerWithRetry,
   runNsisInstallerWithRetry,
   unpackNsisCore,
+  pruneStaleDownloadCache,
 } = await import(downloadsUrl);
 
 // ── resolveDownloadUrl ────────────────────────────────────────────────────
@@ -997,4 +998,65 @@ test('findCachedInstaller: null on a missing dir, prefix filters foreign files',
     else process.env.BROWSER_DL_DIR = prevDir;
     fs.rmSync(tmp, {recursive: true, force: true});
   }
+});
+
+// ── pruneStaleDownloadCache (ADR 0038) ────────────────────────────────────
+// The local download cache defaults to the OS temp dir, so an unpruned cache
+// makes every installer permanent litter there (two 73 MB Firefox setups were
+// still in the user's Temp on 2026-10-02). Age — never "is it mine" — is the
+// signal, so a concurrently running leg's download is safe.
+
+test('pruneStaleDownloadCache: drops aged installers, keeps fresh and foreign files', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-prune-'));
+  try {
+    const files = [
+      'firefox-portable-setup.exe',
+      'firefox-esr-140-portable-setup.exe',
+      'zen-setup-1.0.exe',
+      'nightly.dmg',
+      'notes.txt', // not an installer: never ours to delete
+    ];
+    for (const name of files) fs.writeFileSync(path.join(dir, name), 'x');
+    fs.mkdirSync(path.join(dir, 'firefox-setup-2.0.exe')); // dir, not a file
+
+    const {removed, kept} = pruneStaleDownloadCache({
+      dir,
+      maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      now: Date.now() + 8 * 24 * 60 * 60 * 1000,
+      log: () => {},
+    });
+    assert.deepEqual(removed.map(f => path.basename(f)).sort(), [
+      'firefox-esr-140-portable-setup.exe',
+      'firefox-portable-setup.exe',
+      'zen-setup-1.0.exe',
+    ]);
+    assert.deepEqual(kept, []);
+    assert.equal(fs.existsSync(path.join(dir, 'notes.txt')), true);
+    assert.equal(fs.existsSync(path.join(dir, 'firefox-setup-2.0.exe')), true);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('pruneStaleDownloadCache: a just-downloaded installer survives (live leg)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-prune-fresh-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'firefox-portable-setup.exe'), 'x');
+    const {removed, kept} = pruneStaleDownloadCache({dir, log: () => {}});
+    assert.deepEqual(removed, []);
+    assert.deepEqual(
+      kept.map(f => path.basename(f)),
+      ['firefox-portable-setup.exe']
+    );
+    assert.equal(fs.existsSync(path.join(dir, 'firefox-portable-setup.exe')), true);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('pruneStaleDownloadCache: tolerates a missing cache dir', () => {
+  assert.deepEqual(
+    pruneStaleDownloadCache({dir: path.join(os.tmpdir(), 'dl-prune-missing'), log: () => {}}),
+    {removed: [], kept: []}
+  );
 });

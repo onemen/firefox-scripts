@@ -232,6 +232,11 @@ close tab → Services.startup.quit(eAttemptQuit | eRestart) (+ invalidateCaches
 `installer/src/file_utils.c::extract_zip_flatten()`: extract to a temp dir, descend into a single
 top-level wrapper if present, then copy files to their final destinations.
 
+The updater's staging dir is `fxs-updater-ui-<pid>` in `PathUtils.tempDir` — one per browser
+process, cleared before each use and removed in a `finally`. A browser killed mid-swap (shutdown
+during the copy, a crash) skips that `finally`, so startup also reclaims any `fxs-updater-ui-*` dir
+older than 24h (ADR 0038).
+
 ### 5.2 Self-update
 
 - The scheduler (`scriptsUpdater.sys.mjs`) ships inside `utils.zip`; a utils update replaces it on
