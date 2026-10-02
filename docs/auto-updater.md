@@ -66,6 +66,11 @@ keeps those packages up to date automatically:
 5. **Dedicated content namespace.** The updater maps `chrome://firefox-scripts/content/…` to the
    `updater/` subfolder via its own `content firefox-scripts` entry in `chrome.manifest`; the tab UI
    resolves under `updater/ui/` (`chrome://firefox-scripts/content/ui/…`).
+6. **The tab runs against whatever module is installed.** The module installs `updater-ui.zip` and
+   only the tab can replace the module, so the tab may use only module exports that existed in the
+   oldest self-installing module; any newer export must be feature-detected at the tab's
+   compatibility seam in `updater.js`. An unguarded new export deadlocks old installs (issue #383).
+   Pinned by `test/unit/core/updaterTab-compat.test.mjs`.
 
 ## 3. Architecture
 

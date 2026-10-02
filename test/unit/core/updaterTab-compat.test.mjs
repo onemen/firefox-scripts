@@ -1,0 +1,353 @@
+// test/unit/core/updaterTab-compat.test.mjs — the updater tab's
+// backward-compatibility seam (issue #383).
+//
+// The deadlock this pins: updater-ui.zip is installed BY
+// scriptsUpdater.sys.mjs, and the module can only be replaced BY the tab. A tab
+// that hard-requires an export the installed module lacks therefore deadlocks
+// the user — the tab throws before its first state push, so the card stays
+// empty and nothing can install the module that would fix it. On 2026-09-06
+// (`fxFolderDir`, #142) and 2026-09-12 (`getAssetSuffix`, `getChannelState`,
+// #189) each export landed in the module and its first tab-side consumer in
+// the same commit, stranding every install older than those dates on a module
+// that cannot run the tab that would rescue it.
+//
+// These tests evaluate the real tab engine (tools/publish/remote-ui/updater.js)
+// in a Node vm with stubbed Firefox globals (same technique as
+// scriptsUpdater-channel.test.mjs / bootstrapLoader.test.mjs) against:
+//   - the LEGACY export set — the exact export list of the reporter's
+//     attached utils.zip, built at c266468 (2026-09-05), the last commit before
+//     the first breaking export. The list is vendored as a literal so the
+//     fixture can never drift into "whatever main exports today";
+//   - the current module, asserting the real resolvers still win (no
+//     regression of #282's suffix drop or ADR 0026's dead-channel fallback);
+//   - a static check of the tab's import surface, so a future unguarded export
+//     fails here rather than in a user's browser.
+// Not exercised here: the zip/DOM/IOUtils install machinery (the E2E legs).
+
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import vm from 'node:vm';
+import {fileURLToPath} from 'node:url';
+
+const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+const TAB_PATH = path.join(REPO_ROOT, 'tools', 'publish', 'remote-ui', 'updater.js');
+const UI_PATH = path.join(REPO_ROOT, 'tools', 'publish', 'remote-ui', 'updater-ui.js');
+const MODULE_PATH = path.join(
+  REPO_ROOT,
+  'core',
+  'chrome',
+  'utils',
+  'updater',
+  'scriptsUpdater.sys.mjs'
+);
+
+const TAB_SRC = fs.readFileSync(TAB_PATH, 'utf-8').replace(/\r\n/g, '\n');
+const UI_SRC = fs.readFileSync(UI_PATH, 'utf-8').replace(/\r\n/g, '\n');
+
+/**
+ * The complete export list of scriptsUpdater.sys.mjs at c266468 (2026-09-05),
+ * as attached to issue #383. Three names the tab uses today are absent from it
+ * (fxFolderDir, getAssetSuffix, getChannelState) and must stay feature-
+ * detected in the tab.
+ */
+const LEGACY_EXPORTS = [
+  'getHashesUrl',
+  'getZipBaseUrl',
+  'getUiBaseUrl',
+  'getHelperBaseUrl',
+  'initScriptsUpdater',
+  'checkScriptsUpdateNeeded',
+  'ensureUpdaterUi',
+  'fetchBytes',
+  'fetchText',
+  'computeFilesHash',
+  'computeZipFilesHash',
+  'readZipEntry',
+  'extractZipFlatten',
+  'copyFileList',
+];
+
+/** Exports the tab consumes that postdate the legacy floor: guarded by the seam. */
+const GUARDED = ['getAssetSuffix', 'getChannelState', 'fxFolderDir'];
+
+/** The reporter's generated config (stable channel, no STABLE_* keys: pre-0026). */
+const LEGACY_CONFIG = {
+  HASHES_URL: 'https://onemen.github.io/firefox-scripts/hashes.json',
+  ZIP_BASE_URL: 'https://github.com/onemen/firefox-scripts/releases/download/latest',
+  UI_BASE_URL: 'https://onemen.github.io/firefox-scripts',
+  HELPER_BASE_URL: 'https://onemen.github.io/firefox-scripts',
+  ASSET_SUFFIX: '',
+  IS_DEV: false,
+  IS_LOCAL: false,
+  DEV_BRANCH: 'dev-build-main-c266468',
+};
+
+/* ---------------- Firefox-service stubs ---------------- */
+
+function makePrefs(store) {
+  return {
+    getCharPref: (key, d = '') => (key in store ? store[key] : d),
+    setCharPref: (key, v) => {
+      store[key] = String(v);
+    },
+    clearUserPref: key => {
+      delete store[key];
+    },
+  };
+}
+
+/** Minimal nsIFile stand-in: `exists()` false keeps readAppDisplayName inert. */
+function makeNsIFile(nativePath) {
+  let p = nativePath;
+  return {
+    get path() {
+      return p;
+    },
+    initWithPath(next) {
+      p = next;
+    },
+    clone() {
+      return makeNsIFile(p);
+    },
+    append(part) {
+      p = p.replace(/[\\/]+$/, '') + '/' + part;
+    },
+    exists: () => false,
+    reveal() {},
+  };
+}
+
+function makeIoFiles({exePath, grePath, profPath}) {
+  const dirs = {XREExeF: exePath, GreD: grePath, ProfD: profPath};
+  return {
+    get: key => makeNsIFile(dirs[key] ?? grePath),
+  };
+}
+
+/**
+ * A scriptsUpdater namespace exposing exactly LEGACY_EXPORTS (the tab's seven
+ * unconditional names implemented; the rest are inert stubs), so the test
+ * cannot pass by accident on an export the reporter's module never had.
+ */
+function legacyNamespace(config, {utilsUpdateNeeded = true} = {}) {
+  const names = {
+    getHashesUrl: () => config.HASHES_URL,
+    getZipBaseUrl: () => config.ZIP_BASE_URL,
+    getUiBaseUrl: () => config.UI_BASE_URL,
+    getHelperBaseUrl: () => config.HELPER_BASE_URL,
+    initScriptsUpdater: () => {},
+    checkScriptsUpdateNeeded: async () => ({
+      fxFolder: {updateNeeded: false, date: '2026-08-21', remoteHash: 'a'.repeat(64), files: []},
+      utils: {
+        updateNeeded: utilsUpdateNeeded,
+        date: '2026-09-26',
+        remoteHash: 'b'.repeat(64),
+        files: ['updater/scriptsUpdater.sys.mjs'],
+      },
+      updaterUi: {updateNeeded: false, date: '', remoteHash: '', files: []},
+    }),
+    ensureUpdaterUi: async () => true,
+    fetchBytes: async () => new Uint8Array(),
+    fetchText: async () => '',
+    computeFilesHash: () => 'a'.repeat(64),
+    computeZipFilesHash: async () => 'a'.repeat(64),
+    readZipEntry: () => null,
+    extractZipFlatten: async () => '',
+    copyFileList: async () => {},
+  };
+  assert.deepEqual(
+    Object.keys(names).sort(),
+    [...LEGACY_EXPORTS].sort(),
+    'the stub namespace must mirror the legacy export set exactly'
+  );
+  return names;
+}
+
+/**
+ * Evaluate the tab engine against `moduleExports` + `config`, run its real
+ * init() and resolve with the state snapshot it pushed.
+ */
+async function runTab({
+  moduleExports,
+  config,
+  exePath = 'C:\\Program Files\\Mozilla Firefox\\firefox.exe',
+  grePath = 'C:\\Program Files\\Mozilla Firefox',
+  profPath = 'C:\\Users\\test\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\p1',
+  platform = 'win',
+  xpcomabi = 'x86_64',
+} = {}) {
+  const prefs = {};
+  const windowStub = {};
+  const sandbox = {
+    window: windowStub,
+    ChromeUtils: {
+      importESModule(spec) {
+        if (spec.includes('Downloads')) return {Downloads: {fetch: async () => {}}};
+        if (spec.includes('Subprocess'))
+          return {Subprocess: {call: async () => ({wait: async () => ({})})}};
+        if (spec.includes('AppConstants')) {
+          return {AppConstants: {platform, MOZ_APP_VERSION_DISPLAY: '140.0'}};
+        }
+        if (spec.includes('updater-config')) return {CONFIG: config};
+        if (spec.includes('scriptsUpdater')) return moduleExports;
+        throw new Error(`unexpected importESModule(${spec})`);
+      },
+    },
+    Services: {
+      prefs: makePrefs(prefs),
+      dirsvc: makeIoFiles({exePath, grePath, profPath}),
+      appinfo: {version: '140.0', XPCOMABI: xpcomabi, oscpu: 'Windows NT'},
+      console: {logStringMessage() {}},
+      startup: {quit() {}},
+      obs: {notifyObservers() {}},
+    },
+    Cc: {},
+    Ci: new Proxy({}, {get: () => ({})}),
+    PathUtils: {
+      profileDir: profPath,
+      tempDir: os.tmpdir(),
+      join: (...parts) => parts.join('/'),
+      parent: p => p,
+    },
+    IOUtils: {
+      read: async () => new Uint8Array(),
+      makeDirectory: async () => {},
+      copy: async () => {},
+    },
+    console,
+    Blob,
+    URL: {createObjectURL: () => 'blob:x', revokeObjectURL() {}},
+    document: {createElement: () => ({click() {}}), body: {appendChild() {}, removeChild() {}}},
+  };
+  vm.runInContext(TAB_SRC, vm.createContext(sandbox), {filename: 'updater.js'});
+
+  const engine = windowStub.UpdaterEngine;
+  assert.ok(engine, 'the tab engine must expose window.UpdaterEngine');
+  let state = null;
+  engine.onState = snapshot => {
+    state = snapshot;
+  };
+  engine.onProgress = () => {};
+  await engine.init();
+  assert.ok(state, 'engineInit() must push a state snapshot');
+  return {state, prefs, engine};
+}
+
+/* ---------------- the reporter's scenario (legacy module) ---------------- */
+
+test('legacy module: the tab renders and offers the very update that unblocks it', async () => {
+  const config = {...LEGACY_CONFIG};
+  const {state, prefs} = await runTab({moduleExports: legacyNamespace(config), config});
+
+  // Plain, unsuffixed asset names from the legacy config's own URLs.
+  assert.equal(state.fxFolderUrl, `${config.ZIP_BASE_URL}/fx-folder.zip`);
+  assert.equal(state.utilsUrl, `${config.ZIP_BASE_URL}/utils.zip`);
+  assert.equal(state.installerUrl, `${config.ZIP_BASE_URL}/installer_win.exe`);
+  // Config install dir: GreD for an ordinary install.
+  assert.equal(state.configDir, 'C:\\Program Files\\Mozilla Firefox');
+  assert.equal(state.packages.config.manualInstall, false);
+  // The user sees utils "Update available" and can act on it right now.
+  assert.equal(state.packages.utils.updateNeeded, true);
+  assert.equal(state.packages.config.updateNeeded, false);
+  // A completed check records the shown day (ADR 0012).
+  assert.equal(prefs['extensions.firefox-scripts.lastScriptsCheckDate'] !== undefined, true);
+});
+
+test('legacy module: no migration banner state (channel reports dev)', async () => {
+  const config = {...LEGACY_CONFIG};
+  const {state} = await runTab({moduleExports: legacyNamespace(config), config});
+  // A pre-ADR-0026 module has no channels and never migrated; showMigrationBanner
+  // only reveals itself for channel === 'stable', so it must stay off.
+  assert.equal(state.channel, 'dev');
+  assert.equal(state.migratedFromDev, false);
+});
+
+test('legacy module with a -dev config keeps fetching namespaced assets', async () => {
+  const config = {...LEGACY_CONFIG, ASSET_SUFFIX: '-dev', IS_DEV: true};
+  const {state} = await runTab({moduleExports: legacyNamespace(config), config});
+  assert.equal(state.utilsUrl, `${config.ZIP_BASE_URL}/utils-dev.zip`);
+  assert.equal(state.fxFolderUrl, `${config.ZIP_BASE_URL}/fx-folder-dev.zip`);
+  assert.equal(state.installerUrl, `${config.ZIP_BASE_URL}/installer_win-dev.exe`);
+});
+
+test('legacy module on Snap maps the config dir to /etc/firefox', async () => {
+  const config = {...LEGACY_CONFIG};
+  const {state} = await runTab({
+    moduleExports: legacyNamespace(config),
+    config,
+    exePath: '/snap/firefox/1234/usr/lib/firefox/firefox',
+    grePath: '/snap/firefox/1234/usr/lib/firefox',
+    platform: 'linux',
+    xpcomabi: 'x86_64',
+  });
+  assert.equal(state.configDir, '/etc/firefox');
+  assert.equal(state.packages.config.manualInstall, true);
+});
+
+/* ---------------- the current module (no regression) ---------------- */
+
+test('current module: its own resolvers win over the fallbacks', async () => {
+  const config = {...LEGACY_CONFIG, ASSET_SUFFIX: '-dev', IS_DEV: true};
+  // Sentinel values: if the seam ever prefers its fallback over a present
+  // module resolver, these assertions fail.
+  const moduleExports = {
+    ...legacyNamespace(config),
+    getAssetSuffix: () => '-MODULE',
+    getChannelState: () => ({channel: 'stable', migratedFromDev: true}),
+    fxFolderDir: () => '/module/fx-folder',
+  };
+  const {state} = await runTab({moduleExports, config});
+  assert.equal(state.utilsUrl, `${config.ZIP_BASE_URL}/utils-MODULE.zip`);
+  assert.equal(state.installerUrl, `${config.ZIP_BASE_URL}/installer_win-MODULE.exe`);
+  assert.equal(state.configDir, '/module/fx-folder');
+  assert.equal(state.channel, 'stable');
+  assert.equal(state.migratedFromDev, true);
+});
+
+/* ---------------- static guards ---------------- */
+
+/** Names the tab destructures off the module namespace. */
+function importedNames() {
+  const match = TAB_SRC.match(
+    /const scriptsUpdater = ChromeUtils\.importESModule\([\s\S]*?\nconst \{([\s\S]*?)\} = scriptsUpdater;/
+  );
+  assert.ok(match, 'the tab must import the module as a namespace');
+  return match[1]
+    .split(',')
+    .map(line => line.trim())
+    .filter(Boolean);
+}
+
+test('the tab imports only legacy-safe or feature-detected module exports', () => {
+  const allowed = new Set([...LEGACY_EXPORTS, ...GUARDED]);
+  const unexpected = importedNames().filter(name => !allowed.has(name));
+  assert.deepEqual(unexpected, [], 'unguarded module exports in the tab break old installs');
+});
+
+test('every guarded export is feature-detected with a fallback', () => {
+  for (const name of GUARDED) {
+    assert.ok(
+      TAB_SRC.includes(`typeof scriptsUpdater.${name} === 'function'`),
+      `${name} must be feature-detected at the seam`
+    );
+  }
+});
+
+test('the UI client needs no guards: it imports nothing from the module', () => {
+  assert.equal(/scriptsUpdater\.sys\.mjs/.test(UI_SRC), false);
+  assert.equal(/importESModule/.test(UI_SRC), false);
+});
+
+test('the legacy fixture stays a subset of the current module (exports are never removed)', () => {
+  const moduleSrc = fs.readFileSync(MODULE_PATH, 'utf-8').replace(/\r\n/g, '\n');
+  const current = new Set(
+    [...moduleSrc.matchAll(/^export (?:async )?(?:function|const|let|class) (\w+)/gm)].map(
+      m => m[1]
+    )
+  );
+  const lost = LEGACY_EXPORTS.filter(name => !current.has(name));
+  assert.deepEqual(lost, [], 'dropping an export the legacy floor had would break the fixture');
+});

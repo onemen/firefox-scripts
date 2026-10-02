@@ -20,6 +20,8 @@
 //
 // Roles:
 //   packages  → utils.zip / fx-folder.zip / updater-ui.zip + their hashes
+//   updater-ui→ updater-ui.zip + its hash entry alone (the update tab, hotfixable
+//               without touching the two manual-download zips — issue #383)
 //   installer → installer_<platform> binaries + .sha256 sidecars (release +
 //               Pages mirror)
 //   helper    → helper_<platform> binaries + .sha256 sidecars (Pages only)
@@ -28,7 +30,7 @@
 // and the scope decision are unit-tested directly (publishScope.test.mjs).
 
 /** Roles a run may publish, plus the `all` shorthand for every one of them. */
-export const INCLUDE_ROLES = ['packages', 'installer', 'helper'];
+export const INCLUDE_ROLES = ['packages', 'updater-ui', 'installer', 'helper'];
 export const INCLUDE_ALL = 'all';
 
 /**
@@ -87,14 +89,36 @@ export function parseInclude(argv = process.argv) {
  * Role → in-scope flag: a role is in scope only when included.
  *
  * @param {Set<string>} include roles to publish
- * @returns {{packages: boolean; installer: boolean; helper: boolean}}
+ * @returns {{
+ *   packages: boolean;
+ *   updaterUi: boolean;
+ *   installer: boolean;
+ *   helper: boolean;
+ * }}
  */
 export function scopeFor(include = new Set()) {
   return {
     packages: include.has('packages'),
+    updaterUi: include.has('updater-ui'),
     installer: include.has('installer'),
     helper: include.has('helper'),
   };
+}
+
+/**
+ * Is this package zip in scope? `packages` covers all three; the `updater-ui`
+ * role covers the tab alone, which is what makes a tab-only hotfix possible
+ * (issue #383) — utils.zip / fx-folder.zip stay frozen and are not rebuilt,
+ * re-uploaded or re-staged. Keyed by the manifest/package name, not the role
+ * name, so the two never drift.
+ *
+ * @param {{packages: boolean; updaterUi: boolean}} scope
+ * @param {string} name package name ('utils' | 'fx-folder' | 'updater-ui')
+ * @returns {boolean}
+ */
+export function packageInScope(scope, name) {
+  if (name === 'updater-ui') return Boolean(scope.packages || scope.updaterUi);
+  return Boolean(scope.packages);
 }
 
 /** True when no binary role is in scope (nothing for the AV/VT gates to scan). */
@@ -160,7 +184,15 @@ export function pagesCommitMessage({mode, include, platforms = [], devBranch = '
  */
 export function includeBanner(include, {mode, local = false} = {}) {
   if (include.size === INCLUDE_ROLES.length) return '';
-  const heldBack = INCLUDE_ROLES.filter(role => !include.has(role));
+  // Held back at ARTIFACT granularity, not role granularity: `updater-ui` names
+  // the same zip `packages` covers, so it is only really withheld when no
+  // package role is in scope. Naming it as held back next to a packages run
+  // would be false — the tab ships with it.
+  const heldBack = INCLUDE_ROLES.filter(role => {
+    if (include.has(role)) return false;
+    if (role === 'updater-ui' && include.has('packages')) return false;
+    return true;
+  });
   const tail =
     local ?
       ['(--local: the snapshot simply omits the held-back roles.)']
@@ -199,7 +231,9 @@ export function includeBanner(include, {mode, local = false} = {}) {
  * @returns {string} warning text ('' when nothing applies)
  */
 export function devBranchStrandWarning(include, {branchExists = null} = {}) {
-  if (include.has('packages')) return '';
+  // `updater-ui` counts as a package role: it puts a zip on the branch, so it
+  // is never the "no zips at all" shape this warning is about.
+  if (include.has('packages') || include.has('updater-ui')) return '';
   const flag = '--include=installer,helper';
   if (branchExists === false) {
     return [
@@ -219,5 +253,40 @@ export function devBranchStrandWarning(include, {branchExists = null} = {}) {
     `NOTE: ${flag} on a dev publish: fine on an existing branch (its zips keep serving), ` +
     'but if this run CREATES the dev-build branch the branch is born with a manifest naming zips ' +
     'it has never carried — permanent "update available" + zip 404s.'
+  );
+}
+
+/**
+ * The dev-publish variant of the same trap for the tab-only role: a dev branch
+ * CREATED with `--include=updater-ui` carries the tab but not the two
+ * manual-download zips, so the installer 404s on them. On an existing branch
+ * the frozen entries keep serving and the run is consistent — same bar as
+ * devBranchStrandWarning.
+ *
+ * @param {Set<string>} include roles to publish
+ * @param {{branchExists?: boolean | null}} [opts]
+ * @returns {string} warning text ('' when nothing applies)
+ */
+export function devTabOnlyWarning(include, {branchExists = null} = {}) {
+  if (include.has('packages') || !include.has('updater-ui')) return '';
+  const flag = '--include=updater-ui';
+  if (branchExists === false) {
+    return [
+      `WARNING: ${flag} on a dev publish that CREATES its dev-build branch.`,
+      'The branch is born carrying updater-ui.zip but NOT utils.zip / fx-folder.zip,',
+      'while their manifest entries stay frozen — the installer will 404 on the zips.',
+      'Re-run with --include=packages (or all) so the branch carries the full set.',
+    ].join('\n');
+  }
+  if (branchExists === true) {
+    return (
+      `NOTE: ${flag} on an EXISTING dev branch: only the tab moves; utils.zip / ` +
+      'fx-folder.zip keep serving under their frozen manifest entries, so this run stays consistent.'
+    );
+  }
+  return (
+    `NOTE: ${flag} on a dev publish: fine on an existing branch (its zips keep serving), ` +
+    'but if this run CREATES the dev-build branch the branch will carry updater-ui.zip alone — ' +
+    'the installer will 404 on utils.zip / fx-folder.zip.'
   );
 }
