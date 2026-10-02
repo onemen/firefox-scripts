@@ -684,6 +684,19 @@ test('isFileLockError: spawnSync-shape EBUSY (libuv sharing violation) matches o
   );
 });
 
+test('isFileLockError: a readFileSync EBUSY (file held by a writer) matches', () => {
+  // Node fs errors carry no stderr — the message/path is the whole signal. The
+  // updater E2E's tree-hash read sees this shape when the browser holds a file
+  // open while copying it (floorp portable leg, 2026-10-02), so the retry there
+  // depends on this classification.
+  const err = Object.assign(
+    new Error("EBUSY: resource busy or locked, open 'C:/Temp/chrome/utils/x.sys.mjs'"),
+    {code: 'EBUSY', syscall: 'open'}
+  );
+  assert.equal(isFileLockError(err, {platform: 'win32'}), true);
+  assert.equal(isFileLockError(err, {platform: 'linux'}), false);
+});
+
 test('runNsisInstallerWithRetry: retries spawnSync EBUSY then succeeds', () => {
   const attempts = [];
   const result = runNsisInstallerWithRetry('setup.exe', ['/S', '/D=C:\\x'], 'test installer', {
