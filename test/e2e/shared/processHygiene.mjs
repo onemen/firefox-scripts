@@ -206,7 +206,15 @@ export function killProcessesByCmdline(
   // POSIX: pkill -f takes an ERE — escape the specials a path can contain
   // (dots at least).
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const res = run('pkill', ['-f', escaped], {
+  // pkill parses its argv with getopt, so a pattern that STARTS WITH A DASH is
+  // read as an option: `pkill -f --fxs-e2e-puppeteer-<ts>` printed usage and
+  // exited 2, silently killing NOTHING (the macOS nightly 2026-10-02 launch
+  // wedge: both attempts timed out at 20 s and the runner then had to terminate
+  // orphan `Firefox Nightly`/`firefox`/`crashhelper` processes — the retry ran
+  // against a profile the first attempt still held). Wrapping the pattern in a
+  // group keeps the same match and cannot be mistaken for an option.
+  const pattern = escaped.startsWith('-') ? `(${escaped})` : escaped;
+  const res = run('pkill', ['-f', pattern], {
     encoding: 'utf8',
     timeout: 30_000,
   });
@@ -222,6 +230,75 @@ export function killProcessesByCmdline(
     log(`  [hygiene] cmdline sweep failed (pkill exit ${res.status})`);
   }
   return 0;
+}
+
+/**
+ * Wait until no process's command line contains `needle`, up to `timeoutMs`.
+ *
+ * The kill primitives above are fire-and-forget: on POSIX pkill signals and
+ * returns, and the browser tree can take seconds to unwind (a BrowserParent
+ * teardown keeps the profile lock held). A retry that relaunches the moment the
+ * kill returns can therefore start against a profile the killed browser still
+ * owns — the macOS nightly 2026-10-02 launch wedge failed exactly that way,
+ * twice, at the same 20 s deadline. Waiting for the needle to disappear turns
+ * "the sweep did not work" into a bounded, logged delay.
+ *
+ * Unit-test seam: `run`/`platform` as in killProcessesByCmdline.
+ *
+ * @param {string} needle unique substring that must appear in the command line
+ * @param {{
+ *   log?: (msg: string) => void;
+ *   run?: typeof import('node:child_process').spawnSync;
+ *   platform?: string;
+ *   timeoutMs?: number;
+ *   intervalMs?: number;
+ *   label?: string;
+ * }} [opts]
+ * @returns {Promise<boolean>} true when nothing matches any more
+ */
+export async function waitForProcessesGone(
+  needle,
+  {
+    log = console.log,
+    run = spawnSync,
+    platform = process.platform,
+    timeoutMs = 10_000,
+    intervalMs = 250,
+    label = 'process(es) matching the sweep needle',
+  } = {}
+) {
+  if (!needle) return true;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  /** Still running? pkill/pgrep exit 1 = nothing matched; PowerShell counts. */
+  const stillRunning = () => {
+    if (platform === 'win32') {
+      const ps =
+        'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ' +
+        `$_.CommandLine.Contains('${needle}') } | Measure-Object | ` +
+        'Select-Object -ExpandProperty Count';
+      const res = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      if (res.error) return false;
+      return Number.parseInt(`${res.stdout ?? ''}`.trim(), 10) > 0;
+    }
+    const res = run('pgrep', ['-f', escaped.startsWith('-') ? `(${escaped})` : escaped], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    if (res.error) return false;
+    return res.status === 0;
+  };
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!stillRunning()) return true;
+    if (Date.now() >= deadline) {
+      log(`  [hygiene] ${label} still alive after ${timeoutMs}ms: ${needle}`);
+      return false;
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
 }
 
 /**

@@ -67,6 +67,32 @@ scenario starts. To prove determinism, run the updater selection twice in a row 
 node test/e2e/updater/updater-e2e.mjs --snapshot dist/dev-main-abc1234 --repeat 2
 ```
 
+Killing a wedged process tree has one portability trap and one timing trap, both fixed after the
+2026-10-02 legs. **Portability:** POSIX kills go through `pkill -f <needle>`, and pkill parses its
+argv with getopt — a needle that STARTS WITH A DASH (the per-launch tag `--fxs-e2e-puppeteer-<ts>`)
+is read as an option, so pkill printed usage, exited 2, and killed nothing; the launch-retry kill
+was a silent no-op on every macOS/Ubuntu leg while the Windows branch (PowerShell `.Contains`,
+driven from `test/e2e/shared/processHygiene.mjs`) worked. The pattern is now group-wrapped when it
+would start with a dash, and the retry sweeps by the profile directory as a second needle.
+**Timing:** `pkill` signals and returns while the browser needs seconds to release the profile, so
+the retry also waits (`waitForProcessesGone`, bounded and logged) for the needle to disappear before
+relaunching — a retry that starts against a profile the killed browser still holds wedges on the
+profile lock (`nightly · macos-latest`, 2026-10-02: both attempts died at the 20 s launch deadline
+and the runner had to terminate orphan browser processes afterwards).
+
+An install click must be aimed at the page that rendered the fixture's state, and it must be
+verified. A WebDriver-BiDi page target OUTLIVES its tab, so "the first page whose `UpdaterEngine`
+exists" — and even "a page whose URL is the updater URL" — can be a tab that `closeUpdaterTabs()`
+just closed: its card is still rendered, so a `card-title`-only readiness wait passes instantly and
+the click lands in a dying document (the fingerprint: `card rendered` 6 ms after the tab opened,
+which no fresh engine can do — it has to fetch the manifest and hash the trees). The install-applies
+steps now resolve their page by the `both-stale` state they seed (`findRenderedUpdaterPage`, which
+re-resolves every poll so a correct page wins), click through `clickInstall` (which reports a
+disabled Update button instead of clicking it, and proves the engine accepted the command by waiting
+for the first progress step both install flows emit before their first `await`), and retry the click
+once with a `[diag]` line when acceptance never comes (`zen · windows-latest`, 2026-10-02: six
+dependent assertions failed 30 s after a click that had gone nowhere).
+
 ### Installer E2E
 
 Starts the installer in `--smoke-test` mode and exercises every state-changing `/api` route: token

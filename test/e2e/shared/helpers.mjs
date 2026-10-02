@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
-import {killProcessesByCmdline} from './processHygiene.mjs';
+import {killProcessesByCmdline, waitForProcessesGone} from './processHygiene.mjs';
 
 export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -209,9 +209,11 @@ const LAUNCH_DEADLINE_MS = 20_000;
  * @param {string} tag unique per-launch tag (also present in the browser's
  *   argv)
  * @param {(msg: string) => void} log
+ * @param {string} [profileDir] the attempt's userDataDir, swept as a second
+ *   needle (the profile being free is what the retry needs)
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
-async function raceLaunchDeadline(launchPromise, deadlineMs, tag, log) {
+async function raceLaunchDeadline(launchPromise, deadlineMs, tag, log, profileDir) {
   let timer;
   const deadline = new Promise((_, reject) => {
     timer = setTimeout(
@@ -227,6 +229,14 @@ async function raceLaunchDeadline(launchPromise, deadlineMs, tag, log) {
       `  [launch] start exceeded ${deadlineMs / 1000}s — killing the wedged browser tree (${tag})`
     );
     killProcessesByCmdline(tag, {log, label: 'process(es) from the timed-out launch attempt'});
+    // Also sweep by the profile the attempt was launched with: the tag kill is
+    // one needle, and "the profile is free" is what the retry needs.
+    if (profileDir) {
+      killProcessesByCmdline(profileDir, {
+        log,
+        label: 'process(es) from the timed-out launch attempt holding the profile',
+      });
+    }
     throw err;
   } finally {
     clearTimeout(timer);
@@ -317,7 +327,7 @@ export async function launchFirefox(
     // default and the deadline exists to bound a wedged start, not to assert
     // performance.
     const deadline = Math.max(launchDeadlineMs, LAUNCH_DEADLINE_MS);
-    return raceLaunchDeadline(launchPromise, deadline, tag, console.log);
+    return raceLaunchDeadline(launchPromise, deadline, tag, console.log, profileDir);
   };
 
   try {
@@ -337,6 +347,29 @@ export async function launchFirefox(
       log: console.log,
       label: 'leftover process(es) from the wedged launch attempt',
     });
+    // The profile dir is the second needle because the tag kill has two ways to
+    // miss — the POSIX pattern form (fixed in killProcessesByCmdline, but a
+    // needle only works when the process really carries it) and a tree that
+    // outlived its argv — and because "the profile is free" is the property the
+    // retry actually needs: `--new-instance` starts against the SAME
+    // userDataDir, so a survivor makes the retry wedge on the profile the first
+    // attempt still holds (macOS nightly 2026-10-02: both attempts died at the
+    // 20 s deadline, and the runner had to terminate orphan browser processes
+    // afterwards).
+    killProcessesByCmdline(profileDir, {
+      log: console.log,
+      label: 'wedged process(es) holding the profile',
+    });
+    // ...and then WAIT for the tree to actually unwind: pkill signals and
+    // returns while the browser takes seconds to release the profile lock.
+    if (
+      !(await waitForProcessesGone(profileDir, {
+        log: console.log,
+        label: 'wedged browser still holding the profile',
+      }))
+    ) {
+      console.log('  [launch] the profile is still held — the retry may wedge on the profile lock');
+    }
     console.log(`  [launch] wedged (${err?.message}) — retrying once`);
     try {
       return await launchOnce();

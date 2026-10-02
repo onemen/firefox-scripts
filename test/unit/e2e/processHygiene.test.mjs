@@ -23,6 +23,7 @@ const {
   killProcessesByCmdline,
   killStrayProcesses,
   removeProfileCompatibilityIni,
+  waitForProcessesGone,
 } = await import(hygieneUrl);
 
 // ── Engine-backed pattern validation (T5) ───────────────────────────────────
@@ -358,6 +359,26 @@ test('killProcessesByCmdline: POSIX branch escapes regex specials in the needle'
   assert.equal(seen[0].args[1], '/tmp/fxs-e2e-ABC \\(1\\)');
 });
 
+test('killProcessesByCmdline: a POSIX needle starting with a dash cannot be read as an option', () => {
+  // pkill parses argv with getopt: `pkill -f --fxs-e2e-puppeteer-123` printed
+  // usage and exited 2 (logged as "cmdline sweep failed (pkill exit 2)"), so
+  // the launch-retry kill silently did NOTHING — every tag sweep on the macOS
+  // and Ubuntu legs, while the Windows branch (PowerShell .Contains) worked.
+  const seen = [];
+  killProcessesByCmdline('--fxs-e2e-puppeteer-1790932692920', {
+    platform: 'darwin',
+    run: (cmd, args) => {
+      seen.push({cmd, args: [...args]});
+      return {status: 0, stdout: ''};
+    },
+  });
+  assert.equal(seen[0].cmd, 'pkill');
+  assert.equal(seen[0].args[0], '-f');
+  // Same match, group-wrapped so the FIRST character is not a dash.
+  assert.equal(seen[0].args[1], '(--fxs-e2e-puppeteer-1790932692920)');
+  assert.ok(!seen[0].args[1].startsWith('-'), 'the pattern must not look like an option');
+});
+
 test('killProcessesByCmdline: POSIX no-match (exit 1) kills nothing and logs nothing', () => {
   const logs = [];
   const killed = killProcessesByCmdline('/tmp/fxs-e2e-NONE', {
@@ -377,4 +398,87 @@ test('killProcessesByCmdline: empty needle is a no-op (refuses to match everythi
     },
   });
   assert.equal(killed, 0);
+});
+
+// ── waitForProcessesGone (#384 launch retry) ────────────────────────────────
+// The retry must not start against a profile the killed browser still holds;
+// the wait is the bounded gate that makes "the sweep did not work" visible
+// instead of turning into a second 20 s wedge (macOS nightly, 2026-10-02).
+
+test('waitForProcessesGone: POSIX reports gone as soon as pgrep stops matching', async () => {
+  const seen = [];
+  let calls = 0;
+  const gone = await waitForProcessesGone('/tmp/fxs-e2e-ABC', {
+    platform: 'linux',
+    timeoutMs: 1000,
+    intervalMs: 1,
+    run: (cmd, args) => {
+      seen.push({cmd, args: [...args]});
+      calls++;
+      // Matched once (exit 0 = still running), then gone (exit 1 = no match).
+      return {status: calls === 1 ? 0 : 1, stdout: ''};
+    },
+  });
+  assert.equal(gone, true);
+  assert.equal(seen[0].cmd, 'pgrep');
+  assert.deepEqual(seen[0].args, ['-f', '/tmp/fxs-e2e-ABC']);
+  assert.equal(calls, 2, 'the wait polls until the needle stops matching');
+});
+
+test('waitForProcessesGone: a dash-leading needle is group-wrapped for pgrep too', async () => {
+  const seen = [];
+  await waitForProcessesGone('--fxs-e2e-puppeteer-123', {
+    platform: 'darwin',
+    timeoutMs: 100,
+    intervalMs: 1,
+    run: (cmd, args) => {
+      seen.push({cmd, args: [...args]});
+      return {status: 1, stdout: ''};
+    },
+  });
+  assert.deepEqual(seen[0].args, ['-f', '(--fxs-e2e-puppeteer-123)']);
+});
+
+test('waitForProcessesGone: times out with a loud log when the tree never dies', async () => {
+  const logs = [];
+  const gone = await waitForProcessesGone('/tmp/fxs-e2e-STUCK', {
+    platform: 'linux',
+    timeoutMs: 20,
+    intervalMs: 1,
+    log: m => logs.push(m),
+    label: 'wedged browser still holding the profile',
+    run: () => ({status: 0, stdout: ''}),
+  });
+  assert.equal(gone, false);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /wedged browser still holding the profile/);
+  assert.match(logs[0], /\/tmp\/fxs-e2e-STUCK/);
+});
+
+test('waitForProcessesGone: win32 branch counts the matching processes', async () => {
+  const seen = [];
+  let calls = 0;
+  const gone = await waitForProcessesGone('C:\\Temp\\fxs-e2e-ABC', {
+    platform: 'win32',
+    timeoutMs: 1000,
+    intervalMs: 1,
+    run: (cmd, args) => {
+      seen.push({cmd, args: [...args]});
+      calls++;
+      return {status: 0, stdout: calls === 1 ? '2\n' : '0\n'};
+    },
+  });
+  assert.equal(gone, true);
+  assert.equal(seen[0].cmd, 'powershell.exe');
+  assert.match(seen[0].args.at(-1), /Measure-Object/);
+  assert.ok(seen[0].args.at(-1).includes('C:\\Temp\\fxs-e2e-ABC'));
+});
+
+test('waitForProcessesGone: an empty needle is trivially gone (no spawn)', async () => {
+  const gone = await waitForProcessesGone('', {
+    run: () => {
+      throw new Error('must not spawn');
+    },
+  });
+  assert.equal(gone, true);
 });
