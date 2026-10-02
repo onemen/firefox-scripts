@@ -473,6 +473,31 @@ function forgetDuplicateUpdaterTabs() {
   }
 }
 
+/**
+ * The window the user is actually on: the most-recently-used
+ * `navigator:browser` window, or null when the browser has none.
+ *
+ * The updater tab must open where the user is looking, and that is NOT the
+ * window initScriptsUpdater() was called with: BootstrapLoader.js /
+ * userChrome.js call it per window off `chrome-document-loaded`, so on a
+ * restored session gWindow is whichever window that observer happened to see
+ * first (window 1 of the saved session), while SessionStore re-selects the
+ * window that was selected at shutdown — usually a different one. The window
+ * mediator's MRU order is also the order allBrowserWindows() enumerates in, so
+ * the fresh tab lands in the window the twin guard scanned first.
+ *
+ * @returns {Window | null}
+ */
+function mostRecentBrowserWindow() {
+  try {
+    return Services.wm.getMostRecentWindow('navigator:browser') || null;
+  } catch {
+    // A mediator without the method (or a bogus window): callers fall back to
+    // the window they already hold.
+    return null;
+  }
+}
+
 /** Every live navigator:browser window, in MRU order. */
 function allBrowserWindows() {
   const wins = [];
@@ -486,7 +511,9 @@ function allBrowserWindows() {
 /**
  * Select `tab` in `win` once its browser has committed a load (load or pageshow
  * — about:blank placeholders can fire load without committing, so both are
- * awaited). Selecting earlier is the #384 wedge: see checkForUpdates.
+ * awaited), then move keyboard focus into it: selecting the tab alone leaves
+ * the focus on whatever the user was in, so the tab is visible but unresponsive
+ * to typing. Selecting earlier is the #384 wedge: see checkForUpdates.
  *
  * A load that never comes must not wedge selection forever: a one-shot 10 s
  * timer selects anyway (tabbar cosmetics at worst — the load itself is never
@@ -516,6 +543,7 @@ function selectWhenLoaded(win, tab) {
     try {
       if (!win.closed && gBrowser.tabContainer.contains(tab)) {
         gBrowser.selectedTab = tab;
+        lb.focus();
       }
     } catch {
       // Same: teardown mid-select is not a scheduler failure.
@@ -653,11 +681,14 @@ export async function checkForUpdates() {
     return;
   }
 
-  // Re-read gWindow, don't trust a captured window: an await above may have
-  // outlived window 1 (window churn mid-check). The refreshed gWindow (set by
-  // a later initScriptsUpdater) is the live tab target; if the browser is now
-  // windowless there is nothing to attach the tab to.
-  const liveWin = !gWindow || gWindow.closed ? null : gWindow;
+  // Resolve the tab target HERE, not from the window the check started on: an
+  // await above can outlive it, and the window initScriptsUpdater() saw first
+  // is not the window the user is on (a restored session re-selects the window
+  // that was selected at shutdown, which is not necessarily window 1 — see
+  // mostRecentBrowserWindow). gWindow stays the fallback for a mediator that
+  // cannot answer; if neither yields a live window, the browser is windowless
+  // and there is nothing to attach the tab to.
+  const liveWin = mostRecentBrowserWindow() || (gWindow && !gWindow.closed ? gWindow : null);
   const b = liveWin?.gBrowser;
   if (!b) {
     return;

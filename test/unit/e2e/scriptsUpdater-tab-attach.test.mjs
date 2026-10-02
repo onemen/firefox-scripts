@@ -235,7 +235,13 @@ const updaterConfig = () => ({
   IS_LOCAL: false,
 });
 
-function loadUpdater({store = {}, routes = {}, windows = [], platformVersion = '140.0'} = {}) {
+function loadUpdater({
+  store = {},
+  routes = {},
+  windows = [],
+  mostRecent,
+  platformVersion = '140.0',
+} = {}) {
   const source = fs
     .readFileSync(MODULE_PATH, 'utf-8')
     .replace(/\r\n/g, '\n')
@@ -323,6 +329,13 @@ function loadUpdater({store = {}, routes = {}, windows = [], platformVersion = '
             getNext: () => windows[i++],
           };
         },
+        /**
+         * The mediator's "window the user is on". Firefox's enumerator is
+         * MRU-ordered, so the first listed window is the faithful default;
+         * tests that need another answer (or none — the fallback path) pass
+         * `mostRecent` explicitly.
+         */
+        getMostRecentWindow: () => (mostRecent === undefined ? windows[0] || null : mostRecent),
       },
     },
     Cc: makeCc(),
@@ -438,6 +451,12 @@ function seedPendingWorld(layout) {
 function makeBrowser() {
   const browser = {
     currentURI: {spec: 'about:blank'},
+    // Selecting a tab is not enough: focus must move into the browser element
+    // (see selectWhenLoaded).
+    focusCalls: 0,
+    focus() {
+      this.focusCalls++;
+    },
     _listeners: {load: [], pageshow: []},
     addEventListener(type, cb) {
       this._listeners[type].push(cb);
@@ -493,14 +512,22 @@ function restoredUpdaterBrowser() {
   return browser;
 }
 
-/** Run initScriptsUpdater against a seeded pending-update world. */
-async function openTabOnPendingWorld({windows = []} = {}) {
+/**
+ * Run initScriptsUpdater against a seeded pending-update world. `windows` are
+ * the OTHER windows the enumerator must report (after the current one),
+ * `mostRecent` overrides the mediator's answer (default: the current window).
+ */
+async function openTabOnPendingWorld({windows = [], mostRecent} = {}) {
   const store = {};
-  const {sandbox} = loadUpdater({store, windows});
+  // The enumerator (and the mediator's answer) is MRU-ordered in Firefox, so
+  // the init/current window goes FIRST and the caller's other windows follow.
+  const enumeratorWindows = [];
+  const {sandbox} = loadUpdater({store, windows: enumeratorWindows, mostRecent});
   const layout = makeProfileLayout(sandbox);
   const routes = seedPendingWorld(layout);
   sandbox.Services.io = makeIo(routes);
   const win = makeFakeWindow();
+  enumeratorWindows.push(win, ...windows);
   sandbox.initScriptsUpdater(win);
   sandbox.Services.obs.notify('sessionstore-windows-restored');
   // The tests attach immediately: fire the restore event the way Firefox does.
@@ -521,8 +548,12 @@ test('fresh tab is selected only after its browser commits the updater URI', asy
       null,
       'selection must not happen synchronously after addTrustedTab (the #384 wedge)'
     );
+    assert.equal(tab.linkedBrowser.focusCalls, 0, 'and nothing is focused before the load');
     tab.linkedBrowser.commit(TAB_URI);
     assert.equal(win._selected, tab, 'selection follows the browser load');
+    // Selecting the tab is only half of it: keyboard focus has to move into
+    // the page, or the tab renders but ignores typing.
+    assert.equal(tab.linkedBrowser.focusCalls, 1, 'the browser element is focused');
   } finally {
     layout.cleanup();
   }
@@ -555,6 +586,62 @@ test('the session-restore gate is bounded at 5s (a pending promise cannot stall 
   );
   assert.ok(match, 'the restore gate must race SessionStore with an explicit bound');
   assert.equal(Number(match[1]), 5000, 'the restore gate waits at most 5 s');
+});
+
+test('the fresh tab opens in the most-recent window, not the window init saw first', async () => {
+  // BootstrapLoader.js / userChrome.js call initScriptsUpdater(win) per window
+  // off chrome-document-loaded, so on a restored session gWindow is whichever
+  // window the observer saw first — window 1 of the saved session — while
+  // SessionStore re-selects the window that was selected at shutdown. The tab
+  // must follow the user, not the init order (#384 follow-up).
+  const firstWin = makeFakeWindow();
+  const mruWin = makeFakeWindow();
+  // MRU-ordered, like the real mediator: mruWin is the window in front.
+  const {sandbox} = loadUpdater({store: {}, windows: [mruWin, firstWin]});
+  const layout = makeProfileLayout(sandbox);
+  sandbox.Services.io = makeIo(seedPendingWorld(layout));
+  sandbox.initScriptsUpdater(firstWin);
+  sandbox.Services.obs.notify('sessionstore-windows-restored');
+  try {
+    assert.ok(
+      await waitFor(() => mruWin.openedTabs.length > 0),
+      'the fresh tab opened in the most-recent window'
+    );
+    assert.equal(mruWin.openedTabs[0]._uri, TAB_URI);
+    assert.equal(
+      firstWin.openedTabs.length,
+      0,
+      'the window that happened to init first gets no tab'
+    );
+  } finally {
+    layout.cleanup();
+  }
+});
+
+test('a mediator that cannot name a most-recent window falls back to the init window', async () => {
+  // gWindow is the fallback, not the primary: no browser window reported means
+  // the mediator could not answer (or threw), so the module uses the window it
+  // already holds instead of giving up on the attach.
+  const firstWin = makeFakeWindow();
+  const otherWin = makeFakeWindow();
+  const {sandbox} = loadUpdater({
+    store: {},
+    windows: [otherWin],
+    mostRecent: null,
+  });
+  const layout = makeProfileLayout(sandbox);
+  sandbox.Services.io = makeIo(seedPendingWorld(layout));
+  sandbox.initScriptsUpdater(firstWin);
+  sandbox.Services.obs.notify('sessionstore-windows-restored');
+  try {
+    assert.ok(
+      await waitFor(() => firstWin.openedTabs.length > 0),
+      'the tab opened in the fallback (init) window'
+    );
+    assert.equal(otherWin.openedTabs.length, 0);
+  } finally {
+    layout.cleanup();
+  }
 });
 
 test('selection falls back after the 10s timer when no load ever fires', async () => {
@@ -618,8 +705,10 @@ test('a twin materializing after the attach is forgotten on the per-tab restore 
   const restoredWin = makeFakeWindow();
   const win = makeFakeWindow();
   // The enumerator must see BOTH windows, the way Services.wm does in Firefox
-  // (the guard looks for the marked fresh tab session-wide).
-  const windows = [restoredWin, win];
+  // (the guard looks for the marked fresh tab session-wide), and it is
+  // MRU-ordered: `win` is the window the user is on, so the fresh tab — which
+  // this test asserts on `win` — belongs there.
+  const windows = [win, restoredWin];
   const {sandbox} = loadUpdater({store: {}, windows});
   const layout = makeProfileLayout(sandbox);
   const routes = seedPendingWorld(layout);
