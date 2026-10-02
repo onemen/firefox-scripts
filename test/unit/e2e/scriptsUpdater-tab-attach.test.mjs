@@ -24,6 +24,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import vm from 'vm';
 import {fileURLToPath} from 'node:url';
+import {comparePlatformVersions, makeSessionStoreStub} from '../../shared/sandboxServices.mjs';
 
 const tempRoots = [];
 after(() => {
@@ -135,12 +136,19 @@ function makeCryptoHash() {
 
 /**
  * Timers registered through the sandbox's Cc are captured here (reset per
- * makeCc call, i.e. per loadUpdater). selectWhenLoaded's 10 s fallback is the
- * last one registered by the time the tab exists; a test fires it explicitly —
- * the module's other timers (withTimeout, the daily timer) must never fire.
+ * makeCc call, i.e. per loadUpdater) with their delay, so a test can fire
+ * exactly the one it means: selectWhenLoaded's 10 s fallback, or the
+ * late-restore sweep (the only repeating 2 s timer). The module's other timers
+ * (withTimeout, the daily timer) must never fire.
  */
 let ccTimers = [];
+
+/** The last live timer registered with `delay` ms. */
+function timerByDelay(delay) {
+  return ccTimers.filter(t => t._delay === delay && t._cb).pop();
+}
 let makeSsCalls = [];
+let lazySpecs = {};
 
 function makeCc() {
   ccTimers = [];
@@ -148,11 +156,22 @@ function makeCc() {
     '@mozilla.org/timer;1': {
       createInstance: () => {
         const timer = {
-          initWithCallback(cb) {
+          initWithCallback(cb, delay, type) {
             timer._cb = cb;
+            timer._delay = delay;
+            timer._type = type;
           },
           cancel() {
             timer._cb = null;
+          },
+          /** Run one tick the way the real nsITimer would. */
+          fire() {
+            const cb = timer._cb;
+            if (typeof cb === 'function') {
+              cb();
+            } else {
+              cb.notify();
+            }
           },
         };
         ccTimers.push(timer);
@@ -216,7 +235,7 @@ const updaterConfig = () => ({
   IS_LOCAL: false,
 });
 
-function loadUpdater({store = {}, routes = {}, windows = []} = {}) {
+function loadUpdater({store = {}, routes = {}, windows = [], platformVersion = '140.0'} = {}) {
   const source = fs
     .readFileSync(MODULE_PATH, 'utf-8')
     .replace(/\r\n/g, '\n')
@@ -229,10 +248,17 @@ function loadUpdater({store = {}, routes = {}, windows = []} = {}) {
   const sandbox = {
     ChromeUtils: {
       generateQI: () => () => {},
+      // The module keeps ONE defineESModuleGetters block; anything else it
+      // tries to add (or any spec it invents) fails loudly here.
       defineESModuleGetters: (target, getters) => {
         for (const [name, spec] of Object.entries(getters)) {
+          lazySpecs[name] = String(spec);
           if (String(spec).includes('Timer')) {
             target[name] = cb => setTimeout(cb, 0);
+          } else if (String(spec).endsWith('/sessionstore/SessionStore.sys.mjs')) {
+            target[name] = makeSessionStoreStub((win, index) => makeSsCalls.push({win, index}));
+          } else {
+            throw new Error(`unexpected lazy ESM getter: ${name} -> ${spec}`);
           }
         }
       },
@@ -241,29 +267,12 @@ function loadUpdater({store = {}, routes = {}, windows = []} = {}) {
           return {CONFIG: updaterConfig()};
         }
         if (spec.includes('SessionStore')) {
-          // The purge path resolves through the SessionStore module (the
-          // portable API — Services.ss exists only on newer Firefox).
-          return {
-            SessionStore: {
-              getClosedTabDataForWindow: () =>
-                JSON.stringify({
-                  windows: [
-                    {
-                      _closedTabs: [
-                        {
-                          state: {
-                            entries: [{url: 'chrome://firefox-scripts/content/ui/updater.html'}],
-                          },
-                        },
-                      ],
-                    },
-                  ],
-                }),
-              forgetClosedTab: (win, index) => {
-                makeSsCalls.push({win, index});
-              },
-            },
-          };
+          // SessionStore is reachable ONLY through the lazy getter (its spec
+          // is version-conditional) — a direct import here means the module
+          // regressed to a module-scope import.
+          throw new Error(
+            `SessionStore must come from the lazy getter, not importESModule: ${spec}`
+          );
         }
         return {};
       },
@@ -271,7 +280,12 @@ function loadUpdater({store = {}, routes = {}, windows = []} = {}) {
     Services: {
       console: {logStringMessage: () => {}},
       prefs: makePrefs(store),
-      appinfo: {OS: process.platform === 'win32' ? 'WINNT' : 'Linux', version: '140.0'},
+      appinfo: {
+        OS: process.platform === 'win32' ? 'WINNT' : 'Linux',
+        version: platformVersion,
+        platformVersion,
+      },
+      vc: {compare: comparePlatformVersions},
       dirsvc: {get: () => ({path: dirs['fx-folder']})},
       io: makeIo(routes),
       scriptSecurityManager: {getSystemPrincipal: () => ({})},
@@ -337,6 +351,7 @@ function loadUpdater({store = {}, routes = {}, windows = []} = {}) {
     queueMicrotask,
   };
   makeSsCalls = [];
+  lazySpecs = {};
   vm.runInContext(source, vm.createContext(sandbox), {filename: 'scriptsUpdater.sys.mjs'});
   return {sandbox};
 }
@@ -470,6 +485,13 @@ function makeFakeWindow() {
 
 const TAB_URI = 'chrome://firefox-scripts/content/ui/updater.html';
 
+/** A browser already showing the updater page (a restored tab, not a fresh one). */
+function restoredUpdaterBrowser() {
+  const browser = makeBrowser();
+  browser.currentURI = {spec: TAB_URI};
+  return browser;
+}
+
 /** Run initScriptsUpdater against a seeded pending-update world. */
 async function openTabOnPendingWorld({windows = []} = {}) {
   const store = {};
@@ -525,9 +547,8 @@ test('selection falls back after the 10s timer when no load ever fires', async (
   try {
     assert.ok(opened);
     const tab = win.openedTabs[0];
-    assert.ok(ccTimers.length >= 1, 'the fallback timer was registered');
-    const fallback = ccTimers[ccTimers.length - 1];
-    assert.ok(fallback._cb, 'the fallback timer was not cancelled');
+    const fallback = timerByDelay(10_000);
+    assert.ok(fallback, 'the 10 s fallback timer was registered and is still live');
     fallback._cb();
     assert.equal(win._selected, tab, 'the fallback selects the tab anyway');
     // Idempotent: the load arriving later must not re-select or throw.
@@ -551,10 +572,11 @@ test('twin-tab guard: a restored tab (other window) is forgotten and replaced by
     // The restore-sweep timer runs after the attach block — the restored tab
     // can materialize late (ESR 140, 2026-10-01), so the sweep fires on its
     // own tick: play it here, after the fresh open already happened. Only the
-    // REPEATING sweep timer is driven (the last registered); firing the fetch
-    // timeout's one-shot would resolve the manifest await as a rejection.
-    const sweepTimer = ccTimers[ccTimers.length - 1];
-    if (typeof sweepTimer?._cb === 'function') sweepTimer._cb();
+    // repeating sweep (2 s) is driven; firing the fetch timeout's one-shot
+    // would resolve the manifest await as a rejection.
+    const sweep = timerByDelay(2000);
+    assert.ok(sweep, 'the bounded restore sweep was started');
+    sweep.fire();
     assert.ok(opened, 'a fresh updater tab opens in the current window');
     assert.equal(
       restoredWin.openedTabs.length,
@@ -569,6 +591,51 @@ test('twin-tab guard: a restored tab (other window) is forgotten and replaced by
       win.openedTabs.filter(x => x._uri === TAB_URI).length,
       1,
       'exactly one live updater tab across the session'
+    );
+  } finally {
+    layout.cleanup();
+  }
+});
+
+test('a twin materializing after the attach is swept even when the restore event never reached the module', async () => {
+  // The 2026-10-01 ESR 140 CI order: this module initialized AFTER
+  // sessionstore-windows-restored had already fired (non-window startup
+  // order), so the observer never ran and the restored tab appeared next to
+  // the fresh one. The attach block must therefore start the sweep itself.
+  const restoredWin = makeFakeWindow();
+  const win = makeFakeWindow();
+  // The enumerator must see BOTH windows, the way Services.wm does in Firefox
+  // (the sweep looks for the marked fresh tab session-wide).
+  const windows = [restoredWin, win];
+  const {sandbox} = loadUpdater({store: {}, windows});
+  const layout = makeProfileLayout(sandbox);
+  const routes = seedPendingWorld(layout);
+  sandbox.Services.io = makeIo(routes);
+  sandbox.initScriptsUpdater(win); // no notify(): the event already happened
+  try {
+    assert.ok(await waitFor(() => win.openedTabs.length > 0), 'the fresh tab opened');
+    const sweep = timerByDelay(2000);
+    assert.ok(sweep, 'the attach block started the bounded sweep');
+    const lateTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
+    restoredWin.gBrowser.tabs.push(lateTab);
+    sweep.fire();
+    assert.ok(!restoredWin.openedTabs.includes(lateTab), 'the late twin is forgotten');
+    assert.ok(makeSsCalls.length >= 1, 'and purged from the recently-closed list');
+    // A quiet tick must NOT end the watch: the next twin still gets swept.
+    sweep.fire();
+    const secondLateTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
+    restoredWin.gBrowser.tabs.push(secondLateTab);
+    sweep.fire();
+    assert.ok(!restoredWin.openedTabs.includes(secondLateTab), 'the sweep outlives a quiet tick');
+    // No marked tab left = no twin: an unmarked updater tab is then the ONLY
+    // one (a user's own open, or the E2E driver's) and must be left alone.
+    win.openedTabs.length = 0;
+    const loneTab = {_uri: TAB_URI, linkedBrowser: restoredUpdaterBrowser()};
+    restoredWin.gBrowser.tabs.push(loneTab);
+    sweep.fire();
+    assert.ok(
+      restoredWin.openedTabs.includes(loneTab),
+      "the sweep only removes DUPLICATES of the session's own fresh tab"
     );
   } finally {
     layout.cleanup();
@@ -645,7 +712,6 @@ test('selection into a closed window is a no-op, not a crash', async () => {
     layout.cleanup();
   }
 });
-
 test('healthy-path tab shape is unchanged (uri, flags, no scheduler pref write)', async () => {
   const {store, layout, win, opened} = await openTabOnPendingWorld();
   try {
@@ -658,6 +724,43 @@ test('healthy-path tab shape is unchanged (uri, flags, no scheduler pref write)'
       store['extensions.firefox-scripts.lastScriptsCheckDate'],
       undefined,
       'the shown day belongs to the tab, not the scheduler'
+    );
+  } finally {
+    layout.cleanup();
+  }
+});
+
+/* ------------- the version-conditional SessionStore spec (ESR 140..Nightly) ------------- */
+
+test('SessionStore spec follows the platform version: resource:// before 156.0a1, moz-src:// from it', async () => {
+  // 156.0a1 moved SessionStore to moz-src://; the resource:///modules alias is
+  // gone afterwards, and moz-src:// does not exist before it. The chosen spec
+  // is visible only through the module's single lazy getter block.
+  const RESOURCE = 'resource:///modules/sessionstore/SessionStore.sys.mjs';
+  const MOZ_SRC = 'moz-src:///browser/components/sessionstore/SessionStore.sys.mjs';
+
+  loadUpdater({platformVersion: '140.0'});
+  assert.equal(lazySpecs.SessionStore, RESOURCE, 'ESR 140 must keep resource:///modules');
+
+  loadUpdater({platformVersion: '156.0a1'});
+  assert.equal(lazySpecs.SessionStore, MOZ_SRC, 'the cutoff version itself already moved');
+
+  loadUpdater({platformVersion: '159.0a1'});
+  assert.equal(lazySpecs.SessionStore, MOZ_SRC, 'Nightly resolves moz-src://');
+});
+
+test('the purge and the restore gate both resolve SessionStore through the lazy getter', async () => {
+  // One getter, one module instance: the closed-tab purge call must be visible
+  // to the stub that the getter served (a direct importESModule would throw in
+  // this harness, so this test also fails if the module regresses).
+  const restoredWin = makeFakeWindow();
+  restoredWin.gBrowser.tabs.push({linkedBrowser: {currentURI: {spec: TAB_URI}}});
+  const {layout, opened} = await openTabOnPendingWorld({windows: [restoredWin]});
+  try {
+    assert.ok(opened);
+    assert.ok(
+      makeSsCalls.length >= 1,
+      'forgetUpdaterTab reached lazy.SessionStore.getClosedTabDataForWindow/forgetClosedTab'
     );
   } finally {
     layout.cleanup();

@@ -23,6 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'vm';
 import {fileURLToPath} from 'node:url';
+import {comparePlatformVersions, makeSessionStoreStub} from '../../shared/sandboxServices.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const MODULE_PATH = path.join(
@@ -247,6 +248,11 @@ function loadUpdater({config = updaterConfig(), store = {}, routes = {}} = {}) {
         for (const [name, spec] of Object.entries(getters)) {
           if (String(spec).includes('Timer')) {
             target[name] = cb => setTimeout(cb, 0);
+          } else if (String(spec).includes('sessionstore/SessionStore.sys.mjs')) {
+            // Served through the lazy getter (its spec is version-conditional),
+            // with the real namespace's shape so sessionRestoredWait() resolves
+            // instead of burning its 10 s fallback on a TypeError.
+            target[name] = makeSessionStoreStub();
           }
         }
       },
@@ -259,7 +265,12 @@ function loadUpdater({config = updaterConfig(), store = {}, routes = {}} = {}) {
     },
     Services: {
       prefs: makePrefs(store),
-      appinfo: {OS: process.platform === 'win32' ? 'WINNT' : 'Linux', version: '140.0'},
+      appinfo: {
+        OS: process.platform === 'win32' ? 'WINNT' : 'Linux',
+        version: '140.0',
+        platformVersion: '140.0',
+      },
+      vc: {compare: comparePlatformVersions},
       dirsvc: {get: () => ({path: dirs['fx-folder']})},
       io: makeIo(routes),
       scriptSecurityManager: {getSystemPrincipal: () => ({})},

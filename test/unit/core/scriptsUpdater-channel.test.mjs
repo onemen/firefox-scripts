@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'vm';
 import {fileURLToPath} from 'node:url';
+import {comparePlatformVersions, makeSessionStoreStub} from '../../shared/sandboxServices.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const MODULE_PATH = path.join(
@@ -225,17 +226,27 @@ function loadUpdater({config, store = {}, routes = {}} = {}) {
         }
         return {}; // Downloads.sys.mjs — unused by the channel logic
       },
-      // The module's lazy Timer getter (module-scope setTimeout has never
-      // existed in ESM scope — #292); the channel tests never await it.
+      // The module's lazy getters (module-scope setTimeout has never existed
+      // in ESM scope — #292; SessionStore's spec is version-conditional, so it
+      // is only ever reachable through this block); the channel tests await
+      // neither.
       defineESModuleGetters(target, getters) {
         if (getters.setTimeout && String(getters.setTimeout).includes('Timer.sys.mjs')) {
           target.setTimeout = cb => setTimeout(cb, 0);
+        }
+        if (getters.SessionStore && String(getters.SessionStore).includes('SessionStore')) {
+          target.SessionStore = makeSessionStoreStub();
         }
       },
     },
     Services: {
       prefs: makePrefs(store),
-      appinfo: {OS: process.platform === 'win32' ? 'WINNT' : 'Linux', version: '140.0'},
+      appinfo: {
+        OS: process.platform === 'win32' ? 'WINNT' : 'Linux',
+        version: '140.0',
+        platformVersion: '140.0',
+      },
+      vc: {compare: comparePlatformVersions},
       dirsvc: {get: () => ({path: os.tmpdir()})},
       io: makeIo(routes),
       scriptSecurityManager: {getSystemPrincipal: () => ({})},

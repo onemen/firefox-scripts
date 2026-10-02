@@ -212,6 +212,7 @@ try {
   let lastCount = 0;
   let tabSeen = false;
   let lastTabSet = '';
+  let engineDone = false;
   const watcher = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
   watcher.initWithCallback(
     {
@@ -278,16 +279,20 @@ try {
           // for nothing). Mirror it as ENGINE-DONE so scenarios 11/12 await the
           // engine instead of guessing a sleep (the pref only reaches prefs.js
           // at the shutdown flush, so the LIVE value is the only timely
-          // signal). Cancel on the poll after the pref appears.
+          // signal). The watcher keeps polling after it (once per engine, not
+          // once per poll): scenario 11 asserts the FINAL tab set, which can
+          // still change after the engine — a late twin materializing and the
+          // bounded sweep removing it both land after ENGINE-DONE, and a
+          // cancelled watcher would freeze the last TAB_SET and hide exactly
+          // the race under test (2026-10-01 ESR 140 CI run).
           try {
             const shownDay = Services.prefs.getCharPref(
               'extensions.firefox-scripts.lastScriptsCheckDate',
               ''
             );
-            if (shownDay) {
+            if (shownDay && !engineDone) {
+              engineDone = true;
               writeUtf8('ENGINE-DONE ' + shownDay + String.fromCharCode(10));
-              watcher.cancel();
-              return;
             }
           } catch (e) {}
         } catch (e) {}
@@ -4168,16 +4173,40 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
       500,
       label
     );
-    const tabLines = readMirror(seeded.profileDir)
-      .split('\n')
-      .filter(l => l.includes('TAB_SET'));
-    const finalTabLine = tabLines[tabLines.length - 1];
+    // The set must then stay at exactly one tab for SWEEP_QUIET_MS before it is
+    // called final: the production sweep watches a bounded 12 s window from the
+    // attach (6 × 2 s) and a twin it removes RESETS the set — asserting the
+    // first post-ENGINE-DONE line would pass over a twin that lands two seconds
+    // later (or fail on one that lands two seconds earlier and is swept right
+    // after). The watcher records a TAB_SET line on every change, so "the line
+    // is quiet" is exactly "no tab appeared or disappeared".
+    const SWEEP_QUIET_MS = 6000;
+    const readFinalTabSet = () => {
+      const line = readMirror(seeded.profileDir)
+        .split('\n')
+        .filter(l => l.includes('TAB_SET'))
+        .pop();
+      if (!line) {
+        return null;
+      }
+      const stamp = Date.parse(line.slice('TAB_SET '.length, line.indexOf('Z') + 1));
+      return {line, ageMs: Number.isFinite(stamp) ? Date.now() - stamp : SWEEP_QUIET_MS};
+    };
+    const finalTabSet = await pollUntil(
+      () => {
+        const set = readFinalTabSet();
+        return set && set.ageMs >= SWEEP_QUIET_MS ? set : null;
+      },
+      30_000,
+      500,
+      label
+    );
     check(
       counter,
-      Boolean(finalTabLine) && !finalTabLine.includes(' | '),
-      `final updater-tab set is exactly one (always-fresh guard; transient twins tolerated) (${label})`,
-      finalTabLine && finalTabLine.includes(' | ') ?
-        'a SECOND updater tab SURVIVED (the sweep should have removed it): ' + finalTabLine
+      Boolean(finalTabSet) && !finalTabSet.line.includes(' | '),
+      `final updater-tab set is exactly one, stable for ${SWEEP_QUIET_MS / 1000}s (always-fresh guard; transient twins tolerated) (${label})`,
+      finalTabSet?.line.includes(' | ') ?
+        `a SECOND updater tab SURVIVED the sweep (stable ${(finalTabSet.ageMs / 1000).toFixed(1)}s): ${finalTabSet.line}`
       : 'no updater tab was ever seen after restore'
     );
     const schemeIs = readMirror(seeded.profileDir).includes('schemeIs');

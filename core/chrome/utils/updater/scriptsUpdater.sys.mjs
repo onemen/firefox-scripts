@@ -125,13 +125,27 @@ export function getHelperBaseUrl() {
 
 const {Downloads} = ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs');
 
+/** True when the running platform is `version` or newer (Services.vc.compare). */
+const isVersion = version => Services.vc.compare(Services.appinfo.platformVersion, version) >= 0;
+
 // Window-independent timers for the updater's module scope: setTimeout
 // does not exist in ESM module scope (a bare reference throws — the #292
-// lesson), so the one deferred step that needs it comes from Timer.sys.mjs
-// through the canonical lazy getter.
+// lesson), so the one deferred step that needs it comes from Timer.sys.mjs,
+// through the canonical lazy getters below — THE one defineESModuleGetters
+// block. Every conditional module lives here; importESModule is reserved for
+// top-level unconditional modules (CONFIG, Downloads), because a spec that
+// depends on the running version cannot be chosen in module scope.
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   setTimeout: 'resource://gre/modules/Timer.sys.mjs',
+  // 156.0a1 moved SessionStore to moz-src:// — the resource:///modules alias
+  // stops working after that, and moz-src:// does not exist before it. The
+  // session-restore gate and the closed-tab purge must therefore resolve the
+  // spec at runtime: ESR 140 gets resource://, Nightly gets moz-src://.
+  SessionStore:
+    isVersion('156.0a1') ?
+      'moz-src:///browser/components/sessionstore/SessionStore.sys.mjs'
+    : 'resource:///modules/sessionstore/SessionStore.sys.mjs',
 });
 
 // The actual update tab (updater-ui.zip) — a privileged chrome:// page.
@@ -269,6 +283,10 @@ let gWindow = null;
 // checkForUpdates's attach block (sessionRestoredWait).
 let gSessionRestored = false;
 
+// Set while the bounded late-restore sweep is running, so the observer and the
+// attach block cannot stack two sweeps (sweepRestoredUpdaterTabs).
+let gSweepActive = false;
+
 /**
  * Initialize the updater. Called per browser window on startup by
  * BootstrapLoader.js / userChrome.js; idempotent so double-init is harmless.
@@ -302,63 +320,7 @@ export function initScriptsUpdater(win) {
       if (topic === 'sessionstore-windows-restored') {
         gSessionRestored = true;
         Services.obs.removeObserver(observe, topic);
-        // A restore can MATERIALIZIZE its updater tab after this module's
-        // startup attach block already scanned (sessionstore feeds its windows
-        // in late; observed on ESR 140: the guard ran, opened the fresh tab,
-        // and the restored tab then appeared next to it — two engines, both
-        // self-closing on the twin-tab guard, no pref ever written). Sweep any
-        // unmarked updater tab the attach block could not have seen — bounded
-        // repeating (6 × 2 s), because the materialization itself can land
-        // after the event (the sweep must outlive it, not race it). The fresh
-        // tab carries _scriptsUpdateTab, so it is never a victim.
-        try {
-          let ticks = 0;
-          const sweep = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
-          sweep.initWithCallback(
-            {
-              notify() {
-                try {
-                  if (++ticks > 6) {
-                    sweep.cancel();
-                    return;
-                  }
-                  let removed = false;
-                  for (const win of allBrowserWindows()) {
-                    if (win.closed) {
-                      continue;
-                    }
-                    for (const tab of [...win.gBrowser.tabs]) {
-                      try {
-                        if (
-                          !tab._scriptsUpdateTab &&
-                          (tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
-                            tab.linkedBrowser?.initialURI === UPDATER_UI_URI)
-                        ) {
-                          forgetUpdaterTab(win, tab);
-                          removed = true;
-                        }
-                      } catch {
-                        // A tab mid-teardown has no usable browser.
-                      }
-                    }
-                  }
-                  // Nothing left to sweep twice in a row: the restore is done
-                  // feeding us tabs — stop early.
-                  if (!removed && ticks > 1) {
-                    sweep.cancel();
-                  }
-                } catch {
-                  // Window churn mid-sweep: the next tick retries.
-                }
-              },
-            },
-            2000,
-            Ci.nsITimer.TYPE_REPEATING_SLACK
-          );
-        } catch {
-          // Timer creation failed (unusual): the attach block's own guard and
-          // the tab engine's twin-tab guard still hold.
-        }
+        sweepRestoredUpdaterTabs();
       }
     }, 'sessionstore-windows-restored');
   } catch {
@@ -404,20 +366,128 @@ async function sessionRestoredWait() {
     return;
   }
   try {
-    const {SessionStore} = ChromeUtils.importESModule(
-      'resource:///modules/sessionstore/SessionStore.sys.mjs'
-    );
-    await withTimeout(Promise.resolve(SessionStore.promiseAllWindowsRestored), 10000);
+    await withTimeout(Promise.resolve(lazy.SessionStore.promiseAllWindowsRestored), 10000);
     gSessionRestored = true;
     return;
   } catch {
-    // Import or promise unavailable (unexpected): fall back below.
+    // Getter (unsupported version) or promise unavailable: fall back below.
   }
   const deadline = Date.now() + 10000;
   while (!gSessionRestored && Date.now() < deadline) {
     await new Promise(resolve => lazy.setTimeout(resolve, 100));
   }
 }
+
+/**
+ * True when `tab` is showing the updater page. A tab whose browser is
+ * mid-teardown can throw on the property access; callers run it inside a
+ * try/catch.
+ *
+ * @param {Tab} tab - the tab to classify
+ * @returns {boolean}
+ */
+function isUpdaterTab(tab) {
+  return (
+    tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
+    tab.linkedBrowser?.initialURI === UPDATER_UI_URI
+  );
+}
+
+/**
+ * True when `tab` is the updater page and is NOT this session's own fresh open
+ * (`_scriptsUpdateTab` is set by the attach block, and never by a restored
+ * tab).
+ *
+ * @param {Tab} tab - the tab to classify
+ * @returns {boolean}
+ */
+function isUnmarkedUpdaterTab(tab) {
+  return !tab._scriptsUpdateTab && isUpdaterTab(tab);
+}
+
+/**
+ * Repeating, bounded (6 × 2 s) pass that forgets every unmarked updater tab in
+ * every live window. A restored session's updater tab can MATERIALIZE after
+ * both the attach block's scan and the sessionstore-windows-restored event
+ * (SessionStore feeds windows in late; observed on ESR 140: the guard ran,
+ * opened the fresh tab, and the restored tab then appeared next to it — two
+ * engines, both self-closing on the twin-tab guard, no pref ever written).
+ *
+ * Started from the event AND from the attach block: on a slow profile this
+ * module initializes after the event has already fired, so the event alone
+ * would leave the late twin unswept (the 2026-10-01 ESR 140 CI run). The tick
+ * count is never cut short by "the last tick removed nothing" — a quiet tick
+ * says nothing about the next one, and the whole window is cheap (a window/tab
+ * scan every 2 s). Nothing awaits this sweep; it only normalizes the tab bar.
+ *
+ * A tab is only swept when it DUPLICATES the session's own fresh tab (an
+ * unmarked updater tab is forgotten only while a marked one is live somewhere):
+ * the mark is what separates "a twin of the tab we opened" from "the only
+ * updater tab around" — a user's own updater tab (or a test driver's) must
+ * never be closed just for lacking an expando this module happens to set. The
+ * attach block's own pass needs no such rule: it runs BEFORE the fresh tab
+ * exists and its job is exactly to replace a restored tab with a fresh one.
+ */
+function sweepRestoredUpdaterTabs() {
+  if (gSweepActive) {
+    return;
+  }
+  try {
+    gSweepActive = true;
+    let ticks = 0;
+    const sweep = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
+    sweep.initWithCallback(
+      {
+        notify() {
+          try {
+            if (++ticks > 6) {
+              gSweepActive = false;
+              sweep.cancel();
+              return;
+            }
+            // Session-wide, not per window: the twin can materialize in a
+            // window other than the one holding the fresh tab.
+            const twins = [];
+            let freshTabLive = false;
+            for (const win of allBrowserWindows()) {
+              if (win.closed) {
+                continue;
+              }
+              for (const tab of [...win.gBrowser.tabs]) {
+                try {
+                  if (isUnmarkedUpdaterTab(tab)) {
+                    twins.push({win, tab});
+                  } else if (tab._scriptsUpdateTab) {
+                    // The MARK is the identity of this session's fresh tab, not
+                    // its URI: the sweep's first ticks run while that tab's
+                    // browser is still at about:blank (load not committed yet).
+                    freshTabLive = true;
+                  }
+                } catch {
+                  // A tab mid-teardown has no usable browser.
+                }
+              }
+            }
+            if (freshTabLive) {
+              for (const {win, tab} of twins) {
+                forgetUpdaterTab(win, tab);
+              }
+            }
+          } catch {
+            // Window churn mid-sweep: the next tick retries.
+          }
+        },
+      },
+      2000,
+      Ci.nsITimer.TYPE_REPEATING_SLACK
+    );
+  } catch {
+    // Timer creation failed (unusual): the attach block's own guard and the tab
+    // engine's twin-tab guard still hold.
+    gSweepActive = false;
+  }
+}
+
 /** Every live navigator:browser window, in MRU order. */
 function allBrowserWindows() {
   const wins = [];
@@ -504,10 +574,9 @@ function forgetUpdaterTab(win, tab) {
     win.gBrowser.removeTab(tab);
     try {
       // Services.ss exists only on newer Firefox (159+); the SessionStore
-      // module is the portable path — same API, every supported engine.
-      const {SessionStore} = ChromeUtils.importESModule(
-        'resource:///modules/sessionstore/SessionStore.sys.mjs'
-      );
+      // module is the portable path — same API, every supported engine — and
+      // its spec is version-conditional in the lazy getter block above.
+      const SessionStore = lazy.SessionStore;
       const closed = SessionStore.getClosedTabDataForWindow(win);
       const data = typeof closed === 'string' ? JSON.parse(closed) : closed;
       // Shape varies by method AND version: the window-state object carries
@@ -633,11 +702,7 @@ export async function checkForUpdates() {
       }
       for (const tab of [...win.gBrowser.tabs]) {
         try {
-          if (
-            !tab._scriptsUpdateTab &&
-            (tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
-              tab.linkedBrowser?.initialURI === UPDATER_UI_URI)
-          ) {
+          if (isUnmarkedUpdaterTab(tab)) {
             forgetUpdaterTab(win, tab);
           }
         } catch {
@@ -655,10 +720,7 @@ export async function checkForUpdates() {
       }
       for (const tab of win.gBrowser.tabs) {
         try {
-          if (
-            tab.linkedBrowser?.currentURI?.spec === UPDATER_UI_URI ||
-            tab.linkedBrowser?.initialURI === UPDATER_UI_URI
-          ) {
+          if (isUpdaterTab(tab)) {
             return;
           }
         } catch {
@@ -685,6 +747,12 @@ export async function checkForUpdates() {
   // Deferring to load/pageshow keeps the "updater tab selected" behavior on
   // the healthy path while the load itself can never be killed by it.
   selectWhenLoaded(liveWin, tab);
+  // The sweep must outlive a late-materializing restored twin even when the
+  // sessionstore-windows-restored event fired before this module initialized
+  // (non-window browser startup order — the 2026-10-01 ESR 140 CI run):
+  // starting it here as well makes the window start with the attach, not with
+  // the event. Idempotent while a sweep is already running.
+  sweepRestoredUpdaterTabs();
 }
 
 /**
