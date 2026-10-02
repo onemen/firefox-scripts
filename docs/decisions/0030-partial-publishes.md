@@ -20,7 +20,7 @@ nothing at all.
 
 ## Decision
 
-`tools/publish/upload.mjs` requires `--include=packages|installer|helper` (repeatable or
+`tools/publish/upload.mjs` requires `--include=packages|updater-ui|installer|helper` (repeatable or
 comma-separated, or `all` for the full set), and the CI dispatches (`pages.yml`,
 `build-and-upload.yml`) take the same list in an `include` input. The scope is opt-in and validated:
 a missing, empty or unknown role fails the run loudly instead of guessing — there is no implicit
@@ -51,3 +51,24 @@ PARTIAL — and the flag exists for the case where a flag is a false positive th
 decided to route around; the durable fixes (per-hash vendor submissions and code signing) are
 tracked on the AV issue (#157). Revisit-if: signing lands and rebuild verdicts stop being a lottery
 — then this escape hatch can be retired.
+
+## Amendment 2026-10-02 — a fourth role: `updater-ui` (the tab alone)
+
+The role set gained `updater-ui`: it ships `updater-ui.zip` and its `hashes.json` entry and nothing
+else, leaving `utils.zip` / `fx-folder.zip` frozen. `packages` keeps covering all three zips and
+keeps its issue #354 invariant — within its scope the release surfaces still re-upload the complete
+set — so this is a strict addition, not a redefinition.
+
+Why: the update tab is the one artifact an installed browser fetches **by itself**
+(`ensureUpdaterUi`, verified against the manifest), which makes it the one artifact whose fix cannot
+wait for an unrelated publish. Issue #383 is the case — a tab/module version-skew deadlock where the
+tab had to ship alone — and re-uploading the two manual-download zips to `latest` as a side effect
+resets their per-asset download counters for no benefit. The held-back packages keep their frozen
+entries, so no installed copy sees a phantom update, and the tab remains Pages-only (never a release
+asset), so a tab-only run touches no release asset at all.
+
+Two consequences the tooling owns: the CI jobs that used to test `include != 'packages'` now test
+for the _presence of a binary role_ (no role name is a substring of another, and `all` matches all),
+so a role the matrix must not run for cannot slip past; and a dev publish that **creates** a branch
+with only `updater-ui` would birth it carrying the tab but not the two zips the installer needs, so
+it gets its own strand warning next to the existing one.
