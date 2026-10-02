@@ -22,10 +22,12 @@
  * It prints the `FIREFOX_BINARY` value to export before the E2E run.
  *
  * `browser` is a `test/e2e/shared/downloads.mjs` key (firefox, firefox-dev,
- * nightly; the forks install portably on Windows too). Re-running is cheap: an
- * existing portable dir is reused instead of re-downloaded. The installer
- * itself lands in the OS temp dir (`BROWSER_DL_DIR` overrides) as downloads.mjs
- * does for every other browser; those files are pruned after a week
+ * nightly, firefox-esr-<major>; the forks install portably on Windows too). An
+ * ESR key extracts like the official builds (its installer ignores `/D=`, so
+ * the forks' route left an empty directory). Re-running is cheap: an existing
+ * portable dir is reused instead of re-downloaded. The installer itself lands
+ * in the OS temp dir (`BROWSER_DL_DIR` overrides) as downloads.mjs does for
+ * every other browser; those files are pruned after a week
  * (`pruneStaleDownloadCache`). The install destination must NOT be inside the
  * OS temp dir (`--allow-temp-dir` overrides) — a browser there is never
  * reclaimed. Point `PORTABLE_BROWSER_DIR` at the repo's gitignored
@@ -39,8 +41,8 @@ import {installBrowser} from '../test/e2e/shared/downloads.mjs';
 
 const USAGE = `Usage: pnpm e2e:portable [browser] [--dir <path>]
 
-  browser        downloads.mjs key — firefox, firefox-dev, nightly, a fork
-                 (default: nightly)
+  browser        downloads.mjs key — firefox, firefox-dev, nightly, a fork,
+                 firefox-esr-<major> (default: nightly)
   --dir <path>   install destination (default: see defaultPortableDir)
   --allow-temp-dir
                  permit a destination inside the OS temp dir (refused by

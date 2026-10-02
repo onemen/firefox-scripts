@@ -234,19 +234,27 @@ test('downloads.mjs: generated ESR recipes are portable Windows-only', async () 
   );
   const entry = downloads.esrDownloadsEntry('firefox-esr-140');
   assert.equal(entry.install.win.resolver, true);
-  assert.equal(entry.install.win.portable, true);
-  assert.equal(entry.install.win.portableExe, 'firefox.exe');
+  // Official Mozilla installer → the extract-only portable route. The forks'
+  // /D= mechanism must NOT claim ESR (the installer ignores /D= and left an
+  // empty dir — the `pnpm e2e:portable firefox-esr-140` bug this guards).
+  assert.equal(entry.install.win.portable, undefined);
+  assert.equal(entry.install.win.mozillaPortable, true);
+  assert.equal(
+    downloads.isMozillaPortableInstall('firefox-esr-140', 'win', '/p/portable'),
+    true,
+    'a portable dir must route ESR through the extraction path'
+  );
   assert.equal(entry.install.mac, undefined);
   assert.equal(entry.install.linux, undefined);
   assert.equal(downloads.esrDownloadsEntry('firefox'), undefined);
   // The generic cold-cache fallback key shares the recipe (it must be
   // installable when the baseline cache missed — the 2026-09-19 CI failure).
-  assert.equal(downloads.esrDownloadsEntry('firefox-esr').install.win.portable, true);
+  assert.equal(downloads.esrDownloadsEntry('firefox-esr').install.win.mozillaPortable, true);
   // A malformed major is still rejected.
   assert.equal(downloads.esrDownloadsEntry('firefox-esr-abc'), undefined);
   // downloadsEntry folds the dynamic keys into the static table.
-  assert.equal(downloads.downloadsEntry('firefox-esr-153').install.win.portable, true);
-  assert.equal(downloads.downloadsEntry('firefox-esr').install.win.portable, true);
+  assert.equal(downloads.downloadsEntry('firefox-esr-153').install.win.mozillaPortable, true);
+  assert.equal(downloads.downloadsEntry('firefox-esr').install.win.mozillaPortable, true);
   assert.equal(
     downloads.downloadsEntry('firefox').install.win.url.includes('firefox-latest'),
     true

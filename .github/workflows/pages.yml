@@ -50,8 +50,9 @@ on:
         default: false
       include:
         description:
-          'Roles to publish — packages|installer|helper|all, comma-separated (an explicitly empty
-          value is rejected by upload.mjs; the default is a full publish)'
+          'Roles to publish — packages|updater-ui|installer|helper|all, comma-separated (an
+          explicitly empty value is rejected by upload.mjs; the default is a full publish).
+          updater-ui ships the update tab alone; packages covers all three zips'
         type: string
         default: 'all'
 
@@ -185,12 +186,19 @@ jobs:
             cross: true
           - platform: mac
             os: macos-latest
-    # A packages-only publish stages no binaries — the legs SKIP instead of
-    # failing red (their upload step has if-no-files-found: error and the
-    # staging tree would be empty); the single-writer job below then runs
+    # A publish with no binary role in scope stages no binaries — the legs SKIP
+    # instead of failing red (their upload step has if-no-files-found: error and
+    # the staging tree would be empty); the single-writer job below then runs
     # pass 2 alone (zips are built inside pass 2; --skip-build requires no
     # staged binaries when nothing changed).
-    if: ${{ inputs.include != 'packages' }}
+    #
+    # `include` is a free-text, comma-separated role list, so role membership
+    # is a substring test against the whole value (never `!= 'packages'`, which
+    # a role the matrix must NOT run for would slip past). No role name is a
+    # substring of another, and 'all' matches every role.
+    if:
+      ${{ contains(inputs.include, 'all') || contains(inputs.include, 'installer') ||
+      contains(inputs.include, 'helper') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -265,12 +273,15 @@ jobs:
     # past (a plain `needs: publish` let a packages-only prod dispatch run
     # the writer after pre-publish failed). always() + the per-job result
     # checks still let the writer run when the matrix legitimately skipped
-    # (packages-only dispatch: the zips are built inside pass 2).
+    # (a package-only dispatch — packages or updater-ui: the zips are built
+    # inside pass 2). The skipped-matrix arm is the exact complement of the
+    # matrix job's own condition above.
     needs: [pre-publish, baseline, publish]
     if: >-
       ${{ always() && needs.pre-publish.result == 'success' && needs.baseline.result == 'success' &&
-      (needs.publish.result == 'success' || (inputs.include == 'packages' && needs.publish.result ==
-      'skipped')) }}
+      (needs.publish.result == 'success' || (!contains(inputs.include, 'all') &&
+      !contains(inputs.include, 'installer') && !contains(inputs.include, 'helper') &&
+      needs.publish.result == 'skipped')) }}
     # Prod publishes deploy through the `release` environment (protected-branch
     # policy: main only). Dev publishes are disposable and bypass the
     # environment so they can run from any branch.

@@ -83,6 +83,7 @@ import {
   findGreDir,
   missingFirefoxMessage,
 } from '../shared/browsers.mjs';
+import {isFileLockError} from '../shared/downloads.mjs';
 import {
   closeBrowser,
   killStrayProcesses,
@@ -546,7 +547,22 @@ function computeInstalledHash(files, dir) {
     // sentinel so callers record a FAIL instead of throwing ENOENT.
     if (!fs.existsSync(abs)) return null;
     hash.update(relative + '\n');
-    hash.update(fs.readFileSync(abs));
+    // Windows denies a reader while another process holds the file open for
+    // writing — the updater copies these very files into the tree, and the
+    // browser can still be mid-copy (or mid-shutdown, flushing prefs) when the
+    // hash lands. That surfaces here as EBUSY: "resource busy or locked, open
+    // <path>" and killed the floorp portable leg outright (2026-10-02). Treat a
+    // locked read as "tree not settled yet": the polling caller
+    // (waitForTreeHash) re-hashes and the value converges once the writer
+    // closes. Any other read error still throws.
+    let bytes;
+    try {
+      bytes = fs.readFileSync(abs);
+    } catch (err) {
+      if (isFileLockError(err)) return null;
+      throw err;
+    }
+    hash.update(bytes);
   }
   return hash.digest('hex');
 }

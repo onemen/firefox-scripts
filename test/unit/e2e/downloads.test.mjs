@@ -25,6 +25,7 @@ const {
   cacheFirstDecision,
   downloadDir,
   downloadTo,
+  downloadsEntry,
   findCachedInstaller,
   isFileLockError,
   isMozillaPortableInstall,
@@ -684,6 +685,19 @@ test('isFileLockError: spawnSync-shape EBUSY (libuv sharing violation) matches o
   );
 });
 
+test('isFileLockError: a readFileSync EBUSY (file held by a writer) matches', () => {
+  // Node fs errors carry no stderr — the message/path is the whole signal. The
+  // updater E2E's tree-hash read sees this shape when the browser holds a file
+  // open while copying it (floorp portable leg, 2026-10-02), so the retry there
+  // depends on this classification.
+  const err = Object.assign(
+    new Error("EBUSY: resource busy or locked, open 'C:/Temp/chrome/utils/x.sys.mjs'"),
+    {code: 'EBUSY', syscall: 'open'}
+  );
+  assert.equal(isFileLockError(err, {platform: 'win32'}), true);
+  assert.equal(isFileLockError(err, {platform: 'linux'}), false);
+});
+
 test('runNsisInstallerWithRetry: retries spawnSync EBUSY then succeeds', () => {
   const attempts = [];
   const result = runNsisInstallerWithRetry('setup.exe', ['/S', '/D=C:\\x'], 'test installer', {
@@ -766,6 +780,25 @@ test('isMozillaPortableInstall: forks and snap keep their own paths', () => {
   assert.equal(isMozillaPortableInstall('firefox-snap', 'linux', dir), false, 'snap');
   // Unknown keys and platforms without a recipe stay on the system route.
   assert.equal(isMozillaPortableInstall('nope', 'win', dir), false, 'unknown browser');
+});
+
+test('isMozillaPortableInstall: ESR extracts like an official build, not /D=', () => {
+  const dir = '/p/portable';
+  // ESR has no static url (its major is dynamic and a retired one needs the
+  // version-embedded index); the mozillaPortable marker routes it to the 7z
+  // extract-only path. The forks' /D= mechanism must not claim it — the
+  // Mozilla installer ignores /D= and left an empty directory behind (the
+  // `pnpm e2e:portable firefox-esr-140` bug this guards).
+  for (const browser of ['firefox-esr-140', 'firefox-esr-153', 'firefox-esr']) {
+    const recipe = downloadsEntry(browser)?.install?.win;
+    assert.equal(recipe?.portable, undefined, `${browser} must not ride /D=`);
+    assert.equal(recipe?.mozillaPortable, true, `${browser} must extract`);
+    assert.equal(isMozillaPortableInstall(browser, 'win', dir), true, `${browser} win`);
+    assert.equal(isMozillaPortableInstall(browser, 'win', ''), false, `${browser} no dir`);
+  }
+  // LibreWolf is resolver-based too but NOT a Mozilla build: it must keep the
+  // system route, so the marker must not be inferred from `resolver` alone.
+  assert.equal(isMozillaPortableInstall('librewolf', 'win', dir), false, 'librewolf system route');
 });
 
 test('portableBinaryPath: launcher file per platform (not the top-level dir)', () => {
