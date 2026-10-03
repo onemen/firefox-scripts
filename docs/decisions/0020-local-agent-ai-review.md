@@ -4,6 +4,11 @@
 - **Date:** 2026-08-29
 - **Amended:** [0029](./0029-status-line-amendments.md) — its own amendment
   convention; the inline **Amended** notes below are now declared here
+- **Amended:** 2026-10-03 — the posting protocol below now also requires a review record in every
+  outcome (findings, rejections, or none) and fixes the order: post, then fix, then resolve.
+  **Ownership exception, same date:** the batch pass stops at the record — it never writes fixes and
+  never resolves its own threads, because it runs across PRs it does not own. See "Who fixes what"
+  below; the local pass is unchanged.
 
 _Problem surface:_ PR review tooling
 
@@ -55,6 +60,54 @@ AI review is a **local, agent-run step**, not a CI bot:
   per the protocol above (line-anchored resolvable threads, 🤖 provenance marker, resolve as fixes
   land) — external findings get the same scrutiny as local ones, never a rubber stamp.
 
+### The review record (amended 2026-10-03)
+
+The posting protocol above is not only about what a *surviving* finding looks like. Four rules close
+the cases where it used to leave nothing behind:
+
+- **Post before you fix.** The review threads are written first, then the fix lands, then each thread
+  is resolved. A thread posted after the fix cannot be anchored to the line that carried the defect,
+  so it degenerates into a vague comment — and the PR loses the only record of what was found.
+- **A rejected finding is still a record.** Every rejected finding gets a thread too, carrying the
+  disputed line and the reason it does not hold, and that thread **stays open** — an unquoted
+  "wrong" is unverified, not disproved, so the quote is what makes the rejection checkable rather
+  than an assertion. Keeping it is what stops a rejected finding from vanishing silently and being
+  re-raised by the next reader; the asymmetry is deliberate, since the cost of a redundant thread is
+  much lower than the cost of a silently-dropped real defect. Deleting the thread would undo the
+  purpose stated in the same sentence, so it is not deleted. The owning agent resolves a rejection
+  thread once it agrees with the verdict — or acts on it.
+- **Zero findings still gets a review.** "Reviewed, nothing to find" and "never reviewed" are
+  indistinguishable on a PR unless the former says so. A short body — provider, files reviewed,
+  counts, and no findings — is posted so the outcome is on the record.
+- **The order is post → fix → resolve.** Never fix first and describe afterwards. _For the batch
+  pass, the reviewing agent stops after the first step — see the ownership exception below._
+
+These apply identically to both reviewers. The local pass (`review:local`, the `ai-review` skill) and
+the operator-initiated CodeRabbit batch (`review:batch`, the `cr-batch-review` skill) are two ways of
+producing findings, not two protocols; a batch pass is quota-limited and operator-triggered, so it
+follows this record rather than replacing it.
+
+### Who fixes what: the reviewing agent posts, the owning agent fixes
+
+The record above describes who posts. It does not describe who *writes the fix*, and the answer is
+not the same for the two passes:
+
+- **Local pass** — the agent reviews the PR it opened, so it also fixes and resolves its own threads
+  (post → fix → resolve, as above).
+- **Batch pass** — the reviewing agent posts the record and **stops**. No commits, no pushes, no
+  thread resolutions, not even for a finding that is obviously right and trivially fixable.
+
+The reason is ownership, not caution about correctness. The batch pass is built to run *across* PRs,
+including **PRs opened by other agents** — that is what merging N heads into one quota slot means. A
+reviewer that writes code into a branch it does not own lands a patch the owner never reviewed, and
+cannot judge its own work; a thread resolved by the reviewer that raised it is a finding nobody
+independently agreed with. The owner re-assesses each thread (a batch pass is a second opinion, not
+a verdict), fixes what it accepts, and resolves what it fixed.
+
+So a batch pass **leaves open threads by design**. `main`'s conversation-resolution requirement is
+satisfied by the owning agent, not the reviewer, and a review report has to say which threads were
+left open on which PRs so the owner knows what it inherits.
+
 ## Consequences
 
 - No CI bot noise, no per-push comments, no token stored in CI; review output lands on the PR
@@ -65,6 +118,9 @@ AI review is a **local, agent-run step**, not a CI bot:
   self-triggered a CodeRabbit pass on PR #204 without instruction.)
 - Review quality depends on the agent performing the step and on the configured model — not on a
   scheduled bot.
+- Reviewers do not fix. A batch pass's threads stay open until the PR's owner fixes and resolves
+  them, so a cross-agent review costs the owner a triage pass — that is the price of not having one
+  agent's unreviewed patch land in another's branch.
 - Requires `GEMINI_API_KEY` in the agent's local `.env` (untracked); the CI AI-review workflow
   (`ai-review.yml`) is removed, so no CI secret is stored.
 - The formerly-Not-recorded "AI-review tooling" entry in `index.md` is superseded by this record.

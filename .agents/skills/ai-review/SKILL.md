@@ -185,14 +185,40 @@ reviewers are the **operator's** call, never the agent's initiative:
   the user, consumes their included-review quota (~1/hour), and adds timeline activity they did not
   ask for. Recommend the pass and wait for the explicit instruction.
 - **`pnpm review:batch` likewise requires explicit operator instruction** to run — same reason: it
-  posts CodeRabbit reviews to PRs under the user's account and spends their quota.
+  posts CodeRabbit reviews to PRs under the user's account and spends their quota. **That pass has
+  its own skill, `cr-batch-review`** — this one covers the local reviewer only. When the operator
+  asks for the batch pass, switch to that skill rather than working it from here; the ADR 0020
+  protocol is shared either way.
 - **When the operator does run `review:batch`** (or any external reviewer), the agent triages its
   findings right / wrong / useless exactly as for the local pass and posts each accepted finding per
   the protocol above: line-anchored individually resolvable threads (fallback review body, never
-  `gh pr comment`), the 🤖 provenance marker (e.g.
-  `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`), and each
-  thread resolved as its fix lands. External findings get the same scrutiny as local ones —
-  assessed, not rubber-stamped.
+  `gh pr comment`) and the 🤖 provenance marker (e.g.
+  `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`). **Then it
+  stops** — a batch pass reviews PRs it does not own, so it writes no fixes and resolves no threads;
+  the owning agent re-assesses each open thread, fixes what it accepts, and resolves what it fixed.
+  **The `fix → resolve` step above is the local pass only.** External findings get the same scrutiny
+  as local ones — assessed, not rubber-stamped. Running the batch review is not the end of the step:
+  **ADR 0020 triage and posting is mandatory once it finishes** — the run is only worth anything if
+  its findings are assessed and posted (or explicitly rejected with a reason).
+- **`review:batch` hands you the anchors** — `tools/ci/batch-review.mjs` parses the cr output into
+  `dist/review/batch-findings.json`: one entry per finding with `severity`, `category`, `path`,
+  `startLine`/`line` (the range endpoints), and the finding body, plus the `refs` (PR branches) it
+  came from. **Those line numbers are relative to the MERGED octopus branch, not to any single PR
+  head** — when several PRs are reviewed together, one PR's insertions shift another's, so the same
+  `path:line` can point at different code on a given head. Determine which PR owns each finding (by
+  which head contains the changed line) and re-verify the anchor against that head before posting;
+  treat the report as a starting point, not an authority. A finding without a parsed anchor still
+  gets posted, with an anchor you verified yourself. The report is a report, not a queue: assess
+  every finding before posting anything.
+- **Post the threads BEFORE anything is fixed.** An ADR0020 thread must exist on the PR at the
+  commit that carried the defect; posting it after the fix lands cannot be anchored to the offending
+  line and leaves no record of what was found. Assess → post all accepted findings → resolve each
+  thread as its fix lands. **For `review:batch` the chain stops after posting** (see the boundary
+  note above): that pass covers PRs the agent does not own.
+- **Check quota before running `review:batch`** — `cr usage` (or `pnpm review:batch -- --check`) is
+  milliseconds and answers whether a review can run at all. The window is rolling and the bot and
+  CLI share it; running blind can spend the last slot on a run that fails, or block the operator's
+  own pass.
 
 ## Also know
 
