@@ -25,7 +25,7 @@ inspection).
 ## How to use the installer
 
 1. **Download** the installer for your OS from the
-   [`latest` release](https://github.com/onemen/firefox-scripts/releases/tag/latest):
+   [Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest):
    - `installer_win.exe` — Windows
    - `installer_linux` — Linux (x86_64) · `installer_linux_aarch64` — Linux (ARM64)
    - `installer_mac` — macOS (universal: Intel + Apple Silicon)
@@ -86,9 +86,9 @@ repository they are bundled into two packages:
   browser's installation directory.
 
 Both packages are also available for download from the
-[`latest` release](https://github.com/onemen/firefox-scripts/releases/tag/latest) — you can install
-or update them by hand. After your first install from this repository, the browser will notify you
-when a new version is available (see
+[Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest) — you can install or
+update them by hand. After your first install from this repository, the browser will notify you when
+a new version is available (see
 [How the updater keeps your scripts up to date](#how-the-updater-keeps-your-scripts-up-to-date)).
 
 ### Finding your version and reverting
