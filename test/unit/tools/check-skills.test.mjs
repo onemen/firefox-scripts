@@ -12,13 +12,9 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-skills.mjs')).href;
-const {
-  checkSkillsDir,
-  findVendoredTests,
-  agentsSkillsTable,
-  checkAgentsTableDrift,
-  descriptionLines,
-} = await import(scriptUrl);
+const {checkSkillsDir, findVendoredTests, agentsSkillsTable, checkAgentsTableDrift} = await import(
+  scriptUrl
+);
 
 // Every makeSkillsDir() call creates a mkdtemp ROOT in os.tmpdir() but returns
 // only the inner `skills` dir, so the tests' finally blocks never removed the
@@ -385,40 +381,7 @@ test('findVendoredTests finds test files recursively per skill', () => {
   }
 });
 
-// The `ai-review` defect: a `: ` inside a multi-line plain scalar ends the
-// YAML value and starts a new mapping key, so the host stops seeing a
-// `description` at all and never lists the skill. Every other frontmatter
-// check still passed, which is why it survived weeks of CI green.
-test('a colon-space inside a block description is rejected', () => {
-  const dir = makeSkillsDir({
-    'ai-review': {
-      'SKILL.md':
-        '---\nname: ai-review\ndescription:\n' +
-        '  Review a PR the ADR 0020 way, and post each finding as a thread\n' +
-        '  (fallback: `gh pr review <n> --comment`), resolving each as its fix lands.\n' +
-        '---\n\nBody.\n',
-    },
-  });
-  const errors = checkSkillsDir(dir);
-  assert.equal(errors.length, 1);
-  assert.match(errors[0].message, /description contains ": "/);
-  assert.match(errors[0].message, /hides the skill from the host/);
-});
-
-test('the shipped skills have no colon-space in their descriptions', () => {
-  for (const name of fs.readdirSync(path.join(REPO_ROOT, '.agents/skills'))) {
-    const file = path.join(REPO_ROOT, '.agents/skills', name, 'SKILL.md');
-    if (!fs.existsSync(file)) continue;
-    const text = fs.readFileSync(file, 'utf8');
-    const block = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)[1].split(/\r?\n/);
-    for (const line of descriptionLines(block)) {
-      assert.ok(!line.includes(': '), name + ': colon-space -> ' + line);
-    }
-  }
-});
-
-test('descriptionLines unwraps a block scalar and stops at the next key', () => {
-  const block = ['name: demo', 'description:', '  First line.', '  Second line.', 'metadata:'];
-  assert.deepEqual(descriptionLines(block), ['First line.', 'Second line.']);
-  assert.deepEqual(descriptionLines(['description: One liner.']), ['One liner.']);
-});
+// The `ai-review` defect — a `: ` inside a multi-line plain scalar ending the
+// YAML value — is caught by `pnpm lint:yaml` (tools/check-yaml-frontmatter.mjs,
+// issue #413), which parses the frontmatter for real instead of pattern-matching
+// the text. check-skills keeps only the structural checks.
