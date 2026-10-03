@@ -3,7 +3,7 @@ name: ai-review
 description:
   Review a PR the ADR 0020 way — run the local `pnpm review:local` reviewer, assess every finding as
   right / wrong / useless with the disputed line quoted before any rejection, and post each accepted
-  finding as its own line-anchored, individually resolvable review thread (fallback: `gh pr review
+  finding as its own line-anchored, individually resolvable review thread (fallback `gh pr review
   <n> --comment`, never `gh pr comment`), resolving each thread as its fix lands. Use when a PR is
   ready for review or the user asks for the AI review step.
 ---
