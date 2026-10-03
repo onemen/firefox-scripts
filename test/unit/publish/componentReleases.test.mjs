@@ -52,12 +52,12 @@ test('tags: date-stamped, per component', () => {
 });
 
 test('date tags sort BELOW `latest` — the same-day tie-break (ADR 0019 amendment 2026-10-02)', () => {
-  // GitHub orders /releases by the linked tag's commit DAY and then by TAG NAME
+  // GitHub orders /releases by the linked tag's commit DAY, then by TAG NAME
   // DESCENDING. A component tag is created on the same commit as `latest`, so
-  // it can never win on date, and a name that sorts ABOVE `latest` takes the top
-  // card on every publish day — which `scripts-<date>` did ("scripts-…" >
-  // "latest", measured 2026-10-02). Any new component tag must sort below it;
-  // this is the guard that keeps a rename from silently moving the page order.
+  // it can never win on date: a name sorting ABOVE `latest` takes the top card
+  // on every publish day (the retired zips tag did, measured 2026-10-02). Any
+  // component tag must sort below `latest`; this is the guard that keeps a
+  // rename from silently moving the page order. coreTag() holds the evidence.
   const date = '2026-10-02';
   for (const tag of [coreTag(date), installerTag(date)]) {
     assert.ok(tag < 'latest', `${tag} must sort below 'latest' in the descending tie-break`);
