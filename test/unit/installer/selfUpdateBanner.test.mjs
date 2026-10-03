@@ -1,13 +1,21 @@
 // test/unit/installer/selfUpdateBanner.test.mjs — the installer self-update
-// banner's FALLBACK destination.
+// banner: its FALLBACK destination, and which ingest surface it trusts.
 //
-// The banner's normal branch downloads data.downloadUrl (an asset URL from the
-// managed "download" map).  When a newer publish carries no download entry for
-// THIS platform, installer/src/self_update.c still reports updateAvailable with
-// an empty download_url, and the tab opens a human-facing page instead.  That
-// page must be the permanently-named `latest` release: the rolling /releases
-// listing can be topped by a dated component release (scripts-<date>) that
-// carries no installer asset, leaving the user to hunt for the binary.
+// Fallback destination: the banner's normal branch downloads data.downloadUrl
+// (an asset URL from the managed "download" map).  When a newer publish carries
+// no download entry for THIS platform, installer/src/self_update.c still reports
+// updateAvailable with an empty download_url, and the tab opens a human-facing
+// page instead.  That page must be the permanently-named `latest` release: the
+// rolling /releases listing can be topped by a dated component release
+// (scripts-<date>) that carries no installer asset, leaving the user to hunt
+// for the binary.
+//
+// Ingest surface (#401): fetchRaw resolves an ArrayBuffer, so passing it
+// straight to the mechanismSince gate made JSON.parse throw on every payload
+// ("[object ArrayBuffer]"), the catch turned that into "not post-cutover", and
+// every post-cutover binary silently fell through to the legacy release-body
+// flow.  The banner kept working, which is exactly why it went unnoticed — so
+// these cases assert WHICH surface was ingested, not just that a banner showed.
 //
 // The tab's JS only runs inside the shipped IIFE, so the cases drive the real
 // fragments through the shared harness (test/shared/webUiSandbox.mjs).  Pure
@@ -40,13 +48,18 @@ const NO_URL_UPDATE_AVAILABLE = {
  * @param {object} verdict body served by GET /api/self-update
  * @returns {Record<string, Function>} route table for loadWebUi
  */
-function selfUpdateRoutes(verdict) {
+function selfUpdateRoutes(verdict, buildInfo) {
   return {
     '/api/build-info': () => ({
       ok: true,
       status: 200,
       json: () =>
-        Promise.resolve({selfUpdateDisabled: false, buildDate: '2026-01-01', isLocal: false}),
+        Promise.resolve({
+          selfUpdateDisabled: false,
+          buildDate: '2026-01-01',
+          isLocal: false,
+          ...buildInfo,
+        }),
     }),
     '/api/package-urls': () => ({
       ok: true,
@@ -139,4 +152,73 @@ test('self-update banner stays hidden when self-update is disabled', async () =>
   // the shipped markup).
   assert.equal(ui.element('btn-self-update').onclick, null, 'no button handler');
   assert.deepEqual(ui.opened, [], 'nothing opened');
+});
+
+test('a post-cutover build ingests the Pages payload, not the legacy release body', async () => {
+  // issue #401. fetchRaw hands back an ArrayBuffer; the mechanismSince gate
+  // needs text. With the buffer passed through, JSON.parse threw on every
+  // payload, the catch reported "not post-cutover", and the tab fell through
+  // to the legacy flow — so the assertion that matters is that the releases
+  // listing is NEVER fetched for a post-cutover build.
+  const ui = loadWebUi({routes: selfUpdateRoutes(NO_URL_UPDATE_AVAILABLE)});
+
+  await ui.ctx.checkSelfUpdate();
+  await ui.settle();
+
+  assert.ok(
+    ui.fetches.some(f => f.url === PAGES_PAYLOAD_URL),
+    'the Pages payload was fetched'
+  );
+  assert.ok(
+    ui.fetches.some(f => f.url === '/api/self-update' && f.method === 'POST'),
+    'and POSTed to the local endpoint, so the managed payload is the one in force'
+  );
+  assert.ok(
+    !ui.fetches.some(f => f.url === RELEASES_URL),
+    'the legacy release-body fallback must not be fetched for a post-cutover build'
+  );
+});
+
+test('a pre-cutover build still takes the legacy release-body flow', async () => {
+  // The other half of the gate: buildDate < mechanismSince must NOT trust the
+  // Pages payload, or pre-cutover binaries would stop reading release bodies
+  // that still carry the managed block.
+  const ui = loadWebUi({
+    routes: {
+      ...selfUpdateRoutes(NO_URL_UPDATE_AVAILABLE, {
+        selfUpdateDisabled: false,
+        buildDate: '2025-12-01',
+        isLocal: false,
+      }),
+      [PAGES_PAYLOAD_URL]: () =>
+        rawJson({mechanismSince: '2026-09-29', installerDate: '2026-10-01'}),
+    },
+  });
+
+  await ui.ctx.checkSelfUpdate();
+  await ui.settle();
+
+  assert.ok(
+    ui.fetches.some(f => f.url === RELEASES_URL),
+    'an older binary falls back to the release listing'
+  );
+});
+
+test('a payload without mechanismSince is treated as pre-cutover', async () => {
+  // A managed body with no cutover marker must not be trusted as the Pages
+  // surface; the tab falls back exactly as it did before #341.
+  const ui = loadWebUi({
+    routes: {
+      ...selfUpdateRoutes(NO_URL_UPDATE_AVAILABLE),
+      [PAGES_PAYLOAD_URL]: () => rawJson({installerDate: '2026-10-01'}),
+    },
+  });
+
+  await ui.ctx.checkSelfUpdate();
+  await ui.settle();
+
+  assert.ok(
+    ui.fetches.some(f => f.url === RELEASES_URL),
+    'no cutover marker means the legacy flow'
+  );
 });

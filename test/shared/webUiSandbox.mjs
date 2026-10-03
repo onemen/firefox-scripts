@@ -114,6 +114,11 @@ export function loadWebUi(options = {}) {
     console,
     setTimeout,
     clearTimeout,
+    // Real globals in both the tab and Node. TextDecoder is what the self-update
+    // ingest uses to turn fetchRaw's ArrayBuffer into text for the
+    // mechanismSince gate (issue #401) — without it here, that path throws
+    // "TextDecoder is not defined" instead of exercising the decode.
+    TextDecoder,
     // The tab starts a 3s heartbeat; scheduling it would keep the test process
     // alive, so intervals are recorded and never run.
     setInterval(fn, ms) {
