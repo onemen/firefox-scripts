@@ -1,5 +1,5 @@
 // test/unit/installer/webUiSandbox.test.mjs — the shared harness's own
-// contract (test/shared/webUiSandbox.mjs).
+// contract (test/shared/webUiSandbox.mjs and the modules beside it).
 //
 // The installer-tab suites are only as trustworthy as the DOM they run against.
 // The harness used to auto-create a blank element for any selector the tab
@@ -132,6 +132,60 @@ test('innerHTML assignments become real children, not opaque strings', () => {
   list.innerHTML = '<div class="empty-state"><h3>No Browsers Detected</h3></div>';
   assert.equal(list.querySelector('.card-progress'), null);
   assert.equal(ui.text(list.querySelector('.empty-state')), 'No Browsers Detected');
+});
+
+test('replacing contents detaches the old subtree, ids and all', () => {
+  // The product path that made this matter: setUtilsStatus() renders its
+  // checkbox through innerHTML and is re-run on every status refresh, so a
+  // stale chk-utils-<n> left in the id index would shadow the live checkbox
+  // that startGroupInstall reads .checked from.
+  const ui = loadWebUi();
+  const host = ui.createElement('span');
+
+  host.innerHTML = '<input id="chk-utils-0" class="chk-component">';
+  const stale = ui.element('chk-utils-0');
+  assert.equal(stale, host.querySelector('#chk-utils-0'), 'registered while attached');
+  assert.equal(ui.find('#chk-utils-0'), null, 'host is detached, so the document cannot see it');
+
+  host.innerHTML = '<input id="chk-utils-1" class="chk-component">';
+  assert.equal(ui.element('chk-utils-0'), null, 'the replaced id stops resolving');
+  assert.equal(host.contains(stale), false, 'and it is not a descendant any more');
+  assert.equal(stale.parentNode, null, 'its parentNode is cleared, not left dangling');
+  assert.equal(ui.element('chk-utils-1').parentNode, host, 'the new node is live');
+});
+
+test('detaching reaches nested descendants, not just direct children', () => {
+  const ui = loadWebUi();
+  const el = ui.createElement('span');
+  el.innerHTML = '<b id="outer"><i id="nested-id">x</i></b>';
+
+  // Both the root's id AND the nested one must register on the way in: a
+  // subtree that moves re-registers its whole id set, or an inner id is lost
+  // as soon as it leaves the parse buffer.
+  assert.equal(ui.element('outer'), el.querySelector('#outer'), 'root id registered');
+  assert.equal(ui.element('nested-id'), el.querySelector('#nested-id'), 'nested id registered');
+
+  el.textContent = 'replaced';
+
+  assert.equal(ui.element('nested-id'), null, 'a nested id must not survive');
+  assert.equal(ui.element('outer'), null);
+  assert.equal(ui.text(el), 'replaced');
+});
+
+test('removeChild detaches the subtree it takes out of the document', () => {
+  const ui = loadWebUi();
+  const list = ui.element('browser-list');
+  const card = ui.createElement('div');
+  card.className = 'browser-card';
+  card.innerHTML = '<span id="badge-utils-0"></span>';
+  list.appendChild(card);
+  assert.ok(ui.element('badge-utils-0'));
+
+  // renderBrowsers drops cards whose binary is no longer detected; the badge id
+  // inside a removed card must stop resolving with it.
+  list.removeChild(card);
+  assert.equal(ui.element('badge-utils-0'), null);
+  assert.equal(list.children.length, 0);
 });
 
 test('re-keying or clearing an id stops the old one resolving', () => {
