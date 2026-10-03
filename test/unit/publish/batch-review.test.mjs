@@ -7,12 +7,22 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path, {join} from 'node:path';
 import {
   ageToUnixSeconds,
+  cleanupCoderabbitTemp,
+  findingsJson,
+  findingsTable,
   isRateLimited,
   parseArgs,
+  parseFindings,
+  USAGE,
   parseOpenPrBranchesOutput,
   removeTempWorktree,
+  stripAnsi,
+  writeFindingsReport,
 } from '../../../tools/ci/batch-review.mjs';
 
 // ── removeTempWorktree (temp-worktree teardown ladder) ─────────────────
@@ -135,6 +145,41 @@ test('parseArgs: defaults', () => {
   assert.equal(args.wait, null);
 });
 
+test('parseArgs: --help / -h is a request, not an unknown flag', () => {
+  // Regression: `--help` used to fall into the unknown-flag branch and answer
+  // "Unknown flag: --help" (exit 2) while the complete flag list sat unread in
+  // the file's own header comment — a dead end for anyone who asked for usage.
+  assert.equal(parseArgs(['--help']).help, true);
+  assert.equal(parseArgs(['-h']).help, true);
+  assert.equal(parseArgs(['--pr', '7', '--help']).help, true);
+  assert.equal(parseArgs(['--pr', '7']).help, false);
+  assert.throws(() => parseArgs(['--nope']), /Unknown flag: --nope/);
+});
+
+test('USAGE documents every flag the parser accepts', () => {
+  // The help text is a contract with the parser: a flag added without a line
+  // here makes `--help` lie, which is how the agent ended up guessing flags.
+  const accepted = new Set();
+  for (const flag of [
+    '--pr',
+    '--branch',
+    '--open',
+    '--since',
+    '--base',
+    '--keep',
+    '--agent',
+    '--dry-run',
+    '--check',
+    '--wait',
+    '--temp-grace',
+    '-h',
+    '--help',
+  ]) {
+    accepted.add(flag);
+  }
+  for (const flag of accepted) assert.ok(USAGE.includes(flag), `USAGE must document ${flag}`);
+});
+
 test('parseArgs: --check and --wait', () => {
   assert.equal(parseArgs(['--check']).check, true);
   assert.equal(parseArgs(['--pr', '1', '--wait', '45']).wait, 45);
@@ -189,4 +234,298 @@ test('ageToUnixSeconds: converts human ages to timestamps', () => {
   assert.ok(ageToUnixSeconds('3d') < now - 250000 && ageToUnixSeconds('3d') > now - 270000);
   assert.throws(() => ageToUnixSeconds('nope'), /Invalid --since age/);
   assert.throws(() => ageToUnixSeconds('3'), /Invalid --since age/);
+});
+
+// ── findings → anchors ───────────────────────────────────────────────────
+// ADR 0020 wants one review thread per finding, anchored to path + line on the
+// PR head. cr prints that anchor (inside an OSC-8 hyperlink); parsing it here
+// is what stops every agent from re-deriving the range from the diff.
+
+/** One finding as cr prints it: severity + category, the anchor, the body. */
+function crFinding({
+  severity = 'minor',
+  category = 'Functional Correctness',
+  file = 'docs/auto-updater.md',
+  range = '250-255',
+  body = 'Separate config-copy behavior from copyFileList() retries.',
+} = {}) {
+  const label = range ? `${file}:${range}` : file;
+  return [
+    `  ${severity} [${category}]`,
+    `  → \u001b]8;;vscode://file/C:\\Users\\test\\AppData\\Local\\Temp\\cr-batch-1\\${file.replace(
+      /\//g,
+      '\\'
+    )}\u0007${label}\u001b]8;;\u0007`,
+    '',
+    `  ${body}`,
+  ].join('\n');
+}
+
+const CR_TAIL = [
+  '',
+  '────────────────────────────────────────',
+  'Review complete',
+  '1 finding ✔',
+  '',
+].join('\n');
+
+test('parseFindings: extracts severity, category and the line range', () => {
+  const findings = parseFindings(`${crFinding()}\n${CR_TAIL}`);
+  assert.equal(findings.length, 1);
+  assert.deepEqual(
+    {severity: findings[0].severity, category: findings[0].category},
+    {severity: 'minor', category: 'Functional Correctness'}
+  );
+  assert.equal(findings[0].path, 'docs/auto-updater.md');
+  assert.equal(findings[0].startLine, 250);
+  assert.equal(findings[0].line, 255, 'the thread anchors to the LAST line of the range');
+  assert.match(findings[0].body, /^Separate config-copy/);
+});
+
+test('parseFindings: a single-line finding anchors line to itself', () => {
+  const [finding] = parseFindings(crFinding({file: 'tools/publish/x.mjs', range: '42'}));
+  assert.equal(finding.startLine, 42);
+  assert.equal(finding.line, 42);
+});
+
+test('parseFindings: several findings, each with its own anchor', () => {
+  const out = [
+    crFinding({range: '10-12', body: 'First.'}),
+    '',
+    crFinding({severity: 'major', range: '88', body: 'Second.'}),
+    CR_TAIL,
+  ].join('\n');
+  const findings = parseFindings(out);
+  assert.equal(findings.length, 2);
+  assert.equal(findings[0].body, 'First.');
+  assert.equal(findings[1].severity, 'major');
+  assert.equal(findings[1].line, 88);
+});
+
+test('parseFindings: an unanchored finding is kept, not dropped', () => {
+  // The agent still has to triage it — ADR 0020 just falls back to a review
+  // body when no line anchor exists.
+  const out = ['  minor [Security]', '', '  Something file-wide.', '', CR_TAIL].join('\n');
+  const findings = parseFindings(out);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].path, null);
+  assert.equal(findings[0].line, null);
+  assert.equal(findings[0].body, 'Something file-wide.');
+});
+
+test('parseFindings: the run summary is not swallowed into the last body', () => {
+  const findings = parseFindings(`${crFinding({body: 'Real finding.'})}\n${CR_TAIL}`);
+  assert.equal(findings[0].body, 'Real finding.');
+});
+
+test('parseFindings: no findings in, none out', () => {
+  assert.deepEqual(parseFindings(''), []);
+  assert.deepEqual(parseFindings('All matched files use Prettier code style!'), []);
+});
+
+test('stripAnsi: removes OSC-8 hyperlinks and colour runs', () => {
+  const raw = '\u001b[1mminor\u001b[0m \u001b]8;;file:///x\u0007docs/a.md:1\u001b]8;;\u0007';
+  assert.equal(stripAnsi(raw), 'minor docs/a.md:1');
+  assert.equal(stripAnsi('a\r\nb'), 'a\nb');
+});
+
+test('findingsTable / findingsJson: carry the anchor and the ADR 0020 pointer', () => {
+  const findings = parseFindings(`${crFinding()}\n${CR_TAIL}`);
+  const table = findingsTable(findings);
+  assert.match(table, /1\. \[minor\] Functional Correctness — docs\/auto-updater\.md:250-255/);
+  const json = JSON.parse(findingsJson(findings, {refs: ['fix/a'], base: 'origin/main'}));
+  assert.equal(json.count, 1);
+  assert.match(json.protocol, /ADR 0020/);
+  assert.deepEqual(json.refs, ['fix/a']);
+  assert.equal(json.findings[0].line, 255);
+  assert.equal(findingsTable([]), 'No findings parsed from the cr output.');
+});
+
+// ── cr's own %TEMP% leftovers ────────────────────────────────────────────
+// The CLI stages each run in a coderabbit-update-* dir and never removes it, so
+// every review leaves one in the OS temp dir — the same dir this repo's hygiene
+// test polices, and the user's Temp on Windows.
+
+const NOW = 1_700_000_000_000;
+
+test('cleanupCoderabbitTemp: removes stale cr dirs, keeps young ones', () => {
+  const entries = [
+    'coderabbit-update-old',
+    'coderabbit-update-new',
+    'cr-batch-12256',
+    'fxs-utils-1234',
+  ];
+  const removed = [];
+  const {removed: gone, kept} = cleanupCoderabbitTemp({
+    graceMs: 30 * 60_000,
+    tmpDir: '/t',
+    now: () => NOW,
+    readdirSync: () => entries,
+    statSync: p => ({mtimeMs: p.endsWith('old') ? NOW - 3_600_000 : NOW - 60_000}),
+    rmSync: p => removed.push(p),
+    isLocked: () => false,
+  });
+  // join() so the expectation matches the platform separator the helper uses.
+  const oldPath = join('/t', 'coderabbit-update-old');
+  const newPath = join('/t', 'coderabbit-update-new');
+  assert.deepEqual(gone, [oldPath]);
+  assert.deepEqual(removed, [oldPath]);
+  assert.deepEqual(kept, [{path: newPath, ageMs: 60_000, reason: 'within grace'}]);
+});
+
+test('cleanupCoderabbitTemp: an undeletable dir is reported, never thrown', () => {
+  const logged = [];
+  const {removed, kept} = cleanupCoderabbitTemp({
+    graceMs: 1000,
+    tmpDir: '/t',
+    now: () => NOW,
+    readdirSync: () => ['coderabbit-update-locked'],
+    statSync: () => ({mtimeMs: NOW - 10_000}),
+    rmSync: () => {
+      throw new Error('EBUSY: resource busy or locked');
+    },
+    isLocked: () => false,
+    log: msg => logged.push(msg),
+  });
+  assert.deepEqual(removed, []);
+  assert.equal(kept.length, 1);
+  assert.match(logged[0], /could not remove a stale cr temp dir.*EBUSY/);
+});
+
+test('cleanupCoderabbitTemp: an unreadable temp dir is a no-op, not a crash', () => {
+  const {removed, kept} = cleanupCoderabbitTemp({
+    tmpDir: '/nope',
+    readdirSync: () => {
+      throw new Error('ENOENT');
+    },
+  });
+  assert.deepEqual(removed, []);
+  assert.deepEqual(kept, []);
+});
+
+test('parseArgs: --temp-grace defaults to 30 minutes and parses', () => {
+  assert.equal(parseArgs([]).tempGrace, 30);
+  assert.equal(parseArgs(['--temp-grace', '5']).tempGrace, 5);
+  assert.equal(parseArgs(['--temp-grace', '0']).tempGrace, 0);
+  assert.throws(() => parseArgs(['--temp-grace', 'soon']), /Invalid --temp-grace/);
+  assert.throws(() => parseArgs(['--temp-grace']), /Invalid --temp-grace/);
+});
+
+// ── review:batch findings on this tool (ADR 0020 triage) ────────────────
+
+test('cleanupCoderabbitTemp keeps an old dir that a running cr still holds open', () => {
+  const NOW = 1_700_000_000_000;
+  const removed = [];
+  // Old enough to sweep, but a live review owns it: age is not ownership.
+  const {removed: gone, kept} = cleanupCoderabbitTemp({
+    graceMs: 1000,
+    tmpDir: '/t',
+    now: () => NOW,
+    readdirSync: () => ['coderabbit-update-live'],
+    statSync: () => ({mtimeMs: NOW - 86_400_000}),
+    rmSync: p => removed.push(p),
+    isLocked: p => p.includes('live'),
+  });
+  assert.deepEqual(gone, []);
+  assert.deepEqual(removed, [], 'a live run keeps its directory');
+  assert.equal(kept[0].reason, 'in use by a running cr');
+});
+
+test('cleanupCoderabbitTemp keeps an old dir when the lock probe itself fails', () => {
+  const NOW = 1_700_000_000_000;
+  // Cannot prove it is free -> never delete on a doubt.
+  const {removed, kept} = cleanupCoderabbitTemp({
+    graceMs: 1000,
+    tmpDir: '/t',
+    now: () => NOW,
+    readdirSync: () => ['coderabbit-update-unknowable'],
+    statSync: () => ({mtimeMs: NOW - 86_400_000}),
+    rmSync: () => assert.fail('must not delete when the probe errors'),
+    isLocked: () => {
+      throw new Error('EPERM');
+    },
+  });
+  assert.deepEqual(removed, []);
+  assert.equal(kept[0].reason, 'in use by a running cr');
+});
+
+test('parseFindings keeps the anchor when an OSC-8 link ends with ESC-backslash', () => {
+  // cr emits the ST (ESC \) terminator as well as BEL; a character class that
+  // admits ESC swallows the visible label before it.
+  const raw = [
+    'minor [Functional Correctness]',
+    '  → \u001b]8;;file:///x/docs/a.md\u001b\\docs/a.md:12-14\u001b]8;;\u001b\\',
+    '',
+    ' body text',
+  ].join('\n');
+  const findings = parseFindings(raw);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].path, 'docs/a.md');
+  assert.equal(findings[0].startLine, 12);
+  assert.equal(findings[0].line, 14);
+});
+
+// ── findings report persistence ─────────────────────────────────────────
+// `dist/` is scratch that ordinary commands delete — an `rm -rf dist` during
+// unrelated work already ate a real report — so the run also archives a
+// timestamped copy outside it.
+
+test('writeFindingsReport writes the current report and a durable archive', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-report-'));
+  const cwd = process.cwd();
+  process.chdir(root);
+  // chdir back BEFORE the rm: Windows refuses to delete the process CWD.
+  t.after(() => {
+    process.chdir(cwd);
+    fs.rmSync(root, {recursive: true, force: true});
+  });
+
+  const {current, archive} = writeFindingsReport('{"count":0}');
+  assert.equal(current, path.join('dist', 'review', 'batch-findings.json'));
+  assert.ok(archive.startsWith(path.join('review-history', 'batch-findings-')), archive);
+  assert.ok(archive.endsWith('.json'), archive);
+  assert.equal(fs.readFileSync(current, 'utf8'), '{"count":0}');
+  assert.equal(fs.readFileSync(archive, 'utf8'), '{"count":0}');
+});
+
+test('writeFindingsReport timestamps so runs accumulate, and clears a stale current', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-report2-'));
+  const cwd = process.cwd();
+  process.chdir(root);
+  // chdir back BEFORE the rm: Windows refuses to delete the process CWD.
+  t.after(() => {
+    process.chdir(cwd);
+    fs.rmSync(root, {recursive: true, force: true});
+  });
+
+  // A stale report from an earlier run must not survive into the next one.
+  fs.mkdirSync(path.join('dist', 'review'), {recursive: true});
+  fs.writeFileSync(path.join('dist', 'review', 'batch-findings.json'), '{"stale":true}');
+  writeFindingsReport('{"fresh":true}');
+  assert.equal(
+    fs.readFileSync(path.join('dist', 'review', 'batch-findings.json'), 'utf8'),
+    '{"fresh":true}'
+  );
+
+  const first = fs.readdirSync('review-history');
+  writeFindingsReport('{"again":true}');
+  const second = fs.readdirSync('review-history');
+  // Two distinct timestamps -> two files, so the earlier run is not overwritten.
+  assert.equal(second.length >= first.length, true);
+  assert.equal(new Set(second).size, second.length);
+});
+
+test('writeFindingsReport can skip the archive', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-report3-'));
+  const cwd = process.cwd();
+  process.chdir(root);
+  // chdir back BEFORE the rm: Windows refuses to delete the process CWD.
+  t.after(() => {
+    process.chdir(cwd);
+    fs.rmSync(root, {recursive: true, force: true});
+  });
+
+  const {archive} = writeFindingsReport('{"count":0}', {keep: false});
+  assert.equal(archive, null);
+  assert.equal(fs.existsSync('review-history'), false);
 });
