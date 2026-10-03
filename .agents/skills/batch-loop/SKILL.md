@@ -115,19 +115,21 @@ Run before the step-6 summary — every item is a one-command verification:
 
 - **NEVER call sleep** and never idle-wait on CI, tests, or builds — the never-idle-wait rule in the
   `change-workflow` skill applies at all times. End the turn instead.
-- **The terminal tool here is sync-only — this is why never-idle-wait exists.** Probed 2026-09-24
-  and re-probed 2026-09-30 (unchanged): `process_type: BACKGROUND` errors ("not implemented"), and
-  same-block terminal calls dispatch in parallel but **execute sequentially** (two 2 s `sleep`s ran
-  back-to-back, ~80 ms apart) — stacking slow foreground calls in one block serializes them, so a
-  long call (`sleep 240; gh pr checks`, a `--watch`, a minutes-long `review:local`) blocks the whole
-  turn and is lost if the client restarts — and **no `--watch` variant is ever a substitute for
-  ending the turn**. Budget foreground commands in tens of seconds; anything longer is covered by
-  ending the turn and re-checking one-shot on the next message. Read-only `gh`/git queries are the
-  safe things to batch in one block (their serialization costs milliseconds); anything with a real
-  runtime (install, build, review, long poll loop) goes in its own block or its own turn. Untracked
-  client-gap: no repo issue records this behavior (swept 2026-09-30: issue-body searches for
-  `sleep`, `parallel`, `BACKGROUND`, `idle-wait` match nothing on-topic) — the only records are this
-  note and the `change-workflow` rule.
+- **Spend a turn on work, never on waiting.** Every command you run must return before the turn
+  would otherwise be over: budget foreground commands in **tens of seconds**, and when a step is
+  genuinely long (a build, a minutes-long `review:local`, a CI poll), end the turn and re-check it
+  one-shot on the next message. A turn that ends is a free slot for the user; a turn that blocks is
+  a stall they have to sit through.
+  - **Batch by cost.** Read-only `gh`/git queries are milliseconds — put many in one block. Anything
+    with a real runtime (install, build, review, poll loop) gets its own block, or its own turn.
+    Stacking slow commands in one block is how a turn silently turns into a wait.
+  - **No `--watch`, ever.** `--watch`, `--follow`, `sleep N; cmd` and "just poll until green" are
+    all the same mistake in different syntax. Convert the wait into a turn boundary.
+  - **One poll per turn, not a poll loop.** Ask once, report the state you saw, end the turn. The
+    next message is the poll.
+  - **Do not route long work through a side channel.** A tool, server or script that keeps running
+    after the turn ends leaves you reporting on something you can no longer see or stop. If a step
+    cannot be expressed as "run this, read the result, reply", it belongs in a turn boundary.
 - **Never merge a PR without the user's explicit approval** (AGENTS.md Critical Rule) — the summary
   reports ready/merged/blocked state and stops there.
 - One worktree per task; never link the parent's node_modules into it.
