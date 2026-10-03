@@ -71,7 +71,15 @@
         if (!pagesUrl || !info || !info.buildDate) return null;
         return fetchRaw(pagesUrl)
           .then(function (buf) {
-            const text = buf;
+            // fetchRaw resolves an ArrayBuffer (r.arrayBuffer()). JSON.parse
+            // coerces its argument with String(), and String(new ArrayBuffer())
+            // is "[object ArrayBuffer]" — so handing `buf` straight to the
+            // mechanismSince gate made it throw on every payload, and the
+            // catch below turned that into "not post-cutover", so every
+            // post-cutover binary silently fell through to the legacy
+            // release-body flow (issue #401). Decode for the gate only: the
+            // POST still sends the raw buffer, which fetch accepts as a body.
+            const text = new TextDecoder().decode(buf);
             if (!atMechanismSince(info.buildDate, text)) return false;
             return postRaw('/api/self-update', buf).then(function (res) {
               const ok = Boolean(res && res.ok);

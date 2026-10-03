@@ -43,6 +43,7 @@ import {
   summary,
   readFileSyncWithRetry,
   pruneStaleTempRoots,
+  installerWorkDirStrays,
 } from '../shared/helpers.mjs';
 import {
   findSnapshot,
@@ -1031,6 +1032,10 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     });
     check(counter, up.ok, 'RS-08 config zip uploaded to the installer');
 
+    // Baseline before the install: only dirs that appear from here on are
+    // this install's residue (an earlier killed run may have left its own).
+    const workDirsBefore = new Set(installerWorkDirStrays());
+
     const started = await fetch(
       `${base}/api/install?browser=${rows.b.index}&config=1${tq.replace('?t=', '&t=')}`,
       {method: 'POST', signal: AbortSignal.timeout(TIMEOUT_MS)}
@@ -1069,6 +1074,26 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
       done?.error || ''
     );
     if (!done || done.error) throw new Error('config install did not complete');
+
+    // RS-10b: a finished install drops its own work dir instead of leaving an
+    // empty shell in the user's temp dir (#390).  The 'done' response is
+    // flushed just before the server does that cleanup, so poll briefly rather
+    // than reading a race as a leak.
+    const cleared = await pollUntil(
+      () => installerWorkDirStrays().every(d => workDirsBefore.has(d)),
+      3000,
+      100,
+      'installer work dir removal'
+    );
+    check(
+      counter,
+      Boolean(cleared),
+      'RS-10b installer removed its temp work dir (no shell left behind)',
+      installerWorkDirStrays()
+        .filter(d => !workDirsBefore.has(d))
+        .map(d => path.basename(d))
+        .join(', ')
+    );
 
     // Restart B. On Windows the worker is async (response returns first); on
     // POSIX the work runs inside the request.

@@ -9,8 +9,12 @@
 //   1. the staging dir is named per CHECK (uiTempDirName: `fxs-updater-ui-<pid>`
 //      + timestamp + counter), so two checks — in one process or two — can never
 //      collide over one dir, and nothing is cleared before use;
-//   2. sweepStaleUpdaterUiTempDirs() reclaims dirs older than a day, which is
-//      every stranded one and never a live session's (minutes old).
+//   2. sweepStaleUpdaterTempDirs() reclaims dirs older than a day, which is
+//      every stranded one and never a live session's (minutes old) — and it
+//      matches every prefix the updater owns, not just this module's: the TAB's
+//      install staging dirs (fxs-utils-*, fxs-config-*, remote-ui/updater.js)
+//      had no reaper at all before this, so a killed browser left a downloaded
+//      zip plus its extracted tree in the user's Temp forever.
 //
 // The module is evaluated in a vm sandbox (same approach as
 // scriptsUpdater-hash.test.mjs) so the real PathUtils/IOUtils surface can be
@@ -50,7 +54,9 @@ after(() => {
 /** Real-fs IOUtils over a sandbox temp dir. */
 function makeIoUtils() {
   return {
-    getChildren: async dir => fs.readdirSync(dir),
+    // Absolute paths, as the real IOUtils.getChildren resolves with — a
+    // basename stub made the sweep tests pass over code that cannot work.
+    getChildren: async dir => fs.readdirSync(dir).map(n => path.join(dir, n)),
     stat: async p => fs.statSync(p),
     remove: async (p, {recursive = false, ignoreAbsent = false} = {}) => {
       try {
@@ -123,18 +129,37 @@ function makeTempFixture() {
   return {root, stale, live};
 }
 
+/**
+ * A temp dir holding the TAB's install staging dirs (fxs-utils-<ts>,
+ * fxs-config-<ts>) plus a foreign entry — the prefixes
+ * tools/publish/remote-ui/updater.js stages under PathUtils.tempDir.
+ */
+function makeTabStagingFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-ui-temp-'));
+  tempRoots.push(root);
+  const staleUtils = path.join(root, 'fxs-utils-1700000000000');
+  const staleConfig = path.join(root, 'fxs-config-1700000000001');
+  const live = path.join(root, 'fxs-utils-1700000000002');
+  for (const dir of [staleUtils, staleConfig, live]) {
+    fs.mkdirSync(path.join(dir, 'extracted'), {recursive: true});
+    fs.writeFileSync(path.join(dir, 'utils.zip'), 'zip');
+  }
+  fs.mkdirSync(path.join(root, 'someone-elses-dir'), {recursive: true});
+  return {root, staleUtils, staleConfig, live};
+}
+
 /** Backdate a tree's mtime (the sweep reads mtime, not ctime). */
 function backdate(dir, ms) {
   const when = new Date(Date.now() - ms);
   fs.utimesSync(dir, when, when);
 }
 
-test('sweepStaleUpdaterUiTempDirs: removes a stranded staging dir, keeps a live one', async () => {
+test('sweepStaleUpdaterTempDirs: removes a stranded staging dir, keeps a live one', async () => {
   const {root, stale, live} = makeTempFixture();
   backdate(stale, 48 * 60 * 60 * 1000);
   const sandbox = loadUpdater(root);
 
-  const removed = await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: root});
+  const removed = await sandbox.sweepStaleUpdaterTempDirs({tempDir: root});
 
   assert.deepEqual([...removed], ['fxs-updater-ui-1700000000000']);
   assert.equal(fs.existsSync(stale), false);
@@ -142,30 +167,72 @@ test('sweepStaleUpdaterUiTempDirs: removes a stranded staging dir, keeps a live 
   assert.equal(fs.existsSync(path.join(root, 'someone-elses-dir')), true);
 });
 
-test('sweepStaleUpdaterUiTempDirs: a fresh dir is never swept', async () => {
+test('sweepStaleUpdaterTempDirs: a fresh dir is never swept', async () => {
   const {root, live} = makeTempFixture();
   const sandbox = loadUpdater(root);
 
-  assert.deepEqual([...(await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: root}))], []);
+  assert.deepEqual([...(await sandbox.sweepStaleUpdaterTempDirs({tempDir: root}))], []);
   assert.equal(fs.existsSync(live), true);
 });
 
-test('sweepStaleUpdaterUiTempDirs: maxAgeMs is the only knob, and it is forgiving', async () => {
+test('sweepStaleUpdaterTempDirs: maxAgeMs is the only knob, and it is forgiving', async () => {
   const {root, stale} = makeTempFixture();
   backdate(stale, 30 * 60 * 1000); // 30 minutes
   const sandbox = loadUpdater(root);
 
-  assert.deepEqual([...(await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: root}))], []);
+  assert.deepEqual([...(await sandbox.sweepStaleUpdaterTempDirs({tempDir: root}))], []);
   assert.deepEqual(
-    [...(await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: root, maxAgeMs: 60 * 1000}))],
+    [...(await sandbox.sweepStaleUpdaterTempDirs({tempDir: root, maxAgeMs: 60 * 1000}))],
     ['fxs-updater-ui-1700000000000']
   );
 
   // A temp dir that cannot be listed must degrade to "removed nothing", never
   // to a thrown rejection (init calls this fire-and-forget).
   assert.deepEqual(
-    [...(await sandbox.sweepStaleUpdaterUiTempDirs({tempDir: path.join(root, 'nope')}))],
+    [...(await sandbox.sweepStaleUpdaterTempDirs({tempDir: path.join(root, 'nope')}))],
     []
+  );
+});
+
+test("sweepStaleUpdaterTempDirs: also reclaims the tab's install staging dirs", async () => {
+  const {root, staleUtils, staleConfig, live} = makeTabStagingFixture();
+  const twoDays = 48 * 60 * 60 * 1000;
+  backdate(staleUtils, twoDays);
+  backdate(staleConfig, twoDays);
+  const sandbox = loadUpdater(root);
+
+  const removed = await sandbox.sweepStaleUpdaterTempDirs({tempDir: root});
+
+  assert.deepEqual([...removed].sort(), ['fxs-config-1700000000001', 'fxs-utils-1700000000000']);
+  assert.equal(fs.existsSync(staleUtils), false);
+  assert.equal(fs.existsSync(staleConfig), false);
+  assert.equal(fs.existsSync(live), true, "a live install's staging dir stays");
+  assert.equal(
+    fs.existsSync(path.join(root, 'someone-elses-dir')),
+    true,
+    'a foreign temp entry is never touched'
+  );
+});
+
+test('sweepStaleUpdaterTempDirs: an old foreign dir survives on the prefix check alone', async () => {
+  const {root, stale} = makeTempFixture();
+  const foreign = path.join(root, 'someone-elses-dir');
+  const twoDays = 48 * 60 * 60 * 1000;
+  backdate(stale, twoDays);
+  // Old enough that only the prefix check can spare it — the fixtures elsewhere
+  // leave the foreign entry fresh, so its survival there proves nothing about
+  // the basename/full-path split this test is here to pin.
+  backdate(foreign, twoDays);
+  const sandbox = loadUpdater(root);
+
+  const removed = await sandbox.sweepStaleUpdaterTempDirs({tempDir: root});
+
+  assert.deepEqual([...removed], ['fxs-updater-ui-1700000000000']);
+  assert.equal(fs.existsSync(stale), false, "the module's own stale dir is still reclaimed");
+  assert.equal(
+    fs.existsSync(foreign),
+    true,
+    'an old foreign dir is spared by the prefix match, not by its mtime'
   );
 });
 
