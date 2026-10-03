@@ -1383,12 +1383,17 @@ function isTransientFileHold(err) {
  * hold that outlives the budget — propagates unchanged, so a genuinely
  * read-only or missing target still fails loudly instead of being masked.
  *
+ * Exported for the updater tab's config install (updater.js), which copies into
+ * the same live install dir and must not escalate to a UAC prompt over a hold a
+ * retry would have ridden out. The tab feature-detects it: a module older than
+ * this export keeps the pre-existing escalate-on-any-failure path.
+ *
  * @template T
  * @param {() => Promise<T>} op
  * @param {{attempts?: number; delayMs?: number}} [opts]
  * @returns {Promise<T>}
  */
-async function withFileHoldRetry(op, {attempts = 4, delayMs = 150} = {}) {
+export async function withFileHoldRetry(op, {attempts = 4, delayMs = 150} = {}) {
   let lastErr;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
