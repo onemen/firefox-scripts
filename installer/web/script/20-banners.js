@@ -129,9 +129,13 @@
                 document.body.removeChild(a);
               } else {
                 // A newer build is published but the managed block has no URL
-                // for this platform yet — fall back to the releases page.
+                // for this platform yet — point at the `latest` release, where
+                // the newest build of every asset lives.  Not the rolling
+                // /releases listing: the newest entry there can be a dated
+                // component release (scripts-<date>) with no installer asset,
+                // and the user would have to hunt for the right binary.
                 window.open(
-                  'https://github.com/onemen/firefox-scripts/releases',
+                  'https://github.com/onemen/firefox-scripts/releases/tag/latest',
                   '_blank',
                   'noopener'
                 );
