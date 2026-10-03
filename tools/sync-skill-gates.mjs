@@ -14,9 +14,10 @@
  *   (provenance at a glance). (The literal patterns live in
  *   config/.prettierignore — they cannot be spelled inside a block comment: the
  *   glob's leading double-star-slash sequence is exactly what terminates one.)
- * - `config/.markdownlint-cli2.jsonc` — a managed block inside the `ignores`
- *   array holds one `.agents/skills/NAME/` glob entry per third-party skill, so
- *   installing a new vendor skill never requires hand-editing the config.
+ * - `config/.markdownlintignore` — a managed block between BEGIN/END comment
+ *   markers holds one `.agents/skills/NAME/` glob entry per third-party skill,
+ *   so installing a new vendor skill never requires hand-editing the ignore
+ *   list. (markdownlint-cli has no `ignores` key in its config, hence a file.)
  *
  * eslint's ignores are derived directly at config-load (see
  * `config/eslint.config.js`) — no static eslint list exists.
@@ -58,13 +59,7 @@ export const PRETTIERIGNORE_PATH = 'config/.prettierignore';
 export const BEGIN_MARKER = '# BEGIN managed: third-party skills (generated — run pnpm format:fix)';
 export const END_MARKER = '# END managed';
 
-export const MARKDOWNLINT_PATH = 'config/.markdownlint-cli2.jsonc';
-/** Comment markers inside the JSONC `ignores` array. */
-export const MDLINT_BEGIN_MARKER =
-  '// BEGIN managed: third-party skills (generated — run pnpm format:fix)';
-export const MDLINT_END_MARKER = '// END managed';
-/** The line that opens the ignores array — the managed block inserts after it. */
-export const MDLINT_ANCHOR = '"ignores": [';
+export const MARKDOWNLINT_PATH = 'config/.markdownlintignore';
 
 /**
  * The third-party/authored classification of `.agents/skills/`, from the
@@ -95,8 +90,8 @@ export function classifySkills(root) {
  */
 function isSkillGateLine(line) {
   const t = line.trim();
-  // JSONC `//` comments (markdownlint config prose) are never gate lines —
-  // `--fix` must preserve a comment that merely mentions .agents/skills.
+  // Comment lines (both files' prose) are never gate lines — `--fix` must
+  // preserve a comment that merely mentions .agents/skills.
   if (t === '' || t.startsWith('#') || t.startsWith('//')) return false;
   return t.includes('.agents/skills');
 }
@@ -182,57 +177,53 @@ export function renderPrettierignore(current, thirdParty, authored) {
 }
 
 /**
- * The desired managed block for the markdownlint config's `ignores` array — one
+ * The desired managed block for the markdownlint ignore file — one
  * `.agents/skills/NAME/` glob entry per third-party skill. Authored skills are
  * deliberately absent (they ARE linted); node_modules/dist/local entries stay
- * hand-maintained outside the block.
+ * hand-maintained outside the block. Same `#` comment markers as
+ * .prettierignore (gitignore syntax, so `#` is the comment form).
  *
  * @param {string[]} thirdParty
  * @returns {string[]}
  */
 export function renderMarkdownlintBlock(thirdParty) {
-  return [
-    `    ${MDLINT_BEGIN_MARKER}`,
-    ...thirdParty.map(name => `    "**/.agents/skills/${name}/**",`),
-    `    ${MDLINT_END_MARKER}`,
-  ];
+  return [BEGIN_MARKER, ...thirdParty.map(name => `**/.agents/skills/${name}/**`), END_MARKER];
 }
 
 /**
- * Rewrite the markdownlint config's `ignores` array with the managed block
- * after the opening anchor, dropping both any previous block and stray
- * hand-written skill entries elsewhere in the array (the 4dd6640 regression
- * class). Plain line surgery — no JSON parse/reserialize — so every comment
- * survives byte-for-byte.
+ * Rewrite `config/.markdownlintignore` with the managed block, dropping both
+ * any previous block and stray hand-written skill entries elsewhere in the file
+ * (the 4dd6640 regression class). Plain line surgery — no parse and no
+ * reserialize — so every comment survives byte-for-byte.
  *
- * @param {string} current file content
+ * @param {string} current file content ('' for a fresh file)
  * @param {string[]} thirdParty
  * @returns {string}
  */
 export function renderMarkdownlintConfig(current, thirdParty) {
   const lines = current.replace(/\r\n/g, '\n').split('\n');
-  const anchorIdx = lines.findIndex(l => l.trim() === MDLINT_ANCHOR);
-  if (anchorIdx === -1) {
-    throw new Error(`${MARKDOWNLINT_PATH}: ignores-array anchor (${MDLINT_ANCHOR}) not found`);
-  }
-  const beginIdx = lines.findIndex(l => l.trim() === MDLINT_BEGIN_MARKER);
-  const endIdx = lines.findIndex(l => l.trim() === MDLINT_END_MARKER);
-  const hasBlock = beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx;
+  const beginIdx = lines.indexOf(BEGIN_MARKER);
+  const endIdx = lines.indexOf(END_MARKER);
+  const hasBlock =
+    beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx && !hasOrphanMarkers(lines);
   const inBlock = i => hasBlock && i >= beginIdx && i <= endIdx;
   // Drop the previous block (if any) and stray hand-written skill entries so
   // the fresh block is the only gate in the file after one --fix run.
   const kept = lines.filter(
     (line, i) =>
-      !inBlock(i) &&
-      !isSkillGateLine(line) &&
-      line.trim() !== MDLINT_BEGIN_MARKER &&
-      line.trim() !== MDLINT_END_MARKER
+      inBlock(i) || (!isSkillGateLine(line) && line !== BEGIN_MARKER && line !== END_MARKER)
   );
-  const kAnchor = kept.findIndex(l => l.trim() === MDLINT_ANCHOR);
+  if (!hasBlock) {
+    // No (valid) managed block — append one after the surviving content.
+    const base = kept.join('\n').replace(/\n+$/, '');
+    return [...(base ? [base, ''] : []), ...renderMarkdownlintBlock(thirdParty), ''].join('\n');
+  }
+  const kBegin = kept.indexOf(BEGIN_MARKER);
+  const kEnd = kept.indexOf(END_MARKER);
   return [
-    ...kept.slice(0, kAnchor + 1),
+    ...kept.slice(0, kBegin),
     ...renderMarkdownlintBlock(thirdParty),
-    ...kept.slice(kAnchor + 1),
+    ...kept.slice(kEnd + 1),
   ].join('\n');
 }
 
@@ -247,14 +238,14 @@ async function main() {
 
   const mdFile = path.join(REPO_ROOT, MARKDOWNLINT_PATH);
   const mdCurrent = fs.existsSync(mdFile) ? fs.readFileSync(mdFile, 'utf8') : '';
-  const mdStray = findStraySkillLines(mdCurrent, MDLINT_BEGIN_MARKER, MDLINT_END_MARKER);
+  const mdStray = findStraySkillLines(mdCurrent);
   const mdDesired = renderMarkdownlintConfig(mdCurrent, thirdParty);
 
   const prettierOk = desired === current.replace(/\r\n/g, '\n');
   const mdOk = mdDesired === mdCurrent.replace(/\r\n/g, '\n');
   if (prettierOk && mdOk) {
     console.log(
-      `skill gates: in sync (${thirdParty.length} third-party, ${authored.length} authored) — .prettierignore + .markdownlint-cli2.jsonc`
+      `skill gates: in sync (${thirdParty.length} third-party, ${authored.length} authored) — .prettierignore + .markdownlintignore`
     );
     return;
   }

@@ -19,18 +19,11 @@ overrides:
   # (@microsoft/eslint-plugin-sdl, clang-format → minimatch); the patched
   # 1.1.20+ / 2.1.6+ / 5.0.11+ releases all satisfy this floor.
   brace-expansion: '>=1.1.20'
-
-audit:
-  # GHSA-vfj7-8cjw-p6xm: braces stack-exhaustion DoS through deeply nested
-  # patterns. No patched release exists — 3.0.3 is the newest braces on npm and
-  # the advisory lists `patched_versions: null` — so no override can clear it.
-  # Not reachable: braces rides devDependencies only (markdownlint-cli2 →
-  # globby/fast-glob → micromatch), the pattern strings come from tracked config
-  # (config/.markdownlint-cli2.jsonc, ci.yml) rather than untrusted input, and
-  # the runtime dependency surface is zero (ADR 0033), so nothing here reaches
-  # a shipped artifact. Remove this entry when upstream ships a fix.
-  ignore:
-    - GHSA-vfj7-8cjw-p6xm
+  # GHSA-r3ph-w7gj-g6xm: js-yaml merge keys let an empty merge source burn CPU
+  # (maxTotalMergeKeys bounds key count, not merge depth). markdownlint-cli
+  # pins js-yaml ~5.2.1, whose latest (5.4.0) is still affected; 5.4.1 is the
+  # first fixed release, and the floor keeps every copy patched.
+  js-yaml: '>=5.4.1'
 
 trustPolicy: no-downgrade
 
