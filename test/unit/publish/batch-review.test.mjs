@@ -324,13 +324,14 @@ test('cleanupCoderabbitTemp: removes stale cr dirs, keeps young ones', () => {
     readdirSync: () => entries,
     statSync: p => ({mtimeMs: p.endsWith('old') ? NOW - 3_600_000 : NOW - 60_000}),
     rmSync: p => removed.push(p),
+    isLocked: () => false,
   });
   // join() so the expectation matches the platform separator the helper uses.
   const oldPath = join('/t', 'coderabbit-update-old');
   const newPath = join('/t', 'coderabbit-update-new');
   assert.deepEqual(gone, [oldPath]);
   assert.deepEqual(removed, [oldPath]);
-  assert.deepEqual(kept, [{path: newPath, ageMs: 60_000}]);
+  assert.deepEqual(kept, [{path: newPath, ageMs: 60_000, reason: 'within grace'}]);
 });
 
 test('cleanupCoderabbitTemp: an undeletable dir is reported, never thrown', () => {
@@ -344,6 +345,7 @@ test('cleanupCoderabbitTemp: an undeletable dir is reported, never thrown', () =
     rmSync: () => {
       throw new Error('EBUSY: resource busy or locked');
     },
+    isLocked: () => false,
     log: msg => logged.push(msg),
   });
   assert.deepEqual(removed, []);
@@ -368,4 +370,58 @@ test('parseArgs: --temp-grace defaults to 30 minutes and parses', () => {
   assert.equal(parseArgs(['--temp-grace', '0']).tempGrace, 0);
   assert.throws(() => parseArgs(['--temp-grace', 'soon']), /Invalid --temp-grace/);
   assert.throws(() => parseArgs(['--temp-grace']), /Invalid --temp-grace/);
+});
+
+// ── review:batch findings on this tool (ADR 0020 triage) ────────────────
+
+test('cleanupCoderabbitTemp keeps an old dir that a running cr still holds open', () => {
+  const NOW = 1_700_000_000_000;
+  const removed = [];
+  // Old enough to sweep, but a live review owns it: age is not ownership.
+  const {removed: gone, kept} = cleanupCoderabbitTemp({
+    graceMs: 1000,
+    tmpDir: '/t',
+    now: () => NOW,
+    readdirSync: () => ['coderabbit-update-live'],
+    statSync: () => ({mtimeMs: NOW - 86_400_000}),
+    rmSync: p => removed.push(p),
+    isLocked: p => p.includes('live'),
+  });
+  assert.deepEqual(gone, []);
+  assert.deepEqual(removed, [], 'a live run keeps its directory');
+  assert.equal(kept[0].reason, 'in use by a running cr');
+});
+
+test('cleanupCoderabbitTemp keeps an old dir when the lock probe itself fails', () => {
+  const NOW = 1_700_000_000_000;
+  // Cannot prove it is free -> never delete on a doubt.
+  const {removed, kept} = cleanupCoderabbitTemp({
+    graceMs: 1000,
+    tmpDir: '/t',
+    now: () => NOW,
+    readdirSync: () => ['coderabbit-update-unknowable'],
+    statSync: () => ({mtimeMs: NOW - 86_400_000}),
+    rmSync: () => assert.fail('must not delete when the probe errors'),
+    isLocked: () => {
+      throw new Error('EPERM');
+    },
+  });
+  assert.deepEqual(removed, []);
+  assert.equal(kept[0].reason, 'in use by a running cr');
+});
+
+test('parseFindings keeps the anchor when an OSC-8 link ends with ESC-backslash', () => {
+  // cr emits the ST (ESC \) terminator as well as BEL; a character class that
+  // admits ESC swallows the visible label before it.
+  const raw = [
+    'minor [Functional Correctness]',
+    '  → \u001b]8;;file:///x/docs/a.md\u001b\\docs/a.md:12-14\u001b]8;;\u001b\\',
+    '',
+    ' body text',
+  ].join('\n');
+  const findings = parseFindings(raw);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].path, 'docs/a.md');
+  assert.equal(findings[0].startLine, 12);
+  assert.equal(findings[0].line, 14);
 });

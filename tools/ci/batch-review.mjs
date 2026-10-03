@@ -287,7 +287,7 @@ function spawnSyncGit(cmd, args, opts) {
 /** OSC-8 hyperlinks and SGR colour runs. */
 // Control characters are exactly what this strips — that is the point.
 // eslint-disable-next-line no-control-regex
-const ANSI_RE = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)|\u001b\[[0-9;]*[A-Za-z]/g;
+const ANSI_RE = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b\[[0-9;]*[A-Za-z]/g;
 
 /** `minor [Functional Correctness]` — cr's severity + category line. */
 const FINDING_HEAD_RE = /^(trivial|minor|major|critical) \[([^\]]+)\]$/i;
@@ -440,6 +440,36 @@ export function findingsTable(findings) {
  * }} [opts]
  * @returns {{removed: string[]; kept: {path: string; ageMs: number}[]}}
  */
+/**
+ * True when something still holds the directory open.
+ *
+ * The probe is an atomic rename to a scratch name: a live `cr` process keeps
+ * its working directory open, and on Windows that makes the rename fail with
+ * EBUSY/EPERM. If the rename succeeds the directory was free, so it is renamed
+ * straight back (the same path the caller will delete). Anything unexpected — a
+ * permissions error, an exotic filesystem — answers `true`, because the cost of
+ * keeping a stale directory is one leftover file, while deleting a live one
+ * breaks a running review.
+ *
+ * @param {string} dir
+ * @returns {boolean} true = in use (do not delete)
+ */
+export function defaultIsLocked(dir) {
+  const probe = `${dir}.sweeping-${process.pid}-${Date.now()}`;
+  try {
+    fs.renameSync(dir, probe);
+  } catch {
+    return true; // EBUSY/EPERM/EACCES: assume a live owner
+  }
+  try {
+    fs.renameSync(probe, dir);
+    return false;
+  } catch {
+    // It moved but would not move back — do not lose the directory.
+    return true;
+  }
+}
+
 export function cleanupCoderabbitTemp({
   graceMs = 30 * 60_000,
   tmpDir = tmpdir(),
@@ -448,6 +478,11 @@ export function cleanupCoderabbitTemp({
   rmSync = fs.rmSync,
   now = Date.now,
   log = () => {},
+  // A directory is only swept if nothing has touched it for `graceMs` AND no
+  // cr process holds it open. Age alone is not ownership: a review can run
+  // longer than the grace window without updating its directory's mtime, and
+  // `--temp-grace 0` would otherwise make a live run's dir eligible instantly.
+  isLocked = defaultIsLocked,
 } = {}) {
   const removed = [];
   const kept = [];
@@ -466,7 +501,19 @@ export function cleanupCoderabbitTemp({
       continue; // vanished under us
     }
     if (ageMs < graceMs) {
-      kept.push({path: full, ageMs});
+      kept.push({path: full, ageMs, reason: 'within grace'});
+      continue;
+    }
+    // Old enough, but a live cr run still has it open — that is a stronger
+    // signal than mtime in either direction, so keep it.
+    let locked;
+    try {
+      locked = isLocked(full);
+    } catch {
+      locked = true; // cannot prove it is free; never delete on a doubt
+    }
+    if (locked) {
+      kept.push({path: full, ageMs, reason: 'in use by a running cr'});
       continue;
     }
     try {
@@ -474,7 +521,7 @@ export function cleanupCoderabbitTemp({
       removed.push(full);
     } catch (err) {
       log(`⚠ could not remove a stale cr temp dir: ${full} (${err.message})`);
-      kept.push({path: full, ageMs});
+      kept.push({path: full, ageMs, reason: 'undeletable'});
     }
   }
   return {removed, kept};
@@ -621,12 +668,22 @@ export async function main() {
     const findings = parseFindings(cr.stdout);
     console.log(`\n${findingsTable(findings)}`);
     const reportPath = join('dist', 'review', 'batch-findings.json');
+    // A report from an earlier run is worse than no report: the ADR 0020 step
+    // would post stale findings against this run's PRs. Remove it up front so a
+    // failed write can never be mistaken for a fresh one.
+    fs.rmSync(reportPath, {force: true});
     try {
       fs.mkdirSync(join('dist', 'review'), {recursive: true});
       fs.writeFileSync(reportPath, findingsJson(findings, {refs: unique, base: args.base}));
       console.log(`Anchors + bodies written to ${reportPath}`);
     } catch (err) {
-      console.error(`⚠ could not write ${reportPath}: ${err.message}`);
+      // Fatal, not a warning: the log below tells the agent to read this file,
+      // and it does not exist. Continuing would point it at nothing (or, before
+      // the rmSync above, at the previous run's findings).
+      console.error(`✗ could not write ${reportPath}: ${err.message}`);
+      console.error('  The ADR 0020 posting step needs this file — fix the path or rerun.');
+      process.exitCode = 5;
+      return;
     }
     console.log(
       [
