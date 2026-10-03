@@ -26,17 +26,26 @@
 //   --dry-run          List what would be merged without running cr.
 //   --check            Show `cr usage` (period review count + reset date) and exit.
 //   --wait <minutes>   If cr is rate-limited, wait this long and retry once.
+//   --temp-grace <min> Age below which a coderabbit-update-* dir in %TEMP% is
+//                     treated as possibly in use by another cr run (default 30).
+//
+// After the review the script prints the findings it could anchor, writes them
+// to dist/review/batch-findings.json for the ADR 0020 posting step, and points
+// at the protocol; it also sweeps cr's own coderabbit-update-* temp dirs.
 //
 // Exit codes: 0 = review ran (or dry-run); 2 = nothing to review / bad usage;
 //             3 = cr failed; 4 = CodeRabbit rate limit hit (retry later).
-//
-// Notes:
-// - Local use needs only a browser login: run `cr auth login` once (device
-//   flow, no API key). An agentic API key (cr-...) is required only for
-//   headless CI — see the headless integration docs; user API keys are
-//   rejected by the CLI.
-// - On rate limit the CLI does not retry automatically; this script detects
-//   the condition and tells you, or waits and retries once with --wait.
+//// Notes:
+//   - Local use needs only a browser login: run `cr auth login` once (device
+//     flow, no API key). An agentic API key (cr-...) is required only for
+//     headless CI — see the headless integration docs; user API keys are
+//     rejected by the CLI.
+//   - On rate limit the CLI does not retry automatically; this script detects
+//     the condition and tells you, or waits and retries once with --wait.
+//   - cr's findings carry a file + line range in the terminal output (an OSC-8
+//     hyperlink plus a plain `path:from-to` label). parseFindings() extracts
+//     them so the agent can post line-anchored review threads straight from the
+//     report instead of re-deriving the anchor from the diff.
 // - `git worktree` is used so your current checkout is never touched; the
 //   temp branch lives in a scratch worktree under the repo's .git.
 // - After the review, the temp branch and worktree are removed and your
@@ -74,6 +83,7 @@ export function parseArgs(argv) {
     dryRun: false,
     check: false,
     wait: null,
+    tempGrace: 30,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const value = () => argv[++i];
@@ -122,6 +132,12 @@ export function parseArgs(argv) {
         args.wait = Number(value());
         if (!Number.isFinite(args.wait) || args.wait < 0) {
           throw new Error(`Invalid --wait minutes: ${argv[i - 1]}`);
+        }
+        break;
+      case '--temp-grace':
+        args.tempGrace = Number(value());
+        if (!Number.isFinite(args.tempGrace) || args.tempGrace < 0) {
+          throw new Error(`Invalid --temp-grace minutes: ${argv[i - 1]}`);
         }
         break;
       case '--':
@@ -256,6 +272,214 @@ function spawnSyncGit(cmd, args, opts) {
   return run(cmd, args, opts);
 }
 
+// ── findings → anchors ───────────────────────────────────────────────────
+// `cr review` prints each finding as
+//
+//   minor [Functional Correctness]
+//   → <OSC-8 hyperlink>docs/auto-updater.md:250-255<OSC-8 close>
+//
+//   <body>
+//
+// The label after the hyperlink is the anchor an ADR 0020 review thread needs
+// (`path` + the last line), so it is parsed out here instead of leaving every
+// agent to re-derive it from the diff — and to re-derive it wrong on a range.
+
+/** OSC-8 hyperlinks and SGR colour runs. */
+// Control characters are exactly what this strips — that is the point.
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)|\u001b\[[0-9;]*[A-Za-z]/g;
+
+/** `minor [Functional Correctness]` — cr's severity + category line. */
+const FINDING_HEAD_RE = /^(trivial|minor|major|critical) \[([^\]]+)\]$/i;
+
+/**
+ * `docs/auto-updater.md:250-255` and the `:250` single-line form. The path
+ * class excludes `:` so the separator is unambiguous, and the range form is its
+ * own pattern rather than an optional group over `(\d+)` (no ambiguous
+ * adjacency). Both are re-checked with FILE_SUFFIX_RE before they count.
+ */
+const ANCHOR_RANGE_RE = /^([^:\s]+):(\d+)-(\d+)$/;
+const ANCHOR_SINGLE_RE = /^([^:\s]+):(\d+)$/;
+/** An anchor must point at a file, not at a bare word. */
+const FILE_SUFFIX_RE = /\.[A-Za-z0-9]+$/;
+
+/** Trailing summary chatter that belongs to the run, not to a finding. */
+const TAIL_RE = /^(?:Review complete\b|Review completed\b|\d+ findings?\b|Print all AI prompts)/i;
+
+/**
+ * Strip ANSI/OSC-8 escapes and normalize line endings.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripAnsi(text) {
+  return String(text ?? '')
+    .replace(ANSI_RE, '')
+    .replace(/\r\n/g, '\n');
+}
+
+/**
+ * Parse `cr review` output into findings with their posting anchors.
+ *
+ * A finding the CLI printed without an anchor is still returned (`path: null`)
+ * rather than dropped: the agent must triage it, and an unanchored finding
+ * falls back to the review-body form ADR 0020 allows.
+ *
+ * @param {string} stdout raw `cr review` stdout
+ * @returns {{
+ *   severity: string;
+ *   category: string;
+ *   path: string | null;
+ *   startLine: number | null;
+ *   line: number | null;
+ *   body: string;
+ * }[]}
+ */
+export function parseFindings(stdout) {
+  const findings = [];
+  let current = null;
+  for (const raw of stripAnsi(stdout).split('\n')) {
+    const head = FINDING_HEAD_RE.exec(raw.trim());
+    if (head) {
+      current = {
+        severity: head[1].toLowerCase(),
+        category: head[2],
+        path: null,
+        startLine: null,
+        line: null,
+        body: [],
+      };
+      findings.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const trimmed = raw.replace(/^[\s→>-]+/, '').trim();
+    if (!trimmed) continue;
+    if (TAIL_RE.test(trimmed)) {
+      current = null; // the run's summary starts here
+      continue;
+    }
+    if (/^[\s\u2500-\u257f]+$/.test(trimmed)) {
+      current = null; // a box-drawing rule closes the finding's body
+      continue;
+    }
+    const range = ANCHOR_RANGE_RE.exec(trimmed);
+    const anchor = range ?? ANCHOR_SINGLE_RE.exec(trimmed);
+    if (anchor && FILE_SUFFIX_RE.test(anchor[1]) && !current.path) {
+      current.path = anchor[1].replace(/\\/g, '/');
+      current.startLine = Number(anchor[2]);
+      current.line = range ? Number(anchor[3]) : Number(anchor[2]);
+      continue;
+    }
+    current.body.push(trimmed);
+  }
+  return findings.map(f => ({...f, body: f.body.join('\n')}));
+}
+
+/**
+ * The findings as JSON, for the ADR 0020 posting step (one entry per accepted
+ * finding becomes one line-anchored thread).
+ *
+ * @param {ReturnType<typeof parseFindings>} findings
+ * @param {{refs?: string[]; base?: string}} [opts]
+ * @returns {string}
+ */
+export function findingsJson(findings, {refs = [], base = 'origin/main'} = {}) {
+  return `${JSON.stringify(
+    {
+      protocol: 'ADR 0020 — assess each finding, post the accepted ones as line-anchored threads',
+      base,
+      refs,
+      count: findings.length,
+      findings,
+    },
+    null,
+    2
+  )}\n`;
+}
+
+/**
+ * A compact table for the terminal: what to triage, and where to post it.
+ *
+ * @param {ReturnType<typeof parseFindings>} findings
+ * @returns {string}
+ */
+export function findingsTable(findings) {
+  if (findings.length === 0) return 'No findings parsed from the cr output.';
+  const rows = findings.map((f, i) => {
+    const where =
+      f.path ?
+        `${f.path}:${f.startLine === f.line ? f.line : `${f.startLine}-${f.line}`}`
+      : '(no anchor in output — derive it before posting)';
+    return `  ${i + 1}. [${f.severity}] ${f.category} — ${where}`;
+  });
+  return `Findings parsed from the cr output:\n${rows.join('\n')}`;
+}
+
+// ── cr's own %TEMP% leftovers ────────────────────────────────────────────
+// The CLI stages each run in a coderabbit-update-* dir and never removes it,
+// so every review leaves one behind in the OS temp dir (the same dir this repo's
+// hygiene test polices, and the user's Temp on Windows). The sweep runs before
+// and after the review; an entry younger than the grace period is left alone
+// and reported, because a cr run in another thread could still own it.
+
+/**
+ * Remove stale `coderabbit-update-*` dirs from the OS temp dir.
+ *
+ * Injectable (readdirSync/statSync/rmSync/now/log) so the age rule is unit
+ * tested without touching the filesystem.
+ *
+ * @param {{
+ *   graceMs?: number;
+ *   tmpDir?: string;
+ *   readdirSync?: typeof fs.readdirSync;
+ *   statSync?: typeof fs.statSync;
+ *   rmSync?: typeof fs.rmSync;
+ *   now?: () => number;
+ *   log?: (...a: unknown[]) => void;
+ * }} [opts]
+ * @returns {{removed: string[]; kept: {path: string; ageMs: number}[]}}
+ */
+export function cleanupCoderabbitTemp({
+  graceMs = 30 * 60_000,
+  tmpDir = tmpdir(),
+  readdirSync = fs.readdirSync,
+  statSync = fs.statSync,
+  rmSync = fs.rmSync,
+  now = Date.now,
+  log = () => {},
+} = {}) {
+  const removed = [];
+  const kept = [];
+  let entries;
+  try {
+    entries = readdirSync(tmpDir);
+  } catch {
+    return {removed, kept}; // no readable temp dir: nothing to sweep
+  }
+  for (const name of entries.filter(n => /^coderabbit-update-/.test(n))) {
+    const full = join(tmpDir, name);
+    let ageMs;
+    try {
+      ageMs = now() - statSync(full).mtimeMs;
+    } catch {
+      continue; // vanished under us
+    }
+    if (ageMs < graceMs) {
+      kept.push({path: full, ageMs});
+      continue;
+    }
+    try {
+      rmSync(full, {recursive: true, force: true, maxRetries: 3, retryDelay: 300});
+      removed.push(full);
+    } catch (err) {
+      log(`⚠ could not remove a stale cr temp dir: ${full} (${err.message})`);
+      kept.push({path: full, ageMs});
+    }
+  }
+  return {removed, kept};
+}
+
 function mergedDiffStat(base, refs) {
   // A conservative estimate of what the combined diff touches: union of each
   // ref's file list vs base. Real merges can differ slightly.
@@ -352,6 +576,9 @@ export async function main() {
     const runCrReview = () => {
       const crArgs = ['review'];
       if (args.agent) crArgs.push('--agent');
+      // Sweep before AND after: before clears what earlier runs stranded, after
+      // clears whatever this one leaves behind (cr never removes its own dir).
+      cleanupCoderabbitTemp({graceMs: args.tempGrace * 60_000, log: console.error});
       return run(crBin, crArgs, {ignoreFail: true, cwd: wtree});
     };
     let cr = runCrReview();
@@ -388,6 +615,33 @@ export async function main() {
     console.log(
       cr.stdout?.trim() ? `\n${cr.stdout.trim()}` : 'cr review completed with no text output.'
     );
+
+    // The findings, with the anchors ADR 0020 threads need, before the agent
+    // starts re-reading the raw output.
+    const findings = parseFindings(cr.stdout);
+    console.log(`\n${findingsTable(findings)}`);
+    const reportPath = join('dist', 'review', 'batch-findings.json');
+    try {
+      fs.mkdirSync(join('dist', 'review'), {recursive: true});
+      fs.writeFileSync(reportPath, findingsJson(findings, {refs: unique, base: args.base}));
+      console.log(`Anchors + bodies written to ${reportPath}`);
+    } catch (err) {
+      console.error(`⚠ could not write ${reportPath}: ${err.message}`);
+    }
+    console.log(
+      [
+        '',
+        'Next — ADR 0020 (.agents/skills/ai-review/SKILL.md), not optional:',
+        '  1. Assess every finding right / wrong / useless, quoting the disputed line.',
+        '  2. Post each accepted finding as its own line-anchored, individually',
+        '     resolvable thread (gh api …/pulls/<n>/comments -f path=<path>',
+        '     -F line=<last line of the range> -f side=RIGHT), with the',
+        '     🤖 provenance marker naming this batch run.',
+        '  3. Resolve each thread as its fix lands; none may be left open at merge.',
+        'An external finding gets the same scrutiny as a local one — assessed, not',
+        'rubber-stamped.',
+      ].join('\n')
+    );
   } catch (err) {
     if (err instanceof BatchExit) {
       process.exitCode = err.code;
@@ -396,6 +650,16 @@ export async function main() {
     throw err;
   } finally {
     removeTempWorktree(wtree, tempBranch, {run, keep: Boolean(args.keep), log: console.error});
+    const sweep = cleanupCoderabbitTemp({graceMs: args.tempGrace * 60_000, log: console.error});
+    if (sweep.removed.length > 0) {
+      console.log(`Removed ${sweep.removed.length} stale cr temp dir(s) from the OS temp dir.`);
+    }
+    if (sweep.kept.length > 0) {
+      const age = Math.round(sweep.kept[0].ageMs / 60_000);
+      console.log(
+        `Left ${sweep.kept.length} coderabbit-update-* dir(s) alone (youngest ${age} min old; another cr run may own them — --temp-grace to change).`
+      );
+    }
   }
   console.log(
     args.keep ?

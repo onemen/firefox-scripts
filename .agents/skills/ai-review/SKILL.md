@@ -192,7 +192,16 @@ reviewers are the **operator's** call, never the agent's initiative:
   `gh pr comment`), the 🤖 provenance marker (e.g.
   `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`), and each
   thread resolved as its fix lands. External findings get the same scrutiny as local ones —
-  assessed, not rubber-stamped.
+  assessed, not rubber-stamped. Running the batch review is not the end of the step: **ADR 0020
+  triage and posting is mandatory once it finishes** — the run is only worth anything if its
+  findings are assessed and posted (or explicitly rejected with a reason).
+- **`review:batch` hands you the anchors** — `tools/ci/batch-review.mjs` parses the cr output into
+  `dist/review/batch-findings.json`: one entry per finding with `severity`, `category`, `path`,
+  `line`/`endLine`, and the finding body, plus the `refs` (PR branches) it came from. Post each
+  accepted finding's thread on the **owning** PR at exactly `path:line` from that report rather than
+  re-deriving line numbers from the diff — a finding without a parsed anchor still gets posted, with
+  the anchor you verified yourself. The report is a report, not a queue: assess every finding before
+  posting anything.
 
 ## Also know
 

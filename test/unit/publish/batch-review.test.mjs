@@ -7,12 +7,18 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {join} from 'node:path';
 import {
   ageToUnixSeconds,
+  cleanupCoderabbitTemp,
+  findingsJson,
+  findingsTable,
   isRateLimited,
   parseArgs,
+  parseFindings,
   parseOpenPrBranchesOutput,
   removeTempWorktree,
+  stripAnsi,
 } from '../../../tools/ci/batch-review.mjs';
 
 // ── removeTempWorktree (temp-worktree teardown ladder) ─────────────────
@@ -189,4 +195,177 @@ test('ageToUnixSeconds: converts human ages to timestamps', () => {
   assert.ok(ageToUnixSeconds('3d') < now - 250000 && ageToUnixSeconds('3d') > now - 270000);
   assert.throws(() => ageToUnixSeconds('nope'), /Invalid --since age/);
   assert.throws(() => ageToUnixSeconds('3'), /Invalid --since age/);
+});
+
+// ── findings → anchors ───────────────────────────────────────────────────
+// ADR 0020 wants one review thread per finding, anchored to path + line on the
+// PR head. cr prints that anchor (inside an OSC-8 hyperlink); parsing it here
+// is what stops every agent from re-deriving the range from the diff.
+
+/** One finding as cr prints it: severity + category, the anchor, the body. */
+function crFinding({
+  severity = 'minor',
+  category = 'Functional Correctness',
+  file = 'docs/auto-updater.md',
+  range = '250-255',
+  body = 'Separate config-copy behavior from copyFileList() retries.',
+} = {}) {
+  const label = range ? `${file}:${range}` : file;
+  return [
+    `  ${severity} [${category}]`,
+    `  → \u001b]8;;vscode://file/C:\\Users\\test\\AppData\\Local\\Temp\\cr-batch-1\\${file.replace(
+      /\//g,
+      '\\'
+    )}\u0007${label}\u001b]8;;\u0007`,
+    '',
+    `  ${body}`,
+  ].join('\n');
+}
+
+const CR_TAIL = [
+  '',
+  '────────────────────────────────────────',
+  'Review complete',
+  '1 finding ✔',
+  '',
+].join('\n');
+
+test('parseFindings: extracts severity, category and the line range', () => {
+  const findings = parseFindings(`${crFinding()}\n${CR_TAIL}`);
+  assert.equal(findings.length, 1);
+  assert.deepEqual(
+    {severity: findings[0].severity, category: findings[0].category},
+    {severity: 'minor', category: 'Functional Correctness'}
+  );
+  assert.equal(findings[0].path, 'docs/auto-updater.md');
+  assert.equal(findings[0].startLine, 250);
+  assert.equal(findings[0].line, 255, 'the thread anchors to the LAST line of the range');
+  assert.match(findings[0].body, /^Separate config-copy/);
+});
+
+test('parseFindings: a single-line finding anchors line to itself', () => {
+  const [finding] = parseFindings(crFinding({file: 'tools/publish/x.mjs', range: '42'}));
+  assert.equal(finding.startLine, 42);
+  assert.equal(finding.line, 42);
+});
+
+test('parseFindings: several findings, each with its own anchor', () => {
+  const out = [
+    crFinding({range: '10-12', body: 'First.'}),
+    '',
+    crFinding({severity: 'major', range: '88', body: 'Second.'}),
+    CR_TAIL,
+  ].join('\n');
+  const findings = parseFindings(out);
+  assert.equal(findings.length, 2);
+  assert.equal(findings[0].body, 'First.');
+  assert.equal(findings[1].severity, 'major');
+  assert.equal(findings[1].line, 88);
+});
+
+test('parseFindings: an unanchored finding is kept, not dropped', () => {
+  // The agent still has to triage it — ADR 0020 just falls back to a review
+  // body when no line anchor exists.
+  const out = ['  minor [Security]', '', '  Something file-wide.', '', CR_TAIL].join('\n');
+  const findings = parseFindings(out);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].path, null);
+  assert.equal(findings[0].line, null);
+  assert.equal(findings[0].body, 'Something file-wide.');
+});
+
+test('parseFindings: the run summary is not swallowed into the last body', () => {
+  const findings = parseFindings(`${crFinding({body: 'Real finding.'})}\n${CR_TAIL}`);
+  assert.equal(findings[0].body, 'Real finding.');
+});
+
+test('parseFindings: no findings in, none out', () => {
+  assert.deepEqual(parseFindings(''), []);
+  assert.deepEqual(parseFindings('All matched files use Prettier code style!'), []);
+});
+
+test('stripAnsi: removes OSC-8 hyperlinks and colour runs', () => {
+  const raw = '\u001b[1mminor\u001b[0m \u001b]8;;file:///x\u0007docs/a.md:1\u001b]8;;\u0007';
+  assert.equal(stripAnsi(raw), 'minor docs/a.md:1');
+  assert.equal(stripAnsi('a\r\nb'), 'a\nb');
+});
+
+test('findingsTable / findingsJson: carry the anchor and the ADR 0020 pointer', () => {
+  const findings = parseFindings(`${crFinding()}\n${CR_TAIL}`);
+  const table = findingsTable(findings);
+  assert.match(table, /1\. \[minor\] Functional Correctness — docs\/auto-updater\.md:250-255/);
+  const json = JSON.parse(findingsJson(findings, {refs: ['fix/a'], base: 'origin/main'}));
+  assert.equal(json.count, 1);
+  assert.match(json.protocol, /ADR 0020/);
+  assert.deepEqual(json.refs, ['fix/a']);
+  assert.equal(json.findings[0].line, 255);
+  assert.equal(findingsTable([]), 'No findings parsed from the cr output.');
+});
+
+// ── cr's own %TEMP% leftovers ────────────────────────────────────────────
+// The CLI stages each run in a coderabbit-update-* dir and never removes it, so
+// every review leaves one in the OS temp dir — the same dir this repo's hygiene
+// test polices, and the user's Temp on Windows.
+
+const NOW = 1_700_000_000_000;
+
+test('cleanupCoderabbitTemp: removes stale cr dirs, keeps young ones', () => {
+  const entries = [
+    'coderabbit-update-old',
+    'coderabbit-update-new',
+    'cr-batch-12256',
+    'fxs-utils-1234',
+  ];
+  const removed = [];
+  const {removed: gone, kept} = cleanupCoderabbitTemp({
+    graceMs: 30 * 60_000,
+    tmpDir: '/t',
+    now: () => NOW,
+    readdirSync: () => entries,
+    statSync: p => ({mtimeMs: p.endsWith('old') ? NOW - 3_600_000 : NOW - 60_000}),
+    rmSync: p => removed.push(p),
+  });
+  // join() so the expectation matches the platform separator the helper uses.
+  const oldPath = join('/t', 'coderabbit-update-old');
+  const newPath = join('/t', 'coderabbit-update-new');
+  assert.deepEqual(gone, [oldPath]);
+  assert.deepEqual(removed, [oldPath]);
+  assert.deepEqual(kept, [{path: newPath, ageMs: 60_000}]);
+});
+
+test('cleanupCoderabbitTemp: an undeletable dir is reported, never thrown', () => {
+  const logged = [];
+  const {removed, kept} = cleanupCoderabbitTemp({
+    graceMs: 1000,
+    tmpDir: '/t',
+    now: () => NOW,
+    readdirSync: () => ['coderabbit-update-locked'],
+    statSync: () => ({mtimeMs: NOW - 10_000}),
+    rmSync: () => {
+      throw new Error('EBUSY: resource busy or locked');
+    },
+    log: msg => logged.push(msg),
+  });
+  assert.deepEqual(removed, []);
+  assert.equal(kept.length, 1);
+  assert.match(logged[0], /could not remove a stale cr temp dir.*EBUSY/);
+});
+
+test('cleanupCoderabbitTemp: an unreadable temp dir is a no-op, not a crash', () => {
+  const {removed, kept} = cleanupCoderabbitTemp({
+    tmpDir: '/nope',
+    readdirSync: () => {
+      throw new Error('ENOENT');
+    },
+  });
+  assert.deepEqual(removed, []);
+  assert.deepEqual(kept, []);
+});
+
+test('parseArgs: --temp-grace defaults to 30 minutes and parses', () => {
+  assert.equal(parseArgs([]).tempGrace, 30);
+  assert.equal(parseArgs(['--temp-grace', '5']).tempGrace, 5);
+  assert.equal(parseArgs(['--temp-grace', '0']).tempGrace, 0);
+  assert.throws(() => parseArgs(['--temp-grace', 'soon']), /Invalid --temp-grace/);
+  assert.throws(() => parseArgs(['--temp-grace']), /Invalid --temp-grace/);
 });

@@ -622,6 +622,15 @@ with per-file fallback (OpenRouter stays as an optional backup). `--provider <id
 `OPENROUTER_API_KEY` variables are supported. Keep real keys only in `.env`; never commit them or
 add them to `.env-example` with real values.
 
+The quota-limited batched pass is `pnpm review:batch` (`tools/ci/batch-review.mjs`, CodeRabbit) —
+**operator-initiated only**. It merges several PR heads onto one temp branch, reviews the combined
+diff in one quota slot, parses each finding into `severity` / `category` / `path` / `line` /
+`endLine`, and writes them to **`dist/review/batch-findings.json`** with the `refs` (branches) they
+came from. That report is the input to the ADR 0020 posting step: triage every finding, then post
+each accepted one as a line-anchored thread on its own PR. `--temp-grace <minutes>` (default 30)
+sets the age below which a `coderabbit-update-*` dir in `%TEMP%` is presumed in use; older ones are
+swept before and after the review.
+
 ### Modes — `--mode=prod|dev` (REQUIRED for any real publish)
 
 See ADR [0009](./decisions/0009-unified-publish-modes.md) for the decision behind the modes.
