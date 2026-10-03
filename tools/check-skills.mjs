@@ -172,6 +172,27 @@ export function checkSkillsDir(skillsDir) {
     }
     if (!hasNonEmptyScalar(block, 'description')) {
       errors.push({file: `${rel}/SKILL.md`, message: 'frontmatter has no non-empty description:'});
+    } else {
+      // A `: ` inside a multi-line plain scalar ends the scalar and starts a
+      // new mapping key, so the frontmatter stops being a `description` and the
+      // host never registers the skill at all — `ai-review` sat unpublished in
+      // every `/skill:` list for weeks because of one "(fallback: `gh pr
+      // review`". Nothing else here can see that, because the block still has a
+      // name and *some* description text, so reject the sequence outright and
+      // say what to write instead.
+      for (const line of descriptionLines(block)) {
+        const at = line.indexOf(': ');
+        if (at !== -1) {
+          errors.push({
+            file: `${rel}/SKILL.md`,
+            message:
+              `description contains ": " at offset ${at} ("${line.trim().slice(0, 60)}"), ` +
+              `which ends the YAML plain scalar and hides the skill from the host. ` +
+              `Rewrite it as "—" or drop the colon (e.g. "fallback ` +
+              `\`gh pr review <n> --comment\`", not "fallback: \`gh pr review\`").`,
+          });
+        }
+      }
     }
     const ghKeys = Object.keys(metadata).filter(k => k.startsWith('github-'));
     if (metadata['github-repo']) {
@@ -196,6 +217,29 @@ export function checkSkillsDir(skillsDir) {
     }
   }
   return errors;
+}
+
+/**
+ * The continuation lines of a block-scalar `description:` (or a single-line
+ * one), with the two-space indent stripped.
+ *
+ * @param {string[]} block frontmatter lines
+ * @returns {string[]} description text lines
+ */
+export function descriptionLines(block) {
+  const start = block.findIndex(l => /^description:/.test(l));
+  if (start === -1) return [];
+  const lines = [];
+  // A value on the `description:` line itself is legal and needs no unwrapping.
+  const inline = block[start].replace(/^description:\s*/, '');
+  if (inline) lines.push(inline);
+  for (const line of block.slice(start + 1)) {
+    // A new top-level key ends the description block.
+    if (/^[A-Za-z_][\w-]*:/.test(line)) break;
+    if (!line.trim()) continue;
+    lines.push(line.replace(/^\s+/, ''));
+  }
+  return lines;
 }
 
 /**
