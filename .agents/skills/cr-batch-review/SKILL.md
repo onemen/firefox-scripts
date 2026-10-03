@@ -13,6 +13,15 @@ description:
 
 # CodeRabbit batch review → ADR 0020 posting
 
+**This is the CodeRabbit batch skill, not `ai-review`.** If the operator names CodeRabbit, the
+batch, or `review:batch`, this is the file to follow; `ai-review` is the cheap local default for the
+other case, and its body points here when they overlap. The two share the ADR 0020 protocol — that
+sharing is deliberate, and it is also why reading the ADR is _not_ evidence that the wrong skill was
+chosen. What separates them is the first command and the source of findings.
+
+**Read this file to the end before you build a todo.** Then start with the quota gate below — it is
+the first thing to run, not a step you get to after planning.
+
 The **protocol** — triage, anchoring, the 🤖 marker, resolution — is
 [ADR 0020](../../../docs/decisions/0020-local-agent-ai-review.md) and is identical to the local
 reviewer's. This skill only adds what is specific to the batch pass. Do not restate or re-interpret
@@ -40,7 +49,17 @@ because a PR looks unreviewed. Recommend it and wait.
 ```bash
 pnpm review:batch -- --pr 57 --pr 59     # explicit PRs
 pnpm review:batch -- --open --since 3d    # recently-updated open PRs
+pnpm review:batch -- --open --since 1d    # "today's PRs" — one slot for all of them
 ```
+
+`--open --since <age>` is the flag for a request like "all PRs from today": one merged run, one
+quota slot, N PRs. Resolve "today" yourself first
+(`gh pr list --state open --json number,createdAt`) and pass the numbers explicitly if a date
+boundary matters — `--since` filters on _updated_, not created, so a PR opened last week but pushed
+today is inside that window.
+
+`node tools/ci/batch-review.mjs --help` prints the full flag list (same block as the header comment
+of `tools/ci/batch-review.mjs`).
 
 The script merges the heads onto one temp branch, reviews the combined diff in a single quota slot,
 and writes `dist/review/batch-findings.json`. Read that report — it carries `severity`, `category`,

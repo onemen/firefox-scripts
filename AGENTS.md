@@ -94,7 +94,15 @@ usually covers the need.
 
 Task-scoped instruction modules an agent loads on demand when the task matches them — deep dive
 detail lives there so this file stays a checklist, not a manual. All skills are direct children of
-`.agents/skills/<name>/` (flat, tracked; ADR 0022):
+`.agents/skills/<name>/` (flat, tracked; ADR 0022).
+
+**Load one before you plan.** The table below is an index, not the instructions: when a row matches
+the task, read `.agents/skills/<name>/SKILL.md` first — to the end — and build the todo from what it
+says. Do not work the task from the row, and do not reconstruct the skill's content from the repo's
+general rules. Dispatch is a host convenience, not a guarantee: on 2026-10-03 an agent given "do a
+batch review on all PRs from today" announced it would check `cr-batch-review`, never opened it, and
+improvised the protocol from ADR 0020 for 59s. Reading the file costs one command; improvising the
+same content costs a review pass.
 
 - **Third-party** (`metadata.github-repo` in `SKILL.md`): installed and updated only via
   `gh skill install` / `gh skill update`; kept byte-identical to upstream — never linted or
