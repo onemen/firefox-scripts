@@ -18,6 +18,7 @@ dist
 !**/.agents/skills/ai-review
 !**/.agents/skills/batch-loop
 !**/.agents/skills/change-workflow
+!**/.agents/skills/cr-batch-review
 !**/.agents/skills/generated-files
 !**/.agents/skills/publishing
 # third-party (gh metadata): cavecrew
