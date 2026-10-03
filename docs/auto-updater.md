@@ -247,6 +247,13 @@ The updater's staging dir is `fxs-updater-ui-<pid>-<timestamp>-<counter>` in `Pa
 one per check, removed in a `finally`. A browser killed mid-swap (shutdown during the copy, a crash)
 skips that `finally`, so startup also reclaims any `fxs-updater-ui-*` dir older than 24h.
 
+The **tab** stages its own installs the same way, in `fxs-utils-<timestamp>` and
+`fxs-config-<timestamp>` (see `installUtils`/`installConfig` in `updater.js`). Those two prefixes
+are swept by the same startup pass — before, nothing reclaimed them, so a browser killed mid-install
+left a downloaded zip plus its extracted tree in the user's temp dir permanently. Every staging
+prefix the updater owns is listed in `OWNED_TMP_DIR_PREFIXES`; a new one belongs in that list, or it
+does not get reclaimed.
+
 The final copy of `utils.zip` and `updater-ui.zip` lands in the **live** browser's own tree
 (`ProfD/chrome/utils`), so a transient Windows hold is expected rather than exceptional: Defender
 scanning the file just written, the search indexer, or the browser still reading the module being
