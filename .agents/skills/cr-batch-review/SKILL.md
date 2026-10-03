@@ -72,7 +72,28 @@ head contains that line) and **re-verify the anchor against that head**. A stale
 than none: the script now removes the old file before each run and exits non-zero if it cannot write
 a new one, so if the file is absent the run failed — say so instead of posting from memory.
 
-## Assess, then post, then fix
+## You do not fix anything
+
+**This pass posts review comments and stops.** No code changes, no commits, no pushes, no thread
+resolutions — not even when a finding is indisputably right and the fix is one line.
+
+The batch pass exists to be run _across_ PRs, including **PRs opened by other agents**. The reviewer
+has no mandate over someone else's branch: a fix it writes lands unreviewed code in a PR whose owner
+never looked at it, and the reviewer has no way to judge whether its own patch is right. So the
+ownership split is:
+
+|                     | review:local (`ai-review`) | review:batch (this skill)              |
+| ------------------- | -------------------------- | -------------------------------------- |
+| whose PR            | the agent's own            | any, often another agent's             |
+| post the record     | ✅                         | ✅                                     |
+| fix the findings    | ✅ the same agent          | ❌ never                               |
+| resolve the threads | ✅ as its fixes land       | ❌ the owner does, when its fixes land |
+
+Leave every thread **open**. `main` requires conversation resolution, so the owning agent closes
+them as its own fixes land — that is the owner's work, not yours. Say plainly in your reply which
+threads you left open and on which PRs, so the owner knows what it inherits.
+
+## Assess, then post
 
 Triage every finding as **right / wrong / useless** before posting anything, quoting the disputed
 line in the assessment. External findings get the same scrutiny as local ones — never a rubber
@@ -84,7 +105,7 @@ Then, in this order:
    each with the 🤖 provenance marker, each independently resolvable. Fall back to a single
    `gh pr review <n> --comment` body when anchoring is impossible; never `gh pr comment`. _This is
    deliberate: a thread posted after the fix cannot be anchored to the offending line and leaves no
-   record of what was found. Post, then fix, then resolve._
+   record of what was found. The owner fixes after this, not before._
 2. **Record what you rejected.** A wrong or useless finding still gets a thread with the disputed
    line quoted and the reason it does not hold. **Delete it on the spot.** If it is genuinely right,
    the quote proves it. If it is genuinely wrong, the next reader can see it was considered and why
@@ -92,10 +113,15 @@ Then, in this order:
 3. **Always leave a review record, including a clean one.** Zero findings is a _result_, not an
    absence: post a short body saying what was reviewed (provider, files, counts) and that nothing
    was found. Otherwise "reviewed, nothing to fix" and "never reviewed" look identical on the PR.
-4. **Fix, then resolve each thread** with a reply naming the commit that fixed it.
+4. **Stop, and hand back.** Verify the review landed with `gh pr view <n> --json reviews`, then
+   report which PRs got which threads and that none are resolved. Do not check out the PR branches
+   and do not open worktrees for them — that is the owner's branch, and the owner's decision.
 
-Verify the review landed with `gh pr view <n> --json reviews`. `main` requires conversation
-resolution, so no thread may be left open at merge.
+## What the owner does with it
+
+The owning agent picks up the open threads, assesses each one again (a batch pass is a second
+opinion, not a verdict — ADR 0020's right / wrong / useless rule applies to its output too), fixes
+what it accepts, and resolves each thread with a reply naming the commit that fixed it.
 
 ## Branches with no PR: show the findings in chat
 

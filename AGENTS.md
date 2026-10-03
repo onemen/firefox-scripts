@@ -173,8 +173,11 @@ under the user's own account, and the marker is what separates agent from human 
 is not gated on CI — it can help debug failing checks. Add no CI/repo AI secret. External review
 triggers — CodeRabbit `@coderabbitai review` and `pnpm review:batch` — are **operator-initiated
 only**: the agent never invokes them unprompted. When the operator runs `review:batch`, the agent
-triages its findings and posts accepted ones per the protocol above. Full protocol: the `ai-review`
-skill.
+triages its findings and posts accepted ones per the protocol above — and then **stops**: the batch
+pass reviews PRs it does not own, including other agents' PRs, so it writes **no fixes and resolves
+no threads**. The owning agent re-assesses each open thread, fixes what it accepts, and resolves
+what it fixed. Full protocol: the `ai-review` skill; the ownership rule: the `cr-batch-review` skill
+and ADR 0020.
 
 ## Agent workflow
 

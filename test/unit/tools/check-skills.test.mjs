@@ -385,3 +385,28 @@ test('findVendoredTests finds test files recursively per skill', () => {
 // YAML value — is caught by `pnpm lint:yaml` (tools/check-yaml-frontmatter.mjs,
 // issue #413), which parses the frontmatter for real instead of pattern-matching
 // the text. check-skills keeps only the structural checks.
+
+// The ownership rule: the batch pass reviews PRs it does not own (including
+// other agents'), so it posts review comments and stops. This pins the rule in
+// all three places that have to agree — the skill the reviewer follows, the ADR
+// it defers to, and the AGENTS.md line every agent reads. A future edit that
+// reintroduces "fix, then resolve" into the batch skill fails here instead of
+// shipping an agent's unreviewed patch into someone else's branch.
+test('the batch pass is documented as review-only, in the skill, the ADR and AGENTS.md', () => {
+  const read = rel => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
+  const skill = read('.agents/skills/cr-batch-review/SKILL.md');
+  const adr = read('docs/decisions/0020-local-agent-ai-review.md');
+  const agents = read('AGENTS.md');
+
+  assert.match(skill, /## You do not fix anything/);
+  assert.match(skill, /No code changes, no commits, no pushes, no thread\s+resolutions/);
+  assert.match(skill, /Leave every thread \*\*open\*\*/);
+  // The step list must not still instruct the reviewer to fix.
+  assert.doesNotMatch(skill, /\*\*Fix, then resolve each thread\*\*/);
+
+  assert.match(adr, /### Who fixes what: the reviewing agent posts, the owning agent fixes/);
+  assert.match(adr, /including \*\*PRs opened by other agents\*\*/);
+  assert.match(adr, /leaves open threads by design/);
+
+  assert.match(agents, /it writes \*\*no fixes and resolves\s+no threads\*\*/);
+});
