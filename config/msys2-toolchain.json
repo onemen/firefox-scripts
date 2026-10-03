@@ -47,17 +47,24 @@
     "removing one is not either. Keep repo.msys2.org first.",
     "",
     "Order is preference, not correctness: try in turn, keep the first that",
-    "verifies."
+    "verifies.",
+    "",
+    "Not a fallback: the msys2/msys2-autobuild GitHub releases. They look like",
+    "a package source but carry no packages — every asset in every release is",
+    "a build log (*.bin), plus one status.json. Useful for CI log mirroring,",
+    "useless for fetching a pinned .pkg.tar.zst."
   ],
   "mirrors": {
     "ucrt64": [
       "https://mirror.selfnet.de/msys2/mingw/ucrt64",
       "https://mirrors.tuna.tsinghua.edu.cn/msys2/mingw/ucrt64",
+      "https://mirrors.ustc.edu.cn/msys2/mingw/ucrt64",
       "https://ftp.acc.umu.se/mirror/msys2.org/mingw/ucrt64"
     ],
     "msys": [
       "https://mirror.selfnet.de/msys2/msys/x86_64",
       "https://mirrors.tuna.tsinghua.edu.cn/msys2/msys/x86_64",
+      "https://mirrors.ustc.edu.cn/msys2/msys/x86_64",
       "https://ftp.acc.umu.se/mirror/msys2.org/msys/x86_64"
     ]
   },
