@@ -202,6 +202,43 @@ test('one card per binary, with a utils badge per profile', async () => {
   );
 });
 
+test('config is offered once per card, however many profiles need it', async () => {
+  // startGroupInstall reads the FIRST `.chk-config` on the card
+  // (40-install.js:21) but only ever installs config for idx === 0, so that is
+  // correct as long as a card renders exactly ONE config checkbox.  It does:
+  // config.js lives in the shared binary dir, so setConfigStatus runs once, on
+  // the binary row, from group.browsers[0] — the profile rows carry utils
+  // badges only.
+  //
+  // This case exists because the N-checkboxes-one-read shape is a real trap:
+  // if config status ever moved onto the per-profile rows, every profile would
+  // render a checkbox, the user could tick all three, and two of them would do
+  // nothing at all — silently. Pin the count so that refactor has to break this.
+  const ui = await bootTab([
+    browser({configUpToDate: 0}),
+    browser({index: 1, profilePath: 'C:\\Users\\me\\profile-two', configUpToDate: 0}),
+    browser({index: 2, profilePath: 'C:\\Users\\me\\profile-three', configUpToDate: 0}),
+  ]);
+  const card = cardOf(ui);
+  const configBoxes = card.querySelectorAll('.chk-config');
+
+  assert.equal(configBoxes.length, 1, 'one config checkbox for the whole binary');
+  assert.equal(
+    card.querySelectorAll('.component-status-cell').length,
+    1,
+    'config status on the binary row'
+  );
+  assert.deepEqual(
+    configBoxes.map(c => c.getAttribute('data-group')),
+    [FIREFOX_BIN],
+    'and it names the binary it belongs to'
+  );
+  assert.equal(
+    ui.text(card.querySelector('.component-status-cell > span')),
+    'config.js: Update Available'
+  );
+});
+
 test('a group badge is the worst of its own rows', async () => {
   // The header and the rows are rendered by different code from the same
   // helpers; if they ever disagree the user sees a green card with a red row.
