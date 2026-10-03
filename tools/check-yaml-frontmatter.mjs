@@ -176,6 +176,53 @@ export function yamlCandidates(addedByFile) {
 }
 
 /**
+ * Parse a markdown file's frontmatter block with js-yaml. The shared entry
+ * point for every consumer of skill metadata: this gate and
+ * `tools/check-skills.mjs`, so "is this frontmatter valid?" and "what does it
+ * say?" have one answer instead of a regex and a parser disagreeing.
+ *
+ * A parse error is returned, not thrown: the watchdog and check-skills both
+ * need to _report_ malformed frontmatter, which is the case this exists for.
+ *
+ * @param {string} text file content, CRLF tolerated
+ * @param {string} [file] the file's label, carried into an error finding
+ * @returns {{
+ *   present: boolean;
+ *   range?: {start: number; end: number; body: string};
+ *   data?: unknown;
+ *   error?: {file: string; line: number; column: number; reason: string};
+ * }}
+ *   `present` false = no frontmatter block at all
+ */
+export function parseFrontmatter(text, file = '<frontmatter>') {
+  const range = frontmatterRange(text.replace(/\r\n/g, '\n'));
+  if (!range) return {present: false};
+  try {
+    return {present: true, range, data: load(range.body)};
+  } catch (err) {
+    return {present: true, range, error: yamlFinding(file, err, 1)};
+  }
+}
+
+/**
+ * A js-yaml exception as a 1-based finding. `lineOffset` is the file line of
+ * the parsed text's first line, minus one: js-yaml's `mark.line` is 0-based.
+ *
+ * @param {string} file
+ * @param {unknown} err
+ * @param {number} lineOffset
+ * @returns {{file: string; line: number; column: number; reason: string}}
+ */
+function yamlFinding(file, err, lineOffset) {
+  return {
+    file,
+    line: (err?.mark?.line ?? 0) + lineOffset + 1,
+    column: (err?.mark?.column ?? 0) + 1,
+    reason: err instanceof YAMLException ? (err.reason ?? err.message) : String(err),
+  };
+}
+
+/**
  * Parse one candidate's YAML. Returns null when clean, otherwise a finding with
  * 1-based file line/column.
  *
@@ -192,11 +239,11 @@ export function yamlCandidates(addedByFile) {
  */
 export function parseCandidate(candidate) {
   let text;
+  // js-yaml's mark is 0-based within the text it parsed; the block's first
+  // body line is file line 2 (line 1 is the opening fence).
   let lineOffset;
   if (candidate.range) {
     text = candidate.range.body;
-    // js-yaml's mark is 0-based within the text it parsed; the block's first
-    // body line is file line 2 (line 1 is the opening fence).
     lineOffset = 1;
   } else {
     const abs = path.join(REPO_ROOT, candidate.file);
@@ -208,14 +255,7 @@ export function parseCandidate(candidate) {
     load(text);
     return null;
   } catch (err) {
-    const reason = err instanceof YAMLException ? (err.reason ?? err.message) : String(err);
-    const mark = err?.mark;
-    return {
-      file: candidate.file,
-      line: (mark?.line ?? 0) + lineOffset + 1,
-      column: (mark?.column ?? 0) + 1,
-      reason,
-    };
+    return yamlFinding(candidate.file, err, lineOffset);
   }
 }
 
