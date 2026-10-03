@@ -8,6 +8,10 @@
   helper-only sidecar scheme as their own record (2026-09-24)
 - **Amended:** [0036](./0036-git-derived-build-dates.md) — the self-update build date is derived
   from git per binary instead of hand-stamped (issue #322, 2026-09-25)
+- **Amended:** 2026-10-03 — the zips date tag prefix is `core-<date>`, not `scripts-<date>`; renamed
+  because a component tag is created on the very commit `latest` moves to and therefore always ties
+  with it on the releases page's commit-day ordering, where `scripts-<date>` would sort above
+  `latest` and take the first card (#398)
 
 ## Context
 
@@ -39,7 +43,8 @@ communicates freshness without pretending every package changed.
   `latest` (as `installer-<date>` does) and keeps it first, where `scripts-<date>` would sort above
   it (amended 2026-09-12, Latest Scripts scheme: the earlier `prerelease=true` badge-guard and the
   `make_latest=false` wording predate the verified availability of `make_latest` on
-  Update-a-release; declared per [0029](./0029-status-line-amendments.md)).
+  Update-a-release; declared per [0029](./0029-status-line-amendments.md)). The prefix was renamed
+  `scripts-` → `core-` on 2026-10-03 (#398); everything else here survives.
 - `latest` (existing moving tag) always carries the **complete release asset set** — both package
   zips + the installers — and stays GitHub's "Latest". README, docs and the updater point only at
   `latest` — never at versioned URLs.
