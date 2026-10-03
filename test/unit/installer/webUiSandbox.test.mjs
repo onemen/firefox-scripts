@@ -134,6 +134,22 @@ test('innerHTML assignments become real children, not opaque strings', () => {
   assert.equal(ui.text(list.querySelector('.empty-state')), 'No Browsers Detected');
 });
 
+test('re-keying or clearing an id stops the old one resolving', () => {
+  const ui = loadWebUi();
+  const badge = ui.createElement('span');
+  ui.element('browser-list').appendChild(badge);
+
+  // The tab assigns ids after createElement, so a stale entry would answer
+  // getElementById for a node that no longer carries that id.
+  badge.id = 'badge-utils-0';
+  assert.equal(ui.ctx.qs('badge-utils-0'), badge);
+  badge.id = 'badge-utils-1';
+  assert.equal(ui.element('badge-utils-0'), null, 'old id no longer resolves');
+  assert.equal(ui.element('badge-utils-1'), badge);
+  badge.removeAttribute('id');
+  assert.equal(ui.element('badge-utils-1'), null);
+});
+
 test('the shipped markup parses into the elements the tab expects', () => {
   const ui = loadWebUi();
 

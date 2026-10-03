@@ -500,6 +500,10 @@ function createDom(recorders) {
         return childNodes[childNodes.length - 1] || null;
       },
       get classList() {
+        // A fresh object per access keeps the class ATTRIBUTE the single source
+        // of truth (className writes it, setAttribute writes it), so the two
+        // can never drift.  Nothing in the tab holds on to the list across a
+        // mutation, and it costs a microsecond.
         return makeClassList(el);
       },
       dataset: new Proxy(
@@ -567,11 +571,16 @@ function createDom(recorders) {
     el.setAttribute = function (name, value) {
       const key = String(name).toLowerCase();
       const str = value === true ? '' : String(value);
-      attributes.set(key, str);
+      // Re-keying an id must not leave the old one resolving: the tab assigns
+      // ids after createElement (`badge-utils-<n>`), so a later overwrite has
+      // to drop the stale entry or getElementById would answer for a node that
+      // no longer carries that id.
       if (key === 'id') {
+        const previous = attributes.get('id');
+        if (previous && byId.get(previous) === el) byId.delete(previous);
         if (str) byId.set(str, el);
-        else byId.delete('');
       }
+      attributes.set(key, str);
       if (key === 'style') style.cssText = str;
       if (key === 'disabled') el.disabled = true;
       if (key === 'checked') el.checked = true;
@@ -584,7 +593,12 @@ function createDom(recorders) {
       return attributes.has(String(name).toLowerCase());
     };
     el.removeAttribute = function (name) {
-      attributes.delete(String(name).toLowerCase());
+      const key = String(name).toLowerCase();
+      if (key === 'id') {
+        const previous = attributes.get('id');
+        if (previous && byId.get(previous) === el) byId.delete(previous);
+      }
+      attributes.delete(key);
     };
 
     Object.defineProperty(el, 'innerHTML', {
