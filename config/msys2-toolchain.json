@@ -33,6 +33,41 @@
     "ucrt64": "https://repo.msys2.org/mingw/ucrt64",
     "msys": "https://repo.msys2.org/msys/x86_64"
   },
+  "_mirrors_comment": [
+    "Ordered fallbacks tried when a `repos` host cannot be reached (network",
+    "error) or does not serve the file (404) — repo.msys2.org takes scheduled",
+    "maintenance windows during which it refuses connections outright.",
+    "",
+    "These are the third-party mirrors MSYS2 publishes at",
+    "https://www.msys2.org/docs/mirrors/ (same list pacman itself uses in",
+    "/etc/pacman.d/mirrorlist.*). A mirror is only ever a TRANSPORT for bytes:",
+    "every download is verified against the sha256 in `packages` below, so a",
+    "mirror can supply the file but can never change which file it is. Adding",
+    "a host here is therefore not a supply-chain decision — reordering or",
+    "removing one is not either. Keep repo.msys2.org first.",
+    "",
+    "Order is preference, not correctness: try in turn, keep the first that",
+    "verifies.",
+    "",
+    "Not a fallback: the msys2/msys2-autobuild GitHub releases. They look like",
+    "a package source but carry no packages — every asset in every release is",
+    "a build log (*.bin), plus one status.json. Useful for CI log mirroring,",
+    "useless for fetching a pinned .pkg.tar.zst."
+  ],
+  "mirrors": {
+    "ucrt64": [
+      "https://mirror.selfnet.de/msys2/mingw/ucrt64",
+      "https://mirrors.tuna.tsinghua.edu.cn/msys2/mingw/ucrt64",
+      "https://mirrors.ustc.edu.cn/msys2/mingw/ucrt64",
+      "https://ftp.acc.umu.se/mirror/msys2.org/mingw/ucrt64"
+    ],
+    "msys": [
+      "https://mirror.selfnet.de/msys2/msys/x86_64",
+      "https://mirrors.tuna.tsinghua.edu.cn/msys2/msys/x86_64",
+      "https://mirrors.ustc.edu.cn/msys2/msys/x86_64",
+      "https://ftp.acc.umu.se/mirror/msys2.org/msys/x86_64"
+    ]
+  },
   "packages": [
     {
       "name": "mingw-w64-ucrt-x86_64-binutils",

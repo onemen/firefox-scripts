@@ -12,7 +12,8 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import fs, {readFileSync} from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const {
@@ -23,6 +24,7 @@ const {
   TOOL_PACKAGE,
   expectedToolVersions,
   expectedVersionFor,
+  fetchPackages,
   findMsys2Install,
   msys2BinDirs,
   msys2RootCandidates,
@@ -30,6 +32,7 @@ const {
   optionValue,
   packageFileName,
   packageUrl,
+  packageUrls,
   pacmanBin,
   parsePacmanQuery,
   parseWhich,
@@ -37,6 +40,7 @@ const {
   tarArgs,
   provenanceReport,
   readManifest,
+  sha256FileBytes,
   runtimeVersions,
   validateManifest,
 } = await import('../../../tools/ci/msys2Toolchain.mjs');
@@ -402,4 +406,296 @@ test('provenanceReport rejects a missing tool and a foreign prefix', () => {
     })
   );
   assert.match(foreign.problems.join('\n'), /outside the pinned prefix/);
+});
+
+// ── mirror fallback ─────────────────────────────────────────────────────
+// repo.msys2.org refuses connections outright during MSYS2's scheduled
+// maintenance windows, which fails the whole Windows publish gate for reasons
+// unrelated to the diff under test. `mirrors` in the manifest gives the
+// download an ordered fallback list. A mirror is only ever a transport: every
+// candidate is verified against the same pinned sha256 before it is written.
+
+/** A one-package manifest with a fallback chain. */
+function onePkg({mirrors, sha256} = {}) {
+  return {
+    repos: {
+      ucrt64: 'https://repo.msys2.org/mingw/ucrt64',
+      msys: 'https://repo.msys2.org/msys/x86_64',
+    },
+    ...(mirrors ? {mirrors} : {}),
+    packages: [
+      {
+        name: 'mingw-w64-ucrt-x86_64-binutils',
+        version: '2.46-4',
+        repo: 'ucrt64',
+        arch: 'any',
+        role: 'mingw',
+        sha256: sha256 ?? 'c'.repeat(64),
+      },
+    ],
+  };
+}
+
+/** A fetch stub that records the URLs it was asked for, forwarding the init. */
+function stubFetch(handler) {
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push(url);
+    return handler(url, calls.length, init);
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+/**
+ * mkdtemp that is always cleaned up (the repo's temp-hygiene test polices
+ * leaks).
+ */
+function tempDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-msys2-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  return dir;
+}
+
+const ok = body => ({ok: true, status: 200, arrayBuffer: async () => body});
+
+test('packageUrls lists the canonical repo first, then mirrors in order', () => {
+  const m = onePkg({
+    mirrors: {
+      ucrt64: ['https://a.example/msys2/mingw/ucrt64', 'https://b.example/msys2/mingw/ucrt64'],
+    },
+  });
+  const pkg = m.packages[0];
+  assert.deepEqual(packageUrls(pkg, m), [
+    'https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-binutils-2.46-4-any.pkg.tar.zst',
+    'https://a.example/msys2/mingw/ucrt64/mingw-w64-ucrt-x86_64-binutils-2.46-4-any.pkg.tar.zst',
+    'https://b.example/msys2/mingw/ucrt64/mingw-w64-ucrt-x86_64-binutils-2.46-4-any.pkg.tar.zst',
+  ]);
+});
+
+test('packageUrls without a mirrors map is just the canonical repo', () => {
+  assert.deepEqual(packageUrls(onePkg().packages[0], onePkg()), [
+    'https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-binutils-2.46-4-any.pkg.tar.zst',
+  ]);
+});
+
+test('packageUrls drops a mirror that repeats the primary host', () => {
+  const m = onePkg({mirrors: {ucrt64: ['https://repo.msys2.org/mingw/ucrt64']}});
+  assert.equal(packageUrls(m.packages[0], m).length, 1);
+});
+
+test('fetchPackages uses the primary repo when it works (no fallback traffic)', async t => {
+  const dir = tempDir(t);
+  const body = Buffer.from('pinned bytes');
+  const m = onePkg({sha256: sha256FileBytes(body)});
+  const f = stubFetch(() => ok(body));
+  const files = await fetchPackages({manifest: m, dir, log() {}, fetchImpl: f});
+  assert.equal(f.calls.length, 1);
+  assert.match(f.calls[0], /^https:\/\/repo\.msys2\.org\//);
+  assert.equal(fs.readFileSync(files[0]).toString(), 'pinned bytes');
+});
+
+test('fetchPackages falls back when the primary host refuses the connection', async t => {
+  const dir = tempDir(t);
+  const body = Buffer.from('pinned bytes');
+  const m = onePkg({
+    sha256: sha256FileBytes(body),
+    mirrors: {ucrt64: ['https://a.example/msys2/mingw/ucrt64']},
+  });
+  const logs = [];
+  // Node reports a dead peer as err.cause.code on the TypeError.
+  const refused = () => {
+    const err = new TypeError('fetch failed');
+    err.cause = {code: 'ECONNREFUSED'};
+    throw err;
+  };
+  const f = stubFetch(url => (url.includes('repo.msys2.org') ? refused() : ok(body)));
+  const files = await fetchPackages({manifest: m, dir, log: msg => logs.push(msg), fetchImpl: f});
+  assert.equal(f.calls.length, 2, 'primary tried, then the fallback');
+  assert.equal(fs.readFileSync(files[0]).toString(), 'pinned bytes');
+  assert.ok(
+    logs.some(l => l.includes('served by fallback a.example')),
+    'the operator is told a non-canonical host supplied the bytes'
+  );
+});
+
+test('fetchPackages falls back on a 404 (a mirror may lag the repo)', async t => {
+  const dir = tempDir(t);
+  const body = Buffer.from('pinned bytes');
+  const m = onePkg({
+    sha256: sha256FileBytes(body),
+    mirrors: {ucrt64: ['https://a.example/msys2/mingw/ucrt64']},
+  });
+  const f = stubFetch(url =>
+    url.includes('repo.msys2.org') ? {ok: false, status: 404} : ok(body)
+  );
+  const files = await fetchPackages({manifest: m, dir, log() {}, fetchImpl: f});
+  assert.equal(f.calls.length, 2);
+  assert.equal(fs.readFileSync(files[0]).toString(), 'pinned bytes');
+});
+
+test('fetchPackages fails closed when a mirror serves bytes that do not match the pin', async t => {
+  const dir = tempDir(t);
+  const good = Buffer.from('pinned bytes');
+  const m = onePkg({
+    sha256: sha256FileBytes(good),
+    mirrors: {ucrt64: ['https://evil.example/msys2/mingw/ucrt64']},
+  });
+  const refused = () => {
+    const err = new TypeError('fetch failed');
+    err.cause = {code: 'ECONNREFUSED'};
+    throw err;
+  };
+  // The canonical repo is down and the only fallback is the bad mirror.
+  const f = stubFetch(url =>
+    url.includes('evil.example') ? ok(Buffer.from('tampered')) : refused()
+  );
+  await assert.rejects(
+    () => fetchPackages({manifest: m, dir, log() {}, fetchImpl: f}),
+    /sha256 mismatch .*evil\.example/s
+  );
+  // The mismatch must not be retried elsewhere, and nothing may be written.
+  assert.equal(f.calls.length, 2, 'stopped at the bad mirror, no further retries');
+  assert.deepEqual(fs.readdirSync(dir), [], 'no unverified bytes reached the cache');
+});
+
+test('fetchPackages names every source when all of them fail', async t => {
+  const dir = tempDir(t);
+  const m = onePkg({mirrors: {ucrt64: ['https://a.example/msys2/mingw/ucrt64']}});
+  const f = stubFetch(() => ({ok: false, status: 503}));
+  await assert.rejects(
+    () => fetchPackages({manifest: m, dir, log() {}, fetchImpl: f}),
+    err => {
+      assert.match(err.message, /repo\.msys2\.org.*HTTP 503/s);
+      assert.match(err.message, /a\.example.*HTTP 503/s);
+      assert.match(err.message, /scheduled maintenance/);
+      return true;
+    }
+  );
+});
+
+test('fetchPackages surfaces the underlying network code, not just "fetch failed"', async t => {
+  const dir = tempDir(t);
+  const m = onePkg({mirrors: {ucrt64: ['https://a.example/msys2/mingw/ucrt64']}});
+  const f = stubFetch(() => {
+    const err = new TypeError('fetch failed');
+    err.cause = {code: 'ECONNREFUSED'};
+    throw err;
+  });
+  await assert.rejects(
+    () => fetchPackages({manifest: m, dir, log() {}, fetchImpl: f}),
+    /ECONNREFUSED/
+  );
+});
+
+test('a cached package is not re-downloaded even when every host is down', async t => {
+  const dir = tempDir(t);
+  const body = Buffer.from('pinned bytes');
+  const m = onePkg({sha256: sha256FileBytes(body)});
+  const f = stubFetch(() => ok(body));
+  await fetchPackages({manifest: m, dir, log() {}, fetchImpl: f});
+  const offline = stubFetch(() => {
+    throw new TypeError('fetch failed');
+  });
+  const files = await fetchPackages({manifest: m, dir, log() {}, fetchImpl: offline});
+  assert.equal(offline.calls.length, 0);
+  assert.equal(fs.readFileSync(files[0]).toString(), 'pinned bytes');
+});
+
+test('the shipped manifest keeps the canonical repo first and lists real mirrors', () => {
+  const {repos, mirrors} = readManifest();
+  assert.match(repos.ucrt64, /repo\.msys2\.org/);
+  assert.match(repos.msys, /repo\.msys2\.org/);
+  for (const repo of Object.keys(repos)) {
+    assert.ok(Array.isArray(mirrors?.[repo]) && mirrors[repo].length > 0, `${repo} has fallbacks`);
+    // A fallback must never be the primary restated, and each host must carry
+    // the right environment path for its repo.
+    const suffix = repo === 'ucrt64' ? '/mingw/ucrt64' : '/msys/x86_64';
+    for (const base of mirrors[repo]) {
+      assert.notEqual(base, repos[repo]);
+      assert.ok(base.endsWith(suffix), `${base} should end in ${suffix}`);
+    }
+  }
+});
+
+test('fetchPackages times out a stalled mirror and moves to the next candidate', async t => {
+  const dir = tempDir(t);
+  const body = Buffer.from('pinned bytes');
+  const m = onePkg({
+    sha256: sha256FileBytes(body),
+    mirrors: {
+      ucrt64: [
+        'https://stalled.example/msys2/mingw/ucrt64',
+        'https://good.example/msys2/mingw/ucrt64',
+      ],
+    },
+  });
+  // A peer that accepts the connection, answers, then never finishes the body:
+  // only a signal that outlives arrayBuffer() can rescue this.
+  const stalled = () => ({
+    ok: true,
+    status: 200,
+    arrayBuffer: () =>
+      new Promise((_, reject) => {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        setTimeout(() => reject(err), 5).unref?.();
+      }),
+  });
+  const refused = () => {
+    const err = new TypeError('fetch failed');
+    err.cause = {code: 'ECONNREFUSED'};
+    throw err;
+  };
+  // Primary is down, the first fallback stalls mid-body, the second serves the
+  // pinned bytes — the stall must be recorded and the chain must continue.
+  const f = stubFetch(url => {
+    if (url.includes('stalled.example')) return stalled();
+    if (url.includes('good.example')) return ok(body);
+    return refused();
+  });
+  const logs = [];
+  const files = await fetchPackages({
+    manifest: m,
+    dir,
+    log: msg => logs.push(msg),
+    fetchImpl: f,
+    timeoutMs: 20,
+  });
+  assert.equal(f.calls.length, 3, 'primary, stalled, then good');
+  assert.equal(fs.readFileSync(files[0]).toString(), 'pinned bytes');
+  assert.ok(
+    logs.some(l => l.includes('served by fallback good.example')),
+    'the surviving mirror is named'
+  );
+});
+
+test('fetchPackages gives every download an AbortSignal it can abort on', async t => {
+  const dir = tempDir(t);
+  const body = Buffer.from('pinned bytes');
+  const m = onePkg({sha256: sha256FileBytes(body)});
+  const seen = [];
+  const f = stubFetch((url, _n, init) => {
+    seen.push(init?.signal);
+    return ok(body);
+  });
+  await fetchPackages({manifest: m, dir, log() {}, fetchImpl: f, timeoutMs: 1000});
+  assert.equal(seen.length, 1);
+  // A real AbortSignal, not a missing one: without it the download can hang.
+  assert.ok(seen[0] instanceof AbortSignal, 'fetch received an AbortSignal');
+  assert.equal(seen[0].aborted, false, 'the budget starts unset, not already expired');
+});
+
+test('an abort on the stalled host is reported as a timeout, not "fetch failed"', async t => {
+  const dir = tempDir(t);
+  const m = onePkg({mirrors: {ucrt64: ['https://a.example/msys2/mingw/ucrt64']}});
+  const f = stubFetch(() => {
+    const err = new Error('aborted');
+    err.name = 'TimeoutError';
+    throw err;
+  });
+  await assert.rejects(
+    () => fetchPackages({manifest: m, dir, log() {}, fetchImpl: f, timeoutMs: 20}),
+    /timeout after 20ms/
+  );
 });

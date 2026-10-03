@@ -318,6 +318,11 @@ does not cover everything that shapes the bytes. A published commit's hashes are
 reproducible on a machine that ran `pnpm toolchain:local`. `pnpm toolchain:check` validates the
 manifest alone (no download).
 
+**Mirror fallback.** The manifest's `mirrors` key is an ordered list of alternates tried when
+`repo.msys2.org` cannot be reached (scheduled maintenance) or does not serve the file (404) — see
+the `_mirrors_comment` in `config/msys2-toolchain.json` for the host list and why a mirror is only
+ever a transport for the same pinned bytes.
+
 The MSYS2 pin is not the only byte input. `installer/embed.mjs` gzip-compresses the embedded web
 assets with Node's bundled zlib (`zlib.gzipSync(..., {level: 9})`), so a runtime whose zlib emits
 different deflate bytes would change `resources.h` — and the installer's bytes and hashes — while
