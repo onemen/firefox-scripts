@@ -4,6 +4,8 @@
 - **Date:** 2026-08-29
 - **Amended:** [0029](./0029-status-line-amendments.md) — its own amendment
   convention; the inline **Amended** notes below are now declared here
+- **Amended:** 2026-10-03 — the posting protocol below now also requires a review record in every
+  outcome (findings, rejections, or none) and fixes the order: post, then fix, then resolve
 
 _Problem surface:_ PR review tooling
 
@@ -54,6 +56,29 @@ AI review is a **local, agent-run step**, not a CI bot:
   run one, the agent triages its findings right / wrong / useless and posts each accepted finding
   per the protocol above (line-anchored resolvable threads, 🤖 provenance marker, resolve as fixes
   land) — external findings get the same scrutiny as local ones, never a rubber stamp.
+
+### The review record (amended 2026-10-03)
+
+The posting protocol above is not only about what a *surviving* finding looks like. Four rules close
+the cases where it used to leave nothing behind:
+
+- **Post before you fix.** The review threads are written first, then the fix lands, then each thread
+  is resolved. A thread posted after the fix cannot be anchored to the line that carried the defect,
+  so it degenerates into a vague comment — and the PR loses the only record of what was found.
+- **A rejected finding is still a record.** Every rejected finding gets a thread too, carrying the
+  disputed line and the reason it does not hold, and is deleted on the spot. **Delete it on the
+  spot** — an unquoted "wrong" is unverified, not disproved. This is what stops a rejected finding
+  from vanishing silently and being re-raised by the next reader; the asymmetry is deliberate, since
+  the cost of a redundant thread is much lower than the cost of a silently-dropped real defect.
+- **Zero findings still gets a review.** "Reviewed, nothing to find" and "never reviewed" are
+  indistinguishable on a PR unless the former says so. A short body — provider, files reviewed,
+  counts, and no findings — is posted so the outcome is on the record.
+- **The order is post → fix → resolve.** Never fix first and describe afterwards.
+
+These apply identically to both reviewers. The local pass (`review:local`, the `ai-review` skill) and
+the operator-initiated CodeRabbit batch (`review:batch`, the `cr-batch-review` skill) are two ways of
+producing findings, not two protocols; a batch pass is quota-limited and operator-triggered, so it
+follows this record rather than replacing it.
 
 ## Consequences
 

@@ -106,18 +106,19 @@ detail lives there so this file stays a checklist, not a manual. All skills are 
   (pnpm, the C toolchain, `gh`) and may not translate to other projects.
 - **Authored here**: fully covered by the lint/format gates; updates are normal PRs.
 
-| Skill               | Class       | Load when the task involves                                            |
-| ------------------- | ----------- | ---------------------------------------------------------------------- |
-| `ai-review`         | authored    | Reviewing a PR — the ADR 0020 local review step                        |
-| `batch-loop`        | authored    | Working a batch of tasks — one PR per task, never idle-wait            |
-| `change-workflow`   | authored    | Making code changes — subsystem, docs, validation order                |
-| `generated-files`   | authored    | Regenerating or reasoning about the untracked build files              |
-| `publishing`        | authored    | Releasing — `publish:*` / `snapshot:*`, prod/dev modes                 |
-| `cavecrew`          | third-party | Delegating locate / small-edit / diff-review subtasks to subagents     |
-| `code-review`       | third-party | Reviewing a diff against the repo's standards and originating spec     |
-| `debugging-firefox` | third-party | Debugging live Firefox via DevTools RDP (`docs/debugging-with-rdp.md`) |
-| `grill-me`          | third-party | Stress-testing a plan or design before committing to it                |
-| `lavish`            | third-party | Turning complex/visual agent output into annotatable HTML artifacts    |
+| Skill               | Class       | Load when the task involves                                             |
+| ------------------- | ----------- | ----------------------------------------------------------------------- |
+| `ai-review`         | authored    | Reviewing a PR — the ADR 0020 local review step                         |
+| `batch-loop`        | authored    | Working a batch of tasks — one PR per task, never idle-wait             |
+| `change-workflow`   | authored    | Making code changes — subsystem, docs, validation order                 |
+| `cr-batch-review`   | authored    | Operator-requested CodeRabbit batch pass — ADR 0020 posting, quota gate |
+| `generated-files`   | authored    | Regenerating or reasoning about the untracked build files               |
+| `publishing`        | authored    | Releasing — `publish:*` / `snapshot:*`, prod/dev modes                  |
+| `cavecrew`          | third-party | Delegating locate / small-edit / diff-review subtasks to subagents      |
+| `code-review`       | third-party | Reviewing a diff against the repo's standards and originating spec      |
+| `debugging-firefox` | third-party | Debugging live Firefox via DevTools RDP (`docs/debugging-with-rdp.md`)  |
+| `grill-me`          | third-party | Stress-testing a plan or design before committing to it                 |
+| `lavish`            | third-party | Turning complex/visual agent output into annotatable HTML artifacts     |
 
 All paths are `<root>/.agents/skills/<name>/SKILL.md`.
 
