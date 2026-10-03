@@ -526,6 +526,7 @@ const liveTempRoots = new Set();
  */
 export const E2E_TEMP_PREFIXES = [
   'fxs-e2e',
+  'fxs-installer',
   'fxs-installer-ui',
   'fxs-installer-surface',
   'fxs-fx',

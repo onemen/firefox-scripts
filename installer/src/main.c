@@ -15,6 +15,7 @@
 #ifdef _WIN32
 #include <tlhelp32.h>
 #include <bcrypt.h>
+#include <process.h>
 #else
 #include <fcntl.h>
 #include <signal.h>
@@ -1131,7 +1132,20 @@ int handle_api_install(int client_fd, const char *query, const char *body, size_
         return 0;
     }
 
-    snprintf(g_work_dir, sizeof(g_work_dir), "%s%cfirefox-scripts-install", tmp_dir, PATH_SEPARATOR);
+    // Per-process scratch root, so it is both unique (one installer at a time
+    // — the port probe in main() refuses a second live instance) and
+    // reclaimable: the fxs- prefix is what pruneStaleTempRoots() and the
+    // test-hygiene gate match on.  The old fixed name left an empty directory
+    // in the user's temp dir forever, and a run killed between writing and
+    // removing a package zip left that zip there with nothing able to reclaim
+    // it.  Mirrors the updater's own fxs-updater-ui-<pid> staging dir.
+#ifdef _WIN32
+    long work_dir_pid = (long)_getpid();
+#else
+    long work_dir_pid = (long)getpid();
+#endif
+    snprintf(g_work_dir, sizeof(g_work_dir), "%s%cfxs-installer-%ld",
+             tmp_dir, PATH_SEPARATOR, work_dir_pid);
     mkdir_recursive(g_work_dir);
 
     snprintf(g_binary_dir, MAX_PATH_LEN, "%s", detected_browsers[browser_idx].binary_path);
