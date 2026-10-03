@@ -205,9 +205,13 @@ reviewers are the **operator's** call, never the agent's initiative:
   treat the report as a starting point, not an authority. A finding without a parsed anchor still
   gets posted, with an anchor you verified yourself. The report is a report, not a queue: assess
   every finding before posting anything.
-- **Post the threads BEFORE you write the fix.** An ADR0020 thread must exist on the PR at the
+- **Post the threads BEFORE anything is fixed.** An ADR0020 thread must exist on the PR at the
   commit that carried the defect; posting it after the fix lands cannot be anchored to the offending
-  line and leaves no record of what was found. Assess → post all accepted findings → fix → resolve.
+  line and leaves no record of what was found. Assess → post all accepted findings → resolve each
+  thread as its fix lands. **For `review:batch` the chain stops after posting**: that pass covers
+  PRs the agent does not own, so it writes no fixes and resolves no threads — the owning agent
+  re-assesses each open thread, fixes what it accepts, and resolves what it fixed. The
+  `fix → resolve` tail is the local pass only.
 - **Check quota before running `review:batch`** — `cr usage` (or `pnpm review:batch -- --check`) is
   milliseconds and answers whether a review can run at all. The window is rolling and the bot and
   CLI share it; running blind can spend the last slot on a run that fails, or block the operator's

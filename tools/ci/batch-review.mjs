@@ -740,13 +740,19 @@ export async function main() {
     console.log(
       [
         '',
-        'Next — ADR 0020 (.agents/skills/ai-review/SKILL.md), not optional:',
+        'Next — ADR 0020 (.agents/skills/cr-batch-review/SKILL.md), not optional:',
         '  1. Assess every finding right / wrong / useless, quoting the disputed line.',
         '  2. Post each accepted finding as its own line-anchored, individually',
         '     resolvable thread (gh api …/pulls/<n>/comments -f path=<path>',
         '     -F line=<last line of the range> -f side=RIGHT), with the',
         '     🤖 provenance marker naming this batch run.',
-        '  3. Resolve each thread as its fix lands; none may be left open at merge.',
+        '  3. Leave a review record even when nothing is accepted',
+        '     (gh pr review <n> --comment) — zero findings is a result, not',
+        '     an absence, and it must be one review, not an issue comment.',
+        '  4. Stop there. A batch pass writes no fixes and resolves no threads:',
+        '     this pass covers PRs it does not own, so the owning agent',
+        '     re-assesses each open thread, fixes what it accepts, and',
+        '     resolves what it fixed.',
         'An external finding gets the same scrutiny as a local one — assessed, not',
         'rubber-stamped.',
       ].join('\n')
@@ -764,7 +770,9 @@ export async function main() {
       console.log(`Removed ${sweep.removed.length} stale cr temp dir(s) from the OS temp dir.`);
     }
     if (sweep.kept.length > 0) {
-      const age = Math.round(sweep.kept[0].ageMs / 60_000);
+      // `kept` is appended in readdir order across three reasons, so the youngest
+      // entry is not necessarily first — compute it rather than assume it.
+      const age = Math.round(Math.min(...sweep.kept.map(d => d.ageMs)) / 60_000);
       console.log(
         `Left ${sweep.kept.length} coderabbit-update-* dir(s) alone (youngest ${age} min old; another cr run may own them — --temp-grace to change).`
       );
