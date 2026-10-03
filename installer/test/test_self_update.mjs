@@ -225,7 +225,7 @@ function main() {
             },
           ],
         },
-        {tag_name: 'scripts-2026-09-01', body: 'no block', assets: []},
+        {tag_name: 'core-2026-09-01', body: 'no block', assets: []},
       ]),
       build: '2026-09-01',
       expect: {status: 1, latest: '2026-09-14', url: 'https://x/managed'},

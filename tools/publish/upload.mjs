@@ -118,10 +118,12 @@ import {
 } from './uploadToPages.mjs';
 import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
 import {
+  commitDateUtc,
   mergeSelfUpdateBlock,
   pinLatestRelease,
   refreshLatestBody,
   renderSelfUpdatePayload,
+  retitleLatestRelease,
   syncComponentReleases,
 } from './componentReleases.mjs';
 import {scanBinaries} from '../scan-av.mjs';
@@ -822,7 +824,7 @@ async function publishToGitHub({
     // The packages scope always stages the FULL zip set (issue #354), so the
     // release surfaces re-upload every package — a run that rebuilds only one
     // zip still leaves both on `latest` (the complete ADR 0019 set, no #157
-    // purge leftovers) and on the scripts-<date> tag.
+    // purge leftovers) and on the core-<date> tag.
     for (const name of stagedZipNames(builtZips)) {
       pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
       // updater-ui is internal: the updater downloads and updates it from the
@@ -1016,6 +1018,9 @@ async function publishToGitHub({
   // target follows each publish; an idle run (nothing rebuilt) leaves it where
   // it is, since the release assets did not change either. (The old --no-tag
   // escape hatch was removed: no caller ever used it.)
+  //
+  // The move is also what positions the card: /releases is ordered by the linked
+  // tag's commit day, so the newest commit is what keeps 'Latest Scripts' first.
   if (PUBLISH_MODE === 'prod' && release && anythingUploaded) {
     const tagRef = `tags/${RELEASE_NAME}`;
     const headSha = execSync('git rev-parse HEAD', {
@@ -1054,13 +1059,31 @@ async function publishToGitHub({
       });
     }
     info(`  ${bold('latest')} tag: ${dim(shortHash(oldSha))} → ${green(shortHash(headSha))}`);
+
+    // Date the release title to the commit the tag now points at —
+    // `Latest Scripts - <YYYY-MM-DD>`, the same day the card is ordered by.
+    // headSha, not a bare HEAD read: the title describes the TAG, so the date
+    // must come from the commit the ref resolves to. Deliberately inside the
+    // block above (which the tag move gates on `anythingUploaded`): the title
+    // only moves when the tag does, so an idle prod run cannot re-date the
+    // release off a checkout the tag never pointed at.
+    await retitleLatestRelease(
+      octokit,
+      commitDateUtc(
+        execSync(`git show -s --format=%cI ${headSha}`, {
+          cwd: REPO_ROOT,
+          encoding: 'utf-8',
+        }).trim()
+      ),
+      release
+    );
   }
 
   // Date-stamped component releases alongside `latest` (issue #72, ADR 0019):
-  // scripts-<date> for rebuilt zips, installer-<date> for rebuilt installers
-  // (helpers are gh-pages-only — never release assets). Full releases, then the
-  // Latest badge is re-pinned onto `latest` via make_latest (the Latest Scripts
-  // scheme — the badge release renders as the page's hero card). Skipped on
+  // core-<date> for the rebuilt package zips, installer-<date> for rebuilt
+  // installers (helpers are gh-pages-only — never release assets). Full
+  // releases; the Latest badge is re-pinned onto `latest` via make_latest (the
+  // badge is a label — the tag move above is what orders the page). Skipped on
   // idle runs (nothing rebuilt → tags stay frozen).
   if (PUBLISH_MODE === 'prod' && anythingUploaded) {
     await syncComponentReleases(octokit, {

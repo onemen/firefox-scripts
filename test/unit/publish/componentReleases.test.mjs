@@ -19,7 +19,7 @@ const moduleUrl = pathToFileURL(
 ).href;
 const {
   componentDate,
-  scriptsTag,
+  coreTag,
   installerTag,
   groupBuilt,
   renderComponentBody,
@@ -33,6 +33,9 @@ const {
   renderLatestDownloads,
   updateLatestDownloads,
   newestInstallerDate,
+  commitDateUtc,
+  latestReleaseTitle,
+  retitleLatestRelease,
   LATEST_MANAGED_START,
   LATEST_MANAGED_END,
 } = await import(moduleUrl);
@@ -44,8 +47,21 @@ test('componentDate: YYYY-MM-DD UTC, injectable clock', () => {
 });
 
 test('tags: date-stamped, per component', () => {
-  assert.equal(scriptsTag('2026-09-09'), 'scripts-2026-09-09');
+  assert.equal(coreTag('2026-09-09'), 'core-2026-09-09');
   assert.equal(installerTag('2026-09-09'), 'installer-2026-09-09');
+});
+
+test('date tags sort BELOW `latest` — the same-day tie-break (ADR 0019 amendment 2026-10-02)', () => {
+  // GitHub orders /releases by the linked tag's commit DAY, then by TAG NAME
+  // DESCENDING. A component tag is created on the same commit as `latest`, so
+  // it can never win on date: a name sorting ABOVE `latest` takes the top card
+  // on every publish day (the retired zips tag did, measured 2026-10-02). Any
+  // component tag must sort below `latest`; this is the guard that keeps a
+  // rename from silently moving the page order. coreTag() holds the evidence.
+  const date = '2026-10-02';
+  for (const tag of [coreTag(date), installerTag(date)]) {
+    assert.ok(tag < 'latest', `${tag} must sort below 'latest' in the descending tie-break`);
+  }
 });
 
 test('groupBuilt: updater-ui excluded from scripts; helpers never join a release', () => {
@@ -268,7 +284,7 @@ test('mergeSelfUpdateBlock: no prior → just this run', () => {
 
 test('scriptsAssetNames: the FULL staged set rides along, updater-ui never does', () => {
   // A run that rebuilt only utils must still publish fx-folder.zip — the
-  // missing-asset shape the #157 purge left on `latest` and scripts-<date>.
+  // missing-asset shape the #157 purge left on `latest` and core-<date>.
   assert.deepEqual(scriptsAssetNames(['utils'], ['utils', 'fx-folder', 'updater-ui']), [
     'utils',
     'fx-folder',
@@ -395,14 +411,14 @@ test('newestInstallerDate: newest installer-<date> tag wins, other tags ignored'
   assert.equal(
     newestInstallerDate([
       'latest',
-      'scripts-2026-09-28',
+      'core-2026-09-28',
       'installer-2026-09-26',
       'installer-2026-09-12',
       'dev-build-42',
     ]),
     '2026-09-26'
   );
-  assert.equal(newestInstallerDate(['latest', 'scripts-2026-09-28']), null);
+  assert.equal(newestInstallerDate(['latest', 'core-2026-09-28']), null);
   assert.equal(newestInstallerDate([]), null);
   // ISO dates sort lexicographically == chronologically (year boundary too).
   assert.equal(newestInstallerDate(['installer-2026-12-31', 'installer-2027-01-02']), '2027-01-02');
@@ -461,6 +477,48 @@ test('parseSelfUpdateBlock: round-trips the DETAILS-WRAPPED fenced block (#356 i
   assert.equal(parsed.installerDate, '2026-09-13');
   assert.equal(parsed.download['installer_win.exe'], 'https://x/win');
   assert.equal(parsed.download.installer_mac, 'https://x/mac');
+});
+
+test('commitDateUtc: the UTC day is what GitHub orders the card by', () => {
+  // The maintainer's commits carry +03:00: a late-evening commit must date to
+  // the UTC day (and the tz-crossing case must NOT stay on the local day), or
+  // the title would name a day the page does not sort by.
+  assert.equal(commitDateUtc('2026-10-02T22:16:00+03:00'), '2026-10-02');
+  assert.equal(commitDateUtc('2026-10-02T01:30:00+03:00'), '2026-10-01');
+  assert.equal(commitDateUtc('2026-09-28T14:09:12Z'), '2026-09-28');
+  assert.equal(commitDateUtc(''), null);
+  assert.equal(commitDateUtc('not-a-date'), null);
+});
+
+test('latestReleaseTitle: Latest Scripts - <date>', () => {
+  assert.equal(latestReleaseTitle('2026-10-02'), 'Latest Scripts - 2026-10-02');
+});
+
+test('retitleLatestRelease: writes the name, fails soft', async () => {
+  const calls = [];
+  const octokit = {
+    repos: {updateRelease: async args => calls.push(args)},
+  };
+  await retitleLatestRelease(octokit, '2026-10-02', {id: 7});
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].release_id, 7);
+  assert.equal(calls[0].name, 'Latest Scripts - 2026-10-02');
+
+  // A malformed date is a caller bug: warn, never PATCH a broken title.
+  calls.length = 0;
+  await retitleLatestRelease(octokit, 'yesterday', {id: 7});
+  assert.equal(calls.length, 0);
+
+  // A GitHub error is a warning, never a publish failure (the title is
+  // cosmetic — the assets and the tag move are the contract).
+  const broken = {
+    repos: {
+      updateRelease: async () => {
+        throw new Error('boom');
+      },
+    },
+  };
+  await retitleLatestRelease(broken, '2026-10-02', {id: 7});
 });
 
 test('parseSelfUpdateBlock: bare (unfenced) block keeps the nested download map', () => {

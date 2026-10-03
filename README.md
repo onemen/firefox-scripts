@@ -104,7 +104,7 @@ content last changed (`YYYY-MM-DD`, UTC). To find what you have:
 
 To **revert** a package to an earlier build, open the
 [releases page](https://github.com/onemen/firefox-scripts/releases): the `latest` release always
-holds the newest build of every file, and the frozen `scripts-<date>` (package zips) and
+holds the newest build of every file, and the frozen `core-<date>` (package zips) and
 `installer-<date>` (installer binaries + helpers) releases hold each past publish. Download the
 package zip from the dated release you want and install it by hand (updater tab → manual download
 link, or unpack into your profile's `chrome/utils/` — see the
