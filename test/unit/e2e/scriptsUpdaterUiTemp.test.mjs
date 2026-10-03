@@ -54,7 +54,9 @@ after(() => {
 /** Real-fs IOUtils over a sandbox temp dir. */
 function makeIoUtils() {
   return {
-    getChildren: async dir => fs.readdirSync(dir),
+    // Absolute paths, as the real IOUtils.getChildren resolves with — a
+    // basename stub made the sweep tests pass over code that cannot work.
+    getChildren: async dir => fs.readdirSync(dir).map(n => path.join(dir, n)),
     stat: async p => fs.statSync(p),
     remove: async (p, {recursive = false, ignoreAbsent = false} = {}) => {
       try {
@@ -209,6 +211,28 @@ test("sweepStaleUpdaterTempDirs: also reclaims the tab's install staging dirs", 
     fs.existsSync(path.join(root, 'someone-elses-dir')),
     true,
     'a foreign temp entry is never touched'
+  );
+});
+
+test('sweepStaleUpdaterTempDirs: an old foreign dir survives on the prefix check alone', async () => {
+  const {root, stale} = makeTempFixture();
+  const foreign = path.join(root, 'someone-elses-dir');
+  const twoDays = 48 * 60 * 60 * 1000;
+  backdate(stale, twoDays);
+  // Old enough that only the prefix check can spare it — the fixtures elsewhere
+  // leave the foreign entry fresh, so its survival there proves nothing about
+  // the basename/full-path split this test is here to pin.
+  backdate(foreign, twoDays);
+  const sandbox = loadUpdater(root);
+
+  const removed = await sandbox.sweepStaleUpdaterTempDirs({tempDir: root});
+
+  assert.deepEqual([...removed], ['fxs-updater-ui-1700000000000']);
+  assert.equal(fs.existsSync(stale), false, "the module's own stale dir is still reclaimed");
+  assert.equal(
+    fs.existsSync(foreign),
+    true,
+    'an old foreign dir is spared by the prefix match, not by its mtime'
   );
 });
 

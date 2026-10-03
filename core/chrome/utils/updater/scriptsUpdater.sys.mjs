@@ -103,18 +103,26 @@ export async function sweepStaleUpdaterTempDirs({
     return [];
   }
   const removed = [];
-  for (const name of children) {
+  for (const child of children) {
+    // IOUtils.getChildren resolves with ABSOLUTE paths — "a sequence of
+    // absolute file paths representing the children of the directory at path"
+    // (dom/chrome-webidl/IOUtils.webidl). So the prefix has to be matched on
+    // the basename, and every I/O call below has to use the entry as
+    // returned. Reading it as a name made `startsWith(prefix)` false for
+    // every child of a real Temp dir and the sweep silently removed nothing;
+    // PathUtils.join(tempDir, name) would then have doubled the directory.
+    // The tests stubbed getChildren with bare names, which hid both.
+    const name = child.split(/[\\/]/).pop();
     if (!OWNED_TMP_DIR_PREFIXES.some(prefix => name.startsWith(prefix))) continue;
-    const full = PathUtils.join(tempDir, name);
     let stat;
     try {
-      stat = await IOUtils.stat(full);
+      stat = await IOUtils.stat(child);
     } catch {
       continue; // vanished under us
     }
     if (now - stat.mtimeMs < maxAgeMs) continue;
     try {
-      await IOUtils.remove(full, {recursive: true, ignoreAbsent: true});
+      await IOUtils.remove(child, {recursive: true, ignoreAbsent: true});
       removed.push(name);
     } catch (e) {
       // Another process (or the AV scanner) still holds it — try again on the
