@@ -19,6 +19,11 @@ overrides:
   # (@microsoft/eslint-plugin-sdl, clang-format → minimatch); the patched
   # 1.1.20+ / 2.1.6+ / 5.0.11+ releases all satisfy this floor.
   brace-expansion: '>=1.1.20'
+  # GHSA-r3ph-w7gj-g6xm: js-yaml merge keys let an empty merge source burn CPU
+  # (maxTotalMergeKeys bounds key count, not merge depth). markdownlint-cli
+  # pins js-yaml ~5.2.1, whose latest (5.4.0) is still affected; 5.4.1 is the
+  # first fixed release, and the floor keeps every copy patched.
+  js-yaml: '>=5.4.1'
 
 trustPolicy: no-downgrade
 

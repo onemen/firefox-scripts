@@ -17,7 +17,7 @@ stay SHA-pinned (`.github/dependabot.yml`).
 
 `.github/workflows/ci.yml` runs on every PR and on `main` pushes:
 
-- **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, markdownlint-cli2 — MD056
+- **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, markdownlint — MD056
   table-column-count catches merged table rows that prettier cannot see (#147) — the fused-list
   marker gate on changed markdown (#307), clang-format, `gcc -fanalyzer`), `pnpm format`,
   `pnpm test`, and a separate `node --test --experimental-test-coverage "test/unit/**/*.test.mjs"`

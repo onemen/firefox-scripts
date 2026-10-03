@@ -1,0 +1,24 @@
+# config/.markdownlintignore — exclusions for markdownlint-cli (--ignore-path).
+#
+# markdownlint-cli has no `ignores` key in its config; excluded paths live
+# here instead. Patterns are gitignore syntax (node-ignore), and relative to
+# the repo root.
+#
+# Third-party skills (ADR 0022) are upstream text — never linted or
+# formatted. Same exclusion the eslint markdown config derives from the
+# watchdog's frontmatter classification.
+**/node_modules/**
+**/dist/**
+# Local drafts (gitignored .local files/dirs) — same exclusion
+# .prettierignore and eslint.config.js use (AGENTS.md: they are not
+# authoritative sources and their style is not gated).
+**/*local*/
+**/*local*.*
+
+# BEGIN managed: third-party skills (generated — run pnpm format:fix)
+**/.agents/skills/cavecrew/**
+**/.agents/skills/code-review/**
+**/.agents/skills/debugging-firefox/**
+**/.agents/skills/grill-me/**
+**/.agents/skills/lavish/**
+# END managed
