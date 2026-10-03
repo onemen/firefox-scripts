@@ -1059,16 +1059,18 @@ async function publishToGitHub({
       });
     }
     info(`  ${bold('latest')} tag: ${dim(shortHash(oldSha))} → ${green(shortHash(headSha))}`);
-  }
 
-  // Prod: date the release title to the commit the tag now points at —
-  // `Latest Scripts - <YYYY-MM-DD>`, the same day the card is ordered by. Not
-  // gated on rebuilds: an idle prod run keeps title and tag in step.
-  if (PUBLISH_MODE === 'prod' && release) {
+    // Date the release title to the commit the tag now points at —
+    // `Latest Scripts - <YYYY-MM-DD>`, the same day the card is ordered by.
+    // headSha, not a bare HEAD read: the title describes the TAG, so the date
+    // must come from the commit the ref resolves to. Deliberately inside the
+    // block above (which the tag move gates on `anythingUploaded`): the title
+    // only moves when the tag does, so an idle prod run cannot re-date the
+    // release off a checkout the tag never pointed at.
     await retitleLatestRelease(
       octokit,
       commitDateUtc(
-        execSync('git show -s --format=%cI HEAD', {
+        execSync(`git show -s --format=%cI ${headSha}`, {
           cwd: REPO_ROOT,
           encoding: 'utf-8',
         }).trim()

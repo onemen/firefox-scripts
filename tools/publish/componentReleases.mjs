@@ -794,6 +794,11 @@ export function latestReleaseTitle(date) {
  * Date the `latest` release's title to the commit its tag points at. Fails soft
  * (the title is cosmetic — the tag move positions the card) and is idempotent.
  *
+ * Call this only where the tag was moved, and derive `date` from the sha that
+ * ref now resolves to: the title restates the tag, so a date read from a
+ * checkout the tag never pointed at would advertise a day the tag does not
+ * carry — and the card's position on /releases is ordered by that same day.
+ *
  * @param {import('@octokit/rest').Octokit} octokit authenticated client
  * @param {string} date YYYY-MM-DD (a commitDateUtc() result)
  * @param {{id: number} | null} [release] the `latest` release when the caller
