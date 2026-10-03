@@ -28,16 +28,18 @@ communicates freshness without pretending every package changed.
   zips + installers: `utils.zip`, `fx-folder.zip`, `installer_win.exe` / `installer_mac` /
   `installer_linux`. `updater-ui.zip` and `helper_<os>` are gh-pages-branch artifacts — never
   release assets.
-- Releases are tagged **per component + date**: `scripts-<YYYY-MM-DD>` (the zips) and
+- Releases are tagged **per component + date**: `core-<YYYY-MM-DD>` (the zips) and
   `installer-<YYYY-MM-DD>` (installer binaries; helpers are gh-pages-only — they never appear on a
   release page, and a helper-only rebuild creates no tag). A component release is created only when
   that component changed. Component releases are **full releases** (not prereleases); after each
-  publish the Latest badge is re-pinned onto `latest` with `make_latest=true` on Update-a-release —
-  GitHub renders the badge-holding release as the page's hero card, so the page reads: latest hero
-  first, frozen date tags below (amended 2026-09-12, Latest Scripts scheme: the earlier
-  `prerelease=true` badge-guard and the `make_latest=false` wording predate the verified
-  availability of `make_latest` on Update-a-release; declared per
-  [0029](./0029-status-line-amendments.md)).
+  publish the Latest badge is re-pinned onto `latest` with `make_latest=true` on Update-a-release.
+  The badge is only a label: the releases page is ordered by the day of the commit the linked tag
+  points at, then by tag name descending. A component tag is created on the very commit `latest`
+  moves to, so it always ties on day and only the name can decide — `core-<date>` sorts below
+  `latest` (as `installer-<date>` does) and keeps it first, where `scripts-<date>` would sort above
+  it (amended 2026-09-12, Latest Scripts scheme: the earlier `prerelease=true` badge-guard and the
+  `make_latest=false` wording predate the verified availability of `make_latest` on
+  Update-a-release; declared per [0029](./0029-status-line-amendments.md)).
 - `latest` (existing moving tag) always carries the **complete release asset set** — both package
   zips + the installers — and stays GitHub's "Latest". README, docs and the updater point only at
   `latest` — never at versioned URLs.
