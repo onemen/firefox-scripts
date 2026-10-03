@@ -64,7 +64,7 @@ test('pickPublishedBinaries: installers and helpers, dev suffixes included', () 
 test('isWatchedRelease: latest + the installer-<date> snapshots, nothing else', () => {
   assert.equal(isWatchedRelease('latest'), true);
   assert.equal(isWatchedRelease('installer-2026-09-22'), true);
-  assert.equal(isWatchedRelease('scripts-2026-09-22'), false, 'script snapshots carry no binaries');
+  assert.equal(isWatchedRelease('core-2026-09-22'), false, 'component snapshots carry no binaries');
   assert.equal(isWatchedRelease('installer-2026-9-2'), false, 'the date form is fixed');
   assert.equal(isWatchedRelease('v1.0.0'), false);
   assert.equal(isWatchedRelease(undefined), false);
