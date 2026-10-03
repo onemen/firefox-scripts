@@ -192,10 +192,12 @@ reviewers are the **operator's** call, never the agent's initiative:
 - **When the operator does run `review:batch`** (or any external reviewer), the agent triages its
   findings right / wrong / useless exactly as for the local pass and posts each accepted finding per
   the protocol above: line-anchored individually resolvable threads (fallback review body, never
-  `gh pr comment`), the 🤖 provenance marker (e.g.
-  `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`), and each
-  thread resolved as its fix lands. External findings get the same scrutiny as local ones —
-  assessed, not rubber-stamped.
+  `gh pr comment`) and the 🤖 provenance marker (e.g.
+  `🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`). **Then it
+  stops** — a batch pass reviews PRs it does not own, so it writes no fixes and resolves no threads;
+  the owning agent re-assesses each open thread, fixes what it accepts, and resolves what it fixed.
+  **The `fix → resolve` step above is the local pass only.** External findings get the same scrutiny
+  as local ones — assessed, not rubber-stamped.
 
 ## Also know
 

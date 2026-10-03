@@ -69,10 +69,13 @@ the cases where it used to leave nothing behind:
   is resolved. A thread posted after the fix cannot be anchored to the line that carried the defect,
   so it degenerates into a vague comment — and the PR loses the only record of what was found.
 - **A rejected finding is still a record.** Every rejected finding gets a thread too, carrying the
-  disputed line and the reason it does not hold, and is deleted on the spot. **Delete it on the
-  spot** — an unquoted "wrong" is unverified, not disproved. This is what stops a rejected finding
-  from vanishing silently and being re-raised by the next reader; the asymmetry is deliberate, since
-  the cost of a redundant thread is much lower than the cost of a silently-dropped real defect.
+  disputed line and the reason it does not hold, and that thread **stays open** — an unquoted
+  "wrong" is unverified, not disproved, so the quote is what makes the rejection checkable rather
+  than an assertion. Keeping it is what stops a rejected finding from vanishing silently and being
+  re-raised by the next reader; the asymmetry is deliberate, since the cost of a redundant thread is
+  much lower than the cost of a silently-dropped real defect. Deleting the thread would undo the
+  purpose stated in the same sentence, so it is not deleted. The owning agent resolves a rejection
+  thread once it agrees with the verdict — or acts on it.
 - **Zero findings still gets a review.** "Reviewed, nothing to find" and "never reviewed" are
   indistinguishable on a PR unless the former says so. A short body — provider, files reviewed,
   counts, and no findings — is posted so the outcome is on the record.

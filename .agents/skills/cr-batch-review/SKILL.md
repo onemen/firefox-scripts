@@ -106,10 +106,12 @@ Then, in this order:
    `gh pr review <n> --comment` body when anchoring is impossible; never `gh pr comment`. _This is
    deliberate: a thread posted after the fix cannot be anchored to the offending line and leaves no
    record of what was found. The owner fixes after this, not before._
-2. **Record what you rejected.** A wrong or useless finding still gets a thread with the disputed
-   line quoted and the reason it does not hold. **Delete it on the spot.** If it is genuinely right,
-   the quote proves it. If it is genuinely wrong, the next reader can see it was considered and why
-   it was dropped — otherwise a rejected finding vanishes silently and the next agent re-raises it.
+2. **Record what you rejected, and leave it open.** A wrong or useless finding still gets a thread
+   with the disputed line quoted and the reason it does not hold — and you **do not delete it**. If
+   it is genuinely right, the quote proves it. If it is genuinely wrong, the next reader can see it
+   was considered and why it was dropped, which is the only thing that stops the next agent
+   re-raising it; deleting the thread is the one outcome that loses all of that. The owner resolves
+   a rejection thread when it agrees with the verdict.
 3. **Always leave a review record, including a clean one.** Zero findings is a _result_, not an
    absence: post a short body saying what was reviewed (provider, files, counts) and that nothing
    was found. Otherwise "reviewed, nothing to fix" and "never reviewed" look identical on the PR.

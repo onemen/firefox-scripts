@@ -409,4 +409,12 @@ test('the batch pass is documented as review-only, in the skill, the ADR and AGE
   assert.match(adr, /leaves open threads by design/);
 
   assert.match(agents, /it writes \*\*no fixes and resolves\s+no threads\*\*/);
+
+  // A rejected finding is posted as a record and left open; an earlier draft
+  // also said "delete it on the spot", which cancelled the record it had just
+  // asked for (found by the operator's review:batch run).
+  assert.doesNotMatch(skill, /Delete it on the spot/);
+  assert.doesNotMatch(adr, /deleted on the spot/);
+  assert.match(skill, /do not delete it/);
+  assert.match(adr, /that thread \*\*stays open\*\*/);
 });
