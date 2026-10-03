@@ -22,7 +22,7 @@ const {
   REPO_ROOT: TOOL_ROOT,
 } = await import(syncUrl);
 
-test('classifySkills: live repo — five third-party, five authored', () => {
+test('classifySkills: live repo — five third-party, six authored', () => {
   const {thirdParty, authored} = classifySkills(TOOL_ROOT);
   assert.deepEqual(thirdParty, [
     'cavecrew',
@@ -35,6 +35,7 @@ test('classifySkills: live repo — five third-party, five authored', () => {
     'ai-review',
     'batch-loop',
     'change-workflow',
+    'cr-batch-review',
     'generated-files',
     'publishing',
   ]);

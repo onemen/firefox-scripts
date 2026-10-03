@@ -3,7 +3,7 @@ name: ai-review
 description:
   Review a PR the ADR 0020 way — run the local `pnpm review:local` reviewer, assess every finding as
   right / wrong / useless with the disputed line quoted before any rejection, and post each accepted
-  finding as its own line-anchored, individually resolvable review thread (fallback: `gh pr review
+  finding as its own line-anchored, individually resolvable review thread (fallback `gh pr review
   <n> --comment`, never `gh pr comment`), resolving each thread as its fix lands. Use when a PR is
   ready for review or the user asks for the AI review step.
 ---
@@ -185,7 +185,10 @@ reviewers are the **operator's** call, never the agent's initiative:
   the user, consumes their included-review quota (~1/hour), and adds timeline activity they did not
   ask for. Recommend the pass and wait for the explicit instruction.
 - **`pnpm review:batch` likewise requires explicit operator instruction** to run — same reason: it
-  posts CodeRabbit reviews to PRs under the user's account and spends their quota.
+  posts CodeRabbit reviews to PRs under the user's account and spends their quota. **That pass has
+  its own skill, `cr-batch-review`** — this one covers the local reviewer only. When the operator
+  asks for the batch pass, switch to that skill rather than working it from here; the ADR 0020
+  protocol is shared either way.
 - **When the operator does run `review:batch`** (or any external reviewer), the agent triages its
   findings right / wrong / useless exactly as for the local pass and posts each accepted finding per
   the protocol above: line-anchored individually resolvable threads (fallback review body, never

@@ -94,7 +94,15 @@ usually covers the need.
 
 Task-scoped instruction modules an agent loads on demand when the task matches them — deep dive
 detail lives there so this file stays a checklist, not a manual. All skills are direct children of
-`.agents/skills/<name>/` (flat, tracked; ADR 0022):
+`.agents/skills/<name>/` (flat, tracked; ADR 0022).
+
+**Load one before you plan.** The table below is an index, not the instructions: when a row matches
+the task, read `.agents/skills/<name>/SKILL.md` first — to the end — and build the todo from what it
+says. Do not work the task from the row, and do not reconstruct the skill's content from the repo's
+general rules. Dispatch is a host convenience, not a guarantee: on 2026-10-03 an agent given "do a
+batch review on all PRs from today" announced it would check `cr-batch-review`, never opened it, and
+improvised the protocol from ADR 0020 for 59s. Reading the file costs one command; improvising the
+same content costs a review pass.
 
 - **Third-party** (`metadata.github-repo` in `SKILL.md`): installed and updated only via
   `gh skill install` / `gh skill update`; kept byte-identical to upstream — never linted or
@@ -106,18 +114,19 @@ detail lives there so this file stays a checklist, not a manual. All skills are 
   (pnpm, the C toolchain, `gh`) and may not translate to other projects.
 - **Authored here**: fully covered by the lint/format gates; updates are normal PRs.
 
-| Skill               | Class       | Load when the task involves                                            |
-| ------------------- | ----------- | ---------------------------------------------------------------------- |
-| `ai-review`         | authored    | Reviewing a PR — the ADR 0020 local review step                        |
-| `batch-loop`        | authored    | Working a batch of tasks — one PR per task, never idle-wait            |
-| `change-workflow`   | authored    | Making code changes — subsystem, docs, validation order                |
-| `generated-files`   | authored    | Regenerating or reasoning about the untracked build files              |
-| `publishing`        | authored    | Releasing — `publish:*` / `snapshot:*`, prod/dev modes                 |
-| `cavecrew`          | third-party | Delegating locate / small-edit / diff-review subtasks to subagents     |
-| `code-review`       | third-party | Reviewing a diff against the repo's standards and originating spec     |
-| `debugging-firefox` | third-party | Debugging live Firefox via DevTools RDP (`docs/debugging-with-rdp.md`) |
-| `grill-me`          | third-party | Stress-testing a plan or design before committing to it                |
-| `lavish`            | third-party | Turning complex/visual agent output into annotatable HTML artifacts    |
+| Skill               | Class       | Load when the task involves                                             |
+| ------------------- | ----------- | ----------------------------------------------------------------------- |
+| `ai-review`         | authored    | Reviewing a PR — the ADR 0020 local review step                         |
+| `batch-loop`        | authored    | Working a batch of tasks — one PR per task, never idle-wait             |
+| `change-workflow`   | authored    | Making code changes — subsystem, docs, validation order                 |
+| `cr-batch-review`   | authored    | Operator-requested CodeRabbit batch pass — ADR 0020 posting, quota gate |
+| `generated-files`   | authored    | Regenerating or reasoning about the untracked build files               |
+| `publishing`        | authored    | Releasing — `publish:*` / `snapshot:*`, prod/dev modes                  |
+| `cavecrew`          | third-party | Delegating locate / small-edit / diff-review subtasks to subagents      |
+| `code-review`       | third-party | Reviewing a diff against the repo's standards and originating spec      |
+| `debugging-firefox` | third-party | Debugging live Firefox via DevTools RDP (`docs/debugging-with-rdp.md`)  |
+| `grill-me`          | third-party | Stress-testing a plan or design before committing to it                 |
+| `lavish`            | third-party | Turning complex/visual agent output into annotatable HTML artifacts     |
 
 All paths are `<root>/.agents/skills/<name>/SKILL.md`.
 
@@ -164,8 +173,11 @@ under the user's own account, and the marker is what separates agent from human 
 is not gated on CI — it can help debug failing checks. Add no CI/repo AI secret. External review
 triggers — CodeRabbit `@coderabbitai review` and `pnpm review:batch` — are **operator-initiated
 only**: the agent never invokes them unprompted. When the operator runs `review:batch`, the agent
-triages its findings and posts accepted ones per the protocol above. Full protocol: the `ai-review`
-skill.
+triages its findings and posts accepted ones per the protocol above — and then **stops**: the batch
+pass reviews PRs it does not own, including other agents' PRs, so it writes **no fixes and resolves
+no threads**. The owning agent re-assesses each open thread, fixes what it accepts, and resolves
+what it fixed. Full protocol: the `ai-review` skill; the ownership rule: the `cr-batch-review` skill
+and ADR 0020.
 
 ## Agent workflow
 
