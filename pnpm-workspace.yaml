@@ -20,6 +20,18 @@ overrides:
   # 1.1.20+ / 2.1.6+ / 5.0.11+ releases all satisfy this floor.
   brace-expansion: '>=1.1.20'
 
+audit:
+  # GHSA-vfj7-8cjw-p6xm: braces stack-exhaustion DoS through deeply nested
+  # patterns. No patched release exists — 3.0.3 is the newest braces on npm and
+  # the advisory lists `patched_versions: null` — so no override can clear it.
+  # Not reachable: braces rides devDependencies only (markdownlint-cli2 →
+  # globby/fast-glob → micromatch), the pattern strings come from tracked config
+  # (config/.markdownlint-cli2.jsonc, ci.yml) rather than untrusted input, and
+  # the runtime dependency surface is zero (ADR 0033), so nothing here reaches
+  # a shipped artifact. Remove this entry when upstream ships a fix.
+  ignore:
+    - GHSA-vfj7-8cjw-p6xm
+
 trustPolicy: no-downgrade
 
 trustPolicyExclude:
