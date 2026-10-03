@@ -21,8 +21,10 @@
 //   - the current module, asserting the real resolvers still win (no
 //     regression of #282's suffix drop or ADR 0026's dead-channel fallback);
 //   - a static check of the tab's import surface, so a future unguarded export
-//     fails here rather than in a user's browser.
-// Not exercised here: the zip/DOM/IOUtils install machinery (the E2E legs).
+//     fails here rather than in a user's browser;
+//   - the config install's hold-vs-escalation decision (see that section), the
+//     one piece of install machinery a vm CAN reach: it needs no real browser.
+// Not exercised here: the zip/DOM install machinery around it (the E2E legs).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -72,7 +74,7 @@ const LEGACY_EXPORTS = [
 ];
 
 /** Exports the tab consumes that postdate the legacy floor: guarded by the seam. */
-const GUARDED = ['getAssetSuffix', 'getChannelState', 'fxFolderDir'];
+const GUARDED = ['getAssetSuffix', 'getChannelState', 'fxFolderDir', 'withFileHoldRetry'];
 
 /** The reporter's generated config (stable channel, no STABLE_* keys: pre-0026). */
 const LEGACY_CONFIG = {
@@ -170,6 +172,11 @@ function legacyNamespace(config, {utilsUpdateNeeded = true} = {}) {
 /**
  * Evaluate the tab engine against `moduleExports` + `config`, run its real
  * init() and resolve with the state snapshot it pushed.
+ *
+ * `ioUtils` overrides individual IOUtils methods (the install tests inject a
+ * copy that fails); `subprocessExitCode` is what the elevated-copy helper
+ * "returns", and every spawn is recorded in `subprocessCalls` so a test can
+ * assert the tab did — or did not — ask the user for admin rights.
  */
 async function runTab({
   moduleExports,
@@ -179,16 +186,27 @@ async function runTab({
   profPath = 'C:\\Users\\test\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\p1',
   platform = 'win',
   xpcomabi = 'x86_64',
+  ioUtils = {},
+  subprocessExitCode = 0,
 } = {}) {
   const prefs = {};
   const windowStub = {};
+  const subprocessCalls = [];
   const sandbox = {
     window: windowStub,
     ChromeUtils: {
       importESModule(spec) {
         if (spec.includes('Downloads')) return {Downloads: {fetch: async () => {}}};
-        if (spec.includes('Subprocess'))
-          return {Subprocess: {call: async () => ({wait: async () => ({})})}};
+        if (spec.includes('Subprocess')) {
+          return {
+            Subprocess: {
+              call: async cmd => {
+                subprocessCalls.push(cmd);
+                return {wait: async () => ({exitCode: subprocessExitCode})};
+              },
+            },
+          };
+        }
         if (spec.includes('AppConstants')) {
           return {AppConstants: {platform, MOZ_APP_VERSION_DISPLAY: '140.0'}};
         }
@@ -214,9 +232,13 @@ async function runTab({
       parent: p => p,
     },
     IOUtils: {
-      read: async () => new Uint8Array(),
+      // The helper's magic-number check reads 4 bytes; 'MZ' is the PE header,
+      // so a stubbed download passes it and the test reaches the spawn.
+      read: async () => new Uint8Array([0x4d, 0x5a, 0x90, 0x00]),
       makeDirectory: async () => {},
       copy: async () => {},
+      remove: async () => {},
+      ...ioUtils,
     },
     console,
     Blob,
@@ -234,7 +256,7 @@ async function runTab({
   engine.onProgress = () => {};
   await engine.init();
   assert.ok(state, 'engineInit() must push a state snapshot');
-  return {state, prefs, engine};
+  return {state, prefs, engine, subprocessCalls};
 }
 
 /* ---------------- the reporter's scenario (legacy module) ---------------- */
@@ -362,20 +384,22 @@ test('the legacy fixture stays a subset of the current module (exports are never
 // running BOTH against the same dirsvc values and comparing the answers.
 
 /**
- * Evaluate the real module in a vm and return its fxFolderDir() for `dirsvc`
- * values. Same technique as the channel tests: only the lazy getters the module
- * resolves at load time are stubbed (SessionStore, Downloads, Timer).
+ * Evaluate the real module in a vm and return its sandbox, so a test can drive
+ * the module's own function rather than a hand-written stand-in. Same technique
+ * as the channel tests: only the lazy getters the module resolves at load time
+ * are stubbed (SessionStore, Downloads, Timer — Timer's setTimeout fires
+ * immediately, so the retry backoff costs the test nothing).
  *
  * @param {string} exePath - Services XREExeF (the Snap marker lives here)
  * @param {string} grePath - Services GreD
- * @returns {string}
+ * @returns {object} the sandbox, carrying every export as a property
  */
-function realModuleFxFolderDir(exePath, grePath) {
+function evaluateRealModule(exePath, grePath) {
   const source = fs
     .readFileSync(MODULE_PATH, 'utf-8')
     .replace(/\r\n/g, '\n')
     // Every export is a function declaration, so stripping `export ` exposes
-    // fxFolderDir() on the sandbox object.
+    // the API on the sandbox object.
     .replace(/^export /gm, '');
   const sandbox = {
     ChromeUtils: {
@@ -404,6 +428,12 @@ function realModuleFxFolderDir(exePath, grePath) {
     queueMicrotask,
   };
   vm.runInContext(source, vm.createContext(sandbox), {filename: 'scriptsUpdater.sys.mjs'});
+  return sandbox;
+}
+
+/** The real module's fxFolderDir() for the given dirsvc values. */
+function realModuleFxFolderDir(exePath, grePath) {
+  const sandbox = evaluateRealModule(exePath, grePath);
   assert.equal(typeof sandbox.fxFolderDir, 'function', 'the module must export fxFolderDir');
   return sandbox.fxFolderDir();
 }
@@ -442,4 +472,131 @@ test('the tab fallback agrees with the module: a snap install maps to /etc/firef
     '/etc/firefox',
     'tab fallback must match the module on a snap install'
   );
+});
+
+/* ---------------- a hold is not a permission problem ---------------- */
+// installConfigFiles() copies into the LIVE install dir (GreD), where Defender,
+// the indexer or the browser itself can hold a file for a moment. It falls
+// through to the elevated helper on any failure, so an incidental hold used to
+// cost the user a UAC prompt that fixed nothing. The hold is now retried first;
+// only a copy that still fails escalates. No E2E leg can provoke a sharing
+// violation, so it is pinned here against injected IOUtils failures.
+
+/**
+ * A module namespace with one file to install for the config package, plus the
+ * real module's hold-retry when `holdRetry` is on (the seam resolves it at
+ * load; a legacy namespace carries none and must escalate on the first hold).
+ *
+ * @param {{holdRetry: boolean}} opts
+ * @returns {Object}
+ */
+function configInstallNamespace({holdRetry}) {
+  const names = legacyNamespace({...LEGACY_CONFIG}, {utilsUpdateNeeded: false});
+  // The REAL module's retry, not a stand-in: this test's claim is that the tab
+  // routes the copy through it, and a hand-written stub could agree with a
+  // stale idea of the hold signature while the module moved on.
+  const realModule = evaluateRealModule();
+  assert.equal(
+    typeof realModule.withFileHoldRetry,
+    'function',
+    'the module must export withFileHoldRetry for the tab to use'
+  );
+  return {
+    ...names,
+    checkScriptsUpdateNeeded: async () => ({
+      fxFolder: {
+        updateNeeded: true,
+        date: '2026-10-02',
+        remoteHash: 'a'.repeat(64),
+        files: ['config.js'],
+      },
+      utils: {updateNeeded: false, date: '2026-09-26', remoteHash: 'b'.repeat(64), files: []},
+      updaterUi: {updateNeeded: false, date: '', remoteHash: '', files: []},
+    }),
+    extractZipFlatten: async () => '/tmp/extracted',
+    ...(holdRetry ? {withFileHoldRetry: realModule.withFileHoldRetry} : {}),
+  };
+}
+
+/** A Gecko-style file error, the way IOUtils rejects a held target. */
+function fileHoldError(name = 'NS_ERROR_FILE_IS_LOCKED') {
+  return Object.assign(new Error(name), {name, result: 0x80520015});
+}
+
+/**
+ * Drive the real install flow and report what the user was asked for.
+ *
+ * @param {{holdRetry?: boolean; copy: () => Promise<void>}} opts
+ */
+async function runConfigInstall({holdRetry = true, copy}) {
+  const moduleExports = configInstallNamespace({holdRetry});
+  const {engine, subprocessCalls} = await runTab({
+    moduleExports,
+    config: {...LEGACY_CONFIG},
+    ioUtils: {copy},
+  });
+  const progress = [];
+  engine.onProgress = (...args) => progress.push(args);
+  await engine.install(['config']);
+  return {progress, subprocessCalls};
+}
+
+test('config install: a transient hold is retried, not escalated to UAC', async () => {
+  let attempts = 0;
+  const {progress, subprocessCalls} = await runConfigInstall({
+    copy: async () => {
+      attempts += 1;
+      if (attempts === 1) throw fileHoldError();
+    },
+  });
+  assert.equal(attempts, 2, 'the held copy must be retried, exactly once here');
+  assert.deepEqual(subprocessCalls, [], 'a hold must never reach the elevated helper');
+  assert.ok(
+    progress.some(args => String(args[1]).startsWith('Configuration files installed.')),
+    `expected a plain success message, got ${JSON.stringify(progress)}`
+  );
+});
+
+test('config install: a hold that outlives the retry budget still escalates', async () => {
+  let attempts = 0;
+  const {progress, subprocessCalls} = await runConfigInstall({
+    copy: async () => {
+      attempts += 1;
+      throw fileHoldError();
+    },
+  });
+  assert.equal(attempts, 4, 'the hold is retried to the budget, then given up on');
+  assert.equal(subprocessCalls.length, 1, 'a copy that keeps failing escalates to the helper');
+  assert.ok(
+    progress.some(args => String(args[1]).includes('Requesting administrator permission')),
+    `expected the elevation prompt, got ${JSON.stringify(progress)}`
+  );
+});
+
+test('config install: a non-hold failure escalates immediately, without the retry budget', async () => {
+  let attempts = 0;
+  const {subprocessCalls} = await runConfigInstall({
+    copy: async () => {
+      attempts += 1;
+      throw new Error('NS_ERROR_FILE_CANT_BE_CREATED');
+    },
+  });
+  assert.equal(attempts, 1, 'only holds are retried; a real failure escalates at once');
+  assert.equal(subprocessCalls.length, 1);
+});
+
+test('config install: a legacy module without the hold retry still escalates', async () => {
+  // The seam must stay tolerant: a module predating the export keeps the
+  // pre-existing escalate-on-any-failure path (the tolerance issue #383 is
+  // about, in the install direction).
+  let attempts = 0;
+  const {subprocessCalls} = await runConfigInstall({
+    holdRetry: false,
+    copy: async () => {
+      attempts += 1;
+      throw fileHoldError();
+    },
+  });
+  assert.equal(attempts, 1, 'without the export there is no retry to ride the hold out');
+  assert.equal(subprocessCalls.length, 1, 'the old path escalates, which is still correct');
 });

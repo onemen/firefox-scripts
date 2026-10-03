@@ -74,8 +74,9 @@ const {CONFIG} = ChromeUtils.importESModule(
 // The fallbacks reproduce the behaviour of the older module such an install
 // carries (pre-ADR 0026), so it renders and can install the current utils.
 //
-// The guarded names are fxFolderDir (added with #142, 2026-09-06) and
-// getAssetSuffix / getChannelState (added with ADR 0026, #189, 2026-09-12) —
+// The guarded names are fxFolderDir (added with #142, 2026-09-06),
+// getAssetSuffix / getChannelState (added with ADR 0026, #189, 2026-09-12) and
+// withFileHoldRetry (the config install's hold retry) —
 // each landed in the module and in its first tab-side consumer together. Any
 // install older than those dates can still be out there, and this tab is the
 // only way out of it.
@@ -113,6 +114,15 @@ const getChannelState =
  */
 const fxFolderDir =
   typeof scriptsUpdater.fxFolderDir === 'function' ? scriptsUpdater.fxFolderDir : legacyFxFolderDir;
+
+/**
+ * The module's bounded retry for a transient file hold, or null on a module
+ * that predates it. `null` means "no retry", not "no hold": the config install
+ * then escalates on the first failure exactly as it always has, which is the
+ * correct behaviour for the permission failure that is its actual trigger.
+ */
+const withFileHoldRetry =
+  typeof scriptsUpdater.withFileHoldRetry === 'function' ? scriptsUpdater.withFileHoldRetry : null;
 
 /** @returns {string} */
 function legacyFxFolderDir() {
@@ -674,11 +684,23 @@ async function installConfigFiles(extractDir, files, greDir, tmpDir) {
   // 1) Direct copy — works when the install dir is user-writable.
   try {
     for (const [src, dst] of pairs) {
-      await IOUtils.makeDirectory(PathUtils.parent(dst), {
-        ignoreExisting: true,
-        createAncestors: true,
-      });
-      await IOUtils.copy(src, dst, {noOverwrite: false});
+      const copyOne = async () => {
+        await IOUtils.makeDirectory(PathUtils.parent(dst), {
+          ignoreExisting: true,
+          createAncestors: true,
+        });
+        await IOUtils.copy(src, dst, {noOverwrite: false});
+      };
+      // GreD is the live install dir, so a transient hold (Defender scanning
+      // the file it just wrote, the indexer, the browser itself) is not a
+      // permission problem — escalating to UAC for one costs the user a prompt
+      // that fixes nothing. Retry the hold the same way copyFileList() does;
+      // anything else, and a hold that outlives the budget, still escalates.
+      if (withFileHoldRetry) {
+        await withFileHoldRetry(copyOne);
+      } else {
+        await copyOne();
+      }
     }
     return {ok: true, elevated: false};
   } catch {

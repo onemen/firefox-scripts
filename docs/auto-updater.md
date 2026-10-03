@@ -255,12 +255,15 @@ two Win32 failures `is_file_locked()` treats as "locked" in `installer/src/detec
 `copyFileList()` rides the hold out per file with a short bounded retry (4 tries, 150 ms base). Only
 a hold that outlives the budget fails, and that failure names the file it could not install: the
 tree is then partially updated, and the next check still reports the package stale, so re-running
-the install is the recovery. Non-hold errors are never retried.
-
-The config package is the exception: `installConfigFiles()` copies it into GreD (or `/etc/firefox`
-on Snap) with a plain `IOUtils.copy()` and, on **any** failure, escalates to the elevated helper —
-no per-file retry, because a direct copy into an admin-owned install dir is expected to fail and the
-helper is the designed route. A transient hold therefore just takes that same detour.
+the install is the recovery. Non-hold errors are never retried.The config package lands in the same
+live install dir, one level up (`ProfD/chrome/utils`' sibling `GreD`, or `/etc/firefox` on Snap),
+and its install has a second stage: `installConfigFiles()` copies into it directly and, when that
+copy **fails**, escalates to the elevated helper — because a direct copy into an admin-owned install
+dir is expected to fail and the helper is the designed route. That makes a mere hold expensive: the
+user would get a UAC prompt over a file that was only locked for a moment. So the same hold
+signature is retried here first, through the module's exported `withFileHoldRetry()` (the tab
+feature-detects it, the #383 seam), and only a copy that still fails reaches the helper. A genuinely
+unwritable install dir costs ~1 s of retrying before the prompt it was always going to raise.
 
 ### 5.2 Self-update
 
