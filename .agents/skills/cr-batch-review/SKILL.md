@@ -78,6 +78,23 @@ Then, in this order:
 Verify the review landed with `gh pr view <n> --json reviews`. `main` requires conversation
 resolution, so no thread may be left open at merge.
 
+## Branches with no PR: show the findings in chat
+
+`cr` produces a _pull request_ review. A `--branch` target with no PR has nowhere to post one, so
+the ADR 0020 steps above have nothing to attach to — there is no timeline, no anchor, nothing to
+resolve. The findings are still worth having, so **do not drop them silently**:
+
+- Print **every** finding in the chat reply, each with `path:startLine-line`, the severity and
+  category, and the disputed code quoted.
+- Say plainly that there is **no GitHub record** for this review, and why (no PR exists for the
+  branch).
+- Do not claim any thread was posted or resolved — nothing was.
+- If the operator wants the ADR 0020 record, the fix is cheap: open a draft PR for the branch and
+  re-run. Offer it; do not open one unasked.
+
+A review nobody can find is the same as no review. Silence here is the failure mode, not the
+`--branch` mode.
+
 ## Housekeeping
 
 `review:batch` sweeps `coderabbit-update-*` dirs older than `--temp-grace` (default 30 min) from
