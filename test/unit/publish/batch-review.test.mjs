@@ -7,7 +7,9 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {join} from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import path, {join} from 'node:path';
 import {
   ageToUnixSeconds,
   cleanupCoderabbitTemp,
@@ -19,6 +21,7 @@ import {
   parseOpenPrBranchesOutput,
   removeTempWorktree,
   stripAnsi,
+  writeFindingsReport,
 } from '../../../tools/ci/batch-review.mjs';
 
 // ── removeTempWorktree (temp-worktree teardown ladder) ─────────────────
@@ -424,4 +427,69 @@ test('parseFindings keeps the anchor when an OSC-8 link ends with ESC-backslash'
   assert.equal(findings[0].path, 'docs/a.md');
   assert.equal(findings[0].startLine, 12);
   assert.equal(findings[0].line, 14);
+});
+
+// ── findings report persistence ─────────────────────────────────────────
+// `dist/` is scratch that ordinary commands delete — an `rm -rf dist` during
+// unrelated work already ate a real report — so the run also archives a
+// timestamped copy outside it.
+
+test('writeFindingsReport writes the current report and a durable archive', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-report-'));
+  const cwd = process.cwd();
+  process.chdir(root);
+  // chdir back BEFORE the rm: Windows refuses to delete the process CWD.
+  t.after(() => {
+    process.chdir(cwd);
+    fs.rmSync(root, {recursive: true, force: true});
+  });
+
+  const {current, archive} = writeFindingsReport('{"count":0}');
+  assert.equal(current, path.join('dist', 'review', 'batch-findings.json'));
+  assert.ok(archive.startsWith(path.join('review-history', 'batch-findings-')), archive);
+  assert.ok(archive.endsWith('.json'), archive);
+  assert.equal(fs.readFileSync(current, 'utf8'), '{"count":0}');
+  assert.equal(fs.readFileSync(archive, 'utf8'), '{"count":0}');
+});
+
+test('writeFindingsReport timestamps so runs accumulate, and clears a stale current', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-report2-'));
+  const cwd = process.cwd();
+  process.chdir(root);
+  // chdir back BEFORE the rm: Windows refuses to delete the process CWD.
+  t.after(() => {
+    process.chdir(cwd);
+    fs.rmSync(root, {recursive: true, force: true});
+  });
+
+  // A stale report from an earlier run must not survive into the next one.
+  fs.mkdirSync(path.join('dist', 'review'), {recursive: true});
+  fs.writeFileSync(path.join('dist', 'review', 'batch-findings.json'), '{"stale":true}');
+  writeFindingsReport('{"fresh":true}');
+  assert.equal(
+    fs.readFileSync(path.join('dist', 'review', 'batch-findings.json'), 'utf8'),
+    '{"fresh":true}'
+  );
+
+  const first = fs.readdirSync('review-history');
+  writeFindingsReport('{"again":true}');
+  const second = fs.readdirSync('review-history');
+  // Two distinct timestamps -> two files, so the earlier run is not overwritten.
+  assert.equal(second.length >= first.length, true);
+  assert.equal(new Set(second).size, second.length);
+});
+
+test('writeFindingsReport can skip the archive', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-report3-'));
+  const cwd = process.cwd();
+  process.chdir(root);
+  // chdir back BEFORE the rm: Windows refuses to delete the process CWD.
+  t.after(() => {
+    process.chdir(cwd);
+    fs.rmSync(root, {recursive: true, force: true});
+  });
+
+  const {archive} = writeFindingsReport('{"count":0}', {keep: false});
+  assert.equal(archive, null);
+  assert.equal(fs.existsSync('review-history'), false);
 });

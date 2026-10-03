@@ -54,7 +54,7 @@
 import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
 
 const REPO = 'onemen/firefox-scripts';
 
@@ -283,6 +283,35 @@ function spawnSyncGit(cmd, args, opts) {
 // The label after the hyperlink is the anchor an ADR 0020 review thread needs
 // (`path` + the last line), so it is parsed out here instead of leaving every
 // agent to re-derive it from the diff — and to re-derive it wrong on a range.
+
+/**
+ * Write the findings report — twice, on purpose.
+ *
+ * - `dist/review/batch-findings.json` is the current run's canonical report, the
+ *   one the ADR 0020 posting step reads. It is overwritten each run and removed
+ *   up front, so a stale one can never be mistaken for a fresh one.
+ * - `review-history/batch-findings-<ISO>.json` is the durable archive. `dist/` is
+ *   gitignored scratch that ordinary commands delete — an `rm -rf dist` during
+ *   unrelated work has already eaten a real report — so the copy that survives
+ *   lives outside it, timestamped so successive runs accumulate instead of
+ *   overwriting one another.
+ *
+ * @param {string} json the serialized report
+ * @param {{keep?: boolean}} [opts] `keep: false` writes only the current report
+ * @returns {{current: string; archive: string | null}} paths written
+ */
+export function writeFindingsReport(json, {keep = true} = {}) {
+  const current = join('dist', 'review', 'batch-findings.json');
+  fs.rmSync(current, {force: true});
+  fs.mkdirSync(join('dist', 'review'), {recursive: true});
+  fs.writeFileSync(current, json);
+  if (!keep) return {current, archive: null};
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const archive = join('review-history', `batch-findings-${stamp}.json`);
+  fs.mkdirSync('review-history', {recursive: true});
+  fs.writeFileSync(archive, json);
+  return {current, archive};
+}
 
 /** OSC-8 hyperlinks and SGR colour runs. */
 // Control characters are exactly what this strips — that is the point.
@@ -667,20 +696,16 @@ export async function main() {
     // starts re-reading the raw output.
     const findings = parseFindings(cr.stdout);
     console.log(`\n${findingsTable(findings)}`);
-    const reportPath = join('dist', 'review', 'batch-findings.json');
-    // A report from an earlier run is worse than no report: the ADR 0020 step
-    // would post stale findings against this run's PRs. Remove it up front so a
-    // failed write can never be mistaken for a fresh one.
-    fs.rmSync(reportPath, {force: true});
+    const reportJson = findingsJson(findings, {refs: unique, base: args.base});
     try {
-      fs.mkdirSync(join('dist', 'review'), {recursive: true});
-      fs.writeFileSync(reportPath, findingsJson(findings, {refs: unique, base: args.base}));
-      console.log(`Anchors + bodies written to ${reportPath}`);
+      const {current, archive} = writeFindingsReport(reportJson);
+      console.log(`Anchors + bodies written to ${current}`);
+      if (archive) console.log(`Archived to ${resolve(archive)}`);
     } catch (err) {
       // Fatal, not a warning: the log below tells the agent to read this file,
-      // and it does not exist. Continuing would point it at nothing (or, before
-      // the rmSync above, at the previous run's findings).
-      console.error(`✗ could not write ${reportPath}: ${err.message}`);
+      // and it does not exist. Continuing would point it at nothing (or, at the
+      // previous run's findings, which is worse).
+      console.error(`✗ could not write the findings report: ${err.message}`);
       console.error('  The ADR 0020 posting step needs this file — fix the path or rerun.');
       process.exitCode = 5;
       return;

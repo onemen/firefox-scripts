@@ -1,4 +1,8 @@
 dist
+# Durable archive of review:batch findings (one timestamped JSON per run).
+# Local run artifacts, not source: they must survive `rm -rf dist` but must not
+# dirty `git status`.
+review-history
 lib
 # Logs
 logs
