@@ -188,6 +188,16 @@ export function sha256FileBytes(bytes) {
 }
 
 /**
+ * Per-URL download budget. Without it a mirror that accepts the connection and
+ * then stalls holds the loop until the job-level timeout, so the fallback chain
+ * never advances — exactly the failure the mirror list exists to prevent.
+ * Generous, because these are multi-MB archives over real networks: it only has
+ * to outlast a slow-but-live transfer, and a genuinely stalled peer trips it
+ * long before GitHub's own limit.
+ */
+export const DEFAULT_FETCH_TIMEOUT_MS = 120_000;
+
+/**
  * Download every pinned package into `dir` (cached), verifying SHA-256. Returns
  * the local file paths in manifest order. A checksum mismatch or a missing file
  * throws — never a "close enough" toolchain.
@@ -197,6 +207,7 @@ export async function fetchPackages({
   dir = DEFAULT_CACHE,
   log = console.log,
   fetchImpl = fetch,
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
 } = {}) {
   fs.mkdirSync(dir, {recursive: true});
   const files = [];
@@ -212,21 +223,28 @@ export async function fetchPackages({
     const failures = [];
     let downloaded = false;
     for (const url of urls) {
-      let res;
+      let body;
       try {
-        res = await fetchImpl(url);
+        // One signal covers the headers AND the body: a peer that answers the
+        // request and then stalls mid-transfer is the case a per-request
+        // timeout on the response alone would still hang on.
+        const res = await fetchImpl(url, {signal: AbortSignal.timeout(timeoutMs)});
+        if (!res.ok) {
+          failures.push(`${url}: HTTP ${res.status}`);
+          continue;
+        }
+        body = Buffer.from(await res.arrayBuffer());
       } catch (err) {
-        // A dead mirror is a network error, not a 404 — record the underlying
-        // cause (Node puts it on err.cause) so the final message names the
-        // host instead of just "fetch failed".
-        failures.push(`${url}: ${err?.cause?.code ?? err?.cause?.message ?? err.message}`);
+        // A dead or stalled mirror is a network error, not a 404 — record the
+        // underlying cause (Node puts it on err.cause; an abort carries
+        // `name: 'TimeoutError'`) so the final message names the host instead
+        // of just "fetch failed", then try the next candidate.
+        const cause = err?.cause?.code ?? err?.cause?.message;
+        const why =
+          cause ?? (err?.name === 'TimeoutError' ? `timeout after ${timeoutMs}ms` : err.message);
+        failures.push(`${url}: ${why}`);
         continue;
       }
-      if (!res.ok) {
-        failures.push(`${url}: HTTP ${res.status}`);
-        continue;
-      }
-      const body = Buffer.from(await res.arrayBuffer());
       const actual = sha256FileBytes(body);
       if (actual !== pkg.sha256) {
         // A mirror serving different bytes is a hard stop: it may be a

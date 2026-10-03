@@ -436,12 +436,12 @@ function onePkg({mirrors, sha256} = {}) {
   };
 }
 
-/** A fetch stub that records the URLs it was asked for. */
+/** A fetch stub that records the URLs it was asked for, forwarding the init. */
 function stubFetch(handler) {
   const calls = [];
-  const impl = async url => {
+  const impl = async (url, init) => {
     calls.push(url);
-    return handler(url, calls.length);
+    return handler(url, calls.length, init);
   };
   impl.calls = calls;
   return impl;
@@ -616,4 +616,86 @@ test('the shipped manifest keeps the canonical repo first and lists real mirrors
       assert.ok(base.endsWith(suffix), `${base} should end in ${suffix}`);
     }
   }
+});
+
+test('fetchPackages times out a stalled mirror and moves to the next candidate', async t => {
+  const dir = tempDir(t);
+  const body = Buffer.from('pinned bytes');
+  const m = onePkg({
+    sha256: sha256FileBytes(body),
+    mirrors: {
+      ucrt64: [
+        'https://stalled.example/msys2/mingw/ucrt64',
+        'https://good.example/msys2/mingw/ucrt64',
+      ],
+    },
+  });
+  // A peer that accepts the connection, answers, then never finishes the body:
+  // only a signal that outlives arrayBuffer() can rescue this.
+  const stalled = () => ({
+    ok: true,
+    status: 200,
+    arrayBuffer: () =>
+      new Promise((_, reject) => {
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        setTimeout(() => reject(err), 5).unref?.();
+      }),
+  });
+  const refused = () => {
+    const err = new TypeError('fetch failed');
+    err.cause = {code: 'ECONNREFUSED'};
+    throw err;
+  };
+  // Primary is down, the first fallback stalls mid-body, the second serves the
+  // pinned bytes — the stall must be recorded and the chain must continue.
+  const f = stubFetch(url => {
+    if (url.includes('stalled.example')) return stalled();
+    if (url.includes('good.example')) return ok(body);
+    return refused();
+  });
+  const logs = [];
+  const files = await fetchPackages({
+    manifest: m,
+    dir,
+    log: msg => logs.push(msg),
+    fetchImpl: f,
+    timeoutMs: 20,
+  });
+  assert.equal(f.calls.length, 3, 'primary, stalled, then good');
+  assert.equal(fs.readFileSync(files[0]).toString(), 'pinned bytes');
+  assert.ok(
+    logs.some(l => l.includes('served by fallback good.example')),
+    'the surviving mirror is named'
+  );
+});
+
+test('fetchPackages gives every download an AbortSignal it can abort on', async t => {
+  const dir = tempDir(t);
+  const body = Buffer.from('pinned bytes');
+  const m = onePkg({sha256: sha256FileBytes(body)});
+  const seen = [];
+  const f = stubFetch((url, _n, init) => {
+    seen.push(init?.signal);
+    return ok(body);
+  });
+  await fetchPackages({manifest: m, dir, log() {}, fetchImpl: f, timeoutMs: 1000});
+  assert.equal(seen.length, 1);
+  // A real AbortSignal, not a missing one: without it the download can hang.
+  assert.ok(seen[0] instanceof AbortSignal, 'fetch received an AbortSignal');
+  assert.equal(seen[0].aborted, false, 'the budget starts unset, not already expired');
+});
+
+test('an abort on the stalled host is reported as a timeout, not "fetch failed"', async t => {
+  const dir = tempDir(t);
+  const m = onePkg({mirrors: {ucrt64: ['https://a.example/msys2/mingw/ucrt64']}});
+  const f = stubFetch(() => {
+    const err = new Error('aborted');
+    err.name = 'TimeoutError';
+    throw err;
+  });
+  await assert.rejects(
+    () => fetchPackages({manifest: m, dir, log() {}, fetchImpl: f, timeoutMs: 20}),
+    /timeout after 20ms/
+  );
 });
