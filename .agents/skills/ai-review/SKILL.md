@@ -197,9 +197,9 @@ reviewers are the **operator's** call, never the agent's initiative:
   stops** — a batch pass reviews PRs it does not own, so it writes no fixes and resolves no threads;
   the owning agent re-assesses each open thread, fixes what it accepts, and resolves what it fixed.
   **The `fix → resolve` step above is the local pass only.** External findings get the same scrutiny
-  as local ones — assessed, not rubber-stamped. Running the batch review is not the end of the
-  step: **ADR 0020 triage and posting is mandatory once it finishes** — the run is only worth
-  anything if its findings are assessed and posted (or explicitly rejected with a reason).
+  as local ones — assessed, not rubber-stamped. Running the batch review is not the end of the step:
+  **ADR 0020 triage and posting is mandatory once it finishes** — the run is only worth anything if
+  its findings are assessed and posted (or explicitly rejected with a reason).
 - **`review:batch` hands you the anchors** — `tools/ci/batch-review.mjs` parses the cr output into
   `dist/review/batch-findings.json`: one entry per finding with `severity`, `category`, `path`,
   `startLine`/`line` (the range endpoints), and the finding body, plus the `refs` (PR branches) it
