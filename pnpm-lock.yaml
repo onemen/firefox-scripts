@@ -49,6 +49,9 @@ importers:
       globals:
         specifier: 17.12.0
         version: 17.12.0
+      js-yaml:
+        specifier: '>=5.4.1'
+        version: 5.4.1
       markdownlint-cli:
         specifier: 0.49.1
         version: 0.49.1

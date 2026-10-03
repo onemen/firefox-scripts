@@ -101,6 +101,33 @@ test('missing frontmatter block is flagged', () => {
   }
 });
 
+// The `ai-review` defect (#413): a `: ` inside a multi-line plain scalar ends
+// the scalar and starts a new mapping key, so the host stops seeing a
+// `description` and never registers the skill. The line scanner this replaced
+// could not see it — the block still had a name and *some* description text.
+// Reading the block with js-yaml is what turns it into an error.
+test('frontmatter that does not parse is flagged with the reason and position', () => {
+  const dir = makeSkillsDir({
+    'ai-review': {
+      'SKILL.md':
+        '---\nname: ai-review\ndescription:\n' +
+        '  Review a PR the ADR 0020 way, and post each finding as a thread\n' +
+        '  (fallback: `gh pr review <n> --comment`), resolving each as its fix lands.\n' +
+        '---\n\nBody.\n',
+    },
+  });
+  try {
+    const errors = checkSkillsDir(dir);
+    assert.equal(errors.length, 1, JSON.stringify(errors));
+    assert.match(errors[0].message, /frontmatter is not valid YAML/);
+    assert.match(errors[0].message, /bad indentation of a mapping entry/);
+    // File line 5 = the `(fallback: ...` body line (line 1 is the fence).
+    assert.match(errors[0].message, /frontmatter line 5:\d+/);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('name is required and must match the directory', () => {
   const dir = makeSkillsDir({
     alpha: {'SKILL.md': '---\nname: omega\ndescription: d\n---\n\nBody.\n'},

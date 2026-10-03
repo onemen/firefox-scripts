@@ -28,8 +28,11 @@
  * - third-party skills carry all four gh-injected keys (`github-repo/-ref/
  *   -path/-tree-sha`) and a parseable `github-repo` URL.
  *
- * Frontmatter parsing is reused from tools/skills-watchdog.mjs — one parser,
- * one classification (`metadata.github-repo` = third-party).
+ * Frontmatter is parsed with js-yaml (the same parse the `lint:yaml` gate
+ * reports on, #413) — one parser, one classification (`metadata.github-repo` =
+ * third-party). `tools/skills-watchdog.mjs` keeps its own line-based reader on
+ * purpose: the watchdog's job is to _report_ drifted or unreadable metadata, so
+ * it must survive a block that does not parse.
  *
  * Finally, every `*.test.mjs` found inside a skill directory is executed with
  * `node --test` (vendored tests are the upstream project's own; today that is
@@ -49,7 +52,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 
-import {SKILLS_DIR, parseSkillFrontmatter} from './skills-watchdog.mjs';
+import {SKILLS_DIR} from './skills-watchdog.mjs';
+import {parseFrontmatter} from './check-yaml-frontmatter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -58,42 +62,51 @@ const REPO_URL_RE =
   /^(?:(?:https?|ssh):\/\/(?:git@)?github\.com\/|git@github\.com:|github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
 
 /**
- * Extract the frontmatter block (between the first two `---` lines), or null.
+ * Read a SKILL.md's frontmatter with js-yaml (the same parse the `lint:yaml`
+ * gate reports on) and normalize the two shapes every caller here needs: `name`
+ * / `description` as trimmed strings or null, and `metadata` as a plain
+ * key→value record.
+ *
+ * The frontmatter used to be read by a line scanner that could not tell a valid
+ * block from a broken one — a `: ` inside a multi-line scalar ended the value
+ * and the scanner still saw a `description` (#413). One parser now answers both
+ * "is this valid?" and "what does it say?".
  *
  * @param {string} text SKILL.md content (CRLF tolerated)
- * @returns {string[] | null} the block's lines, without the fences
+ * @param {string} file the file's repo-relative label, for error messages
+ * @returns {{
+ *   present: boolean;
+ *   name: string | null;
+ *   description: string | null;
+ *   metadata: Record<string, string>;
+ *   error: string | null;
+ * }}
  */
-function frontmatterLines(text) {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  if (lines[0]?.trim() !== '---') return null;
-  const end = lines.indexOf('---', 1);
-  if (end === -1) return null;
-  return lines.slice(1, end);
-}
-
-/**
- * True when `key` appears at the top level of the block with a non-empty value
- * — either inline (`key: value`) or as an indented continuation (`key:`
- * followed by deeper-indented lines). Tolerates both styles in use.
- *
- * @param {string[]} block frontmatter lines
- * @param {string} key
- */
-function hasNonEmptyScalar(block, key) {
-  const prefix = key + ':';
-  for (let i = 0; i < block.length; i++) {
-    const line = block[i];
-    if (!line.startsWith(prefix)) continue;
-    const rest = line.slice(prefix.length);
-    if (rest.trim() !== '') return true;
-    for (let j = i + 1; j < block.length; j++) {
-      if (block[j].trim() === '') break;
-      if (!/^\s/.test(block[j])) break; // next top-level key — value was empty
-      if (block[j].trim() !== '') return true;
-    }
-    return false;
+export function readSkillFrontmatter(text, file) {
+  const parsed = parseFrontmatter(text, file);
+  if (!parsed.present)
+    return {present: false, name: null, description: null, metadata: {}, error: null};
+  if (parsed.error) {
+    return {
+      present: true,
+      name: null,
+      description: null,
+      metadata: {},
+      error: `${parsed.error.reason} (frontmatter line ${parsed.error.line}:${parsed.error.column})`,
+    };
   }
-  return false;
+  const data = parsed.data && typeof parsed.data === 'object' ? parsed.data : {};
+  const scalar = value => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
+  const meta = data.metadata && typeof data.metadata === 'object' ? data.metadata : {};
+  return {
+    present: true,
+    name: scalar(data.name),
+    description: scalar(data.description),
+    metadata: Object.fromEntries(
+      Object.entries(meta).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)])
+    ),
+    error: null,
+  };
 }
 
 /**
@@ -156,13 +169,17 @@ export function checkSkillsDir(skillsDir) {
       });
     }
     const text = fs.readFileSync(skillFile, 'utf8');
-    const block = frontmatterLines(text);
-    if (!block) {
+    const fm = readSkillFrontmatter(text, `${rel}/SKILL.md`);
+    if (!fm.present) {
       errors.push({file: `${rel}/SKILL.md`, message: 'no frontmatter block'});
       continue;
     }
-    const {name, metadata} = parseSkillFrontmatter(text);
-    if (!hasNonEmptyScalar(block, 'name') || !name) {
+    const {name, description, metadata, error} = fm;
+    if (error !== null) {
+      errors.push({file: `${rel}/SKILL.md`, message: `frontmatter is not valid YAML: ${error}`});
+      continue;
+    }
+    if (!name) {
       errors.push({file: `${rel}/SKILL.md`, message: 'frontmatter has no non-empty name:'});
     } else if (name !== entry.name) {
       errors.push({
@@ -170,7 +187,7 @@ export function checkSkillsDir(skillsDir) {
         message: `name "${name}" does not match directory name "${entry.name}"`,
       });
     }
-    if (!hasNonEmptyScalar(block, 'description')) {
+    if (!description) {
       errors.push({file: `${rel}/SKILL.md`, message: 'frontmatter has no non-empty description:'});
     }
     const ghKeys = Object.keys(metadata).filter(k => k.startsWith('github-'));
@@ -247,7 +264,7 @@ export function checkAgentsTableDrift(skillsDir, agentsMd) {
       continue;
     }
     const text = fs.readFileSync(path.join(skillsDir, name, 'SKILL.md'), 'utf8');
-    const {metadata} = parseSkillFrontmatter(text);
+    const {metadata} = readSkillFrontmatter(text, `${SKILLS_DIR}/${name}/SKILL.md`);
     const actual = metadata['github-repo'] ? 'third-party' : 'authored';
     if (rows.get(name) !== actual) {
       errors.push({
