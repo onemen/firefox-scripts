@@ -5,29 +5,9 @@
 // merges the heads of several PR branches onto ONE temp branch and runs a
 // single `cr review` over the combined diff — one quota slot, N PRs.
 //
-// Usage (from a clean-enough checkout, on main):
-//
-//   node tools/ci/batch-review.mjs --pr 57 --pr 59
-//   node tools/ci/batch-review.mjs --branch buffy/37-install-applies --branch buffy/53-manual-install-updater
-//   node tools/ci/batch-review.mjs --open            # all open PR branches
-//   node tools/ci/batch-review.mjs --open --since 3d  # PRs updated recently
-//   node tools/ci/batch-review.mjs --pr 57 --agent    # pass --agent to cr
-//   node tools/ci/batch-review.mjs --check           # show cr usage report only
-//   node tools/ci/batch-review.mjs --pr 57 --wait 60 # retry once after an hour if rate-limited
-//
-// Flags:
-//   --pr <number>      GitHub PR number (resolves to its head branch). Repeatable.
-//   --branch <ref>     Git branch/ref to include. Repeatable.
-//   --open             Include every open PR's head branch.
-//   --since <age>      With --open, only PRs updated within <age> (e.g. 3d, 12h).
-//   --base <ref>       Branch to merge onto (default: origin/main).
-//   --keep             Keep the temp branch after review (default: delete).
-//   --agent            Pass --agent to cr review (structured findings).
-//   --dry-run          List what would be merged without running cr.
-//   --check            Show `cr usage` (period review count + reset date) and exit.
-//   --wait <minutes>   If cr is rate-limited, wait this long and retry once.
-//   --temp-grace <min> Age below which a coderabbit-update-* dir in %TEMP% is
-//                     treated as possibly in use by another cr run (default 30).
+// Usage and the full flag list: `node tools/ci/batch-review.mjs --help` (the
+// canonical copy is the USAGE constant below, so the help text cannot drift
+// from what the parser accepts).
 //
 // After the review the script prints the findings it could anchor, writes them
 // to dist/review/batch-findings.json for the ADR 0020 posting step, and points
@@ -71,6 +51,42 @@ function gh(args, opts = {}) {
   return run('gh', args, opts);
 }
 
+/**
+ * The canonical usage text — `--help` prints exactly this. It lives here, not
+ * only in the header comment, because an agent (or a human) who asks for help
+ * cannot see a comment: before this existed, `--help` fell into the
+ * unknown-flag branch and answered "Unknown flag: --help" while the complete
+ * flag list sat unread a few lines up in the same file.
+ */
+export const USAGE = `Usage (from a clean-enough checkout, on main):
+
+  node tools/ci/batch-review.mjs --pr 57 --pr 59
+  node tools/ci/batch-review.mjs --branch buffy/37-install-applies --branch buffy/53-manual-install-updater
+  node tools/ci/batch-review.mjs --open            # all open PR branches
+  node tools/ci/batch-review.mjs --open --since 3d  # PRs updated recently
+  node tools/ci/batch-review.mjs --pr 57 --agent    # pass --agent to cr
+  node tools/ci/batch-review.mjs --check           # show cr usage report only
+  node tools/ci/batch-review.mjs --pr 57 --wait 60 # retry once after an hour if rate-limited
+
+Flags:
+  --pr <number>      GitHub PR number (resolves to its head branch). Repeatable.
+  --branch <ref>     Git branch/ref to include. Repeatable.
+  --open             Include every open PR's head branch.
+  --since <age>      With --open, only PRs updated within <age> (e.g. 3d, 12h).
+  --base <ref>       Branch to merge onto (default: origin/main).
+  --keep             Keep the temp branch after review (default: delete).
+  --agent            Pass --agent to cr review (structured findings).
+  --dry-run          List what would be merged without running cr.
+  --check            Show \`cr usage\` (period review count + reset date) and exit.
+  --wait <minutes>   If cr is rate-limited, wait this long and retry once.
+  --temp-grace <min> Age below which a coderabbit-update-* dir in %TEMP% is
+                     treated as possibly in use by another cr run (default 30).
+  -h, --help         Print this text and exit.
+
+After a review the findings report is written to dist/review/batch-findings.json
+and archived under review-history/; both are gitignored local artifacts, and the
+ADR 0020 posting protocol applies to the findings.`;
+
 export function parseArgs(argv) {
   const args = {
     prs: [],
@@ -82,6 +98,7 @@ export function parseArgs(argv) {
     agent: false,
     dryRun: false,
     check: false,
+    help: false,
     wait: null,
     tempGrace: 30,
   };
@@ -127,6 +144,10 @@ export function parseArgs(argv) {
         break;
       case '--check':
         args.check = true;
+        break;
+      case '-h':
+      case '--help':
+        args.help = true;
         break;
       case '--wait':
         args.wait = Number(value());
@@ -574,6 +595,12 @@ export function parseOpenPrBranchesOutput(stdout) {
 export async function main() {
   const args = parseArgs(process.argv.slice(2));
   const crBin = process.env.CR_BIN || 'cr';
+
+  // --help prints and exits 0: asking for usage is not a usage error.
+  if (args.help) {
+    console.log(USAGE);
+    return;
+  }
 
   // --check: show the usage report without touching anything.
   if (args.check) {

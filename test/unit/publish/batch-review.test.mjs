@@ -18,6 +18,7 @@ import {
   isRateLimited,
   parseArgs,
   parseFindings,
+  USAGE,
   parseOpenPrBranchesOutput,
   removeTempWorktree,
   stripAnsi,
@@ -142,6 +143,41 @@ test('parseArgs: defaults', () => {
   assert.equal(args.dryRun, false);
   assert.equal(args.check, false);
   assert.equal(args.wait, null);
+});
+
+test('parseArgs: --help / -h is a request, not an unknown flag', () => {
+  // Regression: `--help` used to fall into the unknown-flag branch and answer
+  // "Unknown flag: --help" (exit 2) while the complete flag list sat unread in
+  // the file's own header comment — a dead end for anyone who asked for usage.
+  assert.equal(parseArgs(['--help']).help, true);
+  assert.equal(parseArgs(['-h']).help, true);
+  assert.equal(parseArgs(['--pr', '7', '--help']).help, true);
+  assert.equal(parseArgs(['--pr', '7']).help, false);
+  assert.throws(() => parseArgs(['--nope']), /Unknown flag: --nope/);
+});
+
+test('USAGE documents every flag the parser accepts', () => {
+  // The help text is a contract with the parser: a flag added without a line
+  // here makes `--help` lie, which is how the agent ended up guessing flags.
+  const accepted = new Set();
+  for (const flag of [
+    '--pr',
+    '--branch',
+    '--open',
+    '--since',
+    '--base',
+    '--keep',
+    '--agent',
+    '--dry-run',
+    '--check',
+    '--wait',
+    '--temp-grace',
+    '-h',
+    '--help',
+  ]) {
+    accepted.add(flag);
+  }
+  for (const flag of accepted) assert.ok(USAGE.includes(flag), `USAGE must document ${flag}`);
 });
 
 test('parseArgs: --check and --wait', () => {
