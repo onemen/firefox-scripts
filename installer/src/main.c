@@ -1020,6 +1020,20 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
         install_config = 0;
         install_utils = 0;
 
+        // Every artifact in the work dir is removed as it is consumed, so what
+        // is left is the empty shell — drop that too rather than leave one
+        // directory per install in the user's temp dir.  Best-effort: the
+        // elevation helper can still hold a handle on Windows, and a failed
+        // removal must never turn a finished install into a reported failure.
+        // g_work_dir is empty when no install was ever requested (status-only
+        // polls), hence the guard.
+        if (g_work_dir[0]) {
+            if (remove_dir_tree(g_work_dir) != 0) {
+                verbose_printf("[install] Could not remove work dir %s\n", g_work_dir);
+            }
+            g_work_dir[0] = '\0';
+        }
+
         if (refreshed_idx >= 0 && refreshed_idx < detected_count) {
             // Record what this install changed so the restart handler can
             // pick the right scope (config => restart the whole binary group,

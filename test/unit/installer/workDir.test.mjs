@@ -43,6 +43,27 @@ test('the fixed firefox-scripts-install name is gone', () => {
   );
 });
 
+test('a terminal install removes its work dir, best-effort', () => {
+  // The status handler's terminal block is the one place that sees both DONE
+  // and ERROR, so it is where the shell has to go.
+  const block = source.match(
+    /if \(current_state == INSTALL_STATE_DONE \|\| current_state == INSTALL_STATE_ERROR\) \{([\s\S]*?)\n {4}\}\n/
+  );
+  assert.ok(block, 'the terminal-state block in the status handler must exist');
+  assert.match(
+    block[1],
+    /if \(g_work_dir\[0\]\)/,
+    'guarded — g_work_dir is empty when no install was ever requested'
+  );
+  const cleanup = block[1].slice(block[1].indexOf('if (g_work_dir[0])'));
+  assert.match(cleanup, /remove_dir_tree\(g_work_dir\)/, 'the work dir must be removed');
+  assert.ok(
+    !/set_install_error|current_state =|install_ok =/.test(cleanup),
+    'cleanup is best-effort — a failed removal (Windows handle held by the ' +
+      'elevation helper) must not change the reported state or the result'
+  );
+});
+
 test('the harness prune is registered for the installer prefix', () => {
   const list = helpers.match(/export const E2E_TEMP_PREFIXES = \[([^\]]*)\]/);
   assert.ok(list, 'E2E_TEMP_PREFIXES must be declared');

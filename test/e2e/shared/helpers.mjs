@@ -791,6 +791,27 @@ export function pruneStaleTempRoots({
   return {removed, kept};
 }
 
+/**
+ * Live `fxs-installer-*` scratch roots in the OS temp dir. The C installer
+ * creates one per process and removes it when the install reaches a terminal
+ * state, so a dir that survives a completed install is residue. Snapshot the
+ * set before an install and diff it afterwards: unrelated strays from an
+ * earlier killed run must not fail an unrelated check.
+ *
+ * @param {string} [tmp] temp dir to scan
+ * @returns {string[]} absolute paths
+ */
+export function installerWorkDirStrays(tmp = os.tmpdir()) {
+  try {
+    return fs
+      .readdirSync(tmp, {withFileTypes: true})
+      .filter(e => e.isDirectory() && e.name.startsWith('fxs-installer'))
+      .map(e => path.join(tmp, e.name));
+  } catch {
+    return [];
+  }
+}
+
 /** Wait for process exit with a timeout; returns exit info or null. */
 export function waitForProcessExit(child, timeoutMs) {
   return new Promise((resolve, reject) => {
