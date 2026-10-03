@@ -6,6 +6,10 @@ the how-and-why, so a new suite reuses the existing pieces instead of growing it
 different fakes. (The leaf-helper suites — `hashUtils`, `createZip`, browsers/downloads, the C
 installer — are plain Node tests and need none of this.)
 
+There are two sandbox families here, sharing the idea but nothing else: the updater's
+`Services`/`ChromeUtils` fakes (this page, below) and the **installer's web-UI harness** for
+`installer/web/script/*.js` — see [The installer's web-UI sandbox](#the-installers-web-ui-sandbox).
+
 ## Why not just import the module?
 
 `scriptsUpdater.sys.mjs` is loaded by the browser as a privileged module: it reaches for `Services`,
@@ -84,6 +88,39 @@ Timers are captured, never awaited: `makeCc()`'s `@mozilla.org/timer;1` stub rec
 fallback, never the fetch `withTimeout` (firing that one resolves the manifest await as a
 rejection). The attach block's restore wait is driven by the `sessionstore-windows-restored` event,
 which the suite notifies explicitly instead of waiting for a timer to come around.
+
+## The installer's web-UI sandbox
+
+The installer tab (`installer/web/`, served by the C binary at `127.0.0.1:8777`) ships as **one
+concatenated IIFE** — `installer/src/script.built.js`, built by `embed.mjs` from
+`installer/web/script/*.js` in ship order. The fragments are IIFE _bodies_, so none is individually
+parseable or importable, and every helper they call (`qs`, `renderBrowsers`, …) shares one closure.
+So the installer half of the idea — evaluate the shipped source rather than re-implement it — is the
+same; only the fake environment differs, and that one is shared as
+[test/shared/webUiSandbox.mjs](../test/shared/webUiSandbox.mjs).
+
+What it provides, and the two rules that keep it honest:
+
+- **The DOM is the shipped markup.** `loadWebUi()` parses `installer/web/index.html` into a real
+  element tree (classes, `data-*`, parent/child) and matches the selector subset the fragments use.
+  A selector that matches nothing returns `null` — deliberately. An earlier version auto-created a
+  blank element per selector, which meant the fragment wrote its state to one stub and read it back
+  from another, and a `:scope > .success-banner` that matched nothing in the tab still "passed".
+  `ui.missingIds` records every id the tab looked up that the markup lacks, so markup drift fails a
+  test instead of quietly disabling an `if (!el) return` guard.
+- **`innerHTML` assignments become real children.** The render path injects badges, the progress bar
+  and the open-folder buttons as markup strings, so a small tolerant parser backs the `innerHTML`
+  setter. Card structure is otherwise built with `appendChild` and needs nothing more.
+
+It is deliberately **not** a browser: only the DOM surface the fragments actually touch is modelled,
+so the harness stays small enough to be obviously correct, and a property the tab starts using shows
+up as a clear "not a function" rather than a plausible wrong answer. Assertions read through
+`ui.text()` / `ui.html()` / `ui.find()` so they read like the rendered UI.
+
+Same discipline as the updater half: sandboxes are built **fresh per test** (`loadWebUi()` per
+case), the `fetch` route table returns 404 for anything unstubbed and records it in `ui.unstubbed`,
+and `settle()` exists because the tab's promise chains cross realms — a bare `await` on a fragment's
+own promise can return before its continuations run.
 
 ## Coverage split with the E2E suites
 
