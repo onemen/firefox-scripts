@@ -147,7 +147,21 @@ test('the bar stays hidden when the server has no package URLs', async () => {
   });
 
   assert.notEqual(ui.element('manual-download-bar').style.display, 'flex');
-  assert.equal(ui.element('link-download-fx').getAttribute('href'), null, 'no href wired');
+  // The anchors ship with the placeholder href="#"; without a package URL the
+  // tab must leave it at that, and wireDownloadLink's dead-link guard reads it
+  // back with getAttribute — so "still the placeholder" is the claim.
+  assert.equal(
+    ui.element('link-download-fx').getAttribute('href'),
+    '#',
+    'href left at the placeholder'
+  );
+  assert.equal(
+    ui.element('link-download-utils').getAttribute('href'),
+    '#',
+    'href left at the placeholder'
+  );
+  assert.deepEqual(ui.unstubbed.includes('/api/package-urls'), false, 'the descriptor was stubbed');
+  assert.deepEqual(ui.missingIds, [], 'the tab never asked for an element the markup lacks');
 });
 
 test('the heartbeat never opens a tab and never navigates', async () => {
