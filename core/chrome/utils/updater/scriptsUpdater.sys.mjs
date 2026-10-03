@@ -54,20 +54,34 @@ const {CONFIG} = ChromeUtils.importESModule(
 // and break the staleness check.
 const PREF_OVERRIDE_PREFIX = 'extensions.firefox-scripts.override.';
 
-// Staging dir for the updater-ui package, under the OS temp dir. The name
-// carries the shared prefix the sweep below matches, plus a per-check suffix
-// (process id + timestamp) so concurrent checks cannot collide — see
-// uiTempDirName's callers.
+// Staging dirs the updater owns under the OS temp dir, matched by prefix:
+//
+//   fxs-updater-ui-<pid>-<timestamp>-<counter>  this module's updater-ui swap
+//   fxs-utils-<timestamp>                       the tab's utils install
+//   fxs-config-<timestamp>                      the tab's fx-folder install
+//
+// The last two are created by the updater TAB (tools/publish/remote-ui/
+// updater.js, shipped as updater-ui.zip), not here. All three are removed in a
+// `finally`, which a killed browser — or an IOUtils.remove that throws on a
+// Windows/AV lock — skips, so this list is the only thing that ever reclaims
+// them. The per-check suffix on the first name keeps concurrent checks from
+// colliding over one dir; see uiTempDirName's callers.
 const UI_TMP_DIR_PREFIX = 'fxs-updater-ui';
+const OWNED_TMP_DIR_PREFIXES = [UI_TMP_DIR_PREFIX, 'fxs-utils-', 'fxs-config-'];
 
 /** A dir older than this is nobody's: reclaim it. */
 const UI_TMP_STALE_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Remove updater-ui staging dirs left behind by sessions that never reached
- * their `finally` cleanup — a browser killed mid-download, an OS-level crash,
- * or a shutdown during the swap. On 2026-10-02 four such dirs (each still
+ * Remove staging dirs left behind by sessions that never reached their
+ * `finally` cleanup — a browser killed mid-download, an OS-level crash, or a
+ * shutdown during the swap. On 2026-10-02 four updater-ui dirs (each still
  * holding updater-ui.zip + the extracted tree) sat in the user's Temp.
+ *
+ * Every prefix in OWNED_TMP_DIR_PREFIXES is swept, so the tab's own install
+ * staging dirs (the fxs-utils- and fxs-config- prefixes) are reclaimed by the
+ * same pass that already runs at startup — before this, nothing swept them at
+ * all.
  *
  * Age is the liveness signal: the dir being written right now is minutes old,
  * while every stranded one is older than the threshold.
@@ -76,7 +90,7 @@ const UI_TMP_STALE_MS = 24 * 60 * 60 * 1000;
  *   seams
  * @returns {Promise<string[]>} names removed
  */
-export async function sweepStaleUpdaterUiTempDirs({
+export async function sweepStaleUpdaterTempDirs({
   tempDir = PathUtils.tempDir,
   maxAgeMs = UI_TMP_STALE_MS,
   now = Date.now(),
@@ -89,18 +103,26 @@ export async function sweepStaleUpdaterUiTempDirs({
     return [];
   }
   const removed = [];
-  for (const name of children) {
-    if (!name.startsWith(UI_TMP_DIR_PREFIX)) continue;
-    const full = PathUtils.join(tempDir, name);
+  for (const child of children) {
+    // IOUtils.getChildren resolves with ABSOLUTE paths — "a sequence of
+    // absolute file paths representing the children of the directory at path"
+    // (dom/chrome-webidl/IOUtils.webidl). So the prefix has to be matched on
+    // the basename, and every I/O call below has to use the entry as
+    // returned. Reading it as a name made `startsWith(prefix)` false for
+    // every child of a real Temp dir and the sweep silently removed nothing;
+    // PathUtils.join(tempDir, name) would then have doubled the directory.
+    // The tests stubbed getChildren with bare names, which hid both.
+    const name = child.split(/[\\/]/).pop();
+    if (!OWNED_TMP_DIR_PREFIXES.some(prefix => name.startsWith(prefix))) continue;
     let stat;
     try {
-      stat = await IOUtils.stat(full);
+      stat = await IOUtils.stat(child);
     } catch {
       continue; // vanished under us
     }
     if (now - stat.mtimeMs < maxAgeMs) continue;
     try {
-      await IOUtils.remove(full, {recursive: true, ignoreAbsent: true});
+      await IOUtils.remove(child, {recursive: true, ignoreAbsent: true});
       removed.push(name);
     } catch (e) {
       // Another process (or the AV scanner) still holds it — try again on the
@@ -110,7 +132,7 @@ export async function sweepStaleUpdaterUiTempDirs({
   }
   if (removed.length) {
     console.debug(
-      `Firefox Scripts: reclaimed ${removed.length} stale updater-ui temp dir(s): ${removed.join(', ')}`
+      `Firefox Scripts: reclaimed ${removed.length} stale updater temp dir(s): ${removed.join(', ')}`
     );
   }
   return removed;
@@ -390,8 +412,8 @@ export function initScriptsUpdater(win) {
 
   // Reclaim staging dirs stranded by earlier sessions before this one writes
   // anything; fire-and-forget (init must stay synchronous).
-  sweepStaleUpdaterUiTempDirs().catch(e =>
-    console.debug('Firefox Scripts: updater-ui temp sweep failed', e)
+  sweepStaleUpdaterTempDirs().catch(e =>
+    console.debug('Firefox Scripts: staging temp sweep failed', e)
   );
 
   // Track session-restore completion (once per process, never removed —
@@ -1383,12 +1405,17 @@ function isTransientFileHold(err) {
  * hold that outlives the budget — propagates unchanged, so a genuinely
  * read-only or missing target still fails loudly instead of being masked.
  *
+ * Exported for the updater tab's config install (updater.js), which copies into
+ * the same live install dir and must not escalate to a UAC prompt over a hold a
+ * retry would have ridden out. The tab feature-detects it: a module older than
+ * this export keeps the pre-existing escalate-on-any-failure path.
+ *
  * @template T
  * @param {() => Promise<T>} op
  * @param {{attempts?: number; delayMs?: number}} [opts]
  * @returns {Promise<T>}
  */
-async function withFileHoldRetry(op, {attempts = 4, delayMs = 150} = {}) {
+export async function withFileHoldRetry(op, {attempts = 4, delayMs = 150} = {}) {
   let lastErr;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
