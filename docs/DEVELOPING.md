@@ -318,6 +318,16 @@ does not cover everything that shapes the bytes. A published commit's hashes are
 reproducible on a machine that ran `pnpm toolchain:local`. `pnpm toolchain:check` validates the
 manifest alone (no download).
 
+**Mirror fallback.** The manifest's `mirrors` key is an ordered list of alternates tried after
+`repo.msys2.org`, which refuses connections outright during MSYS2's scheduled maintenance windows —
+a failure that has nothing to do with the diff under test but fails the whole Windows publish gate
+anyway. A mirror is only ever a transport for the same bytes: every candidate is verified against
+the pinned SHA-256 **before** it is written to the cache, and a mirror that returns bytes
+disagreeing with the pin is a hard stop (no retry, nothing written). So the fallback set is not a
+supply-chain decision — only which host fetches the bytes changes, never which bytes get installed.
+Keep `repo.msys2.org` first. When every host fails, the error names each URL with its HTTP status or
+underlying network code, and points at maintenance-vs-rotted-pin as the two causes.
+
 The MSYS2 pin is not the only byte input. `installer/embed.mjs` gzip-compresses the embedded web
 assets with Node's bundled zlib (`zlib.gzipSync(..., {level: 9})`), so a runtime whose zlib emits
 different deflate bytes would change `resources.h` — and the installer's bytes and hashes — while

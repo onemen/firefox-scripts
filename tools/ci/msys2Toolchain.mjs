@@ -81,6 +81,40 @@ export function packageUrl(pkg, repos) {
 }
 
 /**
+ * Every URL to try for a pinned package: the canonical repo first, then the
+ * manifest's `mirrors` fallbacks in order.
+ *
+ * A mirror is only a transport for the same bytes — the caller's sha256 check
+ * is unchanged, so a fallback cannot alter which package gets installed. This
+ * exists because repo.msys2.org refuses connections outright during MSYS2's
+ * scheduled maintenance windows, and a Windows build that cannot fetch its
+ * pinned toolchain fails the whole publish gate for reasons unrelated to the
+ * diff under test.
+ *
+ * @param {{name: string; version: string; repo: string; arch: string}} pkg
+ * @param {{
+ *   repos: Record<string, string>;
+ *   mirrors?: Record<string, string[]>;
+ * }} manifest
+ * @returns {string[]}
+ */
+export function packageUrls(pkg, manifest) {
+  const primary = packageUrl(pkg, manifest.repos);
+  const fallbacks = manifest.mirrors?.[pkg.repo] ?? [];
+  // A mirror repeating the primary would retry a known-dead host; drop dupes.
+  const seen = new Set([primary]);
+  const urls = [primary];
+  for (const base of fallbacks) {
+    const url = `${base}/${packageFileName(pkg)}`;
+    if (!seen.has(url)) {
+      seen.add(url);
+      urls.push(url);
+    }
+  }
+  return urls;
+}
+
+/**
  * Structural validation of a manifest. Returns an array of problem strings
  * (empty = valid) so callers can fail with every issue at once — and so the
  * unit test can assert on specific rejections.
@@ -148,12 +182,22 @@ export function sha256File(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+/** SHA-256 of a buffer, lowercase hex — verify before it ever hits the disk. */
+export function sha256FileBytes(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
 /**
  * Download every pinned package into `dir` (cached), verifying SHA-256. Returns
  * the local file paths in manifest order. A checksum mismatch or a missing file
  * throws — never a "close enough" toolchain.
  */
-export async function fetchPackages({manifest, dir = DEFAULT_CACHE, log = console.log} = {}) {
+export async function fetchPackages({
+  manifest,
+  dir = DEFAULT_CACHE,
+  log = console.log,
+  fetchImpl = fetch,
+} = {}) {
   fs.mkdirSync(dir, {recursive: true});
   const files = [];
   for (const pkg of manifest.packages) {
@@ -163,22 +207,51 @@ export async function fetchPackages({manifest, dir = DEFAULT_CACHE, log = consol
       files.push(file);
       continue;
     }
-    const url = packageUrl(pkg, manifest.repos);
+    const urls = packageUrls(pkg, manifest);
     log(`  fetch   ${packageFileName(pkg)}`);
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(
-        `download failed for ${packageFileName(pkg)}: HTTP ${res.status} — ${url}\n` +
-          `  A pinned package can disappear from the MSYS2 repos. Refresh the pin ` +
-          `deliberately (config/msys2-toolchain.json) and re-verify the AV/VT gates.`
-      );
+    const failures = [];
+    let downloaded = false;
+    for (const url of urls) {
+      let res;
+      try {
+        res = await fetchImpl(url);
+      } catch (err) {
+        // A dead mirror is a network error, not a 404 — record the underlying
+        // cause (Node puts it on err.cause) so the final message names the
+        // host instead of just "fetch failed".
+        failures.push(`${url}: ${err?.cause?.code ?? err?.cause?.message ?? err.message}`);
+        continue;
+      }
+      if (!res.ok) {
+        failures.push(`${url}: HTTP ${res.status}`);
+        continue;
+      }
+      const body = Buffer.from(await res.arrayBuffer());
+      const actual = sha256FileBytes(body);
+      if (actual !== pkg.sha256) {
+        // A mirror serving different bytes is a hard stop: it may be a
+        // re-packed or tampered archive, and retrying elsewhere would only
+        // hide it. Never write unverified bytes to the cache.
+        throw new Error(
+          `sha256 mismatch for ${packageFileName(pkg)} from ${url}:\n` +
+            `  expected ${pkg.sha256}\n  got      ${actual}\n` +
+            `  Refusing to install a package no mirror agrees on.`
+        );
+      }
+      fs.writeFileSync(file, body);
+      if (url !== urls[0]) log(`  ↳ served by fallback ${new URL(url).host}`);
+      downloaded = true;
+      break;
     }
-    fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
-    const actual = sha256File(file);
-    if (actual !== pkg.sha256) {
-      fs.rmSync(file, {force: true});
+    if (!downloaded) {
       throw new Error(
-        `sha256 mismatch for ${packageFileName(pkg)}: expected ${pkg.sha256}, got ${actual}`
+        `could not download ${packageFileName(pkg)} from any source:\n` +
+          failures.map(f => `  ${f}`).join('\n') +
+          `\n  If every host reports a connection error, MSYS2 is likely down ` +
+          `(scheduled maintenance — https://www.msys2.org/).\n` +
+          `  If a host returns 404, the pinned version has left the repos: ` +
+          `refresh the pin deliberately (config/msys2-toolchain.json) and ` +
+          `re-verify the AV/VT gates.`
       );
     }
     files.push(file);
