@@ -255,7 +255,7 @@ two Win32 failures `is_file_locked()` treats as "locked" in `installer/src/detec
 `copyFileList()` rides the hold out per file with a short bounded retry (4 tries, 150 ms base). Only
 a hold that outlives the budget fails, and that failure names the file it could not install: the
 tree is then partially updated, and the next check still reports the package stale, so re-running
-the install is the recovery. Non-hold errors are never retried.The config package lands in the same
+the install is the recovery. Non-hold errors are never retried. The config package lands in the same
 live install dir, one level up (`ProfD/chrome/utils`' sibling `GreD`, or `/etc/firefox` on Snap),
 and its install has a second stage: `installConfigFiles()` copies into it directly and, when that
 copy **fails**, escalates to the elevated helper — because a direct copy into an admin-owned install
