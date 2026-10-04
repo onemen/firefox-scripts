@@ -803,13 +803,15 @@ function mirrorSaysTabOpened(profileDir) {
 /**
  * BiDi keeps polling this long after the mirror proves the tab before giving
  * up. The probe's watcher polls once a second, so the mirror routinely reaches
- * the harness BEFORE BiDi enumerates the trusted tab: at 2 s the variant
- * session lost its page handle to that race often enough to fall back to "BiDi
- * cannot attach" (observed locally 2026-09-27 — the same session attached on
- * the next run). The wait is still bounded by the caller's deadline, and the
- * mirror only proves the tab exists — the handle is what the card assertions
- * and the #309 driver need, so the grace buys their assertions for a couple of
- * seconds of bounded waiting.
+ * the harness BEFORE BiDi enumerates the trusted tab. The wait is bounded by
+ * the caller's deadline, and the mirror only proves the tab exists — the handle
+ * is what the card assertions and the #309 driver need, so the grace buys their
+ * assertions for a bounded wait.
+ *
+ * Two budgets exist because the driver session genuinely needs a longer one;
+ * the short default is for callers that can still fall back to their disk/pref
+ * proof. Both are bounds on slowness — neither is a statement about whether
+ * BiDi can attach to a trusted chrome:// tab, which it can.
  */
 const TAB_OPEN_BIDI_GRACE_MS = 2_000;
 const DRIVER_BIDI_GRACE_MS = 15_000;
@@ -821,13 +823,17 @@ const DRIVER_BIDI_GRACE_MS = 15_000;
  *
  * One iteration is a BiDi pages() enumeration plus a 500 ms tick; the wait ends
  * the moment the updater page handle is enumerable. When the mirror proves the
- * tab first, BiDi gets a short grace window (it may enumerate the chrome tab
- * late on headed local runs) and then the wait returns null — the caller falls
- * back to its disk/pref activation proof instead of burning the remaining
- * deadline. This replaces the shape where the sticky TAB_OPENED marker made
- * every remaining iteration take the 2 s late branch + tick, so the loop always
- * ran its full 30 s on CI (where BiDi never attaches to a trusted chrome://
- * tab): ~25 s of dead air per scenario (2026-09-23 leg data).
+ * tab first, BiDi gets a grace window and then the wait returns null — the
+ * caller falls back to its disk/pref activation proof instead of burning the
+ * remaining deadline. This replaces the shape where the sticky TAB_OPENED
+ * marker made every remaining iteration take the late branch + tick, so the
+ * loop always ran its full 30 s: ~25 s of dead air per scenario (2026-09-23 leg
+ * data).
+ *
+ * The page is recognised by evaluated realm, not by url(): see the comment in
+ * the loop body. Every call site therefore gets the same real handle, and the
+ * grace is a bound on genuinely-slow startup rather than a bet that BiDi will
+ * never manage to attach.
  *
  * @param {import('puppeteer-core').Browser} browser
  * @param {string} profileDir - seeded profile dir (probe mirror log location)
@@ -848,14 +854,33 @@ async function waitForUpdaterTabOpen(
   let mirrorAt = 0;
   while (Date.now() < deadlineMs) {
     try {
-      const page = (await browser.pages()).find(p => {
+      // Identify the updater tab by REALM, not by url(). On Windows a trusted
+      // chrome:// tab opened after the session attached reports about:blank as
+      // its BiDi context URL for seconds after its document is already the real
+      // updater page (updaterDriver.mjs documents the same asymmetry, which is
+      // why updaterPages() matches on evaluated state). Matching on url() alone
+      // therefore declared a perfectly usable page "not open" and degraded the
+      // whole session — 34/52 Windows leg runs, every one of them a harness
+      // false negative rather than a BiDi failure. Same ordering, same log
+      // lines, just evaluated once per candidate: cheap, and it converges as
+      // soon as the document is real even while its URL still reads about:blank.
+      const pages = await browser.pages();
+      for (const p of pages) {
+        let isUpdater = false;
         try {
-          return p.url().startsWith(UPDATER_URL);
+          isUpdater = await p.evaluate(
+            () =>
+              typeof window.UpdaterEngine?.init === 'function' &&
+              typeof window.UpdaterE2EDriver === 'undefined'
+          );
         } catch {
-          return false;
+          // Not an evaluable context yet (or a document still loading) — the
+          // next iteration retries; this is the normal state for the startup
+          // about:blank placeholder.
+          continue;
         }
-      });
-      if (page) return page;
+        if (isUpdater) return p;
+      }
     } catch {
       /* browser not ready yet */
     }
@@ -2206,22 +2231,24 @@ async function runVariantSession(counter, opts, snapshotDir) {
       const tabOpened = Boolean(page) || viaPref || sawMirrorLine;
 
       if (!page && tabOpened) {
-        // Tab opened (probe mirror / persisted pref) but BiDi cannot attach to
-        // the trusted chrome:// tab in this environment — a deterministic
-        // limitation on some CI runners (observed on Windows), not a startup
-        // race, so a retry cannot help. Record the tab-open proof with the
-        // limitation spelled out in the label (the historical CI contract for
-        // these legs, previously silent); full card assertions run where BiDi
-        // attaches (locally, other runners). Coverage parity with the pre-#309
-        // session: with no tab handle it could not assert a card either — here
-        // the trio's observable is the tab-open proof above, and the caller
+        // Tab opened (probe mirror / persisted pref) but no page handle became
+        // evaluable before the grace expired. This is a bound on how long we
+        // looked, NOT a statement about BiDi's ability to drive a trusted
+        // chrome:// tab: the page is matched by evaluated realm (see
+        // waitForUpdaterTabOpen), so a handle that exists at all is found. Record
+        // the tab-open proof with that spelled out in the label (the historical CI
+        // contract for these legs, previously silent). Coverage parity with the
+        // pre-#309 session: with no tab handle it could not assert a card either —
+        // here the trio's observable is the tab-open proof above, and the caller
         // still runs the up-to-date / skipped decisions as their own launches.
         check(
           counter,
           true,
-          `tab opens (${attemptLabel}; no card assertions — BiDi cannot attach to the trusted tab in this environment)`
+          `tab opens (${attemptLabel}; no card assertions — no page handle within the BiDi grace window)`
         );
-        console.log('  [diag] probe/pref verified the tab; BiDi missed the handle');
+        console.log(
+          '  [diag] probe/pref verified the tab; no evaluable page handle within the grace'
+        );
         return {profiles: createdProfiles, driverAvailable};
       }
 
