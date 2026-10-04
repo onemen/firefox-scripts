@@ -48,10 +48,15 @@ From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`,
 
 - Public assets in `public/` are the one exception: they are addressed from the site **root**, so
   their `src` must be base-prefixed (`/firefox-scripts/installer.png`).
-- **Screenshots and logos are referenced by URL** (`/firefox-scripts/installer.png`), not imported
-  through `astro:assets`: importing an image in MDX currently breaks the prerender step
-  (`Expected object 'rder' to be defined`) on this Astro/rolldown combination. Files live in
-  `public/`.
+- **Logos and screenshots in `public/` are referenced by URL** (`/firefox-scripts/installer.png`).
+  Nothing is imported through `astro:assets` for those.- **Content images live in `src/assets/` and are imported through the `@assets` alias** (`import img
+from '@assets/chrome_utils.png'` + `<Image src={img} alt="…" />`). `tsconfig.json` maps
+  `@assets/*`, `@components/*` and `@utils/*` to `src/*`; Astro resolves those in the Vite build
+  as well as in `astro check`, so never spell a specifier relative to the `.mdx` file or to the
+  project root — a specifier that exists on disk but is not an alias fails the build with
+  `UNRESOLVED_IMPORT`. A markdown image whose destination is a JSX expression is _not_ parsed, so
+  `<Image>` (an element) is the only form. Astro emits these to `/_astro/<name>.<hash>.webp`
+  **with** the base prefix, so they survive the Pages root.
 - **The node_modules layout is hoisted** on purpose (`nodeLinker: hoisted` in
   `pnpm-workspace.yaml`). This is a nested project inside a repository with its own pnpm install;
   with the default isolated layout on Windows, Node's ESM resolver walks past this tree into the
