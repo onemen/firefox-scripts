@@ -118,15 +118,15 @@ loads it (a custom `config.js` that ignores the check, or a user script re-evalu
 - `about:support` → **Extensions** lists the loaded legacy add-on.
 
 If the preferences are not locked, the file is not being read — see
-[Troubleshooting](/troubleshooting/#the-preferences-are-not-locked).
+[Troubleshooting](../../troubleshooting/#the-preferences-are-not-locked).
 
 <Aside type="caution" title="These preferences are locked">
   `lockPref()` cannot be undone from the profile: the value comes from the file
   in the installation directory, and no `user.js` or `about:config` edit can
   override a locked preference. To get rid of it, delete `config.js` and
   `config-prefs.js` — see [Removing the
-  scripts](/installation/#removing-the-scripts).
+  scripts](../../installation/#removing-the-scripts).
 </Aside>
 
-Next: [BootstrapLoader.js](/how-it-works/bootstrap-loader/) — what actually makes legacy add-ons
+Next: [BootstrapLoader.js](../bootstrap-loader/) — what actually makes legacy add-ons
 load.

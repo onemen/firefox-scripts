@@ -77,7 +77,7 @@ this is privileged context, not a web page:
 | `Services`                 | prefs, observers, the directory service, startup — everything in XUL                              |
 | `Components` / `Cc` / `Ci` | component creation and the interface constants                                                    |
 | `ChromeUtils`              | `importESModule`, `defineESModuleGetters`, `defineLazyGetter`                                     |
-| `Cu`                       | `Cu.Sandbox` / `Cu.evalInSandbox` — see [userChrome.js](/how-it-works/userchrome-js/#the-sandbox) |
+| `Cu`                       | `Cu.Sandbox` / `Cu.evalInSandbox` — see [userChrome.js](../userchrome-js/#the-sandbox) |
 | `gBrowser`                 | the browser's tab strip: `addTab`, `selectedTab`, `selectedTabs`                                  |
 | `document`, `window`       | the current chrome document and window                                                            |
 | `UC`, `_uc`                | the loader's registry and state                                                                   |
@@ -175,5 +175,5 @@ chrome window.
   A `.uc.js` script runs with the browser's full privileges — the same level as
   Firefox's own code. Only run scripts you have read and trust. The same applies
   to the add-ons it exists to run; see
-  [Introduction](/introduction/#why-an-updater-is-not-optional).
+  [Introduction](../../introduction/#why-an-updater-is-not-optional).
 </Aside>

@@ -31,6 +31,23 @@ From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`,
 - **`base` is `/firefox-scripts`** (the Pages project path) and the site is served from the branch
   **root**, because the artifact URLs (`hashes.json`, the zips) are root paths. Do not move the
   site under a subpath, and do not expect the artifact files to be part of `dist/`.
+- **Internal links are RELATIVE, never root-absolute.** Write `../installation/`, not
+  `/installation/`. Astro does **not** add `base` to links it finds in Markdown/MDX content
+  (upstream [withastro/astro#5680][1]) — only the links Starlight generates itself (sidebar,
+  prev/next) get the prefix. A root-absolute link renders as `/installation/` and 404s on the
+  live site, while looking fine in `astro dev` if you only browse base-prefixed URLs.
+  Two details that bite:
+  - the number of `../` must match the page's depth in `src/content/docs/` (`index.mdx` needs
+    none, a root-level page one, `how-it-works/*.mdx` one for a sibling and two for a root page);
+  - a link to a page **needs its trailing slash** — routes are built as `<route>/index.html`, so
+    `../config-js` 404s where `../config-js/` resolves.
+
+  `test/unit/docsSite/internalLinks.test.mjs` enforces all of this (it also checks that public/
+  asset `src`s _do_ carry the base prefix — the opposite rule), so `pnpm test` catches a bad link
+  without needing a build.
+
+- Public assets in `public/` are the one exception: they are addressed from the site **root**, so
+  their `src` must be base-prefixed (`/firefox-scripts/installer.png`).
 - **Screenshots and logos are referenced by URL** (`/firefox-scripts/installer.png`), not imported
   through `astro:assets`: importing an image in MDX currently breaks the prerender step
   (`Expected object 'rder' to be defined`) on this Astro/rolldown combination. Files live in
@@ -52,3 +69,5 @@ From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`,
 - `src/utils/downloadsInfo.json` is **generated** (gitignored, like every other generated file):
   `pnpm downloads` writes it from the live `hashes.json` manifest and the releases API. A missing
   or failed fetch only downgrades the `/download` page to static links; it never fails the build.
+
+[1]: https://github.com/withastro/astro/issues/5680

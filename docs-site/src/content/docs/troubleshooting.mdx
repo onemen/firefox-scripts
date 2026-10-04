@@ -16,7 +16,7 @@ XPI.
 
 1. Check `about:config` for `xpinstall.signatures.required`. It must exist and be **locked** (bold,
    with a lock icon). If it is not locked, `config.js` is not being read.
-2. Check the file locations against [Installation → by hand](/installation/#by-hand):
+2. Check the file locations against [Installation → by hand](../installation/#install-config-script):
    `config.js` next to the browser binary, `config-prefs.js` in `defaults/pref/`, and the utils
    unpacked **directly into** `<profile>/chrome/utils/`.
 3. Restart the browser fully — quit it, do not just close the window.
@@ -42,7 +42,7 @@ preferences are in `defaults/pref/`. Check, in order:
    AutoConfig ignores the first line, so the preferences on the second line are the first statements
    that execute.
 
-Details: [Configuration files (config.js)](/how-it-works/config-js/).
+Details: [Configuration files (config.js)](../how-it-works/config-js/).
 
 ## The scripts were working and now they are not
 
@@ -57,7 +57,7 @@ startup cache.
 
 </Steps>
 
-If the updater tab itself will not open, install by hand from the [Download](/download/) page.
+If the updater tab itself will not open, install by hand from the [Download](../download/) page.
 
 ## My .uc.js script does not run
 
@@ -72,7 +72,7 @@ If the updater tab itself will not open, install by hand from the [Download](/do
 
 For a working example, read `restart.uc.js` in the
 [repository](https://github.com/onemen/firefox-scripts/blob/main/core/chrome/restart.uc.js), and see
-[Writing your own .uc.js](/how-it-works/writing-uc-js/#debugging-a-script) for how to read the
+[Writing your own .uc.js](../how-it-works/writing-uc-js/#debugging-a-script) for how to read the
 loader's own state from the Browser Console.
 
 ## An update is offered every day and I want to stay on the current version
@@ -87,7 +87,7 @@ Detection needs a **running** browser: it inspects running processes and lock fi
 browser first, then run the installer.
 
 If the browser runs from an unusual location (a portable build, an extracted archive), install by
-hand instead — [Installation → by hand](/installation/#by-hand) uses the paths from `about:support`,
+hand instead — [Installation → by hand](../installation/#install-config-script) uses the paths from `about:support`,
 so it works regardless of where the browser lives.
 
 ## The installer tab shows a network error

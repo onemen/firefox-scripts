@@ -28,7 +28,7 @@ temporary `about:profiles` one) starts with no legacy add-ons and no `.uc.js` sc
 `utils.zip` into it.
 
 The installer lets you pick the browsers; for extra profiles, unzip `utils.zip` into the new
-profile's `chrome/utils/` as described in [Installation](/installation/#3-install-the-utils).
+profile's `chrome/utils/` as described in [Installation](../installation/#install-utils).
 
 ## Does it slow the browser down?
 
@@ -44,7 +44,7 @@ binary; click **More info → Run anyway**.
 You do not have to take the word of anyone on the internet: each installer asset in the release
 ships a `.sha256` sidecar, and the elevation it performs is a single, checksum-verified copy step
 through a helper downloaded for that purpose. If you want to inspect what you are running before
-running it, download from the [Download](/download/) page and check the hash yourself.
+running it, download from the [Download](../download/) page and check the hash yourself.
 
 ## Will an extension still work after a browser update?
 
@@ -59,7 +59,7 @@ Supported, and validated in CI on every release:
 
 - **Waterfox** ships its own Bootstrap Loader, so ours skips loading (loading both would
   double-register the loader and break legacy add-ons). `userChrome.js` and the updater still work.
-  See [config.js](/how-it-works/config-js/#waterfox-skipping-the-loader).
+  See [config.js](../how-it-works/config-js/#waterfox-skipping-the-loader).
 - **Zen Browser**, **LibreWolf** and **Floorp** need no special handling.
 
 Detection uses process scanning and lock-file inspection, so **the browser must be running** when the
@@ -98,10 +98,10 @@ Security → Security** if macOS blocked the modified bundle from launching.
 
 Remove `config.js` and `defaults/pref/config-prefs.js` from the browser root directory, remove the
 `chrome` folder from each profile, and restart. See
-[Removing the scripts](/installation/#removing-the-scripts).
+[Removing the scripts](../installation/#removing-the-scripts).
 
 <Aside type="note" title="Still stuck?">
-  See [Troubleshooting](/troubleshooting/), then open an
+  See [Troubleshooting](../troubleshooting/), then open an
   [issue](https://github.com/onemen/firefox-scripts/issues) — please include
   your browser version and the output of `about:support`.
 </Aside>

@@ -13,6 +13,10 @@ import {
   releases,
 } from '../../utils/getDownloadsInfoSync.mjs'
 
+// Fallback for a missing asset entry in downloadsInfo.json: the releases page
+// rather than a dead link.
+const LATEST = 'https://github.com/onemen/firefox-scripts/releases/tag/latest'
+
 The table below is generated at build time from the **same files the updater reads**: the
 per-package dates come from the hash manifest on the Pages branch
 (`hashes.json`), and the release links come from the
@@ -20,7 +24,7 @@ per-package dates come from the hash manifest on the Pages branch
 maintain by hand.
 
 <Aside type="tip" title="First time here?">
-  Follow the [Installation guide](/installation/). You want the installer
+  Follow the [Installation guide](../installation/). You want the installer
   binary, not the zips.
 </Aside>
 
@@ -29,8 +33,8 @@ maintain by hand.
 | Package          | Download                                                                                                                    | Published                             | What goes where                                                 |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
 | **Installer**    | [`latest` release](https://github.com/onemen/firefox-scripts/releases/tag/latest)                                           | —                                     | one-shot setup tool, per OS                                     |
-| **`fx-folder`**  | [`fx-folder.zip`]({assetUrl('latest', "fx-folder.zip") ?? 'https://github.com/onemen/firefox-scripts/releases/tag/latest'}) | {packages['fx-folder']?.date ?? '—'}  | `config.js`, `config-prefs.js` → browser installation directory |
-| **`utils`**      | [`utils.zip`]({assetUrl('latest', "utils.zip") ?? 'https://github.com/onemen/firefox-scripts/releases/tag/latest'})         | {packages['utils']?.date ?? '—'}      | chrome scripts → each profile's `chrome/utils/`                 |
+| **`fx-folder`**  | <a href={assetUrl('latest', 'fx-folder.zip') ?? LATEST}><code>fx-folder.zip</code></a> | {packages['fx-folder']?.date ?? '—'}  | `config.js`, `config-prefs.js` → browser installation directory |
+| **`utils`**      | <a href={assetUrl('latest', 'utils.zip') ?? LATEST}><code>utils.zip</code></a>         | {packages['utils']?.date ?? '—'}      | chrome scripts → each profile's `chrome/utils/`                 |
 | **`updater-ui`** | updated automatically                                                                                                       | {packages['updater-ui']?.date ?? '—'} | the updater tab's own UI — not installed by hand                |
 
 Installer binaries in the `latest` release:

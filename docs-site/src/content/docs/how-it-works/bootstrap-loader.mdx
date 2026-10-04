@@ -35,7 +35,7 @@ that registration.
   [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts)
   (MPL-2.0). It is loaded from
   `chrome://userchromejs/content/BootstrapLoader.js` — the path the utils'
-  `chrome.manifest` registers in [config.js](/how-it-works/config-js).
+  `chrome.manifest` registers in [config.js](../config-js/).
 </Aside>
 
 ## What happens to a legacy add-on
@@ -108,13 +108,13 @@ Two signals: the brand name (deterministic — AutoConfig runs before the AddonM
 exists, so the registry check only protects later evaluations), and the loader registry itself
 (name-independent, so a re-evaluation of the file in any browser is a no-op).
 
-[config.js](/how-it-works/config-js) applies the same check before loading the file, so on
+[config.js](../config-js/) applies the same check before loading the file, so on
 Waterfox neither copy's patches run.
 
 <Aside type="caution" title="If an add-on still will not load">
   "Corrupt" almost always means the loader did not run. Check [Troubleshooting →
   the add-on is reported as
-  corrupt](/troubleshooting/#the-add-on-is-reported-as-corrupt).
+  corrupt](../../troubleshooting/#the-add-on-is-reported-as-corrupt).
 </Aside>
 
-Next: [userChrome.js](/how-it-works/userchrome-js/) — the `.uc.js` script loader.
+Next: [userChrome.js](../userchrome-js/) — the `.uc.js` script loader.
