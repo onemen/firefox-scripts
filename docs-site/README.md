@@ -61,11 +61,21 @@ From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`,
 - **`.mdx` is excluded from prettier** (`.prettierignore`): prettier's MDX formatter rewrites the
   pages in ways the Astro build rejects (a blank line inside a JSX expression, `Parse error @:1:1`).
   `pnpm format` therefore covers `.astro`, `.mjs`, `.ts`, `.css` and `.json` only — the pages are
-  validated by `pnpm build` → `astro check`, which is the gate that understands MDX.
-- **Prefer subsections to `<Tabs>`** for anything with more than two entries: a three-item
-  `<Tabs>` group loses its last tab in the prerendered output on this Astro/Starlight pair (the
-  panel renders, the tab button does not). Two-item tabs are fine — see
-  `how-it-works/writing-uc-js.mdx`.
+  validated by `pnpm build` → `astro check`, which is the gate that understands MDX.- **Navigation is client-side.** `src/components/Head.astro` wraps Starlight's own `<Head />` and adds
+  `<ClientRouter />` from `astro:transitions`, so moving between pages swaps the DOM and animates it
+  with the browser's View Transition API instead of reloading the document. Verify changes with
+  `pnpm build && pnpm preview` — **`pnpm dev` is not representative**: Pagefind is not built for dev
+  (Starlight shows a “search is only available in production builds” notice), and the router's search
+  re-init is skipped there by design.
+- **The router re-creates Starlight's search, so that component re-initialises Pagefind after each
+  swap.** Starlight builds its Pagefind UI from a `DOMContentLoaded` listener, which never fires
+  again for the swapped-in `<site-search>`. The re-init in `Head.astro` is guarded twice — skip the
+  initial load, and stop if a search input already exists. **Keep both guards**: without the second,
+  a UI is stacked into the same container on every navigation (measured 1 → 2 → 3 → 4 over four
+  navigations, which looks like “search is broken”).
+- `<Tabs>` is fine at any size here: the four-item per-OS group in `installation.mdx` renders all
+  four tabs (`tab-0-0` … `tab-0-3`) in the prerendered output. An earlier note here claimed a
+  three-item group lost its tab — that did not reproduce.
 - `src/utils/downloadsInfo.json` is **generated** (gitignored, like every other generated file):
   `pnpm downloads` writes it from the live `hashes.json` manifest and the releases API. A missing
   or failed fetch only downgrades the `/download` page to static links; it never fails the build.

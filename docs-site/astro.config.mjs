@@ -28,6 +28,9 @@ export const starlightConfig = {
     baseUrl: "https://github.com/onemen/firefox-scripts/edit/main/docs-site/",
   },
   lastUpdated: true,
+  components: {
+    Head: "./src/components/Head.astro",
+  },
   sidebar: [
     { label: "Introduction", link: "/introduction" },
     { label: "Installation", link: "/installation" },
