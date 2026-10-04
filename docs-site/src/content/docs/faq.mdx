@@ -1,0 +1,107 @@
+---
+title: FAQ
+description: Common questions about Firefox Scripts — safe mode, profiles, forks, security and updates.
+---
+
+import { Aside } from '@astrojs/starlight/components'
+
+## Does this work in safe mode?
+
+**No — and that is intentional.** Safe mode exists to start the browser _without_ your
+configuration, and these scripts are configuration. In safe mode:
+
+- `config.js` is skipped (Firefox disables AutoConfig in safe mode),
+- `userChrome.js` returns early — it explicitly checks `Services.appinfo.inSafeMode`,
+- your `.uc.js` scripts do not run.
+
+So if a script breaks your browser and you cannot reach the troubleshooting tools, **safe mode is
+the way back in**. Anything you change while there stays; the scripts simply stay out of the way
+until the next normal start.
+
+## Do I have to install it for every profile?
+
+**The configuration files: no — per browser. The utils: yes — per profile.**
+
+`config.js` lives in the browser's installation directory and is read once per browser. The utils
+live in `<profile>/chrome/utils/`, and `UChrm` resolves per profile. A second profile (including a
+temporary `about:profiles` one) starts with no legacy add-ons and no `.uc.js` scripts until you copy
+`utils.zip` into it.
+
+The installer lets you pick the browsers; for extra profiles, unzip `utils.zip` into the new
+profile's `chrome/utils/` as described in [Installation](/installation/#3-install-the-utils).
+
+## Does it slow the browser down?
+
+The loader work is a handful of file reads and a manifest hash comparison at startup — the daily
+update check re-reads a small JSON manifest over the network at most once a day, and only when the
+browser starts. No background service, no scheduled task, no telemetry.
+
+## Why is an unsigned binary telling me to click through SmartScreen?
+
+The installer is not code-signed. Windows shows _"Windows protected your PC"_ for any untrusted
+binary; click **More info → Run anyway**.
+
+You do not have to take the word of anyone on the internet: each installer asset in the release
+ships a `.sha256` sidecar, and the elevation it performs is a single, checksum-verified copy step
+through a helper downloaded for that purpose. If you want to inspect what you are running before
+running it, download from the [Download](/download/) page and check the hash yourself.
+
+## Will an extension still work after a browser update?
+
+Not automatically — that is the problem the updater solves. Legacy add-ons hook deep into browser
+internals and most of them need an update for each Firefox release. The updater offers you the
+published packages once a day; when the browser update breaks an add-on, a fix is usually published
+shortly after.
+
+## Waterfox / Zen / LibreWolf / Floorp
+
+Supported, and validated in CI on every release:
+
+- **Waterfox** ships its own Bootstrap Loader, so ours skips loading (loading both would
+  double-register the loader and break legacy add-ons). `userChrome.js` and the updater still work.
+  See [config.js](/how-it-works/config-js/#waterfox-skipping-the-loader).
+- **Zen Browser**, **LibreWolf** and **Floorp** need no special handling.
+
+Detection uses process scanning and lock-file inspection, so **the browser must be running** when the
+installer runs.
+
+## Is it safe?
+
+The honest answer: **it is privileged code, and you should trust its source.** A legacy add-on and a
+`.uc.js` script both run with the full privileges of the browser — the same level as Firefox's own
+code. That is inherent to what they are, not a flaw in this project.
+
+What you can rely on:
+
+- The scripts are built from source in a public repository, and every release's contents are
+  published with a hash manifest the updater verifies.
+- The installer performs **no network I/O of its own**: the browser tab it opens downloads the
+  packages and hands them to the local server, so there is no hidden download path.
+- The local server that receives those bytes requires a per-run session token.
+
+Install add-ons and user scripts only from sources you trust.
+
+## Can I install only the configuration files?
+
+Yes — the installer's component list is per package. If you only want your own `.uc.js` scripts and
+no legacy add-ons, install the configuration files and the utils but leave TabMixPlus out; if you
+only run add-ons and write no scripts, the utils' updater still keeps itself current without
+anything extra.
+
+## What about the macOS app bundle being replaced?
+
+macOS replaces the whole app bundle when it updates, which removes `config.js` from
+`Firefox.app/Contents/Resources`. Reinstall afterwards — and check **System Settings → Privacy &
+Security → Security** if macOS blocked the modified bundle from launching.
+
+## I want to go back to a clean browser
+
+Remove `config.js` and `defaults/pref/config-prefs.js` from the browser root directory, remove the
+`chrome` folder from each profile, and restart. See
+[Removing the scripts](/installation/#removing-the-scripts).
+
+<Aside type="note" title="Still stuck?">
+  See [Troubleshooting](/troubleshooting/), then open an
+  [issue](https://github.com/onemen/firefox-scripts/issues) — please include
+  your browser version and the output of `about:support`.
+</Aside>

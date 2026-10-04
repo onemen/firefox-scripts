@@ -1,0 +1,40 @@
+# The docs site is its OWN pnpm workspace root (issue #28): the repo root is a
+# root-only workspace (`packages: []`), and the Astro toolchain must not ride
+# the root install — a docs dependency bump must never touch the publish
+# tooling's dependency set, and `pnpm install` at the repo root must not pull
+# Astro in.
+packages:
+  - "."
+
+# Same supply-chain floor as the repo root (ADR 0033 — dependency-update
+# policy): a package must have been published at least 7200 minutes (5 days)
+# before it can be installed. Newer releases simply wait.
+minimumReleaseAge: 7200
+
+# Deps that are already past the floor and must not be held back by a
+# transitive resolution: none today. Add a name here only when a floor-compliant
+# release is blocked by a peer requirement, and say why in a comment.
+minimumReleaseAgeExclude: []
+
+autoInstallPeers: true
+saveExact: true
+
+# Build scripts are opt-in per package (pnpm >= 10). esbuild and sharp both need
+# theirs: without them Astro has no bundler binary and image optimization fails.
+allowBuilds:
+  esbuild: true
+  sharp: true
+
+# A HOISTED (flat) node_modules, not pnpm's default isolated layout.
+#
+# Why: the site is a NESTED project inside a repository that has its own pnpm
+# install one directory up. On Windows, `pnpm install` run from a Git-Bash/MSYS
+# shell writes symlink targets as POSIX paths (`/c/code/...`); Node's ESM
+# resolver does not follow them and silently walks PAST this tree into the
+# parent checkout's node_modules, where a different version of the same package
+# resolves (observed with astro -> js-yaml: "The requested module 'js-yaml'
+# does not provide an export named 'default'"). A hoisted install contains real
+# directories and no symlink hop, so the nested project resolves identically
+# under every shell and on every platform. The dependency set is small and the
+# disk cost is irrelevant next to the hazard.
+nodeLinker: hoisted

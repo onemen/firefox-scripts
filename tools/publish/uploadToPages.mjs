@@ -14,6 +14,11 @@
 // branch (the 2026-08-22 seed-from-main accident dragged the whole source tree
 // and history onto the branch; ADR 0031).  Uploads go through the git-data API
 // so existing files are replaced atomically and unchanged files are skipped.
+//
+// The prod branch also carries the docs site at its root (index.html,
+// 404.html, _astro/, pagefind/ — ADR 0038); those paths are written by
+// .github/workflows/docs-deploy.yml, never from here. This module owns only
+// the artifact paths, which is what keeps the two writers disjoint.
 
 import crypto from 'crypto';
 import {REPO_OWNER, ZIP_PAGES_REPO, ZIP_PAGES_BRANCH} from './paths.js';
@@ -21,75 +26,6 @@ import {bold, dim, green, yellow} from './log.mjs';
 
 function gitBlobSha(buf) {
   return crypto.createHash('sha1').update(`blob ${buf.length}\0`).update(buf).digest('hex');
-}
-
-/**
- * Landing page for the Pages site: the branch carries only binary artifacts and
- * hashes.json, so without this the site root would be a 404.
- *
- * The site serves the repository's own README.md, rendered by GitHub (the same
- * HTML the repo page shows) — fetched fresh on every publish and wrapped in a
- * minimal shell, so the landing page can never drift from the README. Static
- * HTML on purpose: the branch ships .nojekyll because the legacy Jekyll build
- * errored on this repo and left pushes undeployed. Content-addressed like every
- * other pushed file: unchanged content is skipped, so idle runs create no
- * commit for it.
- *
- * @returns {Promise<Buffer>} index.html, or a plain-text fallback when the
- *   README cannot be fetched (the site must never 404).
- */
-export async function pagesIndex(octokit) {
-  const repoUrl = `https://github.com/${REPO_OWNER}/${ZIP_PAGES_REPO}`;
-  let body;
-  try {
-    const {data} = await octokit.request('GET /repos/{owner}/{repo}/readme', {
-      owner: REPO_OWNER,
-      repo: ZIP_PAGES_REPO,
-      headers: {accept: 'application/vnd.github.html+json'},
-      mediaType: {format: 'html'},
-    });
-    body = String(data);
-  } catch (error) {
-    console.log(yellow(`README fetch failed (${error.message}) — falling back to plain text.`));
-    try {
-      const {data} = await octokit.request('GET /repos/{owner}/{repo}/readme', {
-        owner: REPO_OWNER,
-        repo: ZIP_PAGES_REPO,
-        headers: {accept: 'application/vnd.github.raw+json'},
-      });
-      body = `<pre>${String(data).replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'})[c])}</pre>`;
-    } catch (fallbackError) {
-      throw new Error(`Failed to fetch the README for the Pages index: ${fallbackError.message}`, {
-        cause: fallbackError,
-      });
-    }
-  }
-  return Buffer.from(
-    [
-      '<!doctype html>',
-      '<html lang="en">',
-      '  <head>',
-      '    <meta charset="utf-8" />',
-      '    <meta name="viewport" content="width=device-width, initial-scale=1" />',
-      '    <title>firefox-scripts</title>',
-      '    <link',
-      '      rel="stylesheet"',
-      '      href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown.min.css"',
-      '    />',
-      '    <style>',
-      '      body { display: flex; justify-content: center; }',
-      '      .markdown-body { max-width: 980px; padding: 16px 24px; }',
-      '    </style>',
-      '  </head>',
-      '  <body class="markdown-body">',
-      `    <!-- Rendered from ${repoUrl}#readme -->`,
-      body,
-      '  </body>',
-      '</html>',
-      '',
-    ].join('\n'),
-    'utf-8'
-  );
 }
 
 /**
@@ -169,12 +105,20 @@ export async function branchExistsOnPages(octokit) {
  * file content. Callers pass only the files that changed, so a stale dist/ copy
  * can never overwrite a live artifact on Pages.
  *
+ * `deletePaths` removes branch paths in the SAME commit (ADR 0038: the docs
+ * deploy owns a full replace of its own files, so a page that no longer exists
+ * must not survive). A path that is not on the branch is skipped, so passing
+ * the full previous list every run is safe.
+ *
  * Returns the list of uploaded file names (empty when everything is current).
  */
 export async function uploadFilesToPages(
   octokit,
   files,
-  {message = `chore: publish files (${new Date().toISOString().slice(0, 10)})`} = {}
+  {
+    message = `chore: publish files (${new Date().toISOString().slice(0, 10)})`,
+    deletePaths = [],
+  } = {}
 ) {
   const repo = {owner: REPO_OWNER, repo: ZIP_PAGES_REPO};
   // An empty .nojekyll disables the legacy Jekyll build for the Pages branch:
@@ -185,13 +129,16 @@ export async function uploadFilesToPages(
   const entries = Object.entries({'.nojekyll': Buffer.alloc(0), ...files}).filter(
     ([, buf]) => buf != null && buf.length >= 0
   );
-  if (entries.length === 0) {
+  const deletions = deletePaths.filter(p => typeof p === 'string' && p.length > 0);
+  if (entries.length === 0 && deletions.length === 0) {
     return [];
   }
 
   console.log(
     bold(
-      `Publishing to ${REPO_OWNER}/${ZIP_PAGES_REPO}@${ZIP_PAGES_BRANCH} (${entries.length} file${entries.length === 1 ? '' : 's'}):`
+      `Publishing to ${REPO_OWNER}/${ZIP_PAGES_REPO}@${ZIP_PAGES_BRANCH} ` +
+        `(${entries.length} file${entries.length === 1 ? '' : 's'}` +
+        `${deletions.length ? `, ${deletions.length} deletion(s)` : ''}):`
     )
   );
   const headSha = await pagesBranchHead(octokit);
@@ -228,6 +175,20 @@ export async function uploadFilesToPages(
     updatedEntries.push({path: name, mode: '100644', type: 'blob', sha: blob.sha});
     uploaded.push(name);
     console.log(`  ${green('+')} ${name}  ${buf.length} bytes`);
+  }
+
+  // Deletions: a null sha removes the path from the tree (git-data API). Only
+  // paths actually present on the branch are removed, so the caller can pass its
+  // whole previous file list every run.
+  const deleted = [];
+  for (const path of deletions) {
+    if (!existingEntries.has(path)) continue;
+    if (entries.some(([name]) => name === path)) {
+      throw new Error(`Path listed for deletion is also being written: ${path}`);
+    }
+    updatedEntries.push({path, mode: '100644', type: 'blob', sha: null});
+    deleted.push(path);
+    console.log(`  ${yellow('-')} ${path}  deleted`);
   }
 
   if (updatedEntries.length === 0) {

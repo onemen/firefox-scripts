@@ -1,0 +1,169 @@
+---
+title: Installation
+description: Install Firefox Scripts with the installer, or by hand — with the exact paths per operating system.
+tableOfContents: true
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components'
+
+Follow the steps in order. A file in the wrong directory is the single most common reason the
+scripts appear to do nothing.
+
+## With the installer (recommended)
+
+The installer copies the packages into a **running** Firefox-family browser and lets you choose
+which browsers and components to install.
+
+### 1. Download it
+
+From the [latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest):
+
+| Platform     | File                                               |
+| ------------ | -------------------------------------------------- |
+| Windows      | `installer_win.exe`                                 |
+| Linux x86_64 | `installer_linux`                                   |
+| Linux ARM64  | `installer_linux_aarch64`                          |
+| macOS        | `installer_mac` (universal: Intel + Apple Silicon) |
+
+### 2. Run it
+
+The installer connects to a running browser (Firefox, Zen Browser, Waterfox, LibreWolf or Floorp)
+and opens the install screen in a browser tab:
+
+<img src="/firefox-scripts/installer.png" alt="Firefox Scripts installer — install screen listing the detected browsers and the components to install" width="520" />
+
+<Aside type="caution" title="The installer is unsigned">
+On Windows, SmartScreen may show _"Windows protected your PC"_. Click **More info → Run anyway**,
+and approve the single **UAC prompt** if it appears — one checksum-verified elevation, used only for
+the copy step into the admin-protected installation directory.
+</Aside>
+
+The tab always opens. It is the part that downloads the packages from the network; if those cannot
+be reached, the tab shows a network-error banner instead of the install screen.
+
+### 3. Choose the components
+
+- **Configuration files** (`config.js`, `config-prefs.js`) — copied to the browser's installation
+  directory. Needed **once per browser**.
+- **Utils** (the chrome scripts) — copied to your profile's `chrome/utils/` directory. Needed **once
+  per profile**.
+
+### 4. Restart the browser
+
+Click **Install**, wait for it to finish, then restart when prompted.
+
+The installer is a one-shot setup tool: it leaves behind no other files, background processes or
+scheduled tasks. Once it completes, you can delete the downloaded executable.
+
+## After installing: the updater
+
+<img src="/firefox-scripts/updater.png" alt="Firefox Scripts updater tab — a package update notification" width="460" />
+
+Once the scripts are in place, they keep themselves current — you never re-run the installer:
+
+- **Daily check.** The updater compares a SHA-256 manifest of the published files with what you have
+  installed. The check runs at most once a day, and a browser restart is the natural moment.
+- **Notification tab.** When something new is published, a tab opens showing what would change. You
+  can install it there, skip it for the day, or permanently ignore that package.
+- **In-tab install.** Applying an update downloads the new packages and copies them into place
+  inside the browser. Updating the configuration files touches an admin-protected directory, so that
+  one step triggers a single elevation prompt through a helper that ships with the update.
+- **Manual update.** You can always open the updater from the browser menu, or download
+  `utils.zip` / `fx-folder.zip` straight from the update tab.
+
+The updater tab's own UI files update in the background, as a service of the browser. Configuration
+files and browser restarts are only ever applied when you choose to, so the process stays
+predictable.
+
+## By hand
+
+Use this when you want to inspect the files first, or when the installer cannot see your browser.
+
+### 1. Find the two directories
+
+Open `about:support` in the browser you are setting up:
+
+- **Application Binary** — the folder containing the browser binary (`firefox.exe` on Windows).
+  Called the *Firefox root directory* below.
+- **Profile Folder** — where the browser stores bookmarks, passwords and the rest of your data.
+  Mozilla explains it in
+  [Profiles — where Firefox stores your data](https://support.mozilla.org/kb/profiles-where-firefox-stores-user-data).
+
+### 2. Install the configuration files
+
+Unpack `fx-folder.zip` (from the [Download](/download/) page) and copy:
+
+- `config.js` → the Firefox root directory
+- `config-prefs.js` → `[FIREFOX ROOT]/defaults/pref/`
+
+#### Windows
+
+Default root: `C:\Program Files\Mozilla Firefox\` (or `C:\Program Files (x86)\Mozilla Firefox\`
+for a 32-bit install).
+
+- `config.js` → `[FIREFOX ROOT]\config.js`
+- `config-prefs.js` → `[FIREFOX ROOT]\defaults\pref\config-prefs.js`
+
+Writing into `Program Files` needs administrator rights — right-click the browser's shortcut →
+**Run as administrator**, or copy the files from an elevated Explorer window.
+
+#### Linux
+
+Default root: `/usr/lib/firefox/` (Debian/Ubuntu packages) or `/usr/lib64/firefox/` (Fedora/RHEL).
+
+- `config.js` → `/usr/lib/firefox/config.js`
+- `config-prefs.js` → `/usr/lib/firefox/defaults/pref/config-prefs.js`
+
+The `defaults/pref` subfolder usually already exists; create it if it does not. Writing there
+requires root — copy the two files with root privileges.
+
+The **Snap** package is different: its root is `/etc/firefox/`, and Snap Firefox versions before 108
+are not supported.
+
+- `config.js` → `/etc/firefox/config.js`
+- `config-prefs.js` → `/etc/firefox/defaults/pref/config-prefs.js`
+
+#### macOS
+
+The application bundle is the root: `Firefox.app/Contents/Resources` (Finder shows
+`Firefox.app` → `Contents` → `Resources`).
+
+- `config.js` → `Firefox.app/Contents/Resources/config.js`
+- `config-prefs.js` → `Firefox.app/Contents/Resources/defaults/pref/config-prefs.js`
+
+Writing into an app bundle that came from a DMG or the App Store may be undone when the app is
+replaced. See the [FAQ](/faq/#macos-app-bundle-replaced-by-an-update).
+
+### 3. Install the utils
+
+<Aside type="note">
+The utils are installed **per profile**: repeat this step in every profile where you want the
+scripts to be active. The configuration files, by contrast, are installed once per browser.
+</Aside>
+
+<Steps>
+
+1. Create a `chrome` folder in your **Profile Folder** if it does not exist yet.
+2. Unpack `utils.zip` so that its contents end up in `[PROFILE]/chrome/utils/` — the files
+   (`BootstrapLoader.js`, `userChrome.js`, `xPref.sys.mjs`, `chrome.manifest`, `updater/`) must be
+   **directly inside** `utils`, not nested in another folder.
+3. In `about:support`, click **Clear startup cache…** so the browser reloads the scripts on the next
+   start instead of serving the cached startup cache.
+
+</Steps>
+
+### 4. Restart the browser
+
+Start it normally (not in safe mode — see the [FAQ](/faq/#does-this-work-in-safe-mode)) and check
+that the scripts took effect:
+
+- `about:support` → **Extensions** lists your legacy add-on (TabMixPlus) as enabled.
+- Your `.uc.js` scripts take effect — see [Writing your own .uc.js](/how-it-works/writing-uc-js/).
+
+## Removing the scripts
+
+1. Remove `config.js` and `defaults/pref/config-prefs.js` from the Firefox root directory.
+2. Remove the `chrome` folder (or just `chrome/utils`) from each profile.
+3. Restart the browser.
+
+The updater goes away with the utils, so nothing will try to re-install anything.

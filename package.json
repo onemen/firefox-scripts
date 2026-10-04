@@ -35,6 +35,12 @@
     "test": "node --test \"test/unit/**/*.test.mjs\"",
     "check:decisions": "node tools/check-decisions.mjs",
     "check:skills-drift": "node tools/skills-watchdog.mjs --dry-run",
+    "docs:dev": "pnpm --dir docs-site dev",
+    "docs:build": "pnpm --dir docs-site build",
+    "docs:downloads": "pnpm --dir docs-site downloads",
+    "docs:publish": "node tools/docs/publishDocsSite.mjs",
+    "docs:install": "pnpm --dir docs-site install",
+>>>>>>> ce67ea57 (feat(docs): publish a user docs site at the Pages branch root)
     "check:gates": "node tools/check-gate-coverage.mjs",
     "check:core-tests": "node tools/check-core-test-change.mjs",
     "test:hash": "node installer/test/test_hash.mjs && node installer/test/test_self_update.mjs",

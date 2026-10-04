@@ -33,6 +33,11 @@ name: Pages publish
 #
 # Pages serving stays "Deploy from branch: gh-pages" — this workflow pushes
 # to that branch; it does not use the actions-pages deployment method.
+#
+# The prod branch's index.html is the DOCS SITE (ADR 0038), published by
+# docs-deploy.yml. This workflow writes only artifact paths + the branch
+# README; the two workflows share the `gh-pages-write` concurrency group so
+# their read-head-then-commit cycles cannot interleave.
 
 on:
   workflow_dispatch:
@@ -62,7 +67,10 @@ permissions:
   issues: write # ADR 0021: the pre-flight's warn-and-continue path opens a deduped notification issue when a fork's version lookup fails
 
 concurrency:
-  group: pages-publish
+  # SHARED with docs-deploy.yml — the docs site and the release artifacts live
+  # on the same branch, so the two workflows must never hold the branch at the
+  # same time (both do read-head-then-commit through the git-data API).
+  group: gh-pages-write
   cancel-in-progress: false # a publish must never be killed mid-upload
   # ...so every job below sets timeout-minutes (matching build-and-upload.yml):
   # a hung step with no timeout would hold this NON-cancellable slot for

@@ -1,0 +1,55 @@
+/* Firefox Scripts docs — the small set of styles Starlight does not provide. */
+
+/* Landing page: the installer screenshot under the hero text. */
+.hero-shot {
+  display: flex;
+  justify-content: center;
+  margin-block: 0.5rem 1.5rem;
+}
+
+.hero-shot img {
+  /* The installer screenshot is a tall 675x790 capture — cap the height so it
+     reads as an illustration beside the hero text, not a wall of UI. */
+  max-width: min(420px, 100%);
+  max-height: 420px;
+  object-fit: contain;
+  object-position: top;
+  border-radius: 0.5rem;
+  border: 1px solid var(--sl-color-gray-5);
+  box-shadow: var(--sl-shadow-md);
+}
+
+/* Landing page: the supported-browsers logo row. */
+.browser-logos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  align-items: center;
+  margin-block: 1rem 1.5rem;
+}
+
+.browser-logos img {
+  height: 48px;
+  width: 48px;
+  object-fit: contain;
+}
+
+/* Download page: the generated "latest release" line. */
+.release-note {
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+
+/* Tables of package names / dates read better slightly narrower. */
+.sl-markdown-content table {
+  font-size: var(--sl-text-sm);
+}
+
+.sl-markdown-content table td:first-child {
+  white-space: nowrap;
+}
+/* Screenshots inside page content (installation, updater tab). */
+.sl-markdown-content img[src*=".png"] {
+  max-height: 460px;
+  width: auto;
+}

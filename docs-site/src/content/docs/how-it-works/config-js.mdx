@@ -1,0 +1,132 @@
+---
+title: Configuration files (config.js)
+description: How Firefox AutoConfig works, what our config.js does, and how the three preferences in config-prefs.js make Firefox load it.
+---
+
+import { Aside } from '@astrojs/starlight/components'
+
+`config.js` is the entry point of the whole system. It is the only file Firefox itself has to
+notice — everything else is loaded from it.
+
+## Firefox's AutoConfig
+
+Firefox has a built-in mechanism for **administrators** to run their own JavaScript at startup,
+before the browser window exists: [AutoConfig](https://support.mozilla.org/kb/customizing-firefox-using-autoconfig).
+It is the same mechanism behind `mozilla.cfg` on managed installs, and it does two things:
+
+1. sets (or **locks**) preferences, with `pref()` / `lockPref()`;
+2. runs the rest of the file as script, so it can register components or load more files.
+
+AutoConfig is off by default. Turning it on takes two files, both placed in the browser's
+installation directory:
+
+| File                            | Purpose                                                         |
+| ------------------------------- | --------------------------------------------------------------- |
+| `defaults/pref/config-prefs.js` | the preferences that enable AutoConfig and point it at our file |
+| `config.js`                     | the script AutoConfig runs                                      |
+
+## The three preferences
+
+This is the whole of `defaults/pref/config-prefs.js`:
+
+```js
+pref("general.config.obscure_value", 0);
+pref("general.config.filename", "config.js");
+pref("general.config.sandbox_enabled", false);
+```
+
+- **`general.config.filename`** — the name of the script AutoConfig runs, relative to the browser
+  installation directory. Firefox's default is `mozilla.cfg`; ours is `config.js`.
+- **`general.config.sandbox_enabled`** — when `true` (the default), the AutoConfig script runs in a
+  restricted sandbox limited to a documented API — enough for `pref()`, and nothing more. These
+  scripts need `Services`, `Components` and chrome-privileged APIs, so the sandbox is disabled.
+- **`general.config.obscure_value`** — when `true`, the values of the preferences AutoConfig sets are
+  hidden in `about:config`. Set to `0` so the two locked preferences below are visible and can be
+  verified.
+
+:::note[Why the first line is skipped]
+AutoConfig ignores the **first line** of its configuration file, so the file starts with the comment
+`// skip 1st line`. Do not remove it — `lockPref()` on the second line is the first statement that
+actually runs.
+:::
+
+## What config.js does
+
+Locked first, so no preference or `about:config` edit can undo them:
+
+```js
+lockPref("xpinstall.signatures.required", false);
+lockPref("extensions.install_origins.enabled", false);
+```
+
+- **`xpinstall.signatures.required`** — legacy add-ons are not signed. With signature enforcement
+  on, they are refused as corrupt.
+- **`extensions.install_origins.enabled`** — legacy extensions install from any origin rather than
+  being pinned to the add-on site's host.
+
+Then the loading itself:
+
+```js
+const cmanifest = Services.dirsvc.get("UChrm", Ci.nsIFile);
+cmanifest.append("utils");
+cmanifest.append("chrome.manifest");
+Components.manager
+  .QueryInterface(Ci.nsIComponentRegistrar)
+  .autoRegister(cmanifest);
+
+if (!isWaterfox) {
+  Services.scriptloader.loadSubScript(
+    "chrome://userchromejs/content/BootstrapLoader.js",
+  );
+}
+
+Services.scriptloader.loadSubScript(
+  "chrome://userchromejs/content/userChrome.js",
+);
+```
+
+Three steps, all inside `try`/`catch` so a failure in one cannot stop the browser from starting:
+
+1. **Register the utils' `chrome.manifest`.** It maps `chrome://userchromejs/` to the `utils`
+   folder and `chrome://firefox-scripts/` to `updater/`, so the other scripts can be loaded by
+   `chrome://` URL. `UChrm` is the profile's `chrome` directory — this is why the **utils must be
+   unpacked to `chrome/utils/`**, not anywhere else.
+2. **Load `BootstrapLoader.js`** — brings legacy add-ons back, unless the browser already ships its
+   own loader (see below).
+3. **Load `userChrome.js`** — the `.uc.js` loader, and the in-browser updater's UI hook.
+
+## Waterfox: skipping the loader
+
+```js
+const isWaterfox = /waterfox/i.test(Services.appinfo.name);
+```
+
+**Waterfox** bundles its own Bootstrap Loader. Loading ours as well would register a second
+`bootstrap` loader and double-patch the `about:addons` internals, which breaks legacy add-ons. So
+on Waterfox the `BootstrapLoader.js` load is skipped — `userChrome.js` and the updater still load,
+because those are what a user installing these files on Waterfox actually wants.
+
+`BootstrapLoader.js` carries the same guard internally, so it also stays inert if something else
+loads it (a custom `config.js` that ignores the check, or a user script re-evaluating the file).
+
+## Verifying it worked
+
+- `about:config` → search `xpinstall.signatures.required`: it must be present and **locked**
+  (shown in bold with a lock icon).
+- `about:support` → **Application Basics**: the **Profile Folder** line tells you where the `chrome`
+  directory must live.
+- `about:support` → **Extensions** lists the loaded legacy add-on.
+
+If the preferences are not locked, the file is not being read — see
+[Troubleshooting](/troubleshooting/#the-preferences-are-not-locked).
+
+<Aside type="caution" title="These preferences are locked">
+  `lockPref()` cannot be undone from the profile: the value comes from the file
+  in the installation directory, and no `user.js` or `about:config` edit can
+  override a locked preference. To get rid of it, delete `config.js` and
+  `config-prefs.js` — see [Removing the
+  scripts](/installation/#removing-the-scripts).
+</Aside>
+
+Next: [BootstrapLoader.js](/how-it-works/bootstrap-loader/) — what actually makes legacy add-ons
+load.

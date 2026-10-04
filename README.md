@@ -50,8 +50,9 @@ The installer itself is a one-shot setup tool: it installs only the components y
 install completes you can delete the downloaded executable — nothing else was installed besides the
 configuration files and scripts you chose.
 
-Prefer to install by hand? Follow the
-[manual installation guide](https://onemen.github.io/tabmixplus-docs/other/installation/).
+Prefer to install by hand, or want the full documentation? See the docs site at
+**<https://onemen.github.io/firefox-scripts/>** — installation (with the exact paths per OS), the
+download page, how the three scripts work, and troubleshooting.
 
 ## How the updater keeps your scripts up to date
 
@@ -94,23 +95,10 @@ a new version is available (see
 ### Finding your version and reverting
 
 The packages are dated, not version-numbered: every publish stamps each package with the date its
-content last changed (`YYYY-MM-DD`, UTC). To find what you have:
-
-- **Updater tab** — open the updater from the browser menu. Next to each package's manual-download
-  link it shows the date of the current published package; "Up to Date" means your installed copy
-  matches it.
-- **Installer** — re-running the installer shows the same per-package dates next to the
-  manual-download links, plus each browser's Up to Date / Update Available status.
-
-To **revert** a package to an earlier build, open the
-[releases page](https://github.com/onemen/firefox-scripts/releases): the `latest` release always
-holds the newest build of every file, and the frozen `core-<date>` (package zips) and
-`installer-<date>` (installer binaries + helpers) releases hold each past publish. Download the
-package zip from the dated release you want and install it by hand (updater tab → manual download
-link, or unpack into your profile's `chrome/utils/` — see the
-[original scripts](#original-scripts-and-core-folders) section for the layout). The next daily check
-will offer the newer version again; use the tab's skip option if you want to stay on the older build
-for that update.
+content last changed (`YYYY-MM-DD`, UTC). The
+**[download page](https://onemen.github.io/firefox-scripts/download/)** lists the current
+per-package dates, the installer binaries, and the frozen past releases you can revert to — built
+from the same release data the updater itself consumes.
 
 The original scripts are governed by the
 [Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/); the in-browser updater

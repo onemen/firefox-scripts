@@ -164,6 +164,10 @@ export default defineConfig([
       ...thirdPartySkills,
       '**/*.d.ts',
       '**/@types/**',
+      // The docs site is a nested project with its own toolchain (Astro +
+      // MDX + TS, linted by `astro check` in its own build): root eslint has no
+      // MDX/Astro config and must not lint it (ADR 0038).
+      'docs-site/',
     ],
   },
   {

@@ -1,0 +1,116 @@
+---
+title: Download
+description: The current Firefox Scripts packages, the installer binaries, and how to revert to an earlier build.
+---
+
+import { Aside } from '@astrojs/starlight/components'
+import {
+  assetUrl,
+  frozenReleases,
+  hashesUrl,
+  latestRelease,
+  packages,
+  releases,
+} from '../../utils/getDownloadsInfoSync.mjs'
+
+The table below is generated at build time from the **same files the updater reads**: the
+per-package dates come from the hash manifest on the Pages branch
+(`hashes.json`), and the release links come from the
+[GitHub releases](https://github.com/onemen/firefox-scripts/releases). There is nothing to
+maintain by hand.
+
+<Aside type="tip" title="First time here?">
+  Follow the [Installation guide](/installation/). You want the installer
+  binary, not the zips.
+</Aside>
+
+## The packages
+
+| Package          | Download                                                                                                                    | Published                             | What goes where                                                 |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
+| **Installer**    | [`latest` release](https://github.com/onemen/firefox-scripts/releases/tag/latest)                                           | —                                     | one-shot setup tool, per OS                                     |
+| **`fx-folder`**  | [`fx-folder.zip`]({assetUrl('latest', "fx-folder.zip") ?? 'https://github.com/onemen/firefox-scripts/releases/tag/latest'}) | {packages['fx-folder']?.date ?? '—'}  | `config.js`, `config-prefs.js` → browser installation directory |
+| **`utils`**      | [`utils.zip`]({assetUrl('latest', "utils.zip") ?? 'https://github.com/onemen/firefox-scripts/releases/tag/latest'})         | {packages['utils']?.date ?? '—'}      | chrome scripts → each profile's `chrome/utils/`                 |
+| **`updater-ui`** | updated automatically                                                                                                       | {packages['updater-ui']?.date ?? '—'} | the updater tab's own UI — not installed by hand                |
+
+Installer binaries in the `latest` release:
+
+- `installer_win.exe` — Windows
+- `installer_linux` — Linux x86_64
+- `installer_linux_aarch64` — Linux ARM64
+- `installer_mac` — macOS (universal: Intel + Apple Silicon)
+
+Each binary ships with a `.sha256` sidecar, so you can verify the download before you run it.
+
+:::note[About the dates]
+Packages are **dated, not version-numbered**: every publish stamps each package with the date its
+content last changed (`YYYY-MM-DD`, UTC). That is why `fx-folder` can show an older date than
+`utils` — it simply has not changed since.
+:::
+
+## Finding out what you have installed
+
+Open the updater from the browser menu. Next to each package's manual-download link it shows the date of the currently published package;
+**Up to date** means your installed copy matches it. Re-running the installer shows the same
+per-package dates, plus each browser's status.
+
+## Reverting to an earlier build
+
+The `latest` release always holds the newest build of every file. Each past publish is also frozen
+in a dated release:
+
+| Release                                                                  | Contains                                        |
+| ------------------------------------------------------------------------ | ----------------------------------------------- |
+| [`core-<date>`](https://github.com/onemen/firefox-scripts/releases)      | the package zips (`utils.zip`, `fx-folder.zip`) |
+| [`installer-<date>`](https://github.com/onemen/firefox-scripts/releases) | the installer binaries and helpers              |
+
+Download the package zip from the dated release you want and install it by hand — unpack it over
+the existing files (or use the updater tab's manual-download link). The next daily check will offer
+the newer version again; use the tab's **skip** option if you want to stay on the older build.
+
+{latestRelease && (
+  <p class="release-note">
+    Latest release: <a href={latestRelease.htmlUrl}>{latestRelease.name}</a>
+    {latestRelease.assets.length} assets.
+  </p>
+)}
+
+{frozenReleases.length > 0 && (
+  <>
+    <h2>Past builds</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Release</th>
+          <th>Assets</th>
+          <th>Published</th>
+        </tr>
+      </thead>
+      <tbody>
+        {frozenReleases.map(release => (
+          <tr>
+            <td>
+              <a href={release.htmlUrl}>{release.name}</a>
+            </td>
+            <td>{release.assets.map(asset => asset.name).join(', ')}</td>
+            <td>{new Date(release.publishedAt).toISOString().slice(0, 10)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </>
+)}
+
+{releases.length === 0 && (
+  <Aside type="caution" title="Release list unavailable">
+    The release list could not be read while this page was built. Use the
+    [releases page](https://github.com/onemen/firefox-scripts/releases) directly, and check the
+    per-package dates against the <a href={hashesUrl}>hash manifest</a>.
+  </Aside>
+)}
+
+## Source code
+
+The scripts, the installer and the publish tooling are on
+[GitHub](https://github.com/onemen/firefox-scripts). The scripts themselves originate in
+[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) (MPL-2.0).

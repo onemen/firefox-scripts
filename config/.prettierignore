@@ -32,3 +32,8 @@ review-history
 # into the single served script.js — not parseable standalone (see embed.mjs
 # buildScriptJs, which syntax-checks the exact concatenation on every build).
 **/installer/web/script/
+
+# The docs site is a NESTED project with its own prettier install and config
+# (docs-site/package.json `format`). The root gate must not reformat .mdx /
+# .astro sources with the repo's JS-oriented config.
+docs-site/

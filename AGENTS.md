@@ -13,6 +13,10 @@ browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Fl
    and opens the updater tab (chrome-privileged page shipped in `updater-ui.zip`).
 3. **Updater tab UI** (`tools/publish/remote-ui/` → `updater-ui.zip`) — the tab's HTML/JS/CSS and
    logos; `scriptsUpdater.sys.mjs` (utils.zip) keeps it current before opening the tab.
+4. **Docs site** (`docs-site/`, Astro + Starlight) — the user-facing documentation, published to the
+   **root** of the same `gh-pages` branch beside the artifacts (ADR 0038). `docs-deploy.yml` builds
+   and commits it; it writes only site paths, `pages.yml` only artifact paths, and both share the
+   `gh-pages-write` concurrency group.
 
 Architecture deep dive: `docs/DEVELOPING.md` (structure, installer/updater flow, publishing) and
 `docs/auto-updater.md`.
@@ -154,6 +158,9 @@ Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**
   `node tools/publish/release.mjs`.
 - **Installer build:** `make dist_win|dist_linux|dist_mac`, `helper_*`, `resources`, `config`,
   `verify` (Windows: MSYS2 UCRT64 `mingw32-make`).
+- **Docs site:** `pnpm docs:install|docs:dev|docs:downloads|docs:build` (`docs:publish` only when
+  explicitly asked). It is a **nested** project: its own lockfile, its own `pnpm --dir` install,
+  ignored by the root lint/format gates, and validated by the advisory CI `docs site build` job.
 
 ## Testing & QA
 

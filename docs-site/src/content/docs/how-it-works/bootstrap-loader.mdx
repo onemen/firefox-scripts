@@ -1,0 +1,120 @@
+---
+title: BootstrapLoader.js
+description: The file that makes Firefox load legacy install.rdf extensions again, and what it patches to keep them working.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components'
+
+A **legacy add-on** is an XPI whose metadata lives in an RDF file called `install.rdf`, with its
+code in `bootstrap.js`. Firefox 57 removed the component that loaded these; `BootstrapLoader.js`
+puts it back.
+
+## The one-line idea
+
+Firefox did not delete the add-on machinery — it deleted the _registration_ of external loaders.
+Gecko's `AddonManager` still supports them through a single, public entry point:
+
+```js
+AddonManager.addExternalExtensionLoader({
+  name: "bootstrap",
+  manifestFile: "install.rdf",
+  async loadManifest(pkg) {
+    /* build an AddonInternal from install.rdf */
+  },
+  loadScope(addon) {
+    /* run bootstrap.js in a sandbox */
+  },
+});
+```
+
+`BootstrapLoader.js` is a loader with the `install.rdf` manifest type. Everything it does hangs off
+that registration.
+
+<Aside type="note">
+  This file comes from
+  [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts)
+  (MPL-2.0). It is loaded from
+  `chrome://userchromejs/content/BootstrapLoader.js` — the path the utils'
+  `chrome.manifest` registers in [config.js](/how-it-works/config-js).
+</Aside>
+
+## What happens to a legacy add-on
+
+<Steps>
+
+1. **The manifest is read.** `install.rdf` is parsed with the `RDFManifestConverter` helper, and the
+   properties Firefox still knows are copied onto an `AddonInternal`: id, version, name,
+   description, creator, locale strings, icons, `targetApplications`, dependencies. `install.rdf`
+   properties that no longer exist are ignored.
+2. **Type mapping.** The old numeric `type` values are translated to modern names
+   (`2` → `extension`, `64` → `dictionary`).
+3. **`bootstrap.js` is executed.** In a `Cu.Sandbox` with the **system principal** — the same trust
+   level as the browser's own code, which is inherent to how legacy add-ons work. The sandbox is
+   created with `ChromeUtils.compileScript` rather than a plain `loadSubScript`, working around
+   [bug 1974213](https://bugzilla.mozilla.org/show_bug.cgi?id=1974213) (loading `file:` and `jar:`
+   URIs). It waits for the script to finish before continuing.
+4. **`startup()` / `shutdown()` are called.** Before `startup()`, the add-on's `chrome.manifest` is
+   registered **temporarily** as `chrome://` chrome registrations, and removed again on shutdown —
+   that is how a legacy add-on's own UI files become reachable.
+5. **Re-registration is cleaned up.** A killed session can leave a stale `chrome.manifest*` in
+   `browser-extension-data/<id>/`; the leftovers are swept at startup, and fresh registrations are
+   re-derived each session.
+
+</Steps>
+
+## The patches that keep old add-ons alive
+
+Restoring the loader is not enough — the surrounding browser code has moved on. The loader
+re-implements or overrides the pieces an old add-on expects:
+
+- **`XPIDatabase.isDisabledLegacy`** → forced to `false`, so the add-on subsystem does not skip
+  non-WebExtension items.
+- **`XPIExports.verifyBundleSignedState`** → for a non-WebExtension `extension` type (and ids
+  containing `_N_SIGN_`), the signature check returns "not required". Without this, every legacy
+  XPI reads as unsigned and is refused.
+- **`about:addons` options handling** → an `addon-card` click on _Preferences_ now focuses an
+  already-open options window instead of always opening a new one, and the _Preferences_ button is
+  shown for legacy options types. This restores the pre-2017 behaviour old add-ons were built
+  against.
+- **The updater hook** → the same file initializes the in-browser updater when
+  `browser.xhtml` loads, so the update UI is available even when the utils' other entry points have
+  not run yet.
+
+## The double-load guard
+
+Waterfox ships its own Bootstrap Loader. Two loaders registering under the same `bootstrap` key
+would both patch the same prototypes, so this copy stays inert where one already exists:
+
+```js
+function bootstrapLoaderBundled() {
+  if (/waterfox/i.test(Services.appinfo.name)) {
+    return true;
+  }
+  try {
+    const registry = AddonManagerPrivate?.externalExtensionLoaders;
+    if (!registry) return false;
+    if (registry.get("bootstrap")) return true;
+    for (const loader of registry.values()) {
+      if (loader && loader.manifestFile === "install.rdf") return true;
+    }
+  } catch {
+    /* older Gecko / exotic build: brand check only */
+  }
+  return false;
+}
+```
+
+Two signals: the brand name (deterministic — AutoConfig runs before the AddonManager registry
+exists, so the registry check only protects later evaluations), and the loader registry itself
+(name-independent, so a re-evaluation of the file in any browser is a no-op).
+
+[config.js](/how-it-works/config-js) applies the same check before loading the file, so on
+Waterfox neither copy's patches run.
+
+<Aside type="caution" title="If an add-on still will not load">
+  "Corrupt" almost always means the loader did not run. Check [Troubleshooting →
+  the add-on is reported as
+  corrupt](/troubleshooting/#the-add-on-is-reported-as-corrupt).
+</Aside>
+
+Next: [userChrome.js](/how-it-works/userchrome-js/) — the `.uc.js` script loader.

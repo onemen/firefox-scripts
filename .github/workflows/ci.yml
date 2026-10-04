@@ -111,6 +111,53 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json body --jq .body > "$PR_BODY_FILE"
           pnpm check:core-tests
 
+  # Docs site gate (ADR 0038): `docs-site/` is a NESTED project with its own
+  # lockfile and toolchain, so the root `checks` job cannot cover it — a broken
+  # MDX page or a failed astro build would otherwise only surface in the deploy
+  # workflow, i.e. after merge. Path-filtered (its own paths-filter step, so the
+  # job stays self-contained), and ADVISORY in the gate: a docs build failure
+  # must not block an installer PR, so the job has no job-level `if:` and always
+  # reports success when nothing docs-related changed.
+  docs:
+    name: docs site build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: $/.github/actions/setup-repo
+        with:
+          install: 'false'
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            docs:
+              - 'docs-site/**'
+              - 'tools/docs/**'
+              - '.github/workflows/docs-deploy.yml'
+              - '.github/workflows/ci.yml'
+      - name: Skip — no docs-site changes
+        if: steps.filter.outputs.docs != 'true'
+        run: echo "no docs-site changes in this change — skipping the site build"
+      - name: Install docs-site dependencies
+        if: steps.filter.outputs.docs == 'true'
+        run: pnpm --dir docs-site install --frozen-lockfile
+      # Same data step as docs-deploy.yml; never fails the build (the download
+      # page falls back to static links), so CI validates the site without a
+      # token.
+      - name: Fetch release data for the download page
+        if: steps.filter.outputs.docs == 'true'
+        run: pnpm --dir docs-site downloads
+      - name: Build the site
+        if: steps.filter.outputs.docs == 'true'
+        run: pnpm --dir docs-site build
+      # Exercise the PUBLISH path too, not just the build: this imports the
+      # shared git-data uploader (tools/publish/uploadToPages.mjs) and walks the
+      # built tree. Offline and token-free by design, so a broken import or a
+      # changed signature fails here instead of in docs-deploy.yml after merge.
+      - name: Publish dry run (offline, no token)
+        if: steps.filter.outputs.docs == 'true'
+        run: node tools/docs/publishDocsSite.mjs --dry-run
+
   # Publish-path gate: `snapshot:dev` rebuilds the zips and the
   # native binaries for the runner's OS.  This is what catches regressions in
   # the generated files, hashes and Makefile before they reach a release.
@@ -240,7 +287,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: always()
-    needs: [changes, checks, build, build-canary]
+    needs: [changes, checks, docs, build, build-canary]
     steps:
       # Local action — a fresh runner needs the repo checked out first.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -254,9 +301,10 @@ jobs:
           # verify.sh splits the value on whitespace, newlines included.
           results: |-
             checks:${{ needs.checks.result }}
+            docs:${{ needs.docs.result }}
             build:${{ needs.build.result }}
             build-canary:${{ needs.build-canary.result }}
           always-verify: checks
           required: build
           always-report: build
-          advisory: build-canary
+          advisory: docs build-canary
