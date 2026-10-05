@@ -66,8 +66,8 @@ from '@assets/chrome_utils.png'` + `<Image src={img} alt="…" />`). `tsconfig.j
 - **`.mdx` is excluded from prettier** (`.prettierignore`): prettier's MDX formatter rewrites the
   pages in ways the Astro build rejects (a blank line inside a JSX expression, `Parse error @:1:1`).
   `pnpm format` therefore covers `.astro`, `.mjs`, `.ts`, `.css` and `.json` only — the pages are
-  validated by `pnpm build` → `astro check`, which is the gate that understands MDX.- **Navigation is client-side.** `src/components/Head.astro` wraps Starlight's own `<Head />` and adds
-  `<ClientRouter />` from `astro:transitions`, so moving between pages swaps the DOM and animates it
+  validated by `pnpm build` → `astro check`, which is the gate that understands MDX.
+- **Navigation is client-side.** t
   with the browser's View Transition API instead of reloading the document. Verify changes with
   `pnpm build && pnpm preview` — **`pnpm dev` is not representative**: Pagefind is not built for dev
   (Starlight shows a “search is only available in production builds” notice), and the router's search
@@ -81,6 +81,12 @@ from '@assets/chrome_utils.png'` + `<Image src={img} alt="…" />`). `tsconfig.j
 - `<Tabs>` is fine at any size here: the four-item per-OS group in `installation.mdx` renders all
   four tabs (`tab-0-0` … `tab-0-3`) in the prerendered output. An earlier note here claimed a
   three-item group lost its tab — that did not reproduce.
+- **Review annotations are `{/* … *}` MDX comments, and `pnpm lint:mdx` keeps the two apart.** The
+  maintainer marks a page up with `{/* TODO: … *}`; MDX strips it, so a note never reaches a
+  reader. `tools/check-docs-mdx.mjs` (stage `lint:mdx`) fails a page that renders residue instead:
+  an HTML comment, or a bare `TODO` / `FIXME` / `XXX` / `HACK` in prose. Code spans and fenced
+  blocks are exempt, so a page documenting the token can quote it; prose that merely _mentions_ it
+  is flagged, and the fix is backticks.
 - `src/utils/downloadsInfo.json` is **generated** (gitignored, like every other generated file):
   `pnpm downloads` writes it from the live `hashes.json` manifest and the releases API. A missing
   or failed fetch only downgrades the `/download` page to static links; it never fails the build.
