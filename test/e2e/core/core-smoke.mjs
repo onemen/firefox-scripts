@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * test/e2e/core/core-smoke.mjs — issue #30 Level 2: the real-browser core smoke.
+ * test/e2e/core/core-smoke.mjs — issue #30 Level 2: the real-browser core
+ * smoke.
  *
  * The Level 1 unit suites (#416) prove config.js and BootstrapLoader.js behave
  * against STUBBED Firefox APIs. That catches syntax errors and obvious API
@@ -13,10 +14,9 @@
  * passed) with a dev snapshot's utils + fx-folder installed and asserts the
  * startup chain actually completed:
  *
- *   config.js (autoconfig, GreD) executed
- *     → the userChromeJS loader top level ran (userChrome.js lockPref'ed
- *       userChromeJS.enabled with lockPref=true, so the pref is on disk after close)
- *     → no startup errors from OUR modules
+ * config.js (autoconfig, GreD) executed → the userChromeJS loader top level ran
+ * (userChrome.js lockPref'ed userChromeJS.enabled with lockPref=true, so the
+ * pref is on disk after close) → no startup errors from OUR modules
  *
  * Why the assertions are on-disk (prefs.js + a console mirror) rather than over
  * BiDi: BiDi page enumeration is the flakiest part of the harness, and these
@@ -27,8 +27,8 @@
  *
  * Runs once per browser — the scheduled workflow invokes it for stable and
  * Nightly in the same job. The PR-time coverage of core/** on all three OSes is
- * test/e2e/core/manifest-lifecycle-e2e.mjs (Level 2b, shipped in #245); this leg
- * exists to catch UPSTREAM FIREFOX CHANGES on a schedule, not on every PR.
+ * test/e2e/core/manifest-lifecycle-e2e.mjs (Level 2b, shipped in #245); this
+ * leg exists to catch UPSTREAM FIREFOX CHANGES on a schedule, not on every PR.
  *
  * Usage: node test/e2e/core/core-smoke.mjs --firefox <path> [--snapshot <dir>]
  * [--label <name>] [--headless] [--keep-profile]
@@ -58,40 +58,103 @@ import {
 // ── GreD probe (appended to the seeded config.js) ──────────────────────────
 
 /**
+ * Marker line the probe writes once userChrome.js has executed.
+ *
+ * Checked AFTER config.js's
+ * `loadSubScript('chrome://userchromejs/content/userChrome.js')`, because the
+ * appended snippet runs after every statement in that file. If the marker is
+ * absent, config.js either never got past that call (the chrome://userchromejs
+ * registration the loader needs is broken) or userChrome.js threw before its
+ * top-level statements ran. Either way the loader did not come up — and because
+ * config.js wraps both calls in `catch (ex) {}`, nothing else would report it.
+ *
+ * The `typeof` guard is what makes this a statement-level probe: the globals
+ * are created by userChrome.js's own top level, so their presence proves it
+ * ran.
+ */
+const UC_LOADER_MARKER = '[core-smoke] userChrome.js top level executed';
+
+/**
  * Appended to fx-folder's seeded GreD config.js.
  *
- * Two jobs, both deliberately on the autoconfig side so they run before
- * anything of ours: `pref()` records that config.js executed at all (the
- * weakest link — if autoconfig silently failed, every other assertion would
- * still "pass" on a browser that never loaded our code), and the
- * nsIConsoleService listener mirrors console output to a file so startup
- * errors surface in the CI log instead of dying inside the browser.
+ * Three jobs, all on the autoconfig side so they run at a point where the
+ * answer is unambiguous:
+ *
+ * 1. `pref()` records that config.js executed AT ALL. This is the weakest link: if
+ *    autoconfig silently failed, every later assertion would still "pass" on a
+ *    browser that never loaded our code.
+ * 2. A marker line records that userChrome.js — loaded by the statement
+ *    immediately before this snippet — actually executed.
+ * 3. An nsIConsoleService listener mirrors console output to the same file, so
+ *    startup errors surface in the CI log instead of dying inside the browser.
+ *
+ * ORDERING IS LOAD-BEARING: the log file is opened and the marker written
+ * FIRST, and only then are the loader globals inspected. `userChrome.js`
+ * declares `const UserChrome_js` / `const _uc`, and `typeof` on a `const`
+ * binding that is in its temporal dead zone THROWS a ReferenceError rather than
+ * returning 'undefined'. An earlier version evaluated that check first, so a
+ * loader that threw half-way through killed the whole probe block and wrote
+ * nothing at all — the harness could not then tell "loader broke" from "probe
+ * broke". Writing first means the file always exists and always carries a
+ * diagnosis.
  */
 const CONFIG_PROBE_SNIPPET = `
 // [core-smoke-e2e probe]
 try {
   pref('extensions.firefox-scripts.e2eAutoconfigRan', 'yes');
+} catch (e) {}
+try {
   const Cc = Components.classes;
   const Ci = Components.interfaces;
-  const cs = Cc['@mozilla.org/consoleservice;1'].getService(Ci.nsIConsoleService);
-  const f = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
-  f.initWithPath(Services.dirsvc.get('ProfD', Ci.nsIFile).path + '/e2e-console.log');
+  // dirsvc.get + append, NOT nsIFile.initWithPath: this is the exact construction
+  // the manifest-lifecycle probe uses and it is known to work inside autoconfig.
+  // The initWithPath form left the stream uninitialised, so every write threw and
+  // the probe produced an EMPTY log — indistinguishable, from the harness, from a
+  // browser that logs nothing.
+  const f = Services.dirsvc.get('ProfD', Ci.nsIFile);
+  f.append('e2e-console.log');
   const fos = Cc['@mozilla.org/network/file-output-stream;1'].createInstance(
     Ci.nsIFileOutputStream
   );
   fos.init(f, 0x02 | 0x08 | 0x10, -1, 0); // write | create | append
-  cs.registerListener({
-    observe(aMessage, aTopic, aData) {
-      try {
-        const line =
-          new Date().toISOString() +
-          ' ' +
-          (aMessage.QueryInterface(Ci.nsIScriptError)?.errorMessage || aData || '') +
-          '\\n';
-        fos.write(line, line.length);
-      } catch (e) {}
-    },
-  });
+  const emit = line => {
+    try { const s = line + '\\n'; fos.write(s, s.length); } catch (e) {}
+  };
+  // 1) the marker line, unconditionally, so the file always has content
+  emit('${UC_LOADER_MARKER}');
+  // 2) then the diagnosis, each probe guarded on its own
+  try {
+    emit('  typeof UserChrome_js = ' + typeof UserChrome_js);
+  } catch (e) {
+    emit('  typeof UserChrome_js THREW: ' + e);
+  }
+  try {
+    emit('  typeof _uc = ' + typeof _uc);
+  } catch (e) {
+    emit('  typeof _uc THREW: ' + e);
+  }
+  try {
+    emit('  typeof xPref = ' + typeof xPref);
+  } catch (e) {
+    emit('  typeof xPref THREW: ' + e);
+  }
+  // 3) the console mirror, last: a failure here must not cost the marker
+  try {
+    const cs = Cc['@mozilla.org/consoleservice;1'].getService(Ci.nsIConsoleService);
+    cs.registerListener({
+      observe(aMessage, aTopic, aData) {
+        try {
+          emit(
+            new Date().toISOString() +
+              ' ' +
+              (aMessage.QueryInterface(Ci.nsIScriptError)?.errorMessage || aData || '')
+          );
+        } catch (e) {}
+      },
+    });
+  } catch (e) {
+    emit('  console mirror unavailable: ' + e);
+  }
 } catch (e) {}
 // [core-smoke-e2e probe end]
 `;
@@ -99,10 +162,16 @@ try {
 // ── Args ───────────────────────────────────────────────────────────────────
 
 /**
- * pnpm run forwards a literal `--` separator; drop it so both
- * `pnpm … -- --headless` and direct `node … --headless` work.
+ * pnpm run forwards a literal `--` separator; drop it so both `pnpm … --
+ * --headless` and direct `node … --headless` work.
  *
- * @returns {{firefox?: string, snapshot?: string, label?: string, headless?: boolean, keepProfile?: boolean}}
+ * @returns {{
+ *   firefox?: string;
+ *   snapshot?: string;
+ *   label?: string;
+ *   headless?: boolean;
+ *   keepProfile?: boolean;
+ * }}
  */
 function parseArgs() {
   const args = process.argv.slice(2).filter(a => a !== '--');
@@ -126,12 +195,13 @@ function parseArgs() {
 
 /**
  * Snapshot the GreD files this harness overwrites, so they are restored byte
- * for byte afterwards. This writes into the browser's INSTALL dir — the
- * browser rewrote config.js at startup and a previous run may still hold it
- * (Windows EBUSY), hence the retrying read.
+ * for byte afterwards. This writes into the browser's INSTALL dir — the browser
+ * rewrote config.js at startup and a previous run may still hold it (Windows
+ * EBUSY), hence the retrying read.
  *
  * @param {string} greDir
- * @returns {Record<string, string | null>} path → original bytes (null = absent)
+ * @returns {Record<string, string | null>} path → original bytes (null =
+ *   absent)
  */
 function saveGreState(greDir) {
   const saved = {};
@@ -216,7 +286,7 @@ function seedGre(greDir, snapshotDir) {
  * chrome/utils — no source patching, so what runs is exactly what ships.
  *
  * @param {string} snapshotDir
- * @returns {{profileDir: string, chromeUtils: string, prefs: object}}
+ * @returns {{profileDir: string; chromeUtils: string; prefs: object}}
  */
 function seedProfile(snapshotDir) {
   const profileDir = tempDir('fxs-core');
@@ -301,25 +371,56 @@ async function runSmoke(counter, opts, snapshotDir) {
   check(
     counter,
     prefs.includes('extensions.firefox-scripts.e2eAutoconfigRan'),
-    `autoconfig ran — config.js executed (${label})`
-  );
-  // userChrome.js runs at autoconfig time and lockPref()s this; its presence on
-  // disk is proof the loader's top level executed rather than threw.
-  check(
-    counter,
-    /user_pref\("userChromeJS\.enabled", true\)/.test(prefs),
-    `userChromeJS loader ran — userChrome.js top level executed (${label})`
+    `autoconfig ran — config.js executed (${label})`,
+    prefs ? '' : 'no prefs.js — the profile was never written'
   );
 
+  // The GreD probe wrote its marker and mirrored the console into one file.
+  // Absence of that file is NOT itself a failure — a browser that logs nothing
+  // writes no file, and the draft asserted on its presence, which failed on a
+  // healthy quiet start. What matters is whether the MARKER is in it.
   const mirror = path.join(seeded.profileDir, 'e2e-console.log');
   const lines =
     fs.existsSync(mirror) ? readFileSyncWithRetry(mirror, 'utf-8').split('\n').filter(Boolean) : [];
-  check(counter, lines.length > 0, `console mirror written (${label})`);
-  if (lines.length === 0) {
-    console.log('  [diag] no e2e-console.log — autoconfig may not have run');
-  }
+  console.log(`  [diag] console mirror: ${lines.length} line(s)`);
+
+  // The real proof of the loader: config.js got PAST its loadSubScript call and
+  // userChrome.js's top-level statements actually executed.
+  //
+  // The draft asserted `user_pref("userChromeJS.enabled", true)` in prefs.js.
+  // That can never work: userChrome.js sets the pref through
+  // `xPref.set(PREF_ENABLED, true, def=true)`, and `def=true` writes the DEFAULT
+  // branch — which never reaches prefs.js. It failed against a perfectly
+  // working browser. An earlier revision of this harness instead seeded a
+  // .uc.js and asserted it executed; that is the loader's real job, but it only
+  // runs once a browser.xhtml window exists, and a HEADLESS Firefox opens only
+  // about:blank, which UserChrome_js.load() skips by design.
+  //
+  // So the probe reports what it can see. The marker line means "config.js ran
+  // to the end"; the `typeof` lines say whether the loader's globals came into
+  // existence. Both are echoed on failure, because "the loader's globals are
+  // missing" and "the probe never ran" need different fixes.
+  const marker = lines.find(l => l.includes(UC_LOADER_MARKER));
+  const loaderGlobal = lines.find(l => l.includes('typeof UserChrome_js ='));
+  const loaderUp = loaderGlobal !== undefined && loaderGlobal.includes('= object');
+  check(
+    counter,
+    marker !== undefined && loaderUp,
+    `userChromeJS loader ran — userChrome.js top level executed (${label})`,
+    [
+      marker === undefined ? 'probe never reached its marker line' : null,
+      loaderGlobal === undefined ? 'probe wrote no typeof line' : null,
+      loaderUp || loaderGlobal === undefined ? null : loaderGlobal.trim(),
+    ]
+      .filter(Boolean)
+      .join(' | ') || 'config.js did not execute'
+  );
+
   const suspicious = lines.filter(
     l =>
+      !l.includes(UC_LOADER_MARKER) &&
+      !l.trimStart().startsWith('typeof ') &&
+      !l.includes('typeof ') &&
       /(userChrome|BootstrapLoader|firefox-scripts|config\.js)/i.test(l) &&
       /error|exception|failed|not defined|undefined is not/i.test(l)
   );
