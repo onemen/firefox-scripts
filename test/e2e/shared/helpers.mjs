@@ -260,6 +260,7 @@ async function raceLaunchDeadline(launchPromise, deadlineMs, tag, log, profileDi
  * @param {string} profileDir - userDataDir (temp profile)
  * @param {{
  *   headless?: boolean;
+ *   endpointTimeoutMs?: number;
  *   launchDeadlineMs?: number;
  *   protocolTimeoutMs?: number;
  * }} opts
@@ -273,6 +274,16 @@ export async function launchFirefox(
     extraPrefsFirefox = {},
     launchDeadlineMs = LAUNCH_DEADLINE_MS,
     protocolTimeoutMs,
+    // Puppeteer's own `timeout`: how long to wait for Firefox to print the
+    // WebDriver BiDi WS endpoint on stdout. It DEFAULTS TO 30 s and is a
+    // SEPARATE bound from launchDeadlineMs and protocolTimeout — raising the
+    // other two does not raise it, so a start that legitimately takes longer
+    // still fails here. Callers pass this when the browser is slow to reach the
+    // endpoint because something in its own startup is slow (the core
+    // delayed-registration scenario holds the loader for 30 s during startup,
+    // #30). Omitted = puppeteer's default, i.e. every existing caller is
+    // unaffected.
+    endpointTimeoutMs,
   } = {}
 ) {
   const puppeteer = await import('puppeteer-core');
@@ -293,6 +304,7 @@ export async function launchFirefox(
       // measurement). Cap it so a wedged start surfaces as an error the
       // scenario can retry instead of stalling the whole leg.
       protocolTimeout: protocolTimeoutMs || 45_000,
+      ...(endpointTimeoutMs ? {timeout: endpointTimeoutMs} : {}),
       // Puppeteer overwrites user.js with its own preferences before launch
       // (createProfile -> syncPreferences), so any prefs the caller needs must
       // be injected through this option — a caller-written user.js would be
