@@ -1,0 +1,83 @@
+// test/unit/tools/nightlyBuildId.test.mjs — the pure half of
+// tools/ci/nightly-buildid.mjs (issue #30).
+//
+// The scheduled core-smoke leg keys its "already validated" cache marker on the
+// build ID this produces. That makes a WRONG id the worst possible failure: a
+// stable-but-wrong id caches a skip over a build that was never validated (the
+// leg silently stops running), and a per-run-varying id defeats the cache so
+// the leg runs every night. Both are invisible without a test, and neither can
+// be caught by looking at the workflow YAML.
+//
+// The HTTP round trip is not unit-tested (one HEAD request against Mozilla is
+// the same cost as the run it gates); the PARSING is, because that is the part
+// that rots: the header format is an HTTP date, and the mapping to a compact
+// sortable id is where a month name or a padding mistake would hide.
+
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+
+import {parseBuildId} from '../../../tools/ci/nightly-buildid.mjs';
+
+test('a Nightly tarball Last-Modified header becomes a compact build id', () => {
+  assert.equal(parseBuildId('Wed, 26 Aug 2026 11:15:31 GMT'), '20260826-1115');
+});
+
+test('the id is zero-padded so it sorts chronologically as a string', () => {
+  // Lexicographic ordering is what makes the Actions-cache key usable, and it
+  // only works if every field is fixed width: '2026-8-6' would sort wrong.
+  const early = parseBuildId('Thu, 01 Jan 2026 00:00:00 GMT');
+  const late = parseBuildId('Tue, 09 Feb 2026 00:00:00 GMT');
+  assert.equal(early, '20260101-0000');
+  assert.equal(late, '20260209-0000');
+  assert.ok(early < late, 'January sorts before February');
+});
+
+test('every month name maps to its two-digit number', () => {
+  // A missing month entry would throw for that build only — a once-a-year
+  // failure nobody sees until it ships.
+  const months = [
+    ['Jan', '01'],
+    ['Feb', '02'],
+    ['Mar', '03'],
+    ['Apr', '04'],
+    ['May', '05'],
+    ['Jun', '06'],
+    ['Jul', '07'],
+    ['Aug', '08'],
+    ['Sep', '09'],
+    ['Oct', '10'],
+    ['Nov', '11'],
+    ['Dec', '12'],
+  ];
+  for (const [name, num] of months) {
+    assert.equal(parseBuildId(`Wed, 26 ${name} 2026 11:15:31 GMT`), `2026${num}26-1115`, name);
+  }
+});
+
+test('seconds are dropped but the minute is kept', () => {
+  // Minute precision is deliberate: two builds inside the same minute would
+  // share an id and one leg would be skipped, which is the failure mode above.
+  assert.equal(parseBuildId('Wed, 26 Aug 2026 11:15:00 GMT'), '20260826-1115');
+  assert.notEqual(
+    parseBuildId('Wed, 26 Aug 2026 11:15:31 GMT'),
+    parseBuildId('Wed, 26 Aug 2026 11:16:31 GMT')
+  );
+});
+
+test('a missing header throws instead of yielding a fallback id', () => {
+  // The whole point: a bad id must FAIL the workflow step, never produce a
+  // value that would cache a skip over an unvalidated build.
+  assert.throws(() => parseBuildId(null), /no last-modified header/);
+  assert.throws(() => parseBuildId(''), /no last-modified header/);
+});
+
+test('an unparseable header throws rather than guessing', () => {
+  for (const bad of [
+    'not a date',
+    '2026-08-26T11:15:31Z', // ISO 8601, not an HTTP date
+    'Wed, 26 Foo 2026 11:15:31 GMT', // unknown month
+    'Wed, 26 Aug 2026 11:15:31 +0200', // non-GMT offset
+  ]) {
+    assert.throws(() => parseBuildId(bad), Error, bad);
+  }
+});

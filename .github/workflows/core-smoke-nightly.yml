@@ -1,0 +1,132 @@
+# Core smoke (Nightly) — issue #30 Level 2: the scheduled leg that catches
+# upstream Firefox changes breaking the userChromeJS loader chain.
+#
+# The PR-time coverage of core/** is the `core lifecycle E2E` job in e2e.yml
+# (test/e2e/core/manifest-lifecycle-e2e.mjs, required, all three OSes). That leg
+# pins the browsers CI validated; it does NOT move when Mozilla ships. This leg
+# does: it boots whatever Nightly is current and asserts the startup chain —
+# config.js autoconfig ran, the userChromeJS loader top level executed, and no
+# startup errors came from our modules.
+#
+# Unit tests (#416) cannot cover this: every stub in test/unit/core/ was written
+# against today's Gecko, so it keeps passing while the browser breaks. Only a real
+# browser catches a removed or renamed API.
+#
+# Skip-if-build-unchanged: Mozilla publishes no machine-readable "latest Nightly
+# build ID", so tools/ci/nightly-buildid.mjs derives one from the Linux64
+# tarball's Last-Modified header. The Actions-cache marker is keyed on that ID,
+# so nights without a new build skip the leg entirely. The 7-day cache TTL means
+# a missed save simply re-runs — the gate can lose a run, never a failure.
+
+name: Core smoke (Nightly)
+
+on:
+  schedule:
+    # 05:30 UTC — after the first daily Nightly build lands on
+    # archive.mozilla.org (Nightly ships twice a day; one check is enough to
+    # catch upstream regressions within ~24 h).
+    - cron: '30 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-smoke-nightly
+  cancel-in-progress: false
+
+jobs:
+  # Resolve the build identity and decide whether this Nightly has already been
+  # validated. Split out so the two browser legs below can be a matrix: they run
+  # on separate runners, each with its own FIREFOX_BINARY. Installing both
+  # browsers in ONE job would not work — setup-browser exports FIREFOX_BINARY
+  # through $GITHUB_ENV, so the second install would silently overwrite the
+  # first and both smokes would exercise the same binary.
+  gate:
+    name: nightly build gate
+    runs-on: ubuntu-latest
+    outputs:
+      build-id: ${{ steps.nightly.outputs.id }}
+      skip: ${{ steps.cache.outputs.cache-hit == 'true' }}
+    steps:
+      - uses: $/.github/actions/setup-repo
+        with:
+          # No pnpm install: the gate is two node scripts with no dependencies
+          # (a HEAD request and a pure parse). Installing the full tree to
+          # decide a cache hit is the slowest part of the run.
+          install: 'false'
+
+      - name: Resolve Nightly build ID
+        id: nightly
+        run: |
+          ID=$(node tools/ci/nightly-buildid.mjs)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Restore validation marker
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .core-smoke
+          key: core-smoke-${{ steps.nightly.outputs.id }}
+
+      - name: Skip — build already validated
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: |
+          echo "::notice::Nightly build ${{ steps.nightly.outputs.id }} already validated — skipping"
+
+  smoke:
+    name: core smoke · ${{ matrix.label }}
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      # One failure is enough to invalidate the build; no point paying for the
+      # second leg once the first has answered the question.
+      fail-fast: false
+      matrix:
+        include:
+          - browser: firefox
+            label: stable
+          - browser: nightly
+            label: nightly
+    steps:
+      - uses: $/.github/actions/setup-repo
+
+      # xvfb: the BiDi run needs a display server even in headless mode.
+      - name: Install Linux test prerequisites
+        uses: ./.github/actions/linux-test-prereqs
+
+      - name: Build dev snapshot
+        run: pnpm snapshot:dev
+
+      # A PORTABLE install (unregistered, runner-temp) so the harness can seed
+      # fx-folder's config.js into the browser's GreD: autoconfig only runs from
+      # the install dir, and a runner-temp dir is user-writable. setup-browser
+      # exports FIREFOX_BINARY, which the harness resolves on its own.
+      - name: Install ${{ matrix.browser }}
+        uses: ./.github/actions/setup-browser
+        with:
+          browser: ${{ matrix.browser }}
+          cache-key-prefix: core-smoke-${{ matrix.browser }}
+
+      - name: Core smoke · ${{ matrix.label }}
+        run: xvfb-run -a node test/e2e/core/core-smoke.mjs --label ${{ matrix.label }}
+
+  # The marker is written only when BOTH legs are green (both `needs` succeeded)
+  # and only here, so the matrix legs cannot race each other into saving it.
+  record:
+    name: record validated build
+    needs: [gate, smoke]
+    if: needs.gate.outputs.skip != 'true' && success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write validation marker
+        run: |
+          mkdir -p .core-smoke
+          echo "${{ needs.gate.outputs.build-id }}" > .core-smoke/validated
+
+      - name: Save validation marker
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .core-smoke
+          key: core-smoke-${{ needs.gate.outputs.build-id }}
