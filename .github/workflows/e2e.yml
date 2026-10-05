@@ -542,13 +542,21 @@ jobs:
         if: ${{ !startsWith(matrix.os, 'ubuntu') }}
         run: node test/e2e/installer/installer-e2e.mjs --ui --headless
 
+      # A portable leg exists to prove the browser is FOUND and the config
+      # package installs into the right place — the user-owned GreD these legs
+      # provide is the point. The utils-flavour scenarios (7 manual-install-
+      # upgrade, 8 manual-install-no-ui) and the session/timer ones (10, 11) do
+      # not exercise install-path detection, and scenario 9 already runs on the
+      # main updater job's Windows legs (it builds its own scratch GreD, so it is
+      # not portable-only). 1 covers the config-stale variant end to end; 6
+      # asserts the packages actually land on disk.
       - name: Run portable updater E2E (Linux)
         if: startsWith(matrix.os, 'ubuntu')
-        run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs
+        run: xvfb-run -a node test/e2e/updater/updater-e2e.mjs --scenario 1,6
 
       - name: Run portable updater E2E (macOS/Windows)
         if: ${{ !startsWith(matrix.os, 'ubuntu') }}
-        run: node test/e2e/updater/updater-e2e.mjs
+        run: node test/e2e/updater/updater-e2e.mjs --scenario 1,6
 
       # Same failure diagnostics as the installer/updater jobs: the E2E
       # harness leaves failure screenshots in dist/ for artifact upload.
@@ -1215,7 +1223,7 @@ jobs:
           path: dist/
 
       - name: Run updater E2E
-        run: node test/e2e/updater/updater-e2e.mjs
+        run: node test/e2e/updater/updater-e2e.mjs --scenario 1,6
 
       - name: Upload diagnostics
         if: failure()
@@ -1328,7 +1336,7 @@ jobs:
           path: dist/
 
       - name: Run updater E2E
-        run: node test/e2e/updater/updater-e2e.mjs
+        run: node test/e2e/updater/updater-e2e.mjs --scenario 1,6
 
       - name: Upload diagnostics
         if: failure()
