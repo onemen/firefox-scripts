@@ -45,7 +45,7 @@ const THREE_SLASHES = 'file:' + '/'.repeat(3);
 const TWO_SLASHES = 'file:' + '/'.repeat(2);
 
 /**
- * A hand-built file URL for an entry path: three slashes followed by an
+ * A hand-built file URL for an ENTRY PATH: three slashes followed by an
  * interpolated or concatenated path.
  *
  * The optional closing quote matters: in the concatenation spelling the string
@@ -57,8 +57,18 @@ const TWO_SLASHES = 'file:' + '/'.repeat(2);
  * then newline then `+ argv[1]`) is caught too — a per-line matcher cannot see
  * across the break, which is how three real spellings slipped through the first
  * version of this invariant.
+ *
+ * The slashes must be followed by an ENTRY-PATH expression. A bare `$` would
+ * flag any interpolation after a file:/// prefix — including unrelated sandbox
+ * stubs (an nsIFileIO.newFileURI fake building a spec from `file.path`, the
+ * #416 sweep test), which never guard an entry point. So the arms require
+ * either the argv spine (directly, or with a method tail like the original
+ * bug's backslash-normalising `.replace()`), or a BARE identifier — a plausible
+ * `const p = process.argv[1]` alias. A member expression (`x.path`) is a
+ * fixture/URI-builder operand, not an entry path, and is left alone.
  */
-const BROKEN = /file:\/\/\/['"`]?\s*(?:\$|\+)/g;
+const BROKEN =
+  /file:\/\/\/['"`]?\s*(?:\$\{[^}]*process\.argv\[1\][^}]*\}|\$\{\s*[a-zA-Z_$][\w$]*\s*\}|\+\s*(?:process\.)?argv\[1\]|\+\s*[a-zA-Z_$][\w$]*(?![\w$.]))/g;
 
 /** Tracked directories whose JS can carry a direct-invocation guard. */
 const SCANNED_PREFIXES = ['tools/', 'test/', 'installer/', 'config/'];
@@ -224,6 +234,19 @@ test('a plain literal POSIX file URL is not a finding', () => {
   // Fixtures and docs legitimately spell out POSIX URLs; only interpolation or
   // concatenation right after the slashes is the bug.
   assert.deepEqual(findInText("const u = '" + THREE_SLASHES + "home/runner/work/x.mjs';"), []);
+});
+
+test('a sandbox stub interpolating a non-entry path is not a finding', () => {
+  // #416's sweep test stubs nsIFileIO.newFileURI with a file:/// template over
+  // a FIXTURE path. That is a URI builder for a test double, not an entry-path
+  // guard — the invariant is about `import.meta.url` vs `process.argv[1]`.
+  const src = 'newFileURI: file => ({spec: `' + THREE_SLASHES + '${file.path}`}),';
+  assert.deepEqual(findInText(src), []);
+});
+
+test('a non-argv concatenation after the slashes is not a finding', () => {
+  const src = "const u = '" + THREE_SLASHES + "' + file.path;";
+  assert.deepEqual(findInText(src), []);
 });
 
 test('the detector does not flag its own source', () => {
