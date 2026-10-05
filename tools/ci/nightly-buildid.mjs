@@ -20,6 +20,8 @@
  * have.
  */
 
+import {pathToFileURL} from 'node:url';
+
 const URL = 'https://download.mozilla.org/?product=firefox-nightly-latest&os=linux64&lang=en-US';
 
 const MONTHS = {
@@ -73,8 +75,38 @@ export async function fetchBuildId() {
   return parseBuildId(res.headers.get('last-modified'));
 }
 
-// Only run when invoked directly, not when imported by the test.
-if (process.argv[1] && import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}`) {
+/**
+ * Is this module the process entry point (invoked directly, not imported)?
+ *
+ * The comparison must go through `pathToFileURL`, never string concatenation. A
+ * runner's `process.argv[1]` is already absolute: on Linux/macOS it starts with
+ * `/`, so building the URL by hand as `file:///` + argv[1] yields FOUR slashes
+ * while `import.meta.url` has three. That guard never matched on the
+ * ubuntu-latest runner the scheduled workflow uses, so the script printed
+ * nothing, exited 0, and left the build ID empty — which turned the workflow's
+ * cache key into the constant `core-smoke-` and made the smoke a no-op after
+ * the first night. Windows masked it: there `argv[1]` starts with a drive
+ * letter, so the naive form happened to be correct.
+ *
+ * Exported (and unit-tested for both path shapes) because a guard that is wrong
+ * only on the platform that runs the schedule is invisible to a Windows
+ * developer and to a green local run.
+ *
+ * @param {string | undefined} argv1 `process.argv[1]`
+ * @param {string} metaUrl `import.meta.url`
+ * @returns {boolean}
+ */
+export function isDirectInvocation(argv1, metaUrl) {
+  if (!argv1) return false;
+  try {
+    return pathToFileURL(argv1).href === metaUrl;
+  } catch {
+    // A path Node cannot turn into a file URL is not this module's URL.
+    return false;
+  }
+}
+
+if (isDirectInvocation(process.argv[1], import.meta.url)) {
   fetchBuildId()
     .then(id => console.log(id))
     .catch(err => {

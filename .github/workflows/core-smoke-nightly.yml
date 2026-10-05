@@ -60,6 +60,14 @@ jobs:
         id: nightly
         run: |
           ID=$(node tools/ci/nightly-buildid.mjs)
+          # An empty ID is not a benign no-op: it becomes the cache key
+          # `core-smoke-`, which is constant, so every night after the first is a
+          # cache hit and the whole smoke matrix is skipped — the scheduled leg
+          # would silently stop catching anything. Fail here instead.
+          if [ -z "$ID" ]; then
+            echo "::error::nightly-buildid.mjs produced no build ID (exit $?)"
+            exit 1
+          fi
           echo "id=$ID" >> "$GITHUB_OUTPUT"
 
       - name: Restore validation marker
