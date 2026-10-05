@@ -180,6 +180,10 @@ test('changedFiles: an unresolvable merge base falls back, never skips', () => {
   // through — the precise fail-open this gate exists to prevent.
   const calls = [];
   const out = changedFiles({
+    // Pin the base: with no `--base`, changedFiles reads GITHUB_BASE_REF, which
+    // CI sets to `main` — so an unpinned test asserts against the RUNNER's
+    // environment and fails in CI while passing locally.
+    base: 'origin/main',
     git(args) {
       calls.push(args);
       if (args[0] === 'merge-base') throw new Error('unknown revision');
@@ -196,6 +200,7 @@ test('changedFiles: an unresolvable merge base AND base ref throws, never passes
   assert.throws(
     () =>
       changedFiles({
+        base: 'origin/main', // pinned — see the test above
         git(args) {
           if (args[0] === 'merge-base') throw new Error('unknown revision');
           throw new Error('unknown revision: origin/main');
