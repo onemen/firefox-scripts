@@ -83,6 +83,26 @@ jobs:
       - run: pnpm audit --audit-level=high
       - run: pnpm check:decisions
       - run: pnpm check:gates
+      # Issue #30's mechanical gate: a change under core/** must land with a
+      # test change. core/** fails SILENTLY — config.js wraps everything in
+      # `catch (ex) {}` so a broken autoconfig cannot stop the browser starting,
+      # which means an API drift degrades to "nothing installed" with no error
+      # anywhere to grep for. The gate fires only on core/**, requires only
+      # SOME test change (never a specific one), and is waived with a
+      # `#no-core-test-gate` line in the PR body for changes that provably
+      # cannot be covered (a comment, a rename).
+      #
+      # The PR body is written to a file rather than piped, so the script never
+      # blocks on stdin; it diffs against the merge-base, so a main commit
+      # landing mid-PR cannot make it fire or mask a real violation.
+      - name: gate — core changed without a test change
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
+        run: |
+          gh pr view --json body --jq .body > "$PR_BODY_FILE"
+          pnpm check:core-tests
 
   # Publish-path gate: `snapshot:dev` rebuilds the zips and the
   # native binaries for the runner's OS.  This is what catches regressions in
