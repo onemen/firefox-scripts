@@ -23,6 +23,7 @@
     "test": "node --test \"test/unit/**/*.test.mjs\"",
     "check:decisions": "node tools/check-decisions.mjs",
     "check:gates": "node tools/check-gate-coverage.mjs",
+    "check:core-tests": "node tools/check-core-test-change.mjs",
     "test:hash": "node installer/test/test_hash.mjs && node installer/test/test_self_update.mjs",
     "toolchain:check": "node tools/ci/msys2Toolchain.mjs --check",
     "toolchain:local": "node tools/ci/msys2Toolchain.mjs --prefix",

@@ -119,6 +119,9 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0037](./0037-snap-e2e-cross-revision-cache-seed.md) — Snap Firefox E2E leg: cross-revision cache
   seed + single install track (offline-from-cache only); store outages degrade to an older revision
   instead of a hard fail (#291)
+- [0038](./0038-core-changed-no-test-changed-gate.md) — A `core/**` change must arrive with a test
+  change; fires only on `core/**`, requires any test (not a specific one), waivable with
+  `#no-core-test-gate` in the PR body (#30)
 
 ## Historical
 
