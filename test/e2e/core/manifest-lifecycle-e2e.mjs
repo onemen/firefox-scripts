@@ -72,16 +72,42 @@ const PROBE_OK_DEADLINE = 60_000;
 // otherwise it stops before the registration it is waiting for ever happens and
 // the session reports "no OK" for a reason that has nothing to do with the race.
 const RACE_DELAY_MS = 30_000;
-// Enough 1 s ticks to cover the hold plus generous slack for a loaded CI box.
-const RACE_PROBE_TICKS = Math.ceil(RACE_DELAY_MS / 1000) + 45;
-// Generous: the registration lands at ~RACE_DELAY_MS, then the probe must catch
-// the chrome coming live. Two minutes of headroom, still bounded.
-const RACE_OK_DEADLINE = RACE_DELAY_MS + 90_000;
-// The hold runs DURING startup, so the browser cannot finish launching until it
-// releases. puppeteer's default 20 s launch deadline kills it first (observed:
-// the session never attached and the leg reported 0 OK). Cover the hold plus
-// room for a loaded CI runner.
-const RACE_LAUNCH_DEADLINE = RACE_DELAY_MS + 90_000;
+// Everything below is derived from the delay so `--race-delay-ms` retimes the
+// WHOLE scenario (hold, probe budget, deadlines) instead of only the hold.
+// Deriving them from the constant while the hold followed the flag produced a
+// probe that stopped before the registration it was waiting for, and a deadline
+// that could expire mid-hold.
+/**
+ * The hold, probe budget and deadlines for one S4 run.
+ *
+ * Deliberately NOT exported: this module calls `main()` at load, so importing
+ * it would launch a browser. Its behaviour is covered by running the E2E with
+ * `--race-delay-ms`, which is the only honest test of it anyway.
+ *
+ * @param {number | undefined} overrideMs the `--race-delay-ms` value, if any
+ * @returns {{
+ *   delayMs: number;
+ *   probeTicks: number;
+ *   okDeadline: number;
+ *   launchDeadline: number;
+ * }}
+ */
+function raceTiming(overrideMs) {
+  const delayMs = Number.isFinite(overrideMs) ? overrideMs : RACE_DELAY_MS;
+  return {
+    delayMs,
+    // Enough 1 s ticks to cover the hold plus generous slack for a loaded CI box.
+    probeTicks: Math.ceil(delayMs / 1000) + 45,
+    // Generous: the registration lands at ~delayMs, then the probe must catch
+    // the chrome coming live. Two minutes of headroom, still bounded.
+    okDeadline: delayMs + 90_000,
+    // The hold runs DURING startup, so the browser cannot finish launching until
+    // it releases. puppeteer's default 20 s launch deadline kills it first
+    // (observed: the session never attached and the leg reported 0 OK). Cover the
+    // hold plus room for a loaded CI runner.
+    launchDeadline: delayMs + 90_000,
+  };
+}
 
 // ── Test legacy extension (unpacked, bootstrap) ────────────────────────────
 
@@ -174,7 +200,7 @@ function uninstall(data, reason) { log('uninstall reason=' + reason); }
 
 // `ticks` is substituted per session: S1–S3 use the default 1 s sampling, while
 // the S4 delayed-registration session needs the timer to outlive the loader hold
-// (see RACE_PROBE_TICKS).
+// (see `raceTiming`).
 const greProbe = (ticks = PROBE_TICKS) => `
 // [manifest-lifecycle-e2e probe] check whether the test extension's chrome
 // package is resolvable+readable, immediately and on a repeating timer.
@@ -422,7 +448,7 @@ async function runSession(firefoxBin, profileDir, prefs, label, sessionNo, opts)
   // needs its own (much longer) wait for the first OK than the S1–S3 sessions.
   const okDeadline = opts.sessionOkDeadline ?? PROBE_OK_DEADLINE;
   // S4 holds the loader during STARTUP, so the browser does not finish coming up
-  // for ~RACE_DELAY_MS. puppeteer's default 20 s launch deadline therefore kills
+  // for the length of the hold. puppeteer's default 20 s launch deadline kills
   // it before it can ever attach — which is what made the first S4 attempt
   // report 0 OK. The hold is deliberate, so the launch budget has to cover it
   // (plus slack for a loaded CI box).
@@ -593,7 +619,11 @@ async function main() {
 
   const profiles = [];
   try {
-    const seeded = seedProfile(snapshotDir, opts);
+    // S1–S3 are NOT the race: they get no loader hold. `--race-delay-ms` tunes
+    // S4 only (the help text says so), so it must not leak in here — passing
+    // `opts` through delayed these three sessions instead and left the one
+    // session the flag exists for on the hard-coded constant.
+    const seeded = seedProfile(snapshotDir, {});
     profiles.push(seeded.profileDir);
     const {profileDir, prefs, bedDir} = seeded;
 
@@ -710,16 +740,17 @@ async function main() {
     // load') — so the delay runs through the shipped loader rather than by
     // patching it, and the utils package stays verbatim.
     if (!opts.noRace) {
+      const timing = raceTiming(opts.bootstrapDelayMs);
       const raceProfile = seedProfile(snapshotDir, {
         ...opts,
-        bootstrapDelayMs: RACE_DELAY_MS,
+        bootstrapDelayMs: timing.delayMs,
       });
       profiles.push(raceProfile.profileDir);
 
       // The probe must outlive the hold, so this session needs its own tick
       // count. Re-seeding the GreD is safe here: S1–S3 are done with it, and
       // the finally below restores the install dir either way.
-      const raceSeedErr = seedGre(greDir, snapshotDir, RACE_PROBE_TICKS);
+      const raceSeedErr = seedGre(greDir, snapshotDir, timing.probeTicks);
       check(counter, !raceSeedErr, 'S4: seed GreD (long-lived probe)', raceSeedErr || '');
       if (!raceSeedErr) {
         const s4 = await runSession(
@@ -730,8 +761,8 @@ async function main() {
           4,
           {
             ...opts,
-            sessionOkDeadline: RACE_OK_DEADLINE,
-            sessionLaunchDeadlineMs: RACE_LAUNCH_DEADLINE,
+            sessionOkDeadline: timing.okDeadline,
+            sessionLaunchDeadlineMs: timing.launchDeadline,
           }
         );
         check(
@@ -745,9 +776,9 @@ async function main() {
         // place and every assertion below would pass while proving nothing.
         check(
           counter,
-          s4.firstOkAtMs !== null && s4.firstOkAtMs >= RACE_DELAY_MS * 0.5,
+          s4.firstOkAtMs !== null && s4.firstOkAtMs >= timing.delayMs * 0.5,
           'S4: the registration really was delayed (chrome absent until the hold released)',
-          `first OK at T+${s4.firstOkAtMs}ms, expected >= ~${Math.round(RACE_DELAY_MS / 2)}ms — ` +
+          `first OK at T+${s4.firstOkAtMs}ms, expected >= ~${Math.round(timing.delayMs / 2)}ms — ` +
             'the hold did not take effect, so this session proves nothing'
         );
         check(
