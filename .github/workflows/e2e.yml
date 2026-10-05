@@ -568,9 +568,12 @@ jobs:
   # manifest-lifecycle harness registers a legacy bootstrap extension's chrome
   # across three real Firefox sessions (fresh profile / plain restart /
   # cache-clear restart) and asserts chrome stays live plus the startup sweep
-  # leaves no manifest litter. The one harness that exercises the legacy
-  # chrome lifecycle end-to-end — it MUST run on every core/** change (the
-  # updater legs cover the updater UI, not this surface).
+  # leaves no manifest litter, then a fourth session (S4) that forces the
+  # chrome registration ~30 s past startup and asserts it still comes live
+  # (#30) — the first three only ever exercise the fast path. The one harness
+  # that exercises the legacy chrome lifecycle end-to-end — it MUST run on
+  # every core/** change (the updater legs cover the updater UI, not this
+  # surface).
   # Portable Firefox for a writable GreD (the harness seeds config.js there).
   core-lifecycle:
     name: 'core lifecycle E2E · ${{ matrix.os }}'

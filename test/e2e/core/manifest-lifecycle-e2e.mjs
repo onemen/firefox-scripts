@@ -77,6 +77,11 @@ const RACE_PROBE_TICKS = Math.ceil(RACE_DELAY_MS / 1000) + 45;
 // Generous: the registration lands at ~RACE_DELAY_MS, then the probe must catch
 // the chrome coming live. Two minutes of headroom, still bounded.
 const RACE_OK_DEADLINE = RACE_DELAY_MS + 90_000;
+// The hold runs DURING startup, so the browser cannot finish launching until it
+// releases. puppeteer's default 20 s launch deadline kills it first (observed:
+// the session never attached and the leg reported 0 OK). Cover the hold plus
+// room for a loaded CI runner.
+const RACE_LAUNCH_DEADLINE = RACE_DELAY_MS + 90_000;
 
 // ── Test legacy extension (unpacked, bootstrap) ────────────────────────────
 
@@ -157,8 +162,8 @@ ${
   }
   log('delayed registration released after ${delayMs}ms');
 })();
-` :
-    ''
+`
+  : ''
 }function startup(data, reason) { log('startup reason=' + reason); }
 function shutdown(data, reason) { log('shutdown reason=' + reason); }
 function install(data, reason) { log('install reason=' + reason); }
@@ -416,6 +421,12 @@ async function runSession(firefoxBin, profileDir, prefs, label, sessionNo, opts)
   // S4 holds the loader for ~30 s before the registration can even run, so it
   // needs its own (much longer) wait for the first OK than the S1–S3 sessions.
   const okDeadline = opts.sessionOkDeadline ?? PROBE_OK_DEADLINE;
+  // S4 holds the loader during STARTUP, so the browser does not finish coming up
+  // for ~RACE_DELAY_MS. puppeteer's default 20 s launch deadline therefore kills
+  // it before it can ever attach — which is what made the first S4 attempt
+  // report 0 OK. The hold is deliberate, so the launch budget has to cover it
+  // (plus slack for a loaded CI box).
+  const launchDeadlineMs = opts.sessionLaunchDeadlineMs;
   const beforeProbe =
     fs.existsSync(path.join(profileDir, 'chrome-probe.log')) ?
       fs.statSync(path.join(profileDir, 'chrome-probe.log')).size
@@ -427,6 +438,19 @@ async function runSession(firefoxBin, profileDir, prefs, label, sessionNo, opts)
     browser = await launchFirefox(firefoxBin, profileDir, {
       headless: opts.headless,
       extraPrefsFirefox: prefs,
+      ...(launchDeadlineMs ?
+        // THREE separate clocks, all of which must cover the hold:
+        // launchDeadlineMs (harness watchdog), protocolTimeoutMs (BiDi
+        // per-command), and endpointTimeoutMs (puppeteer's wait for the
+        // WebDriver BiDi WS endpoint, default 30 s — the one that actually
+        // killed the first S4 attempt, since the hold delays the ENDPOINT
+        // rather than any command).
+        {
+          launchDeadlineMs,
+          protocolTimeoutMs: launchDeadlineMs,
+          endpointTimeoutMs: launchDeadlineMs,
+        }
+      : {}),
     });
     attachProcessLogging(browser, label);
 
@@ -486,7 +510,15 @@ async function runSession(firefoxBin, profileDir, prefs, label, sessionNo, opts)
   console.log(
     `  [${label}] probe this session: ${newLines.length} samples, ${okCount} OK, ${errCount} ERR (${trailingErr} after first OK)`
   );
-  for (const line of newLines.slice(0, 3)) console.log(`      ${line}`);
+  // Show the transition samples: the leading ERRs and the first OKs. S4's whole
+  // claim is WHEN the chrome came up relative to the loader hold, and the
+  // first-3-only dump below hides exactly that (every S4 ERR sample precedes
+  // the hold, so the OKs were never shown).
+  const interesting = [
+    ...newLines.filter(l => l.includes('=> ERR')).slice(0, 2),
+    ...newLines.filter(l => l.includes('=> OK')).slice(0, 2),
+  ];
+  for (const line of interesting) console.log(`      ${line}`);
 
   const lifeDelta = countLifeLines(profileDir) - beforeLife;
   console.log(`  [${label}] extension lifecycle events this session: ${lifeDelta}`);
@@ -578,84 +610,83 @@ async function main() {
     // alone beats paying for the full set each time. CI never passes the flag.
     // (S1–S3 all need the seeded profile; S4 seeds its own.)
     if (!opts.raceOnly) {
-    // ── S1: fresh profile ──
-    // The very first probe sample (T+0, before the loader runs) is expected to
-    // be ERR — what matters is that chrome comes up and STAYS up: no ERR after
-    // the first OK.
-    const s1 = await runSession(firefoxBin, profileDir, prefs, 'manifest-lifecycle', 1, opts);
-    check(counter, s1.okCount > 0, 'S1 fresh: chrome live (probe OK)');
-    check(
-      counter,
-      s1.trailingErr === 0,
-      'S1 fresh: chrome stays live after the first OK (no trailing ERR)',
-      `${s1.okCount} OK / ${s1.errCount} ERR`
-    );
-    check(counter, s1.lifeDelta > 0, 'S1 fresh: extension started (lifecycle log)');
+      // ── S1: fresh profile ──
+      // The very first probe sample (T+0, before the loader runs) is expected to
+      // be ERR — what matters is that chrome comes up and STAYS up: no ERR after
+      // the first OK.
+      const s1 = await runSession(firefoxBin, profileDir, prefs, 'manifest-lifecycle', 1, opts);
+      check(counter, s1.okCount > 0, 'S1 fresh: chrome live (probe OK)');
+      check(
+        counter,
+        s1.trailingErr === 0,
+        'S1 fresh: chrome stays live after the first OK (no trailing ERR)',
+        `${s1.okCount} OK / ${s1.errCount} ERR`
+      );
+      check(counter, s1.lifeDelta > 0, 'S1 fresh: extension started (lifecycle log)');
 
-    // ── sweep assertions (post S1) ──
-    const afterS1 = bedFiles(bedDir);
-    check(
-      counter,
-      !afterS1.some(f => f.startsWith('chrome.manifest.')),
-      'startup sweep removed stale uuid manifests',
-      JSON.stringify(afterS1)
-    );
-    const canonical = path.join(bedDir, 'chrome.manifest');
-    // The loader absolutizes manifest paths, so the rewritten file reads
-    // `content testext file:///…/extensions/testext@example.com/content/` —
-    // size + the package registration line prove it is the real rewrite, not
-    // an empty leftover.
-    const canonicalContent =
-      fs.existsSync(canonical) ? readFileSyncWithRetry(canonical, 'utf-8') : '';
-    const canonicalOk =
-      afterS1.length === 1 &&
-      afterS1[0] === 'chrome.manifest' &&
-      canonicalContent.length > 0 &&
-      canonicalContent.includes('content testext ');
-    check(
-      counter,
-      canonicalOk,
-      'loader re-wrote its own chrome.manifest (fixed name, real content)',
-      JSON.stringify(afterS1)
-    );
+      // ── sweep assertions (post S1) ──
+      const afterS1 = bedFiles(bedDir);
+      check(
+        counter,
+        !afterS1.some(f => f.startsWith('chrome.manifest.')),
+        'startup sweep removed stale uuid manifests',
+        JSON.stringify(afterS1)
+      );
+      const canonical = path.join(bedDir, 'chrome.manifest');
+      // The loader absolutizes manifest paths, so the rewritten file reads
+      // `content testext file:///…/extensions/testext@example.com/content/` —
+      // size + the package registration line prove it is the real rewrite, not
+      // an empty leftover.
+      const canonicalContent =
+        fs.existsSync(canonical) ? readFileSyncWithRetry(canonical, 'utf-8') : '';
+      const canonicalOk =
+        afterS1.length === 1 &&
+        afterS1[0] === 'chrome.manifest' &&
+        canonicalContent.length > 0 &&
+        canonicalContent.includes('content testext ');
+      check(
+        counter,
+        canonicalOk,
+        'loader re-wrote its own chrome.manifest (fixed name, real content)',
+        JSON.stringify(afterS1)
+      );
 
-    // ── S2: plain restart ──
-    const s2 = await runSession(firefoxBin, profileDir, prefs, 'manifest-lifecycle', 2, opts);
-    check(counter, s2.okCount > 0, 'S2 restart: chrome live (probe OK)');
-    check(
-      counter,
-      s2.trailingErr === 0,
-      'S2 restart: chrome stays live after the first OK (no trailing ERR)',
-      `${s2.okCount} OK / ${s2.errCount} ERR`
-    );
-    check(counter, s2.lifeDelta > 0, 'S2 restart: extension started again');
-    check(
-      counter,
-      bedFiles(bedDir).length === 1 && bedFiles(bedDir)[0] === 'chrome.manifest',
-      'S2 restart: no manifest litter after clean close',
-      JSON.stringify(bedFiles(bedDir))
-    );
+      // ── S2: plain restart ──
+      const s2 = await runSession(firefoxBin, profileDir, prefs, 'manifest-lifecycle', 2, opts);
+      check(counter, s2.okCount > 0, 'S2 restart: chrome live (probe OK)');
+      check(
+        counter,
+        s2.trailingErr === 0,
+        'S2 restart: chrome stays live after the first OK (no trailing ERR)',
+        `${s2.okCount} OK / ${s2.errCount} ERR`
+      );
+      check(counter, s2.lifeDelta > 0, 'S2 restart: extension started again');
+      check(
+        counter,
+        bedFiles(bedDir).length === 1 && bedFiles(bedDir)[0] === 'chrome.manifest',
+        'S2 restart: no manifest litter after clean close',
+        JSON.stringify(bedFiles(bedDir))
+      );
 
-    for (const rel of ['startupCache', 'cache2']) {
-      const p = path.join(profileDir, rel);
-      if (fs.existsSync(p)) fs.rmSync(p, {recursive: true, force: true});
-    }
-    const s3 = await runSession(firefoxBin, profileDir, prefs, 'manifest-lifecycle', 3, opts);
-    check(counter, s3.okCount > 0, 'S3 cache-clear restart: chrome live (probe OK)');
-    check(
-      counter,
-      s3.trailingErr === 0,
-      'S3 cache-clear restart: chrome stays live after the first OK (no trailing ERR)',
-      `${s3.okCount} OK / ${s3.errCount} ERR`
-    );
-    check(counter, s3.lifeDelta > 0, 'S3 restart: extension started again');
-    check(
-      counter,
-      bedFiles(bedDir).length === 1 && bedFiles(bedDir)[0] === 'chrome.manifest',
-      'S3 cache-clear restart: no manifest litter',
-      JSON.stringify(bedFiles(bedDir))
-    );
-
+      for (const rel of ['startupCache', 'cache2']) {
+        const p = path.join(profileDir, rel);
+        if (fs.existsSync(p)) fs.rmSync(p, {recursive: true, force: true});
+      }
+      const s3 = await runSession(firefoxBin, profileDir, prefs, 'manifest-lifecycle', 3, opts);
+      check(counter, s3.okCount > 0, 'S3 cache-clear restart: chrome live (probe OK)');
+      check(
+        counter,
+        s3.trailingErr === 0,
+        'S3 cache-clear restart: chrome stays live after the first OK (no trailing ERR)',
+        `${s3.okCount} OK / ${s3.errCount} ERR`
+      );
+      check(counter, s3.lifeDelta > 0, 'S3 restart: extension started again');
+      check(
+        counter,
+        bedFiles(bedDir).length === 1 && bedFiles(bedDir)[0] === 'chrome.manifest',
+        'S3 cache-clear restart: no manifest litter',
+        JSON.stringify(bedFiles(bedDir))
+      );
     } // end S1–S3 (skipped under --race-only)
 
     // ── S4: delayed chrome registration (issue #30) ──
@@ -697,7 +728,11 @@ async function main() {
           raceProfile.prefs,
           'manifest-lifecycle-race',
           4,
-          {...opts, sessionOkDeadline: RACE_OK_DEADLINE}
+          {
+            ...opts,
+            sessionOkDeadline: RACE_OK_DEADLINE,
+            sessionLaunchDeadlineMs: RACE_LAUNCH_DEADLINE,
+          }
         );
         check(
           counter,
