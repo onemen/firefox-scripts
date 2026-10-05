@@ -51,8 +51,14 @@ const TWO_SLASHES = 'file:' + '/'.repeat(2);
  * The optional closing quote matters: in the concatenation spelling the string
  * is closed before the `+`, so the character right after the slashes is a
  * quote, not `+`. A stricter pattern quietly misses that half of the bug.
+ *
+ * `\s*` deliberately spans newlines. The pattern is matched against the WHOLE
+ * source, not line by line, so an operator-LEADING continuation (`'file:///'`
+ * then newline then `+ argv[1]`) is caught too — a per-line matcher cannot see
+ * across the break, which is how three real spellings slipped through the first
+ * version of this invariant.
  */
-const BROKEN = /file:\/\/\/['"`]?\s*(?:\$|\+)/;
+const BROKEN = /file:\/\/\/['"`]?\s*(?:\$|\+)/g;
 
 /** Tracked directories whose JS can carry a direct-invocation guard. */
 const SCANNED_PREFIXES = ['tools/', 'test/', 'installer/', 'config/'];
@@ -68,14 +74,26 @@ const EXTENSIONS = ['.mjs', '.js', '.cjs'];
  *
  * Pure, so the cases below need no fixtures on disk.
  *
+ * Matches across line breaks and derives each finding's line number from the
+ * match offset, so a prefix continued on the NEXT line is still reported
+ * against the line the slashes are actually on.
+ *
  * @param {string} text
  * @returns {{line: number; text: string}[]}
  */
 export function findInText(text) {
   const findings = [];
-  text.split(/\r?\n/).forEach((line, i) => {
-    if (BROKEN.test(line)) findings.push({line: i + 1, text: line.trim()});
-  });
+  // matchAll, not exec on a module-level /g/: matchAll clones the regex
+  // internally, so the shared lastIndex is never advanced across calls (a stale
+  // lastIndex would make the second call start mid-string and silently skip the
+  // start of the file). Building a fresh RegExp per call would also work but
+  // trips security/detect-non-literal-regexp.
+  for (const m of text.matchAll(BROKEN)) {
+    const line = text.slice(0, m.index).split(/\r?\n/).length;
+    const start = text.lastIndexOf('\n', m.index) + 1;
+    const end = text.indexOf('\n', m.index);
+    findings.push({line, text: text.slice(start, end === -1 ? text.length : end).trim()});
+  }
   return findings;
 }
 
@@ -141,6 +159,45 @@ test('the concatenation spelling of the same bug is flagged too', () => {
   const findings = findInText("const u = '" + THREE_SLASHES + "' + process.argv[1];");
   assert.equal(findings.length, 1);
   assert.match(findings[0].text, /process\.argv/);
+});
+
+// The next three are the shapes a per-line matcher cannot see. The reviewer of
+// PR #421 found them: the operator leads the next line, so the slashes and the
+// `+` land on different lines and the bug passes the invariant.
+
+test('a concatenation whose operator LEADS the next line is flagged', () => {
+  const src = "const u = '" + THREE_SLASHES + "'\n  + process.argv[1];";
+  const findings = findInText(src);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].line, 1, 'reported against the line the slashes are on');
+  assert.equal(findings[0].text, "const u = '" + THREE_SLASHES + "'");
+});
+
+test('an indented operator-leading concatenation is flagged', () => {
+  const src = 'if (x) {\n  const u = "' + THREE_SLASHES + '"\n    + process.argv[1];\n}';
+  const findings = findInText(src);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].line, 2);
+});
+
+test('a template literal continued on the next line is flagged', () => {
+  const src = 'const u = `' + THREE_SLASHES + '"\n  + p`;';
+  const findings = findInText(src);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].line, 1);
+});
+
+test('several occurrences are each reported, on their own lines', () => {
+  const src = [
+    "const a = '" + THREE_SLASHES + "' + p;",
+    '// unrelated',
+    'const b = `' + THREE_SLASHES + '${p}`;',
+  ].join('\n');
+  const findings = findInText(src);
+  assert.deepEqual(
+    findings.map(f => f.line),
+    [1, 3]
+  );
 });
 
 test('the two-slash template is NOT flagged — it is correct', () => {
