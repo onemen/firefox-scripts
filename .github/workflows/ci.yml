@@ -95,13 +95,20 @@ jobs:
       # The PR body is written to a file rather than piped, so the script never
       # blocks on stdin; it diffs against the merge-base, so a main commit
       # landing mid-PR cannot make it fire or mask a real violation.
+      #
+      # The PR is named explicitly: on a `pull_request` event the checkout is a
+      # DETACHED HEAD of the merge commit, and `gh pr view` with no argument
+      # tries to infer the branch from git — which fails with "not on any branch"
+      # and took this whole job down before the gate ever ran.
       - name: gate — core changed without a test change
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY_FILE: ${{ runner.temp }}/pr-body.md
         run: |
-          gh pr view --json body --jq .body > "$PR_BODY_FILE"
+          gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json body --jq .body > "$PR_BODY_FILE"
           pnpm check:core-tests
 
   # Publish-path gate: `snapshot:dev` rebuilds the zips and the
