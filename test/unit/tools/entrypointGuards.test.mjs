@@ -58,17 +58,18 @@ const TWO_SLASHES = 'file:' + '/'.repeat(2);
  * across the break, which is how three real spellings slipped through the first
  * version of this invariant.
  *
- * The slashes must be followed by an ENTRY-PATH expression. A bare `$` would
- * flag any interpolation after a file:/// prefix — including unrelated sandbox
- * stubs (an nsIFileIO.newFileURI fake building a spec from `file.path`, the
- * #416 sweep test), which never guard an entry point. So the arms require
- * either the argv spine (directly, or with a method tail like the original
- * bug's backslash-normalising `.replace()`), or a BARE identifier — a plausible
- * `const p = process.argv[1]` alias. A member expression (`x.path`) is a
- * fixture/URI-builder operand, not an entry path, and is left alone.
+ * The slashes must be followed by an ENTRY-PATH expression containing the
+ * literal `argv[1]` spine — directly (`+ argv[1]`, `${process.argv[1]}`) or
+ * with a method tail inside the interpolation (the original bug's
+ * backslash-normalising `${process.argv[1].replace(...)}`). Anything looser
+ * flags unrelated code: a bare `$` catches any interpolation (the #416 sweep
+ * test's nsIFileIO stub building a spec from `file.path`), a bare-identifier
+ * arm catches regression fixtures that quote the bug with a local alias
+ * (`file:///${argv1}` in #417's nightlyBuildId tests). A heuristic that fires
+ * on honest test text is worse than one that misses an aliased bug — aliases
+ * are rare, quoting the bug in fixtures and comments is routine.
  */
-const BROKEN =
-  /file:\/\/\/['"`]?\s*(?:\$\{[^}]*process\.argv\[1\][^}]*\}|\$\{\s*[a-zA-Z_$][\w$]*\s*\}|\+\s*(?:process\.)?argv\[1\]|\+\s*[a-zA-Z_$][\w$]*(?![\w$.]))/g;
+const BROKEN = /file:\/\/\/['"`]?\s*(?:\$\{[^}]*argv\[1\][^}]*\}|\+\s*(?:process\.)?argv\[1\])/g;
 
 /** Tracked directories whose JS can carry a direct-invocation guard. */
 const SCANNED_PREFIXES = ['tools/', 'test/', 'installer/', 'config/'];
@@ -166,7 +167,9 @@ test('the three-slash template spelling is flagged, with its line number', () =>
   const src = [
     '// guard',
     '// Only run when invoked directly.',
-    'if (p && import.meta.url === `' + THREE_SLASHES + '${p}`) {',
+    'if (p && import.meta.url === `' +
+      THREE_SLASHES +
+      '${process.argv[1].replace(/\\\\/g, "/")}`) {',
     '  run();',
     '}',
   ].join('\n');
@@ -202,7 +205,7 @@ test('an indented operator-leading concatenation is flagged', () => {
 });
 
 test('a template literal continued on the next line is flagged', () => {
-  const src = 'const u = `' + THREE_SLASHES + '"\n  + p`;';
+  const src = 'const u = `' + THREE_SLASHES + '"\n  + process.argv[1]`;';
   const findings = findInText(src);
   assert.equal(findings.length, 1);
   assert.equal(findings[0].line, 1);
@@ -210,9 +213,9 @@ test('a template literal continued on the next line is flagged', () => {
 
 test('several occurrences are each reported, on their own lines', () => {
   const src = [
-    "const a = '" + THREE_SLASHES + "' + p;",
+    "const a = '" + THREE_SLASHES + "' + argv[1];",
     '// unrelated',
-    'const b = `' + THREE_SLASHES + '${p}`;',
+    'const b = `' + THREE_SLASHES + '${argv[1]}`;',
   ].join('\n');
   const findings = findInText(src);
   assert.deepEqual(
@@ -257,6 +260,17 @@ test('a sandbox stub interpolating a non-entry path is not a finding', () => {
 
 test('a non-argv concatenation after the slashes is not a finding', () => {
   const src = "const u = '" + THREE_SLASHES + "' + file.path;";
+  assert.deepEqual(findInText(src), []);
+});
+
+test('an aliased interpolation is not a finding — the regression-fixture case', () => {
+  // #417's nightlyBuildId tests reproduce the original bug with a local alias:
+  // `file:///${argv1}` where `const argv1 = '/home/...'`. There is no literal
+  // argv[1] spine in the expression, so the detector cannot tell it from a
+  // URI-builder stub without lexing — and a gate that fires on honest test
+  // text is worse than one that misses an aliased bug. Left alone.
+  const src =
+    'assert.equal(isDirectInvocation(argv1, `' + THREE_SLASHES + '${argv1}`, toFileURL), false);';
   assert.deepEqual(findInText(src), []);
 });
 
