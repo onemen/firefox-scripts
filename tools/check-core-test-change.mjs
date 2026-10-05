@@ -161,12 +161,29 @@ export function evaluate(files, {waived = false} = {}) {
 export function changedFiles({base, files, git = defaultGit} = {}) {
   if (files) return files;
   const ref = base || process.env.GITHUB_BASE_REF || 'origin/main';
-  const mergeBase = safeMergeBase(git, ref);
   // Two-dot against the merge-base: exactly the PR's own changes, so a main
   // commit landing mid-PR cannot make the gate fire (or mask a real violation).
-  const args =
-    mergeBase ? ['diff', '--name-only', `${mergeBase}...HEAD`] : ['diff', '--name-only', 'HEAD'];
-  const out = git(args);
+  const mergeBase = safeMergeBase(git, ref);
+  if (mergeBase) return parseNameList(git(['diff', '--name-only', `${mergeBase}...HEAD`]));
+  // No merge base (a shallow clone, or a base ref that does not exist locally).
+  //
+  // This fallback MUST still name the base. A bare `git diff --name-only HEAD`
+  // compares HEAD with the WORKING TREE, so on a clean CI checkout it returns
+  // nothing at all — and a gate with no changed files reports "no core/** change"
+  // and passes. The exact fail-open the gate exists to prevent. Diff the ref tip
+  // instead; if even that cannot run, throw so main() stands down loudly.
+  try {
+    return parseNameList(git(['diff', '--name-only', ref, 'HEAD']));
+  } catch (err) {
+    throw new Error(`cannot diff HEAD against ${ref}: ${err.message}`, {cause: err});
+  }
+}
+
+/**
+ * @param {string} out raw `git diff --name-only` output
+ * @returns {string[]}
+ */
+function parseNameList(out) {
   return out
     .split('\n')
     .map(l => l.trim())

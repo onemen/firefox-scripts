@@ -171,7 +171,13 @@ test('changedFiles: diffs against the MERGE BASE, not the branch tip', () => {
 
 test('changedFiles: an unresolvable merge base falls back, never skips', () => {
   // A shallow clone must not silently DISABLE the gate — it falls back to a
-  // plain working-tree diff, which is a coarser but still-usable signal.
+  // diff against the BASE REF TIP, which is coarser (it can include main
+  // commits) but still names the changed files.
+  //
+  // Critically, the fallback still names the base. `git diff HEAD` alone
+  // compares HEAD with the WORKING TREE: on a clean CI checkout that lists
+  // nothing, the gate reports "no core/** change", and a core-only PR sails
+  // through — the precise fail-open this gate exists to prevent.
   const calls = [];
   const out = changedFiles({
     git(args) {
@@ -181,7 +187,22 @@ test('changedFiles: an unresolvable merge base falls back, never skips', () => {
     },
   });
   assert.deepEqual(out, ['core/x.js']);
-  assert.deepEqual(calls[1], ['diff', '--name-only', 'HEAD']);
+  assert.deepEqual(calls[1], ['diff', '--name-only', 'origin/main', 'HEAD']);
+});
+
+test('changedFiles: an unresolvable merge base AND base ref throws, never passes empty', () => {
+  // Neither diff can run: the gate must stand down LOUDLY from main(), not
+  // return an empty list that would read as "no core changed" and pass.
+  assert.throws(
+    () =>
+      changedFiles({
+        git(args) {
+          if (args[0] === 'merge-base') throw new Error('unknown revision');
+          throw new Error('unknown revision: origin/main');
+        },
+      }),
+    /cannot diff HEAD against origin\/main/
+  );
 });
 
 test('changedFiles: blank and CRLF git output is parsed cleanly', () => {
