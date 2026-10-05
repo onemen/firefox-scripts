@@ -102,7 +102,18 @@ export function findInText(text) {
     const line = text.slice(0, m.index).split(/\r?\n/).length;
     const start = text.lastIndexOf('\n', m.index) + 1;
     const end = text.indexOf('\n', m.index);
-    findings.push({line, text: text.slice(start, end === -1 ? text.length : end).trim()});
+    const textOnLine = text.slice(start, end === -1 ? text.length : end);
+    // A full-line comment cannot execute, so it cannot be a broken guard —
+    // skip it. (Trailing text after real code is kept: without lexing we
+    // cannot tell a comment's `+` from an executable one, and over-skipping
+    // would hide real findings.) This keeps regression tests and docs free to
+    // DESCRIBE the bug without tripping the invariant (#417's nightlyBuildId
+    // fixtures quote `file:///` + argv to assert the guard rejects it).
+    if (/^\s*(\/\/|\*)/.test(textOnLine)) continue;
+    // Two regex hits can land on one line (e.g. the code's own hit plus the
+    // same shape quoted in a trailing comment). One line = one finding.
+    if (findings.length > 0 && findings[findings.length - 1].line === line) continue;
+    findings.push({line, text: textOnLine.trim()});
   }
   return findings;
 }
@@ -247,6 +258,30 @@ test('a sandbox stub interpolating a non-entry path is not a finding', () => {
 test('a non-argv concatenation after the slashes is not a finding', () => {
   const src = "const u = '" + THREE_SLASHES + "' + file.path;";
   assert.deepEqual(findInText(src), []);
+});
+
+test('a full-line comment quoting the bug is not a finding', () => {
+  const src = '// guard compared `import.meta.url` against a hand-built ' + '`file:///` and argv.';
+  assert.deepEqual(findInText(src), []);
+});
+
+test('a block-comment continuation quoting the bug is not a finding', () => {
+  const src =
+    ' * `/`, so building the URL by hand as ' + '`file:///` and argv[1] yields FOUR slashes';
+  assert.deepEqual(findInText(src), []);
+});
+
+test('code after a trailing comment is still flagged', () => {
+  const src = "const u = '" + THREE_SLASHES + "' + process.argv[1]; // the shape";
+  const findings = findInText(src);
+  assert.equal(findings.length, 1);
+  assert.match(findings[0].text, /process\.argv/);
+});
+
+test('two hits on one line collapse to one finding', () => {
+  const src = "const u = '" + THREE_SLASHES + "' + argv[1]; // again";
+  const findings = findInText(src);
+  assert.equal(findings.length, 1);
 });
 
 test('the detector does not flag its own source', () => {
