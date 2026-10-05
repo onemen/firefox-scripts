@@ -141,6 +141,8 @@ Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**
 - **Gates:** `pnpm lint` (strict fail-fast aggregate = what CI + the pre-push hook enforce),
   `pnpm format`, `pnpm test`, `pnpm test:hash`. Granular stages: see package.json (`pnpm lint`
   composes them); `pnpm lint:all` is the dev-only report-all view.
+- **Core-test gate:** `pnpm check:core-tests` — fails when `core/**` changed with no `test/**`
+  change (runs in the `checks` CI job on PRs). Waive with `#no-core-test-gate` in the PR body.
 - **Publish (only when the user explicitly asks):** `pnpm publish:all|packages|installer|helper`,
   `pnpm release:stage`, `pnpm release:verify`, `pnpm fetch:release`; offline:
   `pnpm snapshot:prod|dev`. Scope (`--include=…`, ADR 0030) and `--mode=prod|dev` semantics:
@@ -155,8 +157,9 @@ Match the change to its validation — the full matrix is the `change-workflow` 
 - Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test (`pnpm test:hash`).
 - **Do not claim tests passed if the required toolchain or environment was unavailable.**
 - PRs that modify `core/**` must add or extend a test where feasible; if not, the PR description
-  must explain why. (The mechanical "core changed && no test changed → fail" CI gate lands together
-  with the core smoke tests — see issue #30.)
+  must explain why. This is enforced mechanically: `pnpm check:core-tests` fails a PR that changes
+  `core/**` with no `test/**` change. A `#no-core-test-gate` line in the PR body waives it, for
+  changes that provably cannot be covered (a comment, a rename) — say why in the body.
 
 ## AI review of PRs
 
