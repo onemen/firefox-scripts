@@ -88,20 +88,27 @@ export async function fetchBuildId() {
  * the first night. Windows masked it: there `argv[1]` starts with a drive
  * letter, so the naive form happened to be correct.
  *
- * Exported (and unit-tested for both path shapes) because a guard that is wrong
- * only on the platform that runs the schedule is invisible to a Windows
- * developer and to a green local run.
+ * Exported (and unit-tested) because a guard that is wrong only on the platform
+ * that runs the schedule is invisible to a Windows developer and to a green
+ * local run.
+ *
+ * `toFileURL` is injectable so a test can supply POSIX semantics (`file://` +
+ * path) and prove the POSIX branch on ANY host. Without it, the real
+ * `pathToFileURL` resolves a leading `/` against the current drive on Windows,
+ * so a test comparing both sides with it would agree on every platform and
+ * never actually exercise the case that broke.
  *
  * @param {string | undefined} argv1 `process.argv[1]`
  * @param {string} metaUrl `import.meta.url`
+ * @param {(p: string) => {href: string}} [toFileURL] path → file URL
  * @returns {boolean}
  */
-export function isDirectInvocation(argv1, metaUrl) {
+export function isDirectInvocation(argv1, metaUrl, toFileURL = pathToFileURL) {
   if (!argv1) return false;
   try {
-    return pathToFileURL(argv1).href === metaUrl;
+    return toFileURL(argv1).href === metaUrl;
   } catch {
-    // A path Node cannot turn into a file URL is not this module's URL.
+    // A path that cannot become a file URL is not this module's URL.
     return false;
   }
 }

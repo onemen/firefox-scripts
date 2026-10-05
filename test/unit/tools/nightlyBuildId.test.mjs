@@ -95,16 +95,34 @@ test('an unparseable header throws rather than guessing', () => {
 // match (drive letter, no leading slash) and a green run.
 
 test('isDirectInvocation agrees with pathToFileURL for both path shapes', () => {
-  // Both sides go through pathToFileURL on purpose. Asserting a hard-coded
-  // POSIX URL would make the test host-dependent (on Windows pathToFileURL
-  // resolves a leading `/` against the current drive) — a test that only holds
-  // on the machine it was written on is the same class of bug as the one it is
-  // meant to catch.
+  // Both sides go through pathToFileURL, so this holds on any host: it pins
+  // that the guard DELEGATES to the platform converter rather than doing its
+  // own string arithmetic. It cannot by itself prove the POSIX branch — the
+  // next test does that.
   const posix = '/home/runner/work/firefox-scripts/tools/ci/nightly-buildid.mjs';
   const windows = 'C:\\code\\repo\\tools\\ci\\nightly-buildid.mjs';
   for (const p of [posix, windows]) {
     assert.equal(isDirectInvocation(p, pathToFileURL(p).href), true, p);
   }
+});
+
+test('the POSIX branch is proven on ANY host via the injected converter', () => {
+  // THE test for the original bug. `posixToFileURL` reproduces what Node does
+  // on Linux/macOS (`file://` + an absolute path, three slashes) regardless of
+  // the machine running the suite — so the ubuntu-latest shape is exercised
+  // from a Windows checkout, with no runner and no merge required.
+  const posixToFileURL = p => ({href: `file://${p}`});
+  const argv1 = '/home/runner/work/firefox-scripts/tools/ci/nightly-buildid.mjs';
+  assert.equal(
+    isDirectInvocation(argv1, `file://${argv1}`, posixToFileURL),
+    true,
+    'a POSIX entry path must match its own import.meta.url'
+  );
+  // And it must not match a different module, i.e. the injected converter is
+  // genuinely driving the comparison rather than the test always passing.
+  assert.equal(isDirectInvocation(argv1, 'file:///somewhere/else.mjs', posixToFileURL), false);
+  // The four-slash form — what the shipped bug produced — must NOT match.
+  assert.equal(isDirectInvocation(argv1, `file:///${argv1}`, posixToFileURL), false);
 });
 
 test('a naive file:/// concatenation is wrong for a POSIX path — the original bug', () => {
@@ -126,4 +144,12 @@ test('isDirectInvocation is false when the module was imported, not run', () => 
   // No argv[1] at all (embedded, or a bare `node -e`).
   assert.equal(isDirectInvocation(undefined, pathToFileURL(posix).href), false);
   assert.equal(isDirectInvocation('', pathToFileURL(posix).href), false);
+});
+
+test('isDirectInvocation survives a converter that throws', () => {
+  const boom = () => {
+    throw new TypeError('not a path');
+  };
+  const posix = '/home/runner/work/firefox-scripts/tools/ci/nightly-buildid.mjs';
+  assert.equal(isDirectInvocation(posix, `file://${posix}`, boom), false);
 });
