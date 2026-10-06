@@ -49,6 +49,7 @@
     "dev-clean": "node --env-file-if-exists=.env tools/publish/devClean.mjs",
     "review:batch": "node tools/ci/batch-review.mjs",
     "ci:download": "node tools/ci/ciDownload.mjs",
+    "ci:legs-table": "node tools/ci/e2eLegsTable.mjs",
     "review:local": "node tools/ai-review.mjs",
     "test:skills": "node tools/check-skills.mjs --skip-tests"
   },
