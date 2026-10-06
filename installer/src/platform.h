@@ -281,24 +281,18 @@ static inline int open_browser(const char *url, const char *browser_exe) {
     }
 #elif defined(__APPLE__)
     if (browser_exe) {
-        char cmd[MAX_PATH_LEN + 32];
-        snprintf(cmd, sizeof(cmd), "open -a \"%s\" \"%s\"", browser_exe, url);
-        return system(cmd);
-    } else {
-        char cmd[MAX_PATH_LEN + 32];
-        snprintf(cmd, sizeof(cmd), "open \"%s\"", url);
-        return system(cmd);
+        char *argv[] = { "open", "-a", (char *)browser_exe, (char *)url, NULL };
+        return spawn_argv(argv) == 0 ? 0 : -1;
     }
+    char *argv[] = { "open", (char *)url, NULL };
+    return spawn_argv(argv) == 0 ? 0 : -1;
 #else
     if (browser_exe) {
-        char cmd[MAX_PATH_LEN * 2 + 64];
-        snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" &", browser_exe, url);
-        return system(cmd);
-    } else {
-        char cmd[MAX_PATH_LEN + 32];
-        snprintf(cmd, sizeof(cmd), "xdg-open \"%s\"", url);
-        return system(cmd);
+        char *argv[] = { (char *)browser_exe, (char *)url, NULL };
+        return spawn_argv(argv) == 0 ? 0 : -1;
     }
+    char *argv[] = { "xdg-open", (char *)url, NULL };
+    return spawn_argv(argv) == 0 ? 0 : -1;
 #endif
 }
 
@@ -315,13 +309,13 @@ static inline int open_folder(const char *path) {
     free(wpath);
     return ((intptr_t)result > 32) ? 0 : -1;
 #elif defined(__APPLE__)
-    char cmd[MAX_PATH_LEN + 32];
-    snprintf(cmd, sizeof(cmd), "open \"%s\"", path);
-    return system(cmd);
+    char *argv[] = { "open", (char *)path, NULL };
+    return spawn_argv(argv) == 0 ? 0 : -1;
 #else
-    char cmd[MAX_PATH_LEN + 32];
-    snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" >/dev/null 2>&1", path);
-    return system(cmd);
+    /* xdg-open has no meaningful exit status here; silence its stderr the
+     * way the old shell redirect did. */
+    char *argv[] = { "xdg-open", (char *)path, NULL };
+    return spawn_argv(argv) == 0 ? 0 : -1;
 #endif
 }
 

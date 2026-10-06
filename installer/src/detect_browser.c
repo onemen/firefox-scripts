@@ -1,6 +1,7 @@
 #include "detect_browser.h"
 #include "file_utils.h"
 #include "obsolete_files.h"
+#include "sha256.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +58,45 @@ static int lookup_profile_by_name(const char *base_dir, const char *profile_name
 static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
                              char ***out_list, int *out_count);
 static void free_file_list(char ***list, int *count);
+
+/**
+ * True when a manifest files[] relative path must be rejected before it is
+ * ever joined onto a base directory (audit 2026-10-06, #432).  The list is
+ * attacker-controlled input (POST /api/manifest); the JS side applies the
+ * same policy to the same list via isUnsafeZipEntryName
+ * (scriptsUpdater.sys.mjs).  Rejects empty names, absolute paths, Windows
+ * separators, drive letters, dot components, control characters and shell
+ * metacharacters; caps the length at MAX_PATH_LEN - 1.
+ */
+static int manifest_rel_unsafe(const char *rel, size_t len) {
+    static const char forbidden[] = "\"'`$&;|<>\n\r";
+    if (!rel || len == 0 || len >= MAX_PATH_LEN) return 1;
+    if (rel[0] == '/' || rel[0] == '\\') return 1;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)rel[i];
+        if (c < 0x20 || c == 0x7F) return 1;      /* control chars */
+        if (strchr(forbidden, (char)c)) return 1; /* shell metachars */
+    }
+    /* Component scan: dot components, drive letters ("C:"), separators. */
+    char part[MAX_PATH_LEN];
+    size_t cstart = 0;
+    for (size_t i = 0; i <= len; i++) {
+        if (i == len || rel[i] == '/') {
+            size_t plen = i - cstart;
+            if (plen >= sizeof(part)) return 1;
+            if (plen > 0) {
+                memcpy(part, rel + cstart, plen);
+                part[plen] = '\0';
+                if (strcmp(part, ".") == 0 || strcmp(part, "..") == 0) return 1;
+                if (plen >= 2 && part[1] == ':') return 1; /* drive letter */
+            }
+            cstart = i + 1;
+        } else if (rel[i] == '\\') {
+            return 1; /* backslash: Windows separator, always an attack here */
+        }
+    }
+    return 0;
+}
 static void set_package_files(int is_utils, char **list, int count);
 static int get_package_files(int is_utils, const char ***list, int *count);
 static int parse_manifest_files(const char *json, const char *section,
@@ -166,121 +206,40 @@ static void parse_json_string_field(const char *section, const char *key,
 }
 
 /**
- * Compute SHA256 hash of a file using platform tools.
- * On Linux: uses sha256sum via popen.
- * On Windows: uses certutil -hashfile via CreateProcessA (CREATE_NO_WINDOW).
- * Returns 0 on success with 64-char hex hash (+ null) in out_hash.
+ * Compute the SHA-256 of a file bytes with the inlined FIPS 180-4
+ * implementation (sha256.c) — no process spawn, no output-format dependency
+ * on certutil/sha256sum, no mkstemp-then-hand-the-path-to-a-subprocess TOCTOU
+ * (audit 2026-10-06, #432).
+ * Returns 0 on success with 64-char lowercase hex (+ NUL) in out_hash.
  */
 static int compute_file_sha256(const char *filepath, char *out_hash, size_t hash_size) {
     if (!filepath || !out_hash || hash_size < 65) return -1;
 
 #ifdef _WIN32
-    // Use CreateProcessW with CREATE_NO_WINDOW to avoid terminal flashing.
-    // The command line is built in UTF-8 (internal encoding) and converted in
-    // full, so a non-ASCII file path reaches certutil intact.
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "certutil -hashfile \"%s\" SHA256", filepath);
-    WCHAR *wcmd = utf8_to_wide(cmd);
-    if (!wcmd) return -1;
-
-    char temp_dir[MAX_PATH_LEN];
-    char temp_out_path[MAX_PATH_LEN];
-    if (GetTempPathA(MAX_PATH_LEN, temp_dir) == 0 ||
-        GetTempFileNameA(temp_dir, "fsh", 0, temp_out_path) == 0) {
-        free(wcmd);
-        return -1;
-    }
-
-    STARTUPINFOW si = { sizeof(si) };
-    PROCESS_INFORMATION pi;
-    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
-    HANDLE hOut = CreateFileA(temp_out_path, GENERIC_WRITE, FILE_SHARE_READ, &sa,
-                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hOut == INVALID_HANDLE_VALUE) {
-        free(wcmd);
-        return -1;
-    }
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = hOut;
-    si.hStdError = hOut;
-
-    if (!CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW,
-                        NULL, NULL, &si, &pi)) {
-        free(wcmd);
-        CloseHandle(hOut);
-        return -1;
-    }
-    free(wcmd);
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD exit_code;
-    GetExitCodeProcess(pi.hProcess, &exit_code);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    CloseHandle(hOut);
-
-    if (exit_code != 0) {
-        remove(temp_out_path);
-        return -1;
-    }
-
-    // Read the output file — certutil output looks like:
-    //   SHA256 hash of <path>:
-    //   <64 hex chars>
-    //   CertUtil: -hashfile command completed successfully.
-    FILE *f = fopen(temp_out_path, "r");
-    if (!f) {
-        remove(temp_out_path);
-        return -1;
-    }
-    char line[256];
-    int found = 0;
-    while (fgets(line, sizeof(line), f)) {
-        size_t len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' || line[len - 1] == ' '))
-            line[--len] = '\0';
-        if (len == 64) {
-            int all_hex = 1;
-            for (size_t i = 0; i < len; i++) {
-                if (!isxdigit((unsigned char)line[i])) {
-                    all_hex = 0;
-                    break;
-                }
-            }
-            if (all_hex) {
-                snprintf(out_hash, hash_size, "%s", line);
-                found = 1;
-                break;
-            }
-        }
-    }
-    fclose(f);
-    remove(temp_out_path);
-    return found ? 0 : -1;
+    WCHAR *wpath = utf8_to_wide(filepath);
+    FILE *f = wpath ? _wfopen(wpath, L"rb") : NULL;
+    free(wpath);
 #else
-    char cmd[MAX_PATH_LEN + 32];
-    snprintf(cmd, sizeof(cmd), "sha256sum \"%s\" 2>/dev/null", filepath);
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return -1;
-
-    if (!fgets(out_hash, (int)hash_size, fp)) {
-        pclose(fp);
-        return -1;
-    }
-    pclose(fp);
-
-    // Output is "hash  filename" — extract just the hash (hex chars before first space)
-    char *space = strchr(out_hash, ' ');
-    if (space) *space = '\0';
-
-    // Validate it's a 64-char hex hash
-    size_t len = strlen(out_hash);
-    if (len != 64) return -1;
-    for (size_t i = 0; i < len; i++) {
-        if (!isxdigit((unsigned char)out_hash[i])) return -1;
-    }
-
-    return 0;
+    FILE *f = fopen(filepath, "rb");
 #endif
+    if (!f) return -1;
+
+    Sha256Ctx ctx;
+    sha256_init(&ctx);
+    unsigned char buf[65536];
+    size_t n;
+    int ret = 0;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        sha256_update(&ctx, buf, n);
+    }
+    if (ferror(f)) ret = -1;
+    fclose(f);
+    if (ret != 0) return ret;
+
+    unsigned char digest[SHA256_DIGEST_SIZE];
+    sha256_final(&ctx, digest);
+    sha256_hex(digest, out_hash, hash_size);
+    return 0;
 }
 
 /**
@@ -346,40 +305,16 @@ int compute_directory_sha256(const char *base_dir,
     if (!base_dir || !rel_paths || num_files <= 0 || !out_hash || hash_size < 65)
         return -1;
 
-    // Create a temp file to accumulate the hash stream
-    char tmp_path[MAX_PATH_LEN];
-    FILE *tmp_file = NULL;
-
-#ifdef _WIN32
-    char tmp_dir[MAX_PATH_LEN];
-    if (GetTempPathA(MAX_PATH_LEN, tmp_dir) == 0) return -1;
-    char tmp_name[MAX_PATH_LEN];
-    if (GetTempFileNameA(tmp_dir, "fsh", 0, tmp_name) == 0) return -1;
-    snprintf(tmp_path, sizeof(tmp_path), "%s", tmp_name);
-    tmp_file = fopen(tmp_path, "wb");
-    if (!tmp_file) {
-        remove(tmp_path);
-        return -1;
-    }
-#else
-    const char *tmpdir = getenv("TMPDIR");
-    if (!tmpdir) tmpdir = "/tmp";
-    snprintf(tmp_path, sizeof(tmp_path), "%s/fs_dirhash_XXXXXX", tmpdir);
-    int tmp_fd = mkstemp(tmp_path);
-    if (tmp_fd < 0) return -1;
-    tmp_file = fdopen(tmp_fd, "wb");
-    if (!tmp_file) {
-        close(tmp_fd);
-        remove(tmp_path);
-        return -1;
-    }
-#endif
+    // Hash the stream in memory (audit 2026-10-06, #432): the old
+    // mkstemp/GetTempFileName staging file existed only to be handed to an
+    // external hashing tool — a TOCTOU window and a pointless disk round-trip.
+    // The inline SHA-256 consumes the same bytes directly.
+    Sha256Ctx ctx;
+    sha256_init(&ctx);
 
     // Allocate and initialize sorted index array
     int *sorted = (int *)malloc((size_t)num_files * sizeof(int));
     if (!sorted) {
-        fclose(tmp_file);
-        remove(tmp_path);
         return -1;
     }
     for (int i = 0; i < num_files; i++) sorted[i] = i;
@@ -401,12 +336,9 @@ int compute_directory_sha256(const char *base_dir,
         const char *rel = rel_paths[sorted[i]];
         size_t rel_len = strlen(rel);
 
-        // Write relative path + "\n" (single byte 0x0A, never CRLF)
-        if (fwrite(rel, 1, rel_len, tmp_file) != rel_len ||
-            fwrite("\n", 1, 1, tmp_file) != 1) {
-            ret = -1;
-            break;
-        }
+        // Feed relative path + "\n" (single byte 0x0A, never CRLF)
+        sha256_update(&ctx, (const unsigned char *)rel, rel_len);
+        sha256_update(&ctx, (const unsigned char *)"\n", 1);
 
         // Build full path and write raw file contents.
         // Missing file → contributes path + "\n" with no bytes (empty content).
@@ -425,28 +357,24 @@ int compute_directory_sha256(const char *base_dir,
         }
         files_found++;
 
-        char buf[65536];
+        unsigned char buf[65536];
         size_t n;
         while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
-            if (fwrite(buf, 1, n, tmp_file) != n) {
-                ret = -1;
-                break;
-            }
+            sha256_update(&ctx, buf, n);
         }
         if (ferror(in)) ret = -1;
         fclose(in);
         if (ret != 0) break;
     }
 
-    fclose(tmp_file);
-
     if (out_files_found) *out_files_found = files_found;
 
     if (ret == 0) {
-        ret = compute_file_sha256(tmp_path, out_hash, hash_size);
+        unsigned char digest[SHA256_DIGEST_SIZE];
+        sha256_final(&ctx, digest);
+        sha256_hex(digest, out_hash, hash_size);
     }
 
-    remove(tmp_path);
     free(sorted);
     return ret;
 }
@@ -734,6 +662,16 @@ static int parse_manifest_files(const char *json, const char *section,
         if (*p != '"') break;
         size_t len = (size_t)(p - s);
         p++;
+
+        /* Validate BEFORE copying on: the files list is attacker-controlled
+         * input (POST /api/manifest), and a rel is later joined into a full
+         * path and - historically - interpolated into a shell command (audit
+         * 2026-10-06, #432).  Mirror the JS guard the updater applies to the
+         * same list (isUnsafeZipEntryName, scriptsUpdater.sys.mjs). */
+        if (manifest_rel_unsafe(s, len)) {
+            free_file_list(&list, &count);
+            return -1;
+        }
 
         char *copy = (char *)malloc(len + 1);
         if (!copy) break;
