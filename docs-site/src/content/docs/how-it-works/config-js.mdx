@@ -10,6 +10,11 @@ notice — everything else is loaded from it.
 
 ## Firefox's AutoConfig
 
+{/* TODO - find the right place in this file to explain the the whole perpose of this file in to start
+
+BootstrapLoader.js and userChrome.js
+*/}
+
 Firefox has a built-in mechanism for **administrators** to run their own JavaScript at startup,
 before the browser window exists: [AutoConfig](https://support.mozilla.org/kb/customizing-firefox-using-autoconfig).
 It is the same mechanism behind `mozilla.cfg` on managed installs, and it does two things:
@@ -128,5 +133,6 @@ If the preferences are not locked, the file is not being read — see
   scripts](../../installation/#removing-the-scripts).
 </Aside>
 
+{/* TODO: we do not need to add next. Starlight automatically add `Previous` `Next` links at the bottom */}
 Next: [BootstrapLoader.js](../bootstrap-loader/) — what actually makes legacy add-ons
 load.

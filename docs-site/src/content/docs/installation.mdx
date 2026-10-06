@@ -16,6 +16,23 @@ Since Firefox removed the internal component that loads _legacy_ extension, in o
 If you are using **Waterfox** browser, it ships with a built-in **Bootstrap Loader**, so you only
 need to install the `firefox-scripts` configuration files if you use `userChromeJS` scripts.
 
+{/* TODO
+ we need `Browser Compatibility` - section here at the bottom  - or in the side bar so user can easily see it
+
+explain about all the brosers versios / fork we support
+from previous Firefox ESR 140 - update to latest Firefox nightly 159
+
+see in C:\code\TabMixPlus-Hub\tabmixplus-docs --> C:\code\TabMixPlus-Hub\tabmixplus-docs\src\utils\helper.mjs
+how to dinamically update the nightly version
+
+*/}
+
+{/* TODO - in What is userChromeJS? link to the page how-it-works/userchrome-js
+
+update it content from this section if something is missing
+
+*/}
+
 <details>
 <summary>What is userChromeJS?</summary>
 
@@ -61,6 +78,7 @@ continue, and approve the single **UAC prompt** if it appears (one checksum-veri
 for the copy step only).
 :::
 
+{/* TODO - need space between the node and the image */}
 <a
   href="https://raw.githubusercontent.com/onemen/firefox-scripts/main/docs/screenshots/installer.png"
   target="_blank"
@@ -270,7 +288,7 @@ ensuring **Tab Mix Plus** works seamlessly within each individual profile.
 <Image src={chromeUtils} alt="chrome/utils files" />
 
 ## Removing the scripts
-
+{/* TODO: do not offer to remove chrome only chrome/utils  */}
 1. Remove `config.js` and `defaults/pref/config-prefs.js` from the Firefox root directory.
 2. Remove the `chrome` folder (or just `chrome/utils` from each profile.
 3. Restart the browser.

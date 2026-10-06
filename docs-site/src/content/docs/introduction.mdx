@@ -7,6 +7,11 @@ import { Aside, Card, CardGrid } from '@astrojs/starlight/components'
 
 ## The short version
 
+{/* TODO move this down in the sidebar above FAQ or maybe in `How it work` - name it to something like - Why we need it - or other short title
+link to it from first note in installation.mdx
+
+*/}
+
 Modern Firefox cannot load **legacy add-ons** — extensions built on `install.rdf` and `bootstrap.js`
 — and it no longer loads `userChrome.js` scripts. Extensions like
 [TabMixPlus](https://github.com/onemen/TabMixPlus) and many popular user scripts depend on exactly
@@ -58,6 +63,16 @@ second package and loads the rest. The full chain is explained in
   </Card>
 </CardGrid>
 
+{/* TODO: this section belong to seperated page that explain about the installet in details that it is tiny app (for all OS) and that its purpose
+is to help user to automate the installation process of both .zip files
+
+the utils.zip now include an auto updater - this section
+the auto updater DOES not update the extensions it just infrom the user about new versions of utils.zip and/or fx-folder.zip
+and automate the update process - see more in README.md and combine all into a clear doumentations
+installation.mdx - should include the technical info of how to use the installer and updater, this section (in it new location)
+should focus on why we need it and provide more details
+
+  */}
 ## Why an updater is not optional
 
 Legacy add-ons are extremely version-sensitive: they hook deep into browser internals, and most of
@@ -70,6 +85,8 @@ closes that loop: once a day it compares a SHA-256 manifest of the published fil
 have installed, and offers you the new ones in a tab you can act on immediately. Updates to the
 configuration files need write access to an admin-protected directory, so that one step asks for a
 single elevation via a checksum-verified helper.
+
+{/* TODO:  - this note belong to the page about config-js if it is not already there */}
 
 <Aside type="caution" title="Signing and updates">
   These scripts disable the add-on signature requirement for legacy add-ons
@@ -90,6 +107,8 @@ stays out of the way.
 The original scripts are under the Mozilla Public License 2.0; the installer and the in-browser
 updater in this repository are MIT.
 :::
+
+{/* TODO:  - update `Where to go next` now that this is not the top page */}
 
 ## Where to go next
 

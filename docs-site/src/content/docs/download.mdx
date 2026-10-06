@@ -13,6 +13,23 @@ import {
   releases,
 } from '../../utils/getDownloadsInfoSync.mjs'
 
+
+{/* TODO:  - this page need rewrite !!
+
+
+the content should be fully automated
+
+we need to publish ad docs after each publish that update firefox-scripts/releases/
+
+see how i do it in
+ - C:\code\TabMixPlus-Hub\TabMixPlus
+ - C:\code\TabMixPlus-Hub\tabmixplus-docs
+
+*/}
+
+
+{/* TODO:  - this section need more work - what is `missing asset entry` in downloadsInfo.json */}
+
 // Fallback for a missing asset entry in downloadsInfo.json: the releases page
 // rather than a dead link.
 const LATEST = 'https://github.com/onemen/firefox-scripts/releases/tag/latest'
@@ -30,15 +47,16 @@ maintain by hand.
 
 ## The packages
 
+{/* TODO:  - separate the installer from the zip files */}
+
 | Package          | Download                                                                                                                    | Published                             | What goes where                                                 |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
 | **Installer**    | [`latest` release](https://github.com/onemen/firefox-scripts/releases/tag/latest)                                           | —                                     | one-shot setup tool, per OS                                     |
 | **`fx-folder`**  | <a href={assetUrl('latest', 'fx-folder.zip') ?? LATEST}><code>fx-folder.zip</code></a> | {packages['fx-folder']?.date ?? '—'}  | `config.js`, `config-prefs.js` → browser installation directory |
 | **`utils`**      | <a href={assetUrl('latest', 'utils.zip') ?? LATEST}><code>utils.zip</code></a>         | {packages['utils']?.date ?? '—'}      | chrome scripts → each profile's `chrome/utils/`                 |
-| **`updater-ui`** | updated automatically                                                                                                       | {packages['updater-ui']?.date ?? '—'} | the updater tab's own UI — not installed by hand                |
 
 Installer binaries in the `latest` release:
-
+{/* TODO:  - make this real link to latest assets */}
 - `installer_win.exe` — Windows
 - `installer_linux` — Linux x86_64
 - `installer_linux_aarch64` — Linux ARM64
@@ -53,12 +71,28 @@ content last changed (`YYYY-MM-DD`, UTC). That is why `fx-folder` can show an ol
 :::
 
 ## Finding out what you have installed
+{/* TODO:  - this is not true - and not needed
 
+find a better palace to explain that both the installer and the updater (build into the utils file) will inform you when new version will be available
+
+- need to add screenshoot with the installer notification about new version
+can you build mock version that i can run on by browser an take the screenshoot
+
+*/}
 Open the updater from the browser menu. Next to each package's manual-download link it shows the date of the currently published package;
 **Up to date** means your installed copy matches it. Re-running the installer shows the same
 per-package dates, plus each browser's status.
 
 ## Reverting to an earlier build
+
+{/* TODO:  - generate the list from - https://github.com/onemen/firefox-scripts/releases
+
+when there are no previous release show comment that there are no previous release
+when exist - generate 2 list one list for installer tag/installer-*
+and on list for the scripts tag/core-*
+see how it is done in C:\code\TabMixPlus-Hub\tabmixplus-docs
+
+*/}
 
 The `latest` release always holds the newest build of every file. Each past publish is also frozen
 in a dated release:
