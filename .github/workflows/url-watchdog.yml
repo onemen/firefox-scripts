@@ -43,6 +43,7 @@ on:
     # baseline save. GitHub's cron fires late (measured +2h56…+7h02 over six
     # weeks), so the effective start is ~01:00-05:00 UTC; that is still a daily
     # cadence, and nothing else depends on the wall-clock time.
+    - cron: '0 22 * * *'
   workflow_dispatch:
     inputs:
       report-only:
