@@ -5,11 +5,6 @@ importers:
 
   .:
     configDependencies: {}
-    packageManagerDependencies:
-      pnpm:
-        specifier: 12.9.1
-        version: 12.9.1
-
 packages:
 
   '@pnpm/exe.android-arm64@12.9.1':

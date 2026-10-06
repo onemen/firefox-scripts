@@ -12,26 +12,6 @@ minimumReleaseAgeExclude:
   - '@typescript/native-preview*'
   - katex@0.19.0
   - shell-quote@1.12.0
-  # The packageManager pin itself (pnpm@12.9.1, published 2026-10-03) is
-  # younger than the minimumReleaseAge window; every frozen install verifies
-  # it by lockfile integrity hash, so the age gate is waived for the exact
-  # pinned release and its platform binaries. Bump = new pin + these
-  # entries in one PR.
-  - pnpm@12.9.1
-  - '@pnpm/exe.android-arm64@12.9.1'
-  - '@pnpm/exe.android-x64@12.9.1'
-  - '@pnpm/exe.darwin-arm64@12.9.1'
-  - '@pnpm/exe.darwin-x64@12.9.1'
-  - '@pnpm/exe.freebsd-x64@12.9.1'
-  - '@pnpm/exe.linux-arm64@12.9.1'
-  - '@pnpm/exe.linux-arm64-musl@12.9.1'
-  - '@pnpm/exe.linux-ppc64@12.9.1'
-  - '@pnpm/exe.linux-riscv64@12.9.1'
-  - '@pnpm/exe.linux-s390x@12.9.1'
-  - '@pnpm/exe.linux-x64@12.9.1'
-  - '@pnpm/exe.linux-x64-musl@12.9.1'
-  - '@pnpm/exe.win32-arm64@12.9.1'
-  - '@pnpm/exe.win32-x64@12.9.1'
 
 overrides:
   brace-expansion: '>=1.1.20'
