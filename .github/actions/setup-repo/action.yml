@@ -9,9 +9,10 @@
 # pnpm/setup installs pnpm's self-contained release binary and the requested
 # Node runtime in a single step, replacing actions/setup-node, and caches the
 # pnpm store between runs. The pnpm version is read from the packageManager
-# field in package.json — one exact pin (pnpm@12.9.1) shared by CI and local
-# dev, never a floating major (audit 2026-10-06, #433). The action ref itself
-# is pinned to a full commit SHA.
+# field in package.json — a ^12 range shared by CI and local dev, resolved by
+# pnpm against the supply-chain policy (minimumReleaseAge), so no lockfile
+# packageManager pin exists to age-gate (audit 2026-10-06, #433). The action
+# ref itself is pinned to a full commit SHA.
 
 name: Setup repository
 description: Checkout, pnpm + Node via pnpm/setup, pnpm install
