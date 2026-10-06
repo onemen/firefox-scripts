@@ -104,6 +104,15 @@ jobs:
       - name: Install Linux test prerequisites
         uses: ./.github/actions/linux-test-prereqs
 
+      # 'linux' implies the aarch64 twin in upload.mjs — install its
+      # cross-compiler first (same as e2e.yml; without it snapshot:dev dies
+      # with 'aarch64-linux-gnu-gcc: not found').
+      - name: Install aarch64 cross toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-gcc --version | head -1
+
       - name: Build dev snapshot
         run: pnpm snapshot:dev
 
