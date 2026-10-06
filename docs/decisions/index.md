@@ -122,6 +122,9 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0038](./0038-core-changed-no-test-changed-gate.md) — A `core/**` change must arrive with a test
   change; fires only on `core/**`, requires any test (not a specific one), waivable with
   `#no-core-test-gate` in the PR body (#30)
+- [0039](./0039-record-validation-keys-on-updater-legs.md) — The validated-versions record keys on
+  the updater legs' result alone, not the aggregate gate; ADR 0021's partial-dispatch skip intact
+  (amends [0021], #380)
 
 ## Historical
 
