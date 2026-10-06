@@ -55,6 +55,12 @@ const PATHSPECS = ['*.md', '*.mdx', '*.yaml', '*.yml'];
 
 /** Never scanned: build products, the git dir, installed dependencies. */
 const EXCLUDED_SEGMENTS = ['node_modules', 'dist', '.git'];
+// pnpm-lock.yaml is machine-generated multi-document YAML (a leading '---'
+// plus a supply-chain metadata document); this gate is a frontmatter/changed-YAML
+// parser, not a lockfile validator, and issue #413's colon rule does not apply
+// to it. The lockfile's own integrity gate is `pnpm install --frozen-lockfile`,
+// which fails the job when it is inconsistent with package.json.
+const EXCLUDED_FILES = new Set(['pnpm-lock.yaml']);
 
 /**
  * A markdown frontmatter block: the file's first line is exactly `---`, and the
@@ -162,6 +168,7 @@ export function yamlCandidates(addedByFile) {
   const out = [];
   for (const [rel, added] of addedByFile) {
     if (EXCLUDED_SEGMENTS.some(seg => rel.split('/').includes(seg))) continue;
+    if (EXCLUDED_FILES.has(rel)) continue;
     if (YAML_EXT_RE.test(rel)) {
       out.push({file: rel, added});
       continue;
