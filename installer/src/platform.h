@@ -264,6 +264,26 @@ static inline void log_msg(const char *fmt, ...) {
     fflush(f);
 }
 
+#if !defined(_WIN32)
+#include <spawn.h>
+#include <sys/wait.h>
+extern char **environ;
+
+/**
+ * Spawn argv[0] with argv (no shell), wait for completion, and return the
+ * child's exit status (0 = success), or -1 when the spawn or wait fails.
+ * Replaces the audit-2026-10-06 system()/popen shell-outs: arguments reach
+ * the child as an argv array, never through a shell.
+ */
+static inline int spawn_argv(char *const argv[]) {
+    pid_t pid = (pid_t)-1;
+    if (posix_spawn(&pid, argv[0], NULL, NULL, argv, environ) != 0) return -1;
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+#endif
+
 /**
  * Open a URL in a browser.
  * When browser_exe is not NULL, use it to open the URL in that specific browser.
