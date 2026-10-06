@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <errno.h>
 #include <wchar.h>
 #ifdef _WIN32
 #include <tlhelp32.h>
@@ -917,7 +918,26 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
                 snprintf(fx_zip_path, sizeof(fx_zip_path), "%s%cfx-folder.zip", g_work_dir, PATH_SEPARATOR);
 
                 if (save_buf_to_file(fx_zip_path, (const char *)zip_data, zip_len) < 0) {
-                    set_install_error("Failed to save downloaded config zip to temp file");
+                    // Capture the CRT/Win32 error first — RS-10 CI failure
+                    // (#436): the status message must be attributable on its
+                    // own when the config-zip save fails on a runner.
+                    int save_errno = errno;
+#ifdef _WIN32
+                    DWORD save_win32 = GetLastError();
+#endif
+                    char save_err[512];
+#ifdef _WIN32
+                    snprintf(save_err, sizeof(save_err),
+                             "Failed to save downloaded config zip to temp file "
+                             "(path=%s, len=%zu, errno=%d, win32=%lu)",
+                             fx_zip_path, zip_len, save_errno, (unsigned long)save_win32);
+#else
+                    snprintf(save_err, sizeof(save_err),
+                             "Failed to save downloaded config zip to temp file "
+                             "(path=%s, len=%zu, errno=%d)",
+                             fx_zip_path, zip_len, save_errno);
+#endif
+                    set_install_error(save_err);
                     break;
                 }
 
