@@ -6,8 +6,15 @@
 // when the repo crosses the 10 GB total limit, so stale keys accumulate and
 // burn the quota/bandwidth forever (e.g. a `firefox-dl-*` key per Firefox
 // stable bump, a `node-cache-*` per lockfile change). This script keeps the
-// newest N versions per cache-key "stem" (the key without its trailing
-// content hash) and deletes the rest.
+// newest N versions per cache-key FAMILY (see stem()) and deletes the rest.
+//
+// The grouping is family-aware because the setup-browser keys embed what they
+// cache: `…-Windows-ca6cc4d5e2db5f9a` (the installer), its `-x` twin (the
+// extracted dir) and the fork namespace's `-v<version>` entries all rotate per
+// release while their key stem changes, so GitHub's per-key version cap never
+// applies to them and a content-hash-only stem leaves them unpruned. Measure
+// 2026-10-05: 10.7 GB against a 10 GB cap, with the portable-dir entries alone
+// at ~2.6 GB across four releases.
 //
 // Usage:
 //   node tools/ci/prune-caches.mjs [--keep 3] [--dry-run]
@@ -23,6 +30,8 @@
 // origin remote.
 
 import {execSync} from 'node:child_process';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 
 const argv = process.argv.slice(2);
 const KEEP = Number(argv.find(a => a.startsWith('--keep='))?.split('=')[1] ?? 3);
@@ -54,9 +63,45 @@ function token() {
   return t;
 }
 
-/** Strip a trailing content hash so versions of the same key group together. */
-function stem(key) {
-  return key.replace(/[0-9a-f]{8,}$/i, '');
+/**
+ * The cache-key family a key belongs to — the stem whose versions `--keep`
+ * counts. GitHub's own "10 versions per key" only helps when the key itself
+ * rotates; the setup-browser keys embed the content they cache, so every vendor
+ * bump and every extracted-dir save looks like a brand-new key and nothing ever
+ * groups. The family is the key minus everything that varies per entry:
+ *
+ * firefox-portable-Windows-ca6cc4d5e2db5f9a-x → firefox-portable-Windows
+ * firefox-dl-Windows-ca6cc4d5e2db5f9a → firefox-dl-Windows
+ * browser-dl-Windows-zen-portable-dir-v1.23b → browser-dl-Windows-zen-portable
+ * esr-portable-Windows-8769a05370997233 → esr-portable-Windows
+ * snap-firefox-8995 → snap-firefox browser-validated-37359307092 →
+ * browser-validated url-watchdog-baseline-2026-10-05 → url-watchdog-baseline
+ *
+ * The suffixes are peeled in a loop because they stack (`…-dir-v1.23b`): one
+ * pass would leave the inner marker behind and split the family in two. The
+ * sticky version is anchored to a leading digit (`-v1.23b`, `-v157.0`) so the
+ * peel cannot eat a plain word that merely starts with `v` (`-validated`). The
+ * content hash takes a `-` OR a `:` separator, because the msys2 key spells it
+ * `files:<64 hex>`. The trailing dash is dropped last so a hashed key and its
+ * legacy unhashed predecessor (`firefox-portable-macOS`, saved before the
+ * composite keyed on the URL) land in the same family.
+ *
+ * @param {string} key a GitHub Actions cache key
+ * @returns {string} the family stem
+ */
+export function stem(key) {
+  let s = key;
+  for (let i = 0; i < 4; i++) {
+    const next = s
+      .replace(/-dir$/, '')
+      .replace(/-x$/, '')
+      .replace(/-v\d[^-]*$/, '')
+      .replace(/[:-][0-9a-f]{16,}$/i, '')
+      .replace(/-\d+$/, '');
+    if (next === s) break;
+    s = next;
+  }
+  return s.replace(/-+$/, '');
 }
 
 async function main() {
@@ -95,8 +140,20 @@ async function main() {
   const totalSize = inScope.reduce((n, c) => n + c.size_in_bytes, 0);
   console.log(
     `repo ${repo}: ${caches.length} caches, ${inScope.length} in scope ` +
-      `(${(totalSize / 1e6).toFixed(1)} MB), keeping ${KEEP} per stem`
+      `(${(totalSize / 1e6).toFixed(1)} MB), keeping ${KEEP} per family, ` +
+      `${byStem.size} families`
   );
+  for (const [s, group] of [...byStem.entries()].sort(
+    (a, b) =>
+      b[1].reduce((n, c) => n + c.size_in_bytes, 0) - a[1].reduce((n, c) => n + c.size_in_bytes, 0)
+  )) {
+    const size = group.reduce((n, c) => n + c.size_in_bytes, 0);
+    console.log(
+      `  family ${s}  ${String(group.length).padStart(3)} entr${group.length === 1 ? 'y' : 'ies'}  ${(
+        size / 1e6
+      ).toFixed(1)} MB`
+    );
+  }
   for (const c of toDelete) {
     console.log(
       `  delete ${DRY_RUN ? '[dry-run] ' : ''}${c.key}  ` +
@@ -113,7 +170,9 @@ async function main() {
   console.log(DRY_RUN ? `would delete ${toDelete.length}` : `deleted ${toDelete.length}`);
 }
 
-main().catch(err => {
-  console.error(`✗ Error: ${err.message}`);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch(err => {
+    console.error(`✗ Error: ${err.message}`);
+    process.exit(1);
+  });
+}
