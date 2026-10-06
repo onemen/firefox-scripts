@@ -48,10 +48,19 @@ running it, download from the [Download](../download/) page and check the hash y
 
 ## Will an extension still work after a browser update?
 
-Not automatically — that is the problem the updater solves. Legacy add-ons hook deep into browser
-internals and most of them need an update for each Firefox release. The updater offers you the
-published packages once a day; when the browser update breaks an add-on, a fix is usually published
-shortly after.
+Not automatically — and the updater is not what keeps an individual extension working. The updater
+only notifies you when a new version of the **firefox-scripts packages** (`utils.zip`,
+`fx-folder.zip`) is published; it does not update your extensions.
+
+Whether an extension keeps working after a browser update is a separate question. Legacy add-ons hook
+deep into browser internals, and most of them need an update for each Firefox release — whether a fix
+exists, and how quickly, depends on each extension's author. If you let Firefox auto-update extensions
+(in **Add-ons Manager → ⋯ → Restart Firefox** / the extension's auto-update setting in
+`about:addons`), those updates arrive from the extension's own update channel, not from this project.
+
+What the updater does is close the other half of the problem: when a browser update breaks an add-on
+and a fix is published in the firefox-scripts packages, it offers that fix to you once a day in a tab
+you can act on immediately — instead of leaving you with a broken extension until you notice.
 
 ## Waterfox / Zen / LibreWolf / Floorp
 
@@ -83,16 +92,28 @@ Install add-ons and user scripts only from sources you trust.
 
 ## Can I install only the configuration files?
 
-Yes — the installer's component list is per package. If you only want your own `.uc.js` scripts and
-no legacy add-ons, install the configuration files and the utils but leave TabMixPlus out; if you
-only run add-ons and write no scripts, the utils' updater still keeps itself current without
-anything extra.
+Yes — the installer's component list is per package. But the **configuration files alone do not run
+anything**: `config.js` + `config-prefs.js` only enable AutoConfig. To run legacy add-ons or your own
+`.uc.js` scripts you also need the **utils** package (`BootstrapLoader.js`, `userChrome.js` and the
+updater). With only the configuration files installed, no legacy add-on and no `.uc.js` script will
+load.
+
+So:
+
+- If you only want your own `.uc.js` scripts and no legacy add-ons, install the configuration files
+  **and** the utils, and leave TabMixPlus out.
+- If you only run add-ons and write no scripts, install the configuration files **and** the utils —
+  the updater in `utils.zip` still keeps itself current without anything extra.
+
+Installation paths per OS are in [Installation → by hand](../installation/#install-config-script).
 
 ## What about the macOS app bundle being replaced?
 
-macOS replaces the whole app bundle when it updates, which removes `config.js` from
-`Firefox.app/Contents/Resources`. Reinstall afterwards — and check **System Settings → Privacy &
-Security → Security** if macOS blocked the modified bundle from launching.
+When macOS updates Firefox it replaces the whole `Firefox.app` bundle, which removes the
+configuration files you put inside it (`config.js` and `defaults/pref/config-prefs.js`). After a
+macOS Firefox update, reinstall the configuration files into the fresh bundle — see
+[Installation → by hand](../installation/#install-config-script). If macOS blocked the modified
+bundle from launching, check **System Settings → Privacy & Security → Security** and allow it.
 
 ## I want to go back to a clean browser
 

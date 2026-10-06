@@ -10,7 +10,19 @@ Work top to bottom — the order is cheapest check first.
 ## The add-on is reported as corrupt
 
 "Corrupt" from the legacy add-on path almost always means **the loader never ran**, not a broken
-XPI.
+XPI. The fastest fix is to let the installer put the files in the right place; if you prefer to do it
+by hand, follow the manual path below.
+
+### Use the installer
+
+1. Open the browser with the "corrupt" add-on.
+2. Download and run the installer for your OS from the
+   [latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest).
+3. In the tab it opens, pick the browser and the components to install (configuration files and/or
+   utils), and complete the install.
+4. Restart the browser.
+
+### Install by hand
 
 <Steps>
 

@@ -1,6 +1,7 @@
 ---
 title: Installation
 description: Install the Firefox Scripts helper scripts with the installer, or by hand — including the exact paths per OS.
+order: -1
 ---
 
 import chromeUtils from '@assets/chrome_utils.png'
@@ -19,10 +20,11 @@ need to install the `firefox-scripts` configuration files if you use `userChrome
 <details>
 <summary>What is userChromeJS?</summary>
 
-`userChromeJS` is the mechanism that loads custom JavaScript and CSS files (userChrome scripts)
-into the browser interface when Firefox starts. Firefox removed the internal component that loaded
-these files, so both legacy extensions like **Tab Mix Plus** and `userChromeJS` scripts need
-helper scripts installed to load them.
+[userChrome.js](../how-it-works/userchrome-js/) is the script loader that finds your `.uc.js` files
+in the profile's `chrome` directory, reads their headers, and runs them in every browser window.
+`userChromeJS` is the name of the broader mechanism and the original project behind it; Firefox
+removed the internal component that loaded these files, so both legacy extensions like **Tab Mix Plus**
+and `userChromeJS` scripts need helper scripts installed to load them.
 
 - If you only want to customize the browser appearance with `userChrome.css`, **Waterfox**'s
   built-in Bootstrap Loader or a plain `userChromeJS` loader may be all you need.
@@ -272,10 +274,46 @@ ensuring **Tab Mix Plus** works seamlessly within each individual profile.
 ## Removing the scripts
 
 1. Remove `config.js` and `defaults/pref/config-prefs.js` from the Firefox root directory.
-2. Remove the `chrome` folder (or just `chrome/utils` from each profile.
+2. Remove the `chrome` folder from each profile (or just `chrome/utils` if you only want to drop
+   the shipped scripts and keep any of your own `chrome/` files).
 3. Restart the browser.
 
-The updater goes away with the utils, so nothing will try to re-install anything.
+The updater goes away with the utils, so nothing will try to re-install anything. If you still have
+`config.js` and `config-prefs.js` in the browser root after this, Firefox will still try to run
+AutoConfig on the next start — remove those too, or it will log that `config.js` is missing.
+
+## Browser compatibility
+
+These scripts are validated on every release in CI against the browsers below. Anything not listed
+here may work, but is not covered by the release gates.
+
+| Browser | Notes |
+| ------- | ----- |
+| Firefox (stable, ESR, Developer Edition, Nightly) | Fully supported. Nightly is the leading edge — see the current Nightly version below. |
+| Waterfox | Ships its own Bootstrap Loader, so ours skips loading it (loading both would double-register and break legacy add-ons). `userChrome.js` and the updater still work. |
+| Zen Browser | No special handling needed. |
+| LibreWolf | No special handling needed. |
+| Floorp | No special handling needed. |
+
+A browser must be **running** when the installer runs — detection uses process scanning and lock-file
+inspection.
+
+:::note
+The latest Firefox Nightly this was tested against is **Firefox Nightly 159**. To keep this number
+current automatically, wire it from the same source the TabMixPlus docs use (see
+`tabmixplus-docs/src/utils/helper.mjs` for the pattern) — that is a follow-up, not done here.
+:::
+
+## In three steps
+
+1. **Download the installer** for your OS from the [latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest).
+2. **Run it** and pick the browsers and components to install in the tab it opens.
+3. **Restart the browser.** From then on, updates arrive on their own.
+
+:::note
+Since Firefox removed the internal component that loads _legacy_ extension, in order to install
+**Tab Mix Plus**, or any other _legacy_ extension, you have to install 3rd party helper scripts.
+:::
 
 [FX_FOLDER]: https://onemen.github.io/firefox-scripts/fx-folder.zip
 [UTILS_EXTENSIONS_AND_SCRIPTS]: https://onemen.github.io/firefox-scripts/utils.zip

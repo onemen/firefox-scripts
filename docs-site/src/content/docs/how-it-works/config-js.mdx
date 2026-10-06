@@ -6,7 +6,9 @@ description: How Firefox AutoConfig works, what our config.js does, and how the 
 import { Aside } from '@astrojs/starlight/components'
 
 `config.js` is the entry point of the whole system. It is the only file Firefox itself has to
-notice — everything else is loaded from it.
+notice — everything else is loaded from it. Its job is to **start the chain**: enable Firefox's
+AutoConfig mechanism, lock the two preferences that let legacy add-ons load, register the utils'
+`chrome.manifest`, and then load `BootstrapLoader.js` and `userChrome.js` in order.
 
 ## Firefox's AutoConfig
 
@@ -128,5 +130,12 @@ If the preferences are not locked, the file is not being read — see
   scripts](../../installation/#removing-the-scripts).
 </Aside>
 
-Next: [BootstrapLoader.js](../bootstrap-loader/) — what actually makes legacy add-ons
-load.
+<Aside type="caution" title="Signing and updates">
+  These scripts disable the add-on signature requirement for legacy add-ons
+  (`xpinstall.signatures.required`). Install extensions only from sources you
+  trust — a legacy add-on runs with the full privileges of the browser, as
+  explained in [Introduction](../introduction/#what-firefox-removed-and-why).
+</Aside>
+
+Starlight adds **Previous** / **Next** links at the bottom of the page, so there is nothing to
+add here.

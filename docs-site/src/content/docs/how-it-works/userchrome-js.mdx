@@ -9,8 +9,11 @@ import { Aside, Steps } from '@astrojs/starlight/components'
 `.uc.js`, reads a metadata header from each one, and executes the matching scripts in every browser
 window — including new windows opened later.
 
-It is unrelated to Firefox's own `userChrome.css`; the `.uc.js` convention comes from the
-[userChromeJS project](https://github.com/userChromeJS).
+It is unrelated to Firefox's own `userChrome.css`. The name `.uc.js` (and the idea of dropping
+arbitrary JavaScript into the chrome window) comes from the [userChromeJS
+project](https://github.com/userChromeJS); that repository is no longer maintained, and the convention
+is now carried forward by loaders such as this one and by the scripts in
+[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts).
 
 ## Where scripts are looked for
 

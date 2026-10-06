@@ -37,10 +37,10 @@ maintain by hand.
 | **`utils`**      | <a href={assetUrl('latest', 'utils.zip') ?? LATEST}><code>utils.zip</code></a>         | {packages['utils']?.date ?? '—'}      | chrome scripts → each profile's `chrome/utils/`                 |
 
 Installer binaries in the `latest` release:
-- `installer_win.exe` — Windows
-- `installer_linux` — Linux x86_64
-- `installer_linux_aarch64` — Linux ARM64
-- `installer_mac` — macOS (universal: Intel + Apple Silicon)
+- [`installer_win.exe`]({assetUrl('latest', 'installer_win.exe') ?? LATEST}) — Windows
+- [`installer_linux`]({assetUrl('latest', 'installer_linux') ?? LATEST}) — Linux x86_64
+- [`installer_linux_aarch64`]({assetUrl('latest', 'installer_linux_aarch64') ?? LATEST}) — Linux ARM64
+- [`installer_mac`]({assetUrl('latest', 'installer_mac') ?? LATEST}) — macOS (universal: Intel + Apple Silicon)
 
 Each binary ships with a `.sha256` sidecar, so you can verify the download before you run it.
 
@@ -52,14 +52,15 @@ content last changed (`YYYY-MM-DD`, UTC). That is why `fx-folder` can show an ol
 
 ## Finding out what you have installed
 
-Open the updater from the browser menu. Next to each package's manual-download link it shows the date of the currently published package;
-**Up to date** means your installed copy matches it. Re-running the installer shows the same
-per-package dates, plus each browser's status.
+Both the installer and the updater tab show the same per-package dates and status. Open the updater
+from the browser menu — next to each package's manual-download link it shows the date of the
+currently published package, and **Up to date** means your installed copy matches it. Re-running the
+installer shows the same per-package dates, plus each browser's Up to date / Update available status.
 
 ## Reverting to an earlier build
 
 The `latest` release always holds the newest build of every file. Each past publish is also frozen
-in a dated release:
+in a dated release — one for the package zips and one for the installer binaries and helpers:
 
 | Release                                                                  | Contains                                        |
 | ------------------------------------------------------------------------ | ----------------------------------------------- |
@@ -80,6 +81,8 @@ the newer version again; use the tab's **skip** option if you want to stay on th
 {frozenReleases.length > 0 && (
   <>
     <h2>Past builds</h2>
+
+    <h3>Package builds (`core-<date>`)</h3>
     <table>
       <thead>
         <tr>
@@ -89,7 +92,29 @@ the newer version again; use the tab's **skip** option if you want to stay on th
         </tr>
       </thead>
       <tbody>
-        {frozenReleases.map(release => (
+        {frozenReleases.filter(release => release.tag.startsWith('core-')).map(release => (
+          <tr>
+            <td>
+              <a href={release.htmlUrl}>{release.name}</a>
+            </td>
+            <td>{release.assets.map(asset => asset.name).join(', ')}</td>
+            <td>{new Date(release.publishedAt).toISOString().slice(0, 10)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+
+    <h3>Installer builds (`installer-<date>`)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Release</th>
+          <th>Assets</th>
+          <th>Published</th>
+        </tr>
+      </thead>
+      <tbody>
+        {frozenReleases.filter(release => release.tag.startsWith('installer-')).map(release => (
           <tr>
             <td>
               <a href={release.htmlUrl}>{release.name}</a>

@@ -29,8 +29,8 @@ const HASHES_URL =
   process.env.HASHES_URL || `https://onemen.github.io/${REPO}/hashes.json`;
 const API = `https://api.github.com/repos/${OWNER}/${REPO}`;
 
-/** The packages users install by hand, in the order the docs present them. */
-const PACKAGES = ["utils", "fx-folder", "updater-ui"];
+/** The packages the Download page shows. Keep in sync with download.mdx. */
+const PACKAGES = ["utils", "fx-folder"];
 
 const token = process.env.GITHUB_TOKEN_VAR || process.env.GITHUB_TOKEN || "";
 

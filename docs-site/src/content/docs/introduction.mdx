@@ -71,12 +71,9 @@ have installed, and offers you the new ones in a tab you can act on immediately.
 configuration files need write access to an admin-protected directory, so that one step asks for a
 single elevation via a checksum-verified helper.
 
-<Aside type="caution" title="Signing and updates">
-  These scripts disable the add-on signature requirement for legacy add-ons
-  (`xpinstall.signatures.required`). Install extensions only from sources you
-  trust — a legacy add-on runs with the full privileges of the browser, as
-  explained above.
-</Aside>
+The technical details of the installer and the updater live in [Installation](../installation/#install-firefox-scripts)
+and [Download](../download/); this page stays focused on **why** the project exists and where the
+security line sits.
 
 ## Provenance
 
@@ -93,6 +90,7 @@ updater in this repository are MIT.
 
 ## Where to go next
 
-- **[Installation](../installation/)** — install it with the installer, or by hand.
-- **[Download](../download/)** — the current packages, and how to revert.
+- **[Installation](../installation/)** — install with the installer, or by hand.
+- **[Download](../download/)** — the current packages, and how to revert to an earlier build.
 - **[FAQ](../faq/)** — safe mode, multiple profiles, security, forks.
+- **[How it works](../how-it-works/config-js/)** — config.js, BootstrapLoader.js, userChrome.js.
