@@ -1689,7 +1689,16 @@ jobs:
   # nightly dispatch — a manual revalidation is watched by its operator.
   e2e-triage:
     name: triage nightly revalidation
-    needs: [e2e-gate]
+    # The gate AND record-validation: triage reads the run's job listing, and
+    # the post-gate jobs it starts alongside were `in_progress` at that moment —
+    # a failed record-validation (the job that keeps the publish drift gate
+    # unblocked) would never reach a triage issue, while the green-night path
+    # closed issues as if the run were clean (batch-review finding, 2026-10-06).
+    # Waiting for the record job settles the listing; its result still feeds
+    # the failure detection through the jobs API, not through `needs` (so the
+    # post-gate contract — the gate among the needs, never in the gate's own
+    # needs — still holds).
+    needs: [e2e-gate, record-validation]
     if: always() && inputs.nightly == true
     runs-on: ubuntu-24.04
     timeout-minutes: 5

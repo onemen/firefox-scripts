@@ -263,6 +263,15 @@ export async function dispatchRevalidation({token, repo, dryRun}) {
     return;
   }
   const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+  // Consume the plan BEFORE dispatching (batch-review finding, 2026-10-06):
+  // the plan lives inside the baseline cache's directory, so the next run's
+  // restore would otherwise bring it back and replay the previous night's
+  // dispatches — a second full nightly e2e run, a second core-smoke, the
+  // finding-driven fork escapes. Deleting it here makes "replay at most
+  // once" true by construction: the run that observes a plan is the one that
+  // dispatched it. A dry-run keeps the file (it dispatches nothing, so a
+  // later real replay stays correct).
+  if (!dryRun) fs.rmSync(planFile, {force: true});
   console.log(
     `dispatching ${plan.plans.length} workflow run(s)` +
       (plan.nightly ? ' (nightly revalidation)' : '') +
