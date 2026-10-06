@@ -1292,7 +1292,13 @@ int handle_api_install(int client_fd, const char *query, const char *body, size_
 #endif
     snprintf(g_work_dir, sizeof(g_work_dir), "%s%cfxs-installer-%ld",
              tmp_dir, PATH_SEPARATOR, work_dir_pid);
-    mkdir_recursive(g_work_dir);
+    if (mkdir_recursive(g_work_dir) != 0) {
+        // Propagated (audit 2026-10-06, #431): the state machine would only
+        // surface this later as a confusing per-file save failure.
+        const char *err = "{\"error\":\"Cannot create the installer work directory in the temp folder\"}";
+        send_json_response(client_fd, err, (int)strlen(err));
+        return 0;
+    }
 
     snprintf(g_binary_dir, MAX_PATH_LEN, "%s", detected_browsers[browser_idx].binary_path);
     get_parent_dir(g_binary_dir);
