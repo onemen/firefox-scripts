@@ -37,7 +37,12 @@ on:
   # merge queue too (a required check must report on merge_group).
   merge_group:
   schedule:
-    - cron: '0 6 * * 1' # Monday 06:00 UTC — browsers release ~monthly
+    # 22:00 UTC daily (#380) — this is the repo's only cron now. It drives the
+    # nightly revalidation: the `Dispatch nightly revalidation` step below
+    # dispatches a full e2e.yml run plus core-smoke-nightly.yml after the
+    # baseline save. GitHub's cron fires late (measured +2h56…+7h02 over six
+    # weeks), so the effective start is ~01:00-05:00 UTC; that is still a daily
+    # cadence, and nothing else depends on the wall-clock time.
   workflow_dispatch:
     inputs:
       report-only:
@@ -118,6 +123,27 @@ jobs:
         # Report-only never rewrote the baseline file — saving would mint a
         # redundant ~KB cache entry per manual refresh.
         if: always() && inputs.report-only != true
+
+      # ── Nightly revalidation dispatch (#380) ────────────────────────────
+      # AFTER the baseline save, deliberately: the dispatched E2E run reads
+      # this baseline (esr-matrix consumes it, and the record-validation
+      # pre-flight compares against it), so dispatching before the save
+      # validated the PREVIOUS baseline — a race that cost the run its purpose.
+      #
+      # This step only replays the plan the check step wrote to
+      # .watchdog/dispatch-plan.json. The guards live there: a report-only or
+      # --dry-run run writes no plan (so this is a no-op), the nightly full
+      # e2e dispatch is deduped against the finding-driven ones (two full runs
+      # share a concurrency group and would cancel each other), a failed
+      # dispatch files the deduped issue the old in-process path used, and
+      # core-smoke-nightly.yml is dispatched once — its own build-ID marker
+      # skips nights without a new build. No `if: always()`: a failed check
+      # step wrote no plan, so there is nothing to replay.
+      - name: Dispatch nightly revalidation
+        run: node tools/check-browser-downloads.mjs --dispatch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VALIDATED_DIR: .watchdog-validated
 
     # Job-level scoping (the E2E workflow's precedent): dispatching the browser
     # E2E when a new release is recorded needs actions: write; the issue

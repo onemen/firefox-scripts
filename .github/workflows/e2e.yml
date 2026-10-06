@@ -41,22 +41,18 @@ env:
 
 on:
   pull_request:
-  push:
-    branches: [main]
   # Required checks must also run on the merge-queue's temporary branch when
   # a PR lands via the queue (Settings → merge queue) — see docs/DEVELOPING.md.
   merge_group:
-  # Weekly cadence for the legs whose vendor is the flakiest link and whose
-  # coverage does not need per-PR freshness (the snap leg: store CDN 502s and
-  # snapd self-refresh deadlocks cost ~4 min per updater-PR and, being
-  # advisory, never gated anything). Scheduled runs exercise it on a timer; a
-  # red scheduled snap leg still shows up as the usual advisory failure.
-  # 2026-09-30: back ON the updater-PR path per maintainer decision — #382's
-  # fixes (install after any download outcome, AppArmor prompting-client,
-  # seed-preserving revision check) address the flake sources that got it
-  # removed, and PR-time coverage is wanted again. The Monday schedule stays.
-  schedule:
-    - cron: '30 5 * * 1' # Monday 05:30 UTC — ahead of the url-watchdog (06:00)
+  # NO `push: [main]` and NO `schedule:` (#380). A main push re-ran the whole
+  # matrix for a change the PR gate just validated, and the Monday cron only
+  # fired when the path filter agreed, so a quiet week was a coverage hole that
+  # nothing reported. The nightly revalidation is the url-watchdog's job now
+  # (22:00 UTC daily): it dispatches a FULL e2e.yml run — `browser=all`, which
+  # the changes job treats as the complete revalidation set — plus
+  # core-smoke-nightly.yml, AFTER its baseline save. record-validation records
+  # on a full dispatch, so the validated-versions record the publish gate
+  # requires keeps refreshing without a main-push run.
   # Manual dispatch (ADR 0021): `browser` filters the browser-matrix to one
   # leg (the manual escape — test a browser whose installer CI cannot fetch;
   # pair with the temporary ci-downloads release via pnpm ci:download).
@@ -82,6 +78,12 @@ on:
         description: 'Pin the browser version (empty = resolve the newest)'
         type: string
         default: ''
+      nightly:
+        description: >-
+          Set by the url-watchdog's nightly revalidation dispatch — marks the run as the scheduled
+          nightly so e2e-triage files the failure issue (a manual revalidation is watched, not filed).
+        type: boolean
+        default: false
 
 concurrency:
   # Manual escapes get their own group: a routine push must never cancel a
@@ -1672,3 +1674,36 @@ jobs:
           BROWSER: ${{ inputs.browser }}
           VERSION: ${{ inputs.version }}
         run: node tools/ci/cleanupCiDownloads.mjs
+
+  # ── Nightly triage (#380) ──────────────────────────────────────────────
+  # The nightly revalidation is the only E2E run main gets: the workflow's own
+  # push and schedule triggers are gone, so a red leg there is invisible unless
+  # someone is reading the Actions UI. This job converts the run's failures
+  # into one deduped issue — and closes it again on a green night, the same
+  # self-healing pattern the url-watchdog uses for vendor rot.
+  #
+  # Post-gate (like the recorders): a reporter, never a gate input. It reads
+  # the run's job list through the API rather than `needs`, so it stays one
+  # entry and cannot grow the gate's needs list. Fires only on the watchdog's
+  # nightly dispatch — a manual revalidation is watched by its operator.
+  e2e-triage:
+    name: triage nightly revalidation
+    needs: [e2e-gate]
+    if: always() && inputs.nightly == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Triage the nightly legs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+        run: node tools/ci/e2e-triage.mjs
