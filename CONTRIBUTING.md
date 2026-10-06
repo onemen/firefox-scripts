@@ -32,21 +32,24 @@ pnpm install
 
 ### Generated files
 
-The generated files (`installer/src/_config.h`, `installer/src/resources.h`, and
-`core/chrome/utils/updater/updater-config.sys.mjs`) are **not committed** — they are gitignored and
-regenerated on demand: the installer Makefile produces the C headers on every build, and
-`createZip.mjs` produces the updater config at publish time (see `docs/DEVELOPING.md` and ADR
-`docs/decisions/0008-generated-files-untracked.md`). Edit the sources (`config/installer.conf`,
-`installer/web/*`) and let the tooling regenerate.
+The generated files (`installer/src/_config.h`, `installer/src/_builddate.h`,
+`installer/src/resources.h`, `installer/src/script.built.js`,
+`core/chrome/utils/updater/updater-config.sys.mjs` and `tools/publish/remote-ui/updater.css`) are
+**not committed** — they are gitignored and regenerated on demand: the installer Makefile produces
+the C headers on every build, `syncGeneratedFiles.mjs` rebuilds the script concat sidecar, and
+`createZip.mjs` produces the updater config and stylesheet at publish time (see `docs/DEVELOPING.md`
+and ADR `docs/decisions/0008-generated-files-untracked.md`). Edit the sources
+(`config/installer.conf`, `installer/web/*`) and let the tooling regenerate.
 
 ## Verification
 
 Before opening a PR, run the local checks:
 
 ```bash
-pnpm lint          # the full gate: eslint, check-strncpy, tsc, C format check,
-                   # gcc -fanalyzer, markdownlint, check-skills (7 stages; needs the
-                   # C toolchain — see docs/DEVELOPING.md → Prerequisites)
+pnpm lint          # the full gate (9 stages, fail-fast): eslint, check-strncpy, tsc,
+                   # C format check, gcc -fanalyzer, markdownlint, md-list markers,
+                   # YAML frontmatter, check-skills (needs the C toolchain — see
+                   # docs/DEVELOPING.md → Prerequisites)
 pnpm format        # prettier + C format check (read-only)
 pnpm test          # unit tests (pure Node, no build needed)
 pnpm test:hash     # C vs JS hash parity (see installer/test/README.md) — needs a
