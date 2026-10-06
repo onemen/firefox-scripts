@@ -4,11 +4,11 @@
  * tools/ci/e2e-triage.mjs — file (and auto-close) the nightly revalidation's
  * issue (#380).
  *
- * The nightly E2E run is the ONLY E2E run `main` gets now: e2e.yml's own
- * `push: [main]` and `schedule:` triggers are gone, and the url-watchdog
- * dispatches one full run a night. That makes a red leg there invisible unless
- * someone happens to be reading the Actions UI — the coverage it replaces at
- * least turned a push red in the maintainer's face.
+ * The nightly E2E run is the ONLY E2E run `main` gets now: e2e.yml's own `push:
+ * [main]` and `schedule:` triggers are gone, and the url-watchdog dispatches
+ * one full run a night. That makes a red leg there invisible unless someone
+ * happens to be reading the Actions UI — the coverage it replaces at least
+ * turned a push red in the maintainer's face.
  *
  * So the run converts its own failures into one deduped issue, and closes it
  * again on a green night — the same self-healing shape the url-watchdog uses
@@ -63,8 +63,8 @@ export const FAILED_CONCLUSIONS = new Set([
  * The failed legs of a run, sorted by name. The gate and this job itself are
  * excluded: both fail as a CONSEQUENCE of a leg failing.
  *
- * @param {Array<{name: string, conclusion: string, html_url?: string}>} jobs
- * @returns {Array<{name: string, conclusion: string, html_url: string}>}
+ * @param {{name: string; conclusion: string; html_url?: string}[]} jobs
+ * @returns {{name: string; conclusion: string; html_url: string}[]}
  */
 export function failedLegs(jobs) {
   return jobs
@@ -80,10 +80,10 @@ export function failedLegs(jobs) {
 
 /**
  * The identity of a failure set: the leg names, sorted then hashed. Sorting is
- * done HERE, not only by the caller — the identity must not depend on the
- * order GitHub happens to list the jobs in.
+ * done HERE, not only by the caller — the identity must not depend on the order
+ * GitHub happens to list the jobs in.
  *
- * @param {Array<{name: string}>} legs
+ * @param {{name: string}[]} legs
  * @returns {string} 12 hex chars
  */
 export function failuresHash(legs) {
@@ -101,7 +101,7 @@ export function failuresHash(legs) {
 /**
  * The deduped issue title for one failure set.
  *
- * @param {Array<{name: string}>} legs
+ * @param {{name: string}[]} legs
  * @returns {string}
  */
 export function triageTitle(legs) {
@@ -125,7 +125,7 @@ export function isTriageIssueTitle(title) {
  *
  * @param {string} token
  * @param {string} pathname
- * @param {{method?: string, body?: object}} [opts]
+ * @param {{method?: string; body?: object}} [opts]
  * @returns {Promise<any>} parsed JSON
  */
 async function ghApi(token, pathname, {method = 'GET', body} = {}) {
@@ -177,14 +177,17 @@ async function listRunJobs(token, repo, runId) {
  * @returns {Promise<object[]>}
  */
 async function openTriageIssues(token, repo) {
-  const open = await ghApi(token, `/repos/${repo}/issues?state=open&labels=${TRIAGE_LABEL}&per_page=100`);
+  const open = await ghApi(
+    token,
+    `/repos/${repo}/issues?state=open&labels=${TRIAGE_LABEL}&per_page=100`
+  );
   return open.filter(issue => isTriageIssueTitle(issue.title)).sort((a, b) => a.number - b.number);
 }
 
 /**
  * The issue body: what failed, where to look, and what closes it.
  *
- * @param {Array<{name: string, conclusion: string, html_url: string}>} legs
+ * @param {{name: string; conclusion: string; html_url: string}[]} legs
  * @param {string} runUrl
  * @returns {string}
  */
@@ -222,7 +225,9 @@ async function main() {
   const open = await openTriageIssues(token, repo);
 
   if (legs.length === 0) {
-    console.log(`${jobs.length} jobs, no failed legs — closing ${open.length} open triage issue(s)`);
+    console.log(
+      `${jobs.length} jobs, no failed legs — closing ${open.length} open triage issue(s)`
+    );
     for (const issue of open) {
       console.log(`  close #${issue.number}: ${issue.title}`);
       if (dryRun) continue;

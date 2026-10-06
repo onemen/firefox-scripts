@@ -223,11 +223,11 @@ async function dispatchWorkflow(token, repo, {workflow, inputs}) {
  * cancel-in-progress, so the second would cancel the first. A nightly that
  * already has a full run from the findings marks it instead of adding one.
  *
- * `GITHUB_EVENT_NAME === 'schedule'` is the nightly signal — the workflow's
- * own cron; a manual watchdog dispatch keeps the finding-driven behavior only.
+ * `GITHUB_EVENT_NAME === 'schedule'` is the nightly signal — the workflow's own
+ * cron; a manual watchdog dispatch keeps the finding-driven behavior only.
  *
- * @param {Array<{kind: string, browser: string}>} findings
- * @returns {{nightly: boolean, plans: Array<{workflow: string, inputs: object}>}}
+ * @param {{kind: string; browser: string}[]} findings
+ * @returns {{nightly: boolean; plans: {workflow: string; inputs: object}[]}}
  */
 export function buildDispatchPlan(findings) {
   const nightly = process.env.GITHUB_EVENT_NAME === 'schedule';
@@ -250,7 +250,7 @@ export function buildDispatchPlan(findings) {
  * the save validated the previous one. A check run that wrote no plan
  * (report-only, --dry-run, or a failed check) has nothing to replay.
  *
- * @param {{token: string, repo: string, dryRun: boolean}} io
+ * @param {{token: string; repo: string; dryRun: boolean}} io
  * @returns {Promise<void>}
  */
 export async function dispatchRevalidation({token, repo, dryRun}) {
@@ -284,7 +284,9 @@ export async function dispatchRevalidation({token, repo, dryRun}) {
       // See notifyDispatchFailure: not retried on later runs — make the
       // untested release visible with a deduped issue per affected browser
       // (the full dispatch covers both hard gates).
-      for (const browser of entry.inputs.browser === 'all' ? VALIDATED_BROWSERS : [entry.inputs.browser]) {
+      for (const browser of entry.inputs.browser === 'all' ?
+        VALIDATED_BROWSERS
+      : [entry.inputs.browser]) {
         await notifyDispatchFailure(browser, err.message);
       }
     }
@@ -292,8 +294,8 @@ export async function dispatchRevalidation({token, repo, dryRun}) {
 }
 
 /**
- * Notify a failed core-smoke dispatch. Same shape as notifyDispatchFailure:
- * the marker is keyed on the build ID and this run did not write it, so nothing
+ * Notify a failed core-smoke dispatch. Same shape as notifyDispatchFailure: the
+ * marker is keyed on the build ID and this run did not write it, so nothing
  * re-dispatches on its own — the issue stays open until the operator retries.
  */
 async function notifyCoreSmokeDispatchFailure(reason) {
@@ -1177,7 +1179,10 @@ export async function main() {
   if (!prMode && !dryRun && !reportOnly && token && repo) {
     const plan = buildDispatchPlan(findings);
     fs.mkdirSync(baselineDir, {recursive: true});
-    fs.writeFileSync(path.join(baselineDir, DISPATCH_PLAN_FILE), JSON.stringify(plan, null, 2) + '\n');
+    fs.writeFileSync(
+      path.join(baselineDir, DISPATCH_PLAN_FILE),
+      JSON.stringify(plan, null, 2) + '\n'
+    );
     console.log(
       `\nDispatch plan: ${plan.plans.length} workflow run(s)` +
         (plan.nightly ? ' (nightly revalidation)' : '') +

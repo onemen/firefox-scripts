@@ -24,7 +24,11 @@ const leg = (name, conclusion = 'failure') => ({name, conclusion, html_url: `u/$
 
 test('failedLegs: a failed leg is reported, with its conclusion and link', () => {
   assert.deepEqual(failedLegs([leg('updater E2E · firefox · windows-latest')]), [
-    {name: 'updater E2E · firefox · windows-latest', conclusion: 'failure', html_url: 'u/updater E2E · firefox · windows-latest'},
+    {
+      name: 'updater E2E · firefox · windows-latest',
+      conclusion: 'failure',
+      html_url: 'u/updater E2E · firefox · windows-latest',
+    },
   ]);
 });
 
@@ -58,7 +62,10 @@ test('failedLegs: the gate and the triage job itself never make the list', () =>
 test('failedLegs: sorted by name, so the hash cannot depend on GitHub’s job order', () => {
   const names = ['b leg', 'a leg', 'c leg'];
   const sorted = failedLegs(names.map(n => leg(n))).map(l => l.name);
-  assert.deepEqual(sorted, [...sorted].sort((a, b) => a.localeCompare(b)));
+  assert.deepEqual(
+    sorted,
+    [...sorted].sort((a, b) => a.localeCompare(b))
+  );
   assert.deepEqual(sorted, ['a leg', 'b leg', 'c leg']);
 });
 

@@ -93,7 +93,7 @@ test('buildDispatchPlan: a nightly always carries one full e2e run + core smoke'
   });
 });
 
-test('buildDispatchPlan: a nightly marks the findings\' full run instead of adding a second', () => {
+test("buildDispatchPlan: a nightly marks the findings' full run instead of adding a second", () => {
   withEventName('schedule', () => {
     const plan = buildDispatchPlan(FINDINGS_HARD_GATE);
     assert.deepEqual(plan.plans, [

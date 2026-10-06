@@ -81,7 +81,8 @@ on:
       nightly:
         description: >-
           Set by the url-watchdog's nightly revalidation dispatch — marks the run as the scheduled
-          nightly so e2e-triage files the failure issue (a manual revalidation is watched, not filed).
+          nightly so e2e-triage files the failure issue (a manual revalidation is watched, not
+          filed).
         type: boolean
         default: false
 
