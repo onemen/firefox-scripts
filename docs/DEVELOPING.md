@@ -452,15 +452,15 @@ re-adds read:
 | `installer/src/script.built.js`                    | `installer/web/script/*` (via `installer/embed.mjs`)    | `syncGeneratedFiles.mjs` (the eslint/prettier concat gate) |
 
 The remote updater stylesheet is built from `installer/web/style.css` + `tools/publish/updater.css`
-at publish time and written to disk only as a gitignored `?demo=1` preview
-convenience.`tools/publish/syncGeneratedFiles.mjs` performs the regeneration by hand
-(`node installer/embed.mjs` for `resources.h`); the installer Makefile runs it automatically on
-every build (`--touch` stamps `_config.h`'s mtime so the binary always relinks with the current
-MODE). There are no git hooks. `upload.mjs` regenerates `updater-config.sys.mjs` at publish time
-(via `createZip.mjs`), hashes the generated files' **sources** (see the publish flow below), and
-deletes the generated files from disk when the run finishes (`cleanGenerated`), so the working tree
-always matches a fresh clone — a fresh clone builds and publishes without any pre-existing generated
-files, and no localhost/dev-baked copies are left behind after a local/dev run.
+at publish time and written to disk only as a gitignored `?demo=1` preview convenience.
+`tools/publish/syncGeneratedFiles.mjs` performs the regeneration by hand (`node installer/embed.mjs`
+for `resources.h`); the installer Makefile runs it automatically on every build (`--touch` stamps
+`_config.h`'s mtime so the binary always relinks with the current MODE). There are no git hooks.
+`upload.mjs` regenerates `updater-config.sys.mjs` at publish time (via `createZip.mjs`), hashes the
+generated files' **sources** (see the publish flow below), and deletes the generated files from disk
+when the run finishes (`cleanGenerated`), so the working tree always matches a fresh clone — a fresh
+clone builds and publishes without any pre-existing generated files, and no localhost/dev-baked
+copies are left behind after a local/dev run.
 
 ## Test: unit tests (`pnpm test`)
 
