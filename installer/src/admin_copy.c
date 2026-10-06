@@ -172,8 +172,17 @@ int admin_copy_files(const char *const srcs[], const char *const dsts[], int cou
         BOOL ok = ShellExecuteExW(&sei);
         free(wparams);
         if (!ok) {
+            // The standalone helper distinguishes cancel (exit 2); the
+            // installer must too (audit 2026-10-06, #431): the UI maps
+            // ERROR_CANCELLED to a distinct "cancelled" terminal state, not a
+            // scary failed-install error.
+            DWORD err = GetLastError();
+            if (err == ERROR_CANCELLED) {
+                snprintf(error_msg, error_size, "Elevation cancelled by the user");
+                return ADMIN_COPY_CANCELLED;
+            }
             snprintf(error_msg, error_size,
-                     "Elevation failed or was cancelled (error %lu)", GetLastError());
+                     "Elevation failed (error %lu)", err);
             return -2;
         }
 

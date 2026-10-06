@@ -1,6 +1,7 @@
 #include "file_utils.h"
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include "vendor/miniz/miniz.h"
 
@@ -142,6 +143,14 @@ int extract_zip(const char *zip_path, const char *dest_dir) {
     return ret;
 }
 
+/**
+ * Create path and every missing parent directory.
+ * Returns 0 on success (or if the final directory already exists), -1 when a
+ * component could not be created for a reason other than EEXIST (audit
+ * 2026-10-06, #431: the old version ignored every CreateDirectoryW/mkdir
+ * result, so its callers' checks were vacuous and a permission failure
+ * surfaced later as a confusing per-entry error).
+ */
 int mkdir_recursive(const char *path) {
     char tmp[MAX_PATH_LEN];
     snprintf(tmp, sizeof(tmp), "%s", path);
@@ -152,24 +161,26 @@ int mkdir_recursive(const char *path) {
 #ifdef _WIN32
             // Cutting at a separator always lands on a UTF-8 char boundary.
             WCHAR *wdir = utf8_to_wide(tmp);
-            if (wdir) {
-                CreateDirectoryW(wdir, NULL);
+            if (wdir && !CreateDirectoryW(wdir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
                 free(wdir);
+                return -1;
             }
+            free(wdir);
 #else
-            mkdir(tmp, 0755);
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
 #endif
             *p = PATH_SEPARATOR;
         }
     }
 #ifdef _WIN32
     WCHAR *wdir = utf8_to_wide(tmp);
-    if (wdir) {
-        CreateDirectoryW(wdir, NULL);
+    if (wdir && !CreateDirectoryW(wdir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
         free(wdir);
+        return -1;
     }
+    free(wdir);
 #else
-    mkdir(tmp, 0755);
+    if (mkdir(tmp, 0700) != 0 && errno != EEXIST) return -1;
 #endif
     return 0;
 }
