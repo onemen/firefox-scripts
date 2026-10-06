@@ -692,6 +692,11 @@ pnpm publish:dev         # dev-channel upload: the disposable dev-build-<id> bra
 node tools/publish/release.mjs --include=packages,helper --mode=dev --ref=<branch>   # any combination
 ```
 
+`--include` is a **union, not an override**: `pnpm publish:installer -- --include=packages` yields
+`installer,packages` — a superset, silently. A preset therefore cannot be narrowed, and naming an
+exact role list needs the wrapper directly (the last line of the block), which is why both spellings
+exist. (`--mode`, by contrast, is last-wins — do not pass it to a preset that already bakes one.)
+
 A PROD publish first runs the **pre-flight probe** (`drift-check.yml`, ~30 s): the same shared
 `.github/actions/drift-gate` composite that pages.yml enforces in-run, dispatched standalone so a
 drift morning never burns a publish dispatch on a run the probe could have predicted would fail.
