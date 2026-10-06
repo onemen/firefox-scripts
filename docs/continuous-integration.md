@@ -37,22 +37,32 @@ stay SHA-pinned (`.github/dependabot.yml`).
   token, valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`.
 - **Hash parity** (Windows) — `pnpm test:hash` verifies the JS and C installer hashes match, using
   the dev snapshot built by the publish gate (no second build).
-- **URL watchdog** (`.github/workflows/url-watchdog.yml`, weekly + on PRs touching the download map)
-  — re-resolves the latest version of every browser the E2E map installs (Firefox, Dev Edition,
-  LibreWolf, Floorp, Zen; Waterfox tracked by version only) from its vendor API and verifies the
-  download endpoint with a 1 KB ranged GET. Each new release is downloaded once, SHA-256'd and
-  folded into the `[url-watchdog] status` meta issue (per-browser status table + version history —
-  the dashboard and the SHA-256 ledger in one place). Opens issues on rot (404, HTML error page,
-  changed API shape) and same-version binary size changes — except nightly, whose vendor replaces
-  the binary within one N.0a1 window by design (#276): there the watchdog re-verifies the
-  replacement with a full download + SHA-256 instead. Each run logs the baseline's cache-hit status
-  and age, so a silently evicted Actions cache is visible instead of masquerading as a first run.
-  The PR mode (`--pr`) is stateless, always green, and surfaces findings as annotations. Run
-  manually via `workflow_dispatch`, or locally with
+- **URL watchdog** (`.github/workflows/url-watchdog.yml`, daily 22:00 UTC — the repo's ONLY cron,
+  plus PRs touching the download map) — re-resolves the latest version of every browser the E2E map
+  installs (Firefox, Dev Edition, LibreWolf, Floorp, Zen; Waterfox tracked by version only) from its
+  vendor API and verifies the download endpoint with a 1 KB ranged GET. Each new release is
+  downloaded once, SHA-256'd and folded into the `[url-watchdog] status` meta issue (per-browser
+  status table + version history — the dashboard and the SHA-256 ledger in one place). Opens issues
+  on rot (404, HTML error page, changed API shape) and same-version binary size changes — except
+  nightly, whose vendor replaces the binary within one N.0a1 window by design (#276): there the
+  watchdog re-verifies the replacement with a full download + SHA-256 instead. Each run logs the
+  baseline's cache-hit status and age, so a silently evicted Actions cache is visible instead of
+  masquerading as a first run. The PR mode (`--pr`) is stateless, always green, and surfaces
+  findings as annotations. Run manually via `workflow_dispatch`, or locally with
   `node tools/check-browser-downloads.mjs --dry-run`. Its pure reporting layer — the domain
   constants, drift classification, the E2E dispatch planner, and all GitHub-visible rendering
   (status table, version history, issue titles/bodies) — lives in `tools/ci/watchdog-report.mjs`,
   unit-testable without network access; the watchdog re-exports it for its importers.
+
+  **Nightly revalidation driver (#380)** — after the baseline save, the scheduled run dispatches the
+  nightly E2E surface from a plan file the check step wrote (`.watchdog/dispatch-plan.json`): one
+  FULL `e2e.yml` run (deduped against any finding-driven dispatch — two full runs share a
+  concurrency group and would cancel each other) plus `core-smoke-nightly.yml` (its build-ID cache
+  marker skips nights without a new build). The dispatch moved after the baseline save deliberately:
+  the dispatched runs read that baseline. e2e.yml has NO `push: [main]` and NO `schedule:` of its
+  own any more — the nightly is the only E2E run `main` gets — and its `e2e-triage` job files a
+  deduped failure issue (hash of the sorted failed-leg names) closed again on a green night.
+
 - **Skills watchdog** (`.github/workflows/skills-watchdog.yml`, weekly + on PRs touching the
   watchdog) — detects drift in the five third-party skills in `.agents/skills/` (ADR 0022): the
   gh-injected frontmatter metadata is the baseline (no cache, stateless in every mode), and each
@@ -91,6 +101,14 @@ runs as a required leg of the `updater` job (#35), not in the advisory matrix. W
 from the advisory matrix to its own required `updater-waterfox` leg (Windows-only, ADR 0025) after
 its soak; its current version must also be covered by the validated-versions record before a prod
 publish, and the pin-first break-glass runbook for vendor-flake days lives in that ADR.
+
+**The validated-versions record keys on the updater legs alone (ADR 0039)** — `record-validation`
+runs when `needs.updater.result == 'success'`, not when the whole gate is green: the gate summarizes
+every leg, and one red unrelated required leg or one red advisory must not freeze the record (and
+with it the publish drift gate) for a day. The recorder's own contract still refuses a record with
+holes, so the widening cannot weaken what lands in the file. ADR 0021's partial-dispatch skip is
+untouched: a single-browser escape never records; a FULL dispatch — the nightly revalidation — does,
+which is what keeps the record fresh without a main-push run.
 
 **Agent file-change hooks (recommended, per-workstation)** — agent clients (Codebuff, Claude Code,
 …) can run a command after each file edit and feed the output back to the agent in the same turn.

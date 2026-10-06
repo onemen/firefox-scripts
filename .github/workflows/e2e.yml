@@ -1534,14 +1534,26 @@ jobs:
     # always() the result comparisons below still decide the outcome, so the
     # job records only runs whose updater legs really validated.
     #
+    # Keyed on needs.updater.result ALONE (ADR 0039): the updater legs are the
+    # evidence this job records, so THEIR result decides — the gate is a
+    # summary of every leg, and one red unrelated required leg or one red
+    # advisory must not block the record. Before #380 a nightly whose
+    # `installer` leg flaked skipped the record entirely and froze the publish
+    # drift gate until the next night; the legs the recorder does NOT read
+    # have nothing to do with what it writes. The recorder's own contract
+    # still refuses a record with holes (every VALIDATED_BROWSER needs one
+    # artifact per expected OS, agreeing) — a partially-failed updater matrix
+    # has holes in .e2e-versions/ and exits 1, so widening the condition
+    # cannot weaken what lands in the record.
+    #
     # Partial-dispatch guard (ADR 0021): a single-browser manual escape
     # (workflow_dispatch with `browser` set) must NOT record — it validated
     # only one fork, and overwriting the record could let the publish gate
-    # ship a firefox/firefox-dev release that no full run ever tested.
+    # ship a firefox/firefox-dev release that no full run ever tested. A FULL
+    # dispatch (browser=all — the nightly revalidation, #426) still records.
     if: >-
-      always() && needs.e2e-gate.result == 'success' && needs.updater.result == 'success' &&
-      github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' &&
-      inputs.browser != '' && inputs.browser != 'all')
+      always() && needs.updater.result == 'success' && github.event_name != 'pull_request' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser != 'all')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Only this job touches issues (meta-issue comment). Job-level permissions

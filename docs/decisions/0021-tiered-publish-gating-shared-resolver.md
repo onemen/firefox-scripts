@@ -2,6 +2,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-05
+- **Amended:** [0039](./0039-record-validation-keys-on-updater-legs.md) (the validated-versions
+  record keys on the updater legs' result alone, not on the aggregate gate — the partial-dispatch
+  skip for `record-validation` survives unchanged)
 
 ## Context
 
