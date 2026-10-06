@@ -8,7 +8,6 @@ import { Aside, Steps } from '@astrojs/starlight/components'
 A **legacy add-on** is an XPI whose metadata lives in an RDF file called `install.rdf`, with its
 code in `bootstrap.js`. Firefox 57 removed the component that loaded these; `BootstrapLoader.js`
 puts it back.
-{/* TODO - add link to introduction.mdx in its new place !*/}
 
 ## The one-line idea
 
@@ -30,17 +29,6 @@ AddonManager.addExternalExtensionLoader({
 
 `BootstrapLoader.js` is a loader with the `install.rdf` manifest type. Everything it does hangs off
 that registration.
-
-{/* TODO - only add reference to xiaoxiaoflood/firefox-scripts in one place it the docs
-
-  The original scripts were created by [@xiaoxiaoflood](https://github.com/xiaoxiaoflood), but the
-  [firefox-scripts repository](https://github.com/xiaoxiaoflood/firefox-scripts) is no longer
-  maintained, and the code may be outdated.
-
-  also explained about the license and why we need to keep it
-
-
-*/}
 
 <Aside type="note">
   This file comes from

@@ -48,20 +48,13 @@ running it, download from the [Download](../download/) page and check the hash y
 
 ## Will an extension still work after a browser update?
 
-{/* TODO - make this section more clear, the updater only notify the user to that update are available to the code firefox-scripts. it does not update extensions, if user set extensions to automatically update (in about:addons)  then extensions will automatically update.
- but it does not guarantee that all extensions will keep working after every browser update, it depend on each extensions developer
-
-phrase this better
-
-*/}
-
 Not automatically — that is the problem the updater solves. Legacy add-ons hook deep into browser
 internals and most of them need an update for each Firefox release. The updater offers you the
 published packages once a day; when the browser update breaks an add-on, a fix is usually published
 shortly after.
 
 ## Waterfox / Zen / LibreWolf / Floorp
-{/* TODO - link to the section about supported browser , extend the explanations there */}
+
 Supported, and validated in CI on every release:
 
 - **Waterfox** ships its own Bootstrap Loader, so ours skips loading (loading both would
@@ -89,17 +82,6 @@ What you can rely on:
 Install add-ons and user scripts only from sources you trust.
 
 ## Can I install only the configuration files?
-{/* TODO - this section is confusing and wrong and has nothing to do with `TabMixPlus`
-
-
-the `configuration files` in the context of `firefox scripts` af the files in fx-folder
-the legacy add ons and use scripts can not work when installing only the configuration files
-
-with out installing the utils file legacy add-ons and user scripts will not work
-
-maybe add not about this also in installation page
-
-*/}
 
 Yes — the installer's component list is per package. If you only want your own `.uc.js` scripts and
 no legacy add-ons, install the configuration files and the utils but leave TabMixPlus out; if you
@@ -107,7 +89,7 @@ only run add-ons and write no scripts, the utils' updater still keeps itself cur
 anything extra.
 
 ## What about the macOS app bundle being replaced?
-{/* TODO - i do not know from where you bring this faq - and why we need this here */}
+
 macOS replaces the whole app bundle when it updates, which removes `config.js` from
 `Firefox.app/Contents/Resources`. Reinstall afterwards — and check **System Settings → Privacy &
 Security → Security** if macOS blocked the modified bundle from launching.

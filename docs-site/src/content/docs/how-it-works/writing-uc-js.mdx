@@ -82,8 +82,6 @@ this is privileged context, not a web page:
 | `document`, `window`       | the current chrome document and window                                                            |
 | `UC`, `_uc`                | the loader's registry and state                                                                   |
 
-{/* TODO: restart.uc.js does not shipped in utils.zip - you can reference the file as an example */}
-
 The [restart.uc.js](https://github.com/onemen/firefox-scripts/blob/main/core/chrome/restart.uc.js)
 script shipped in `utils.zip` is a good reference: it adds a toolbar button through
 `CustomizableUI.createWidget()`, registers a `chrome-document-loaded` observer, and restarts the
@@ -172,14 +170,6 @@ chrome window.
   releases.
 - **Version it.** `@version` plus a `@downloadURL` pointing at the file is what a checker script
   compares against.
-
-
-{/* TODO: update all links to introduction once you move it
-
-
-`The same applies to the add-ons it exists to run` - what does this mean ?
-
-*/}
 
 <Aside type="caution" title="These scripts are privileged">
   A `.uc.js` script runs with the browser's full privileges — the same level as
