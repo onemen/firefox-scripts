@@ -32,6 +32,7 @@ const {
   issueBody,
   issueTitle,
   parseContentRange,
+  buildDispatchPlan,
   planDispatches,
   renderHistory,
   seedHistoryFromBaseline,
@@ -43,6 +44,83 @@ const {
   FORK_BROWSERS,
   VALIDATED_BROWSERS,
 } = await import(scriptUrl);
+
+// ── Dispatch plan (#380) ──────────────────────────────────────────────────────
+// The check run decides; the workflow's post-save step dispatches. These pin
+// the two halves of that contract: what the plan contains, and that a nightly
+// run always carries exactly ONE full e2e run (two share a concurrency group
+// and would cancel each other) plus one core-smoke dispatch.
+
+const FINDINGS_ONE_FORK = [{kind: 'new-version', browser: 'librewolf', version: '157.0'}];
+const FINDINGS_HARD_GATE = [{kind: 'new-version', browser: 'firefox', version: '146.0'}];
+
+function withEventName(name, fn) {
+  const prev = process.env.GITHUB_EVENT_NAME;
+  if (name === undefined) delete process.env.GITHUB_EVENT_NAME;
+  else process.env.GITHUB_EVENT_NAME = name;
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.GITHUB_EVENT_NAME;
+    else process.env.GITHUB_EVENT_NAME = prev;
+  }
+}
+
+test('buildDispatchPlan: a manual run plans only what the findings ask for', () => {
+  withEventName('workflow_dispatch', () => {
+    const plan = buildDispatchPlan(FINDINGS_ONE_FORK);
+    assert.equal(plan.nightly, false);
+    assert.deepEqual(plan.plans, [
+      {workflow: 'e2e.yml', inputs: {browser: 'librewolf', version: ''}},
+    ]);
+  });
+});
+
+test('buildDispatchPlan: a quiet manual run plans nothing', () => {
+  withEventName('workflow_dispatch', () => {
+    assert.deepEqual(buildDispatchPlan([]).plans, []);
+  });
+});
+
+test('buildDispatchPlan: a nightly always carries one full e2e run + core smoke', () => {
+  withEventName('schedule', () => {
+    const plan = buildDispatchPlan([]);
+    assert.equal(plan.nightly, true);
+    assert.deepEqual(plan.plans, [
+      {workflow: 'e2e.yml', inputs: {browser: 'all', version: '', nightly: true}},
+      {workflow: 'core-smoke-nightly.yml', inputs: {}},
+    ]);
+  });
+});
+
+test("buildDispatchPlan: a nightly marks the findings' full run instead of adding a second", () => {
+  withEventName('schedule', () => {
+    const plan = buildDispatchPlan(FINDINGS_HARD_GATE);
+    assert.deepEqual(plan.plans, [
+      {workflow: 'e2e.yml', inputs: {browser: 'all', version: '', nightly: true}},
+      {workflow: 'core-smoke-nightly.yml', inputs: {}},
+    ]);
+  });
+});
+
+test('buildDispatchPlan: a nightly keeps the per-browser escapes alongside the full run', () => {
+  withEventName('schedule', () => {
+    const plan = buildDispatchPlan([...FINDINGS_HARD_GATE, ...FINDINGS_ONE_FORK]);
+    assert.deepEqual(
+      plan.plans.filter(p => p.workflow === 'e2e.yml').map(p => p.inputs.browser),
+      ['librewolf', 'all'] // planDispatches order: per-browser escapes, then the full run
+    );
+    assert.equal(plan.plans.filter(p => p.inputs.browser === 'all').length, 1);
+  });
+});
+
+test('buildDispatchPlan: no event name is not a nightly (local runs plan nothing)', () => {
+  withEventName(undefined, () => {
+    const plan = buildDispatchPlan([]);
+    assert.equal(plan.nightly, false);
+    assert.deepEqual(plan.plans, []);
+  });
+});
 
 test('compareBaseline: first run, new version, unchanged', () => {
   assert.equal(compareBaseline(null, {version: '154.0.1'}), 'first-run');

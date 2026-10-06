@@ -434,11 +434,15 @@ const CONTRACTS = [
     // that pinned release (ADR 0034). It reads a green leg's artifact and
     // writes the fork record — it must never be an input to the gate, or a fork
     // release would gate every merge.
+    // e2e-triage is post-gate too (#380): it reads the run's job list through
+    // the API and files the nightly failure issue — a reporter, not a gate
+    // input, and it needs the gate so a cancelled run skips it.
     postGate: [
       'record-validation',
       'record-fork-validation',
       'cleanup-ci-downloads',
       'snap-store-watch',
+      'e2e-triage',
     ],
   },
   {

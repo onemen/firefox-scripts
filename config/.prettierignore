@@ -11,6 +11,7 @@ logs
 pnpm-lock.yaml
 # build outputs (installer Makefile + publish scripts dump into dist/)
 dist
+review-history
 # analyze-c.mjs result cache (hash-named JSON files, gitignored like .eslintcache)
 .analyzer-cache
 # BEGIN managed: third-party skills (generated — run pnpm format:fix)

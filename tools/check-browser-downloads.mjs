@@ -156,8 +156,18 @@ const RANGE_BYTES = 1024;
  */
 const OK_STATUSES = new Set(['ok', 'new-version', 'first-run']);
 
-/** E2E workflow dispatched when a new release is recorded (repo file name). */
+/** E2E workflow the nightly revalidation dispatches (repo file name). */
 const E2E_WORKFLOW = 'e2e.yml';
+
+/** The scheduled core smoke, dispatched nightly by the same plan (#380). */
+const CORE_SMOKE_WORKFLOW = 'core-smoke-nightly.yml';
+
+/**
+ * The plan file a check run leaves in the baseline dir for the workflow's
+ * post-save step to replay — the dispatch decision is made where the findings
+ * are, the dispatch itself runs after the baseline is saved (#380).
+ */
+const DISPATCH_PLAN_FILE = 'dispatch-plan.json';
 
 /**
  * Resolve the current release version for a browser via the shared resolver
@@ -185,15 +195,142 @@ export async function fetchEsrVersions() {
 }
 
 /**
- * Dispatch the E2E workflow on main for one planned leg. `browser` absent = the
- * full matrix (the hard-gate path, which also runs record-validation). Fork
- * dispatches set the `browser` input, collapsing the matrix to that leg.
+ * Dispatch one planned workflow run on main. `inputs` must contain only keys
+ * the target workflow declares — an unknown input is an API error, so the plan
+ * never carries a key the workflow does not declare.
  */
-async function dispatchE2E(token, repo, {browser}) {
-  await ghApi(token, `/repos/${repo}/actions/workflows/${E2E_WORKFLOW}/dispatches`, {
+async function dispatchWorkflow(token, repo, {workflow, inputs}) {
+  await ghApi(token, `/repos/${repo}/actions/workflows/${workflow}/dispatches`, {
     method: 'POST',
-    body: {ref: 'main', inputs: {browser: browser || 'all', version: ''}},
+    body: {ref: 'main', inputs},
   });
+}
+
+/**
+ * The dispatch plan one check run leaves for the workflow's post-save step.
+ *
+ * Finding-driven part: exactly `planDispatches`' output — one dispatch per new
+ * fork release (its own `browser` escape), one for ESR drift, one full run when
+ * a hard gate moved.
+ *
+ * Nightly part (#380): when the run is the scheduled nightly, a FULL e2e run is
+ * dispatched whatever the findings — the workflow no longer has a `schedule:`
+ * or `push: [main]` trigger, so a quiet week must not be a coverage hole — and
+ * core-smoke-nightly.yml is dispatched once (its own build-ID cache marker
+ * skips nights without a new build, so this is cheap).
+ *
+ * Dedupe: two full e2e runs share the `e2e-<ref>` concurrency group with
+ * cancel-in-progress, so the second would cancel the first. A nightly that
+ * already has a full run from the findings marks it instead of adding one.
+ *
+ * `GITHUB_EVENT_NAME === 'schedule'` is the nightly signal — the workflow's own
+ * cron; a manual watchdog dispatch keeps the finding-driven behavior only.
+ *
+ * @param {{kind: string; browser: string}[]} findings
+ * @returns {{nightly: boolean; plans: {workflow: string; inputs: object}[]}}
+ */
+export function buildDispatchPlan(findings) {
+  const nightly = process.env.GITHUB_EVENT_NAME === 'schedule';
+  const plans = planDispatches(findings).map(plan => ({
+    workflow: E2E_WORKFLOW,
+    inputs: {browser: plan.browser || 'all', version: ''},
+  }));
+  if (nightly) {
+    const full = plans.find(p => p.inputs.browser === 'all');
+    if (full) full.inputs.nightly = true;
+    else plans.push({workflow: E2E_WORKFLOW, inputs: {browser: 'all', version: '', nightly: true}});
+    plans.push({workflow: CORE_SMOKE_WORKFLOW, inputs: {}});
+  }
+  return {nightly, plans};
+}
+
+/**
+ * Replay the plan the check run wrote (#380). Called by the workflow AFTER the
+ * baseline save — the dispatched runs read that baseline, so dispatching before
+ * the save validated the previous one. A check run that wrote no plan
+ * (report-only, --dry-run, or a failed check) has nothing to replay.
+ *
+ * @param {{token: string; repo: string; dryRun: boolean}} io
+ * @returns {Promise<void>}
+ */
+export async function dispatchRevalidation({token, repo, dryRun}) {
+  const planFile = path.join(
+    process.env.BASELINE_DIR || path.join(REPO_ROOT, '.watchdog'),
+    DISPATCH_PLAN_FILE
+  );
+  if (!fs.existsSync(planFile)) {
+    console.log(`no dispatch plan at ${planFile} — nothing to replay`);
+    return;
+  }
+  const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+  // Consume the plan BEFORE dispatching (batch-review finding, 2026-10-06):
+  // the plan lives inside the baseline cache's directory, so the next run's
+  // restore would otherwise bring it back and replay the previous night's
+  // dispatches — a second full nightly e2e run, a second core-smoke, the
+  // finding-driven fork escapes. Deleting it here makes "replay at most
+  // once" true by construction: the run that observes a plan is the one that
+  // dispatched it. A dry-run keeps the file (it dispatches nothing, so a
+  // later real replay stays correct).
+  if (!dryRun) fs.rmSync(planFile, {force: true});
+  console.log(
+    `dispatching ${plan.plans.length} workflow run(s)` +
+      (plan.nightly ? ' (nightly revalidation)' : '') +
+      (dryRun ? ' [dry-run]' : '')
+  );
+  for (const entry of plan.plans) {
+    const what = entry.workflow + (entry.inputs?.browser ? ` (${entry.inputs.browser})` : '');
+    try {
+      if (!dryRun) await dispatchWorkflow(token, repo, entry);
+      console.log(`  dispatched ${what}`);
+    } catch (err) {
+      console.log(
+        `::warning file=tools/check-browser-downloads.mjs::dispatch failed for ${what}: ${err.message}`
+      );
+      if (entry.workflow === CORE_SMOKE_WORKFLOW) {
+        await notifyCoreSmokeDispatchFailure(err.message);
+        continue;
+      }
+      // See notifyDispatchFailure: not retried on later runs — make the
+      // untested release visible with a deduped issue per affected browser
+      // (the full dispatch covers both hard gates).
+      for (const browser of entry.inputs.browser === 'all' ?
+        VALIDATED_BROWSERS
+      : [entry.inputs.browser]) {
+        await notifyDispatchFailure(browser, err.message);
+      }
+    }
+  }
+}
+
+/**
+ * Notify a failed core-smoke dispatch. Same shape as notifyDispatchFailure: the
+ * marker is keyed on the build ID and this run did not write it, so nothing
+ * re-dispatches on its own — the issue stays open until the operator retries.
+ */
+async function notifyCoreSmokeDispatchFailure(reason) {
+  try {
+    const token = process.env.GITHUB_TOKEN || '';
+    const repo = process.env.GITHUB_REPOSITORY || '';
+    const runUrl =
+      process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY ?
+        `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`
+      : 'local';
+    const title = '[url-watchdog] core smoke dispatch failed';
+    const body =
+      `Watchdog run: ${runUrl}\n\n` +
+      'The nightly dispatch of core-smoke-nightly.yml failed, so this Nightly ' +
+      'build is unvalidated and the marker was not written — later nights will ' +
+      `NOT re-dispatch it:\n\n- ${reason}\n\n` +
+      'Retry the dispatch manually, then close this issue:\n\n' +
+      '`gh workflow run core-smoke-nightly.yml`';
+    if (!token || !repo || process.argv.includes('--dry-run')) {
+      console.log(`[notification skipped] would open: ${title}`);
+      return;
+    }
+    await openIssueIfNew(token, repo, title, body);
+  } catch (err) {
+    console.log(`  notification failed (non-fatal): ${err.message}`);
+  }
 }
 
 /** Parse a Content-Range header ('bytes 0-1023/104857600') → total size. */
@@ -500,6 +637,17 @@ export async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const prMode = process.argv.includes('--pr');
   const driftMode = process.argv.includes('--drift');
+  // Replay the dispatch plan the check run wrote (#380). Its own mode: the
+  // workflow calls it as a separate step AFTER the baseline save, so it must
+  // not re-run the vendor probes.
+  if (process.argv.includes('--dispatch')) {
+    await dispatchRevalidation({
+      token: process.env.GITHUB_TOKEN || '',
+      repo: process.env.GITHUB_REPOSITORY || '',
+      dryRun,
+    });
+    return;
+  }
   // Report-only: skip every vendor-facing probe (no version lookups, no
   // endpoint checks, no downloads) and only rebuild the meta issue from the
   // existing baseline + the LIVE Actions-cache inventory. Cost: two GitHub API
@@ -1027,36 +1175,28 @@ export async function main() {
     fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + '\n');
   }
 
-  // Auto-dispatch the browser E2E for new releases (issue #143): docs/ci-
-  // inventory.md promised this ("should dispatch targeted updater compatibi-
-  // lity E2E") but it was never wired up — new releases sat untested until an
-  // unrelated push or a manual dispatch. Runs only after the baseline persis-
-  // ted (the fail-closed exit above already returned otherwise), so a browser
-  // is dispatched at most once per recorded version — which also means a
-  // FAILED dispatch is never retried by later runs (the version is no longer
-  // new): it surfaces as a run warning plus a deduped per-browser issue.
-  if (!prMode && !dryRun && token && repo) {
-    const plans = planDispatches(findings);
-    if (plans.length > 0) {
-      console.log(`\nDispatching browser E2E for ${plans.length} new release(s):`);
-      for (const plan of plans) {
-        try {
-          await dispatchE2E(token, repo, plan);
-          console.log(`  dispatched e2e.yml on main (${plan.browser || 'full matrix'})`);
-        } catch (err) {
-          console.log(
-            `::warning file=tools/check-browser-downloads.mjs::E2E dispatch failed ` +
-              `for ${plan.browser || 'full matrix'}: ${err.message}`
-          );
-          // See the block comment: not retried on later runs — make the
-          // untested release visible with a deduped issue per affected browser
-          // (the full dispatch covers both hard gates).
-          for (const browser of plan.browser ? [plan.browser] : VALIDATED_BROWSERS) {
-            await notifyDispatchFailure(browser, err.message);
-          }
-        }
-      }
-    }
+  // Plan the dispatch instead of performing it (#380). The decision lives here
+  // — where the findings are — and the dispatch moved to the workflow's step
+  // AFTER the baseline save: the dispatched runs read that baseline (esr-matrix
+  // consumes it, record-validation's pre-flight compares against it), so the
+  // old in-process dispatch validated the PREVIOUS baseline. Runs only after
+  // the baseline persisted (the fail-closed exit above already returned
+  // otherwise), so a browser is planned at most once per recorded version —
+  // which also means a FAILED dispatch is never retried by later runs (the
+  // version is no longer new): it surfaces as a run warning plus a deduped
+  // per-browser issue, from the replay step.
+  if (!prMode && !dryRun && !reportOnly && token && repo) {
+    const plan = buildDispatchPlan(findings);
+    fs.mkdirSync(baselineDir, {recursive: true});
+    fs.writeFileSync(
+      path.join(baselineDir, DISPATCH_PLAN_FILE),
+      JSON.stringify(plan, null, 2) + '\n'
+    );
+    console.log(
+      `\nDispatch plan: ${plan.plans.length} workflow run(s)` +
+        (plan.nightly ? ' (nightly revalidation)' : '') +
+        ` -> ${path.join(baselineDir, DISPATCH_PLAN_FILE)}`
+    );
   }
 
   console.log(

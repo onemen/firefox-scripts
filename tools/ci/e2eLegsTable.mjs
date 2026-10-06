@@ -87,6 +87,9 @@ const JOB_PURPOSE = {
   'cleanup-ci-downloads':
     'Deletes the ci-downloads release a watchdog dispatch created. Never touches ' +
     'another release.',
+  'e2e-triage':
+    'Files the nightly revalidation’s deduped failure issue and closes it on a ' +
+    'green night — the only E2E signal main gets (#380).',
 };
 
 // The three browser roles the watchdog keeps, read out of the module that owns

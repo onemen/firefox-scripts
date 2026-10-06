@@ -21,11 +21,11 @@
 name: Core smoke (Nightly)
 
 on:
-  schedule:
-    # 05:30 UTC — after the first daily Nightly build lands on
-    # archive.mozilla.org (Nightly ships twice a day; one check is enough to
-    # catch upstream regressions within ~24 h).
-    - cron: '30 5 * * *'
+  # Dispatched nightly by the url-watchdog (22:00 UTC, #380) — one cron drives
+  # the whole nightly surface instead of two timers that GitHub starts up to
+  # hours apart (measured +2h56…+7h02 over six weeks). The build-ID cache
+  # marker below still skips nights without a new build, so the dispatch is
+  # cheap; a manual dispatch stays available for an out-of-band re-check.
   workflow_dispatch:
 
 permissions:
