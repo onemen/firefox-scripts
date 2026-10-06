@@ -266,21 +266,43 @@ static inline void log_msg(const char *fmt, ...) {
 
 #if !defined(_WIN32)
 #include <spawn.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 extern char **environ;
 
 /**
- * Spawn argv[0] with argv (no shell), wait for completion, and return the
- * child's exit status (0 = success), or -1 when the spawn or wait fails.
- * Replaces the audit-2026-10-06 system()/popen shell-outs: arguments reach
- * the child as an argv array, never through a shell.
+ * Spawn argv[0] with argv through posix_spawnp — PATH-searched ("open",
+ * "xdg-open" and bare browser names resolve like the old system() shell
+ * did), argument-array based (no shell, audit 2026-10-06 #432).
+ *
+ * wait_child: when nonzero, wait and return the child's exit status
+ * (0 = success, -1 on spawn/wait failure). When zero, return 0 once the
+ * child is running — for GUI programs that outlive the caller, the old
+ * system("… &") behavior; the child is reaped when this process exits.
+ * err_to_devnull: point the child's stderr at /dev/null, restoring the old
+ * shell redirect for xdg-open's noise.
  */
-static inline int spawn_argv(char *const argv[]) {
+static inline int spawn_argv_ex(char *const argv[], int wait_child, int err_to_devnull) {
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_t *fap = NULL;
+    if (err_to_devnull) {
+        if (posix_spawn_file_actions_init(&fa) != 0) return -1;
+        posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+        fap = &fa;
+    }
     pid_t pid = (pid_t)-1;
-    if (posix_spawn(&pid, argv[0], NULL, NULL, argv, environ) != 0) return -1;
+    int rc = posix_spawnp(&pid, argv[0], fap, NULL, argv, environ);
+    if (fap) posix_spawn_file_actions_destroy(fap);
+    if (rc != 0) return -1;
+    if (!wait_child) return 0;
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) return -1;
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+/** Spawn argv and wait for its exit status (short-lived children). */
+static inline int spawn_argv(char *const argv[]) {
+    return spawn_argv_ex(argv, 1, 0);
 }
 #endif
 
@@ -309,7 +331,9 @@ static inline int open_browser(const char *url, const char *browser_exe) {
 #else
     if (browser_exe) {
         char *argv[] = { (char *)browser_exe, (char *)url, NULL };
-        return spawn_argv(argv) == 0 ? 0 : -1;
+        // The browser outlives this process; fire and forget like the old
+        // system("\"browser\" \"url\" &") did — never wait for a session.
+        return spawn_argv_ex(argv, 0, 0) == 0 ? 0 : -1;
     }
     char *argv[] = { "xdg-open", (char *)url, NULL };
     return spawn_argv(argv) == 0 ? 0 : -1;
@@ -335,7 +359,7 @@ static inline int open_folder(const char *path) {
     /* xdg-open has no meaningful exit status here; silence its stderr the
      * way the old shell redirect did. */
     char *argv[] = { "xdg-open", (char *)path, NULL };
-    return spawn_argv(argv) == 0 ? 0 : -1;
+    return spawn_argv_ex(argv, 1, 1) == 0 ? 0 : -1;
 #endif
 }
 
