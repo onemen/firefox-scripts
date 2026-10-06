@@ -36,7 +36,7 @@ and is **not** scanned, so your scripts go in `chrome/`, next to `userChrome.css
 └── chrome/
     ├── userChrome.css
     ├── my-script.uc.js          ← yours
-    ├── restart.uc.js            ← shipped with utils.zip
+    ├── restart.uc.js            ← a worked example, see below
     └── utils/                   ← shipped scripts (not scanned)
 ```
 
@@ -119,9 +119,7 @@ is recorded in `UC.webExts` (background pages) or `UC.sidebar`, and the observer
 `UCJS:WebExtLoaded` / `UCJS:SidebarLoaded` are notified. That is how a user script can talk to a
 modern extension.
 
-## Related
 
-- [Writing your own .uc.js](../writing-uc-js/) — the full tutorial.
-- `restart.uc.js`, shipped in `utils.zip`, is a worked example of a real script:
+- `restart.uc.js` is a worked example of a real script in this repository's `core/chrome/` tree:
   it uses `@include main` and `@onlyonce`, adds a toolbar button, and restarts the application on
-  click.
+  click. It is not necessarily shipped inside `utils.zip`, so treat the repo file as the authoritative example.
