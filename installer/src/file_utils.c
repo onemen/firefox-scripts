@@ -180,7 +180,7 @@ int mkdir_recursive(const char *path) {
     }
     free(wdir);
 #else
-    if (mkdir(tmp, 0700) != 0 && errno != EEXIST) return -1;
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
 #endif
     return 0;
 }
