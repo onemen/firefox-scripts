@@ -32,8 +32,8 @@ export const starlightConfig = {
     Head: "./src/components/Head.astro",
   },
   sidebar: [
-    { label: "Introduction", link: "/introduction" },
     { label: "Installation", link: "/installation" },
+    { label: "Introduction", link: "/introduction" },
     { label: "Download", link: "/download" },
     {
       label: "How it works",

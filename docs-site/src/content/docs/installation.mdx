@@ -1,7 +1,6 @@
 ---
 title: Installation
 description: Install the Firefox Scripts helper scripts with the installer, or by hand — including the exact paths per OS.
-order: -1
 ---
 
 import chromeUtils from '@assets/chrome_utils.png'
@@ -10,7 +9,8 @@ import { Image } from 'astro:assets'
 
 :::note
 Since Firefox removed the internal component that loads _legacy_ extension, in order to install
-**Tab Mix Plus**, or any other _legacy_ extension, you have to install 3rd party helper scripts.<br/>
+**Tab Mix Plus**, or any other _legacy_ extension, you have to install 3rd party helper scripts.
+The short version of why is in [Introduction](../introduction/#the-short-version).
 :::
 
 :::tip
@@ -172,17 +172,17 @@ contain the following files:
 
         **Note**:<br/> The default path to Firefox on `Windows` is typically:
         <div class="ml-4 !mt-0">
-          64-bit Firefox: `C:\Program Files\Mozilla Firefox\` <br/>
-          32-bit Firefox: `C:\Program Files (x86)\Mozilla Firefox\`
+          64-bit Firefox: `C:\\Program Files\\Mozilla Firefox\\` <br/>
+          32-bit Firefox: `C:\\Program Files (x86)\\Mozilla Firefox\\`
         </div>
 
         **Verify the path**:<br/> Check the actual path to your **Firefox root directory**. If it
         differs from the default, replace the path accordingly in the following instructions.
 
         **Copy the configuration files extracted from `fx-folder.zip`**:
-        - copy the file `config.js` to `[PATH TO FIREFOX.EXE]\config.js`.
+        - copy the file `config.js` to `[PATH TO FIREFOX.EXE]\\config.js`.
         - copy the file `config-prefs.js` to
-          `[PATH TO FIREFOX.EXE]\defaults\pref\config-prefs.js`
+          `[PATH TO FIREFOX.EXE]\\defaults\\pref\\config-prefs.js`
 
         </div>
 
@@ -309,11 +309,6 @@ current automatically, wire it from the same source the TabMixPlus docs use (see
 1. **Download the installer** for your OS from the [latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest).
 2. **Run it** and pick the browsers and components to install in the tab it opens.
 3. **Restart the browser.** From then on, updates arrive on their own.
-
-:::note
-Since Firefox removed the internal component that loads _legacy_ extension, in order to install
-**Tab Mix Plus**, or any other _legacy_ extension, you have to install 3rd party helper scripts.
-:::
 
 [FX_FOLDER]: https://onemen.github.io/firefox-scripts/fx-folder.zip
 [UTILS_EXTENSIONS_AND_SCRIPTS]: https://onemen.github.io/firefox-scripts/utils.zip
