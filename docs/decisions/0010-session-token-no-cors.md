@@ -2,6 +2,8 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-21
+- **Amended:** 2026-09-15 — entropy note corrected (true 128-bit; earlier builds yielded 64 bits),
+  see the Decision section
 
 ## Context
 

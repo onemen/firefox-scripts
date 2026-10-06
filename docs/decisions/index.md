@@ -154,6 +154,7 @@ Micro-decisions deliberately left out of the log so nobody re-adds them:
   test harness, see `test/e2e/shared/downloads.mjs` and ADR 0017.
 - The daily-gate rate limit (#333, 2026-09-26): an up-to-date check recording its day is a revision
   of [0012]'s own pref model, amended inline on that record — no new primitive, so no new record.
-  The proposed-and-withdrawn ADR 0037 number stays free for the next record.
+  (The once-proposed ADR 0037 number was later taken by the Snap cache-seed record; free-number
+  claims live in the checker now, not in prose.)
 - URL watchdog internals (weekly + PR modes, per-release SHA-256 ledger in issues, baseline in the
   Actions cache) — monitoring tooling, see `.github/workflows/url-watchdog.yml` and ADR 0017.
