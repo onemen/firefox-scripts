@@ -1,19 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * tools/ci/cleanupCiDownloads.mjs — CI-side cleanup of the temporary
- * `ci-downloads` manual-escape release (ADR 0021).
- *
- * Called by the e2e.yml `cleanup-ci-downloads` job after a single-browser
- * manual-escape run. Deletes the asset the run consumed — matched by the
- * resolver's exact expected asset name for inputs.browser + inputs.version
- * (`pnpm ci:download` always dispatches with the version pinned, so the name is
- * deterministic; no version, no deletion — we never guess), then deletes the
- * release + tag when no assets remain — the steady state is "the ci-downloads
- * release does not exist".
- *
- * Never deletes an asset it cannot attribute to the dispatched browser, and
- * never touches any other release.
+ * CI-side cleanup of the temporary `ci-downloads` manual-escape release (ADR
+ * 0021), run by the e2e.yml `cleanup-ci-downloads` job. Deletes the asset the
+ * run consumed — matched by the resolver's exact expected name for browser +
+ * pinned version — then the release + tag once no assets remain. Never touches
+ * any other release.
  */
 
 import {execFileSync} from 'node:child_process';
@@ -24,13 +16,7 @@ function runGh(args) {
 }
 
 /**
- * Run the cleanup against an injected `gh` runner (the CLI passes `runGh`;
- * tests pass a fixture-backed recorder, so every delete path here is driven
- * against fixtures — never a real repository or release).
- *
- * Returns the step's exit code: 0 = cleaned or nothing to clean, 1 = BROWSER
- * unset. Unexpected `gh` failures throw; the CLI wrapper below turns those into
- * exit 1.
+ * Unexpected `gh` failures throw; the CLI wrapper turns those into exit 1.
  *
  * @param {{
  *   browser?: string;
@@ -38,7 +24,7 @@ function runGh(args) {
  *   gh?: (args: string[]) => string;
  *   log?: (...data: any[]) => void;
  * }} [opts]
- * @returns {number}
+ * @returns {number} 0 = cleaned or nothing to clean, 1 = BROWSER unset
  */
 export function cleanupCiDownloads({
   browser = '',
@@ -60,10 +46,8 @@ export function cleanupCiDownloads({
   }
 
   const assets = release.assets || [];
-  // Match only by the resolver's exact expected asset name (browser + pinned
-  // version — ciDownload always dispatches with one). Guessing ("newest
-  // matching asset") could delete an asset the run never consumed, e.g. when
-  // the resolver answered from an official mirror before reaching ci-downloads.
+  // Match only by exact expected name for browser + pinned version — guessing
+  // ("newest matching asset") could delete an asset the run never consumed.
   const target =
     version ? (assets.find(a => a.name === ciDownloadsAssetName(browser, version)) ?? null) : null;
 
@@ -74,7 +58,7 @@ export function cleanupCiDownloads({
     log(`no ${browser} asset found in ci-downloads — leaving the release untouched`);
   }
 
-  // Delete the release + tag once no assets remain (steady state: absent).
+  // Delete the release + tag once no assets remain.
   const after = JSON.parse(gh(['release', 'view', 'ci-downloads', '--json', 'assets']));
   if ((after.assets || []).length === 0) {
     log('no assets remain — deleting the ci-downloads release + tag');

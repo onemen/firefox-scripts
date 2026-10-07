@@ -1,21 +1,6 @@
-// test/unit/publish/stagingTreeVerify.test.mjs — the staging-tree
-// completeness contract between pass 1 and the single writer of the two-pass
-// publish (build-and-upload.yml, P2-16 / audit 2026-10-06 §6.6).
-//
-// The check is an inline `node -e` step: it re-reads what a staged publish
-// would ship (the union of every build leg's build-manifest.*.json against
-// dist/.build) and must fail the run BY ASSET NAME when a staged file is
-// missing. Because the logic lives inside YAML, a regression that deletes or
-// mangles the step surfaces only as a publish that silently ships an
-// incomplete binary set — every other contract stays green.
-//
-// So these tests extract THE REAL step out of the workflow (presence is
-// itself asserted, and it must run before the pass-2 publish step) and
-// execute its script against fixture trees:
-//
-//   - complete tree → exit 0, every asset listed;
-//   - a missing staged file → exit 1, stderr names the missing asset;
-//   - no manifests at all (idle publish) → exit 0.
+// The staging-tree check lives inline as `node -e` in build-and-upload.yml, so
+// a regression that deletes or mangles it would ship an incomplete binary set
+// while every other contract stays green. These tests extract the real step.
 
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';

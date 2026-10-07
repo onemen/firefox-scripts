@@ -1,23 +1,6 @@
-// test/unit/publish/upload.test.mjs — the publish CLI's fail-fast flag
-// contract (P2-16, audit 2026-10-06).
-//
-// upload.mjs parses its flags at MODULE TOP LEVEL (removed flags and the
-// --build-only/--skip-build exclusion throw during import) and requireMode()
-// is main()'s first statement — so every case below exits before any git,
-// network or filesystem side effect. The assertions are the guard itself:
-//
-//   - a removed invocation (--dry-run, --ci, --skip, …) fails LOUDLY instead
-//     of silently turning into a real upload (the historical fear behind the
-//     REMOVED_FLAGS list);
-//   - --mode and --include have no silent default (an accidental prod publish
-//     is impossible without consciously typing --mode=prod, and a publish
-//     always states what it publishes, ADR 0030);
-//   - --build-only and --skip-build are mutually exclusive (a build-only
-//     pass that also skipped building would have nothing to sign).
-//
-// Deliberately NOT covered here: the build/upload flow behind those guards
-// (needs a real repository, tokens and a staged tree) — that path is rehearsed
-// offline by snapshot:*/release:stage and exercised by the CI publish itself.
+// upload.mjs parses flags at module top level and requireMode() is main()'s
+// first statement, so every case below exits before any git, network or
+// filesystem side effect. --mode has no silent default (ADR 0030).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

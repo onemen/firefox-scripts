@@ -95,10 +95,6 @@ const USAGE = `Usage: pnpm ci:download -- <installer-file> [--browser <name>] [-
   --clean            delete the ci-downloads release + tag and exit`;
 
 /**
- * The CLI body, against an injected `gh` runner (the CLI passes `runGh`; tests
- * pass a fixture-backed recorder, so create/upload/delete/dispatch are driven
- * against fixtures — never a real repository or release).
- *
  * @param {{
  *   argv: string[];
  *   gh?: (args: string[], opts?: {input?: string}) => string;

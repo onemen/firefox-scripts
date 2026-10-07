@@ -1,23 +1,6 @@
-// test/unit/tools/ciDownload.mjs — the manual-escape hatch (ADR 0021) on the
-// other side of the pair: it CREATES the `ci-downloads` release, uploads the
-// asset renamed to the resolver's expected name, and dispatches the run whose
-// cleanup job later deletes it (P2-16, audit 2026-10-06).
-//
-// Every gh call is an injected, scripted recorder — create/upload/delete/
-// dispatch are driven against fixtures only, never a real repository or a real
-// release. What the tests pin:
-//
-//   - `--clean` deletes exactly `ci-downloads` + tag; a 404 is success (the
-//     steady state is "release absent"), any other gh failure propagates to a
-//     non-zero exit instead of being swallowed;
-//   - the asset is uploaded UNDER THE RESOLVER'S EXPECTED NAME (renamed into
-//     a tmp dir — the user's installer file is never staged or touched);
-//   - the dispatch always pins `version`, because the cleanup job matches the
-//     consumed asset by exact expected name (an unpinned dispatch would make
-//     cleanup undeletable);
-//   - validation failures (no file, missing file, unknown browser, version
-//     not inferable, valueless flag) exit 1 before any gh call;
-//   - `inferBrowserVersion` keeps the four supported installer shapes.
+// Every gh call is an injected recorder: create/upload/delete/dispatch are
+// driven against fixtures, never a real repository or release. The dispatch
+// must pin `version`, because cleanup matches the asset by exact name.
 
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';

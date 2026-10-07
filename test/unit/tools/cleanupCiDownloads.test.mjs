@@ -1,25 +1,6 @@
-// test/unit/tools/cleanupCiDownloads.test.mjs — the delete paths of the
-// cleanup-ci-downloads job (ADR 0021), driven against fixtures only (P2-16,
-// audit 2026-10-06).
-//
-// This step runs in the only E2E job holding `contents: write` and is the one
-// place that deletes a release asset, a release and a tag. The irreversible
-// surface is pinned here by guards the tests would catch breaking — a guard
-// removed from the tool fails an assertion below instead of being absorbed by
-// a forgiving mock:
-//
-//   - release absent → exit 0, no deletes (the steady state);
-//   - BROWSER unset → exit 1, not a single gh call (the step fails loudly);
-//   - the asset is matched by the resolver's EXACT expected name only, and
-//     only with a pinned version — no version, no deletion (never guess);
-//   - release + tag are deleted only once NO assets remain (another escape
-//     in flight keeps the release alive);
-//   - every call stays inside the `ci-downloads` namespace — a tag or release
-//     outside it is never named.
-//
-// The gh calls are an injected, scripted recorder (tools/ci/cleanupCiDownloads
-// exports the body for exactly this), so no test can reach a real repository
-// or a real release.
+// The only path that deletes a release asset, a release and a tag. gh calls
+// are an injected recorder, so no test can reach a real repository; the asset
+// is matched by exact expected name and only with a pinned version.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,9 +25,8 @@ function notFound() {
 }
 
 /**
- * Fixture-backed gh: every call is recorded, the next scripted response is
- * returned (object → JSON string, Error → thrown), and an unscripted call
- * throws so an unexpected sequence fails the test instead of guessing.
+ * Fixture-backed gh: recorded calls, scripted responses (object → JSON string,
+ * Error → thrown); an unscripted call throws.
  *
  * @param {(object | string | Error)[]} responses
  */
@@ -144,10 +124,9 @@ test('every gh call stays inside the ci-downloads namespace', () => {
 });
 
 test('first-read lookup failure → treated as “release absent”: exit 0, no deletes', () => {
-  // Current contract: the INITIAL `gh release view` failure (404 in the
-  // steady state) short-circuits to "nothing to clean". Deliberately
-  // asymmetric with ciDownload's --clean, which rethrows non-404 — pinning
-  // both here makes any future tightening an explicit, reviewed change.
+  // A 404 on the initial `gh release view` short-circuits to "nothing to
+  // clean"; ciDownload's --clean rethrows non-404. Pinning both keeps any
+  // tightening explicit.
   for (const failure of [
     notFound(),
     Object.assign(new Error('HTTP 500: server error'), {status: 500}),
