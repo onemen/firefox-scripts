@@ -81,61 +81,83 @@ export function inferBrowserVersion(filename) {
 }
 
 /** Run gh, throwing with the captured stderr on failure. */
-function gh(args, {input} = {}) {
+function runGh(args, {input} = {}) {
   return execFileSync('gh', args, {encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe']});
 }
 
-function usage(code = 1) {
-  console.log(`Usage: pnpm ci:download -- <installer-file> [--browser <name>] [--version <v>]
+const USAGE = `Usage: pnpm ci:download -- <installer-file> [--browser <name>] [--version <v>]
                  [--no-dispatch] [--clean]
 
   <installer-file>   path to the installer (e.g. from firefox-updater's .local.downloads/)
   --browser <name>   override browser inference (librewolf|waterfox|floorp|zen)
   --version <v>      override version inference (also pins the E2E dispatch)
   --no-dispatch      upload only — do not dispatch the E2E run
-  --clean            delete the ci-downloads release + tag and exit`);
-  process.exit(code);
-}
+  --clean            delete the ci-downloads release + tag and exit`;
 
-async function main() {
-  const args = process.argv.slice(2);
-  if (args.includes('--help') || args.includes('-h')) usage(0);
-  const clean = args.includes('--clean');
-  const dispatch = !args.includes('--no-dispatch');
+/**
+ * The CLI body, against an injected `gh` runner (the CLI passes `runGh`; tests
+ * pass a fixture-backed recorder, so create/upload/delete/dispatch are driven
+ * against fixtures — never a real repository or release).
+ *
+ * @param {{
+ *   argv: string[];
+ *   gh?: (args: string[], opts?: {input?: string}) => string;
+ *   log?: (...data: any[]) => void;
+ * }} opts
+ * @returns {number} 0 = success (or --help), 1 = usage/validation failure
+ */
+export function ciDownload({argv, gh = runGh, log = console.log} = {}) {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    log(USAGE);
+    return 0;
+  }
+  const clean = argv.includes('--clean');
+  const dispatch = !argv.includes('--no-dispatch');
+  let flagError = false;
   const flag = name => {
-    const i = args.indexOf(name);
+    const i = argv.indexOf(name);
     if (i === -1) return null;
-    const v = args[i + 1];
+    const v = argv[i + 1];
     if (v === undefined || v.startsWith('--')) {
       console.error(`✗ ${name} given without a value`);
-      usage();
+      flagError = true;
+      return null;
     }
     return v;
   };
   const browserFlag = flag('--browser');
+  if (flagError) {
+    log(USAGE);
+    return 1;
+  }
   const versionFlag = flag('--version');
+  if (flagError) {
+    log(USAGE);
+    return 1;
+  }
   const excluded = new Set([browserFlag, versionFlag].filter(v => v !== null));
-  const file = args.find(a => !a.startsWith('--') && !excluded.has(a));
+  const file = argv.find(a => !a.startsWith('--') && !excluded.has(a));
 
   if (clean) {
-    console.log(`deleting ${CI_DOWNLOADS_TAG} release (if present)…`);
+    log(`deleting ${CI_DOWNLOADS_TAG} release (if present)…`);
     try {
       gh(['release', 'delete', CI_DOWNLOADS_TAG, '--yes', '--cleanup-tag']);
-      console.log(`✓ ${CI_DOWNLOADS_TAG} release + tag deleted`);
+      log(`✓ ${CI_DOWNLOADS_TAG} release + tag deleted`);
     } catch (err) {
       if (!/Not Found|HTTP 404/i.test(String(err.message))) throw err;
-      console.log(`✓ ${CI_DOWNLOADS_TAG} release does not exist — nothing to clean`);
+      log(`✓ ${CI_DOWNLOADS_TAG} release does not exist — nothing to clean`);
     }
-    return;
+    return 0;
   }
 
   if (!file) {
     console.error('✗ no installer file given');
-    usage();
+    log(USAGE);
+    return 1;
   }
   if (!fs.existsSync(file)) {
     console.error(`✗ installer not found: ${file}`);
-    process.exit(1);
+    return 1;
   }
 
   const inferred = inferBrowserVersion(file);
@@ -145,17 +167,17 @@ async function main() {
     console.error(
       `✗ cannot infer browser from '${path.basename(file)}' — pass --browser (${KNOWN_BROWSERS.join('|')})`
     );
-    process.exit(1);
+    return 1;
   }
   if (!version) {
     console.error(
       `✗ cannot infer version from '${path.basename(file)}' — pass --version (it pins the E2E run)`
     );
-    process.exit(1);
+    return 1;
   }
 
   const assetName = ciDownloadsAssetName(browser, version);
-  console.log(`browser: ${browser} · version: ${version} · asset: ${assetName}`);
+  log(`browser: ${browser} · version: ${version} · asset: ${assetName}`);
 
   // ① create the temporary release on demand
   const existing = (() => {
@@ -167,7 +189,7 @@ async function main() {
     }
   })();
   if (!existing) {
-    console.log(`creating temporary ${CI_DOWNLOADS_TAG} release…`);
+    log(`creating temporary ${CI_DOWNLOADS_TAG} release…`);
     gh([
       'release',
       'create',
@@ -182,7 +204,7 @@ async function main() {
         `release automatically after the consuming run; do not pin workflows to it.`,
     ]);
   } else {
-    console.log(`${CI_DOWNLOADS_TAG} release exists — uploading with --clobber`);
+    log(`${CI_DOWNLOADS_TAG} release exists — uploading with --clobber`);
   }
 
   // ② upload the asset under the resolver's expected name. A renamed copy is
@@ -200,7 +222,7 @@ async function main() {
     }
     try {
       gh(['release', 'upload', CI_DOWNLOADS_TAG, uploadPath, '--clobber']);
-      console.log(`✓ uploaded ${assetName}`);
+      log(`✓ uploaded ${assetName}`);
     } finally {
       if (tmpAsset) fs.rmSync(path.dirname(tmpAsset), {recursive: true, force: true});
     }
@@ -210,25 +232,28 @@ async function main() {
   }
 
   if (!dispatch) {
-    console.log('✓ done (--no-dispatch — run the E2E leg manually when ready)');
-    return;
+    log('✓ done (--no-dispatch — run the E2E leg manually when ready)');
+    return 0;
   }
 
   // ③ dispatch the single-browser E2E run (CI cleans the asset afterwards).
   // Always pass the version: the cleanup job matches the consumed asset by
   // exact expected name, which only works with the pinned version.
-  console.log('dispatching e2e.yml…');
+  log('dispatching e2e.yml…');
   gh(['workflow', 'run', 'e2e.yml', '-f', `browser=${browser}`, '-f', `version=${version}`]);
-  console.log(
+  log(
     `✓ dispatched: gh run watch --workflow=e2e.yml — the cleanup job deletes ` +
       `${assetName} (and the release when empty) after the leg finishes`
   );
+  return 0;
 }
 
 const isMain = process.argv[1] && path.basename(process.argv[1]) === 'ciDownload.mjs';
 if (isMain) {
-  main().catch(err => {
+  try {
+    process.exitCode = ciDownload({argv: process.argv.slice(2)});
+  } catch (err) {
     console.error(`✗ Error: ${err.message}`);
     process.exit(1);
-  });
+  }
 }
