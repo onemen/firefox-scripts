@@ -47,10 +47,21 @@ function mockElement() {
  * enumeration at the bottom of the file.
  */
 function makeSandbox(platformVersion) {
+  // Observer registry + console recorders, exposed on the returned sandbox:
+  // the P2-11 tests fire the chrome-document-loaded observer exactly like
+  // Services.obs.notifyObservers would and assert on what was logged.
+  const observers = {};
+  const routed = [];
+  const consoleErrors = [];
   const sandbox = {
     Services: {
       appinfo: {platformVersion, inSafeMode: true},
       scriptloader: {loadSubScript() {}},
+      console: {
+        logStringMessage(msg) {
+          routed.push(msg);
+        },
+      },
       dirsvc: {
         get() {
           return {
@@ -68,7 +79,12 @@ function makeSandbox(platformVersion) {
           return {hasMoreElements: () => false, getNext() {}};
         },
       },
-      obs: {addObserver() {}, notifyObservers() {}},
+      obs: {
+        addObserver(cb, topic) {
+          (observers[topic] = observers[topic] || []).push(cb);
+        },
+        notifyObservers() {},
+      },
       scriptSecurityManager: {getSystemPrincipal() {}},
     },
     ChromeUtils: {
@@ -109,7 +125,19 @@ function makeSandbox(platformVersion) {
       },
       nukeSandbox() {},
     },
+    console: {
+      error(...args) {
+        consoleErrors.push(args);
+      },
+      warn() {},
+      debug() {},
+      log() {},
+      info() {},
+    },
   };
+  sandbox.__observers = observers;
+  sandbox.__routed = routed;
+  sandbox.__consoleErrors = consoleErrors;
   return sandbox;
 }
 
@@ -363,4 +391,69 @@ test('createElement: on* handler mixed with regular attrs', () => {
   assert.equal(el.listeners.length, 1);
   assert.equal(el.listeners[0].type, 'command');
   assert.equal(el.listeners[0].handler, handler);
+});
+
+// ── scriptsUpdater init failure (P2-11) ─────────────────────────────────────
+//
+// The chrome-document-loaded observer used to swallow every import/init
+// failure ("the updater is dead and nobody says so", the #292 class). The
+// catch must now route one line through Services.console.logStringMessage
+// with the stable "Firefox Scripts updater: " prefix so the E2E console
+// mirror sees it (ConsoleAPI never reaches nsIConsoleService observers).
+
+/** Evaluate userChrome.js and return the live sandbox (observers + recorders). */
+function evaluateSandbox(platformVersion = '153.0') {
+  const sandbox = makeSandbox(platformVersion);
+  vm.createContext(sandbox);
+  vm.runInContext(SRC, sandbox);
+  return sandbox;
+}
+
+/** Fire the updater init observer with a browser.xhtml document. */
+function fireLoaded(sandbox, uri = 'chrome://browser/content/browser.xhtml') {
+  const cbs = sandbox.__observers['chrome-document-loaded'] ?? [];
+  assert.ok(cbs.length > 0, 'userChrome.js must register a chrome-document-loaded observer');
+  for (const cb of cbs) cb({documentURI: uri, defaultView: {id: 'win'}});
+}
+
+test('P2-11: a failed scriptsUpdater import is routed to the console mirror', () => {
+  const sandbox = evaluateSandbox();
+  // Default importESModule() returns {} — destructuring initScriptsUpdater
+  // yields undefined and calling it throws, exactly like a dead import.
+  fireLoaded(sandbox);
+  assert.equal(sandbox.__routed.length, 1, 'exactly one logStringMessage line');
+  assert.match(
+    sandbox.__routed[0],
+    /^Firefox Scripts updater: scriptsUpdater init failed - /,
+    'the line must carry the stable prefix the E2E mirror matches'
+  );
+  assert.equal(sandbox.__consoleErrors.length, 1, 'console.error keeps the Browser Console entry');
+});
+
+test('P2-11: an import failure does not stop the observer for later documents', () => {
+  const sandbox = evaluateSandbox();
+  fireLoaded(sandbox);
+  fireLoaded(sandbox);
+  assert.equal(sandbox.__routed.length, 2, 'every failed document reports its own line');
+});
+
+test('P2-11: a successful init routes nothing', () => {
+  const sandbox = evaluateSandbox();
+  let inited = 0;
+  sandbox.ChromeUtils.importESModule = () => ({
+    initScriptsUpdater(win) {
+      inited++;
+      assert.ok(win, 'the window is passed through');
+    },
+  });
+  fireLoaded(sandbox);
+  assert.equal(inited, 1, 'initScriptsUpdater ran');
+  assert.deepEqual(sandbox.__routed, [], 'the happy path stays silent');
+  assert.deepEqual(sandbox.__consoleErrors, [], 'the happy path stays silent');
+});
+
+test('P2-11: non-browser.xhtml documents never reach the import', () => {
+  const sandbox = evaluateSandbox();
+  fireLoaded(sandbox, 'chrome://browser/content/hiddenWindow.html');
+  assert.deepEqual(sandbox.__routed, [], 'only browser.xhtml triggers the updater init');
 });

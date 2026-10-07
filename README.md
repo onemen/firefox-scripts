@@ -127,6 +127,25 @@ The original scripts are governed by the
   [Post v1.0](https://github.com/onemen/firefox-scripts/milestone/2) milestone views plus the
   phase/umbrella issues they collect.
 
+### Documentation index
+
+| Document                                                    | What it covers                                                                |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [DEVELOPING.md](docs/DEVELOPING.md)                         | Setup, build, test, publish/release workflow, installer architecture, tooling |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)               | Symptom → fix for installer, updater and publish failures                     |
+| [auto-updater.md](docs/auto-updater.md)                     | The in-browser updater: daily check, verification, extraction, install flow   |
+| [status-logic.md](docs/status-logic.md)                     | What “Up to date / Update available / Not installed / Skipped” mean and why   |
+| [security.md](docs/security.md)                             | Threat model: session token, localhost request model, upload verification     |
+| [continuous-integration.md](docs/continuous-integration.md) | The CI jobs, path filters and gates                                           |
+| [ci-inventory.md](docs/ci-inventory.md)                     | Generated inventory of workflows, triggers, path filters and required checks  |
+| [e2e-tests.md](docs/e2e-tests.md)                           | How the installer/updater E2E suites run                                      |
+| [e2e-legs.md](docs/e2e-legs.md)                             | Generated table of E2E legs (browsers × OS)                                   |
+| [e2e-matrix-plan.md](docs/e2e-matrix-plan.md)               | The E2E matrix design/plan                                                    |
+| [unit-test-sandboxes.md](docs/unit-test-sandboxes.md)       | The vm-sandbox technique used by the unit suites                              |
+| [debugging-with-rdp.md](docs/debugging-with-rdp.md)         | Live Firefox debugging over RDP (the `debugging-firefox` skill)               |
+| [restart-ui-tab.md](docs/restart-ui-tab.md)                 | Restarting the updater UI tab during development                              |
+| [decisions/index.md](docs/decisions/index.md)               | Architecture decision records (ADR log) — read before design changes          |
+
 ---
 
 ### Contributing
@@ -138,8 +157,10 @@ publish scripts under `tools/publish/`.
 
 ### Problems?
 
-File an **issue** on [the GitHub repository](https://github.com/onemen/firefox-scripts/issues).
-Please search existing issues first — your problem may already be reported.
+Start with **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — it maps the common symptoms
+(installer not opening, updater stuck, publish refusing) to fixes. If nothing there fits, file an
+**issue** on [the GitHub repository](https://github.com/onemen/firefox-scripts/issues). Please
+search existing issues first — your problem may already be reported.
 
 ### License
 

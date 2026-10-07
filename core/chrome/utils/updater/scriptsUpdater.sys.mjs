@@ -385,6 +385,19 @@ let gWindow = null;
 let gSessionRestored = false;
 
 /**
+ * Fire-and-forget entry for checkForUpdates() (audit P2-10): startup, the
+ * window-churn re-check and the daily timer all invoke it without awaiting, and
+ * the async body can reject outside its own try/catches — the unguardable
+ * liveWin.gBrowser.addTrustedTab() when the tab target died mid-check, for one.
+ * Without this wrapper each such rejection lands as an unhandled promise
+ * rejection with no updater context, and it never reaches the E2E console
+ * mirror either.
+ */
+function runCheckForUpdates() {
+  checkForUpdates().catch(e => console.error('Firefox Scripts: update check failed (uncaught)', e));
+}
+
+/**
  * Initialize the updater. Called per browser window on startup by
  * BootstrapLoader.js / userChrome.js; idempotent so double-init is harmless.
  *
@@ -402,7 +415,7 @@ export function initScriptsUpdater(win) {
       // cheap: a same-day check no-ops right after the gate. Without this, a
       // user who closed window 1 mid-check misses the notification until the
       // next daily tick (review on #310).
-      checkForUpdates();
+      runCheckForUpdates();
     }
     return;
   }
@@ -438,10 +451,10 @@ export function initScriptsUpdater(win) {
   // bare setInterval never actually fired — its ReferenceError was swallowed
   // by the loader's catch for the updater's entire lifetime; found via the
   // #292 seeded-error experiment).
-  checkForUpdates();
+  runCheckForUpdates();
   gDailyTimer = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
   gDailyTimer.initWithCallback(
-    checkForUpdates,
+    runCheckForUpdates,
     CHECK_INTERVAL_MS,
     Ci.nsITimer.TYPE_REPEATING_SLACK
   );

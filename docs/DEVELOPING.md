@@ -226,6 +226,23 @@ but do not block (the known-FP band at the default of 3). The run log names the 
 Without a key it just skips with a warning, and an analysis VirusTotal has not finished when the
 poll times out is reported as a skip — never as clean.
 
+Three operational facts promoted from the 2026-09 postmortem drafts (`.local` untracked at the time;
+attributed there, repeated here as measured history, not as current config):
+
+- **The VT gate is effectively the whole CI publish gate.** In the blocking 2026-09-15 run both
+  native AV layers silently no-op'd (runner scanner unavailable), so only VirusTotal judged the
+  bytes. "A missing engine is only a warning" means the other layers can vanish without failing — do
+  not assume a green publish implies a host-AV scan happened.
+- **A VT verdict is hash-stable — re-dispatch cannot clear it.** Since the build-date change (#162),
+  the PE hash is a deterministic function of the commit, so the same commit re-built and
+  re-dispatched gets the same verdict. "Re-run failed jobs" wastes a cycle; clearing a blocked
+  publish needs either a source change (new bytes), a false-positive filing (WDSI, below), or a
+  threshold/engine config change.
+- **The Microsoft veto — not the threshold — is what blocked the installer.** Measured 2026-09-07:
+  `installer_win.exe` was refused at 2 malicious (below the default threshold of 3) purely because
+  the Microsoft engine flagged it, while `helper_win.exe` cleared both bars. When debugging a
+  refusal, read which condition fired: a single Microsoft hit vetoes at any count.
+
 ### Verdict ledger and the published-binary watchdog
 
 A verdict is evidence about ONE hash, and every rebuild produces a new one — which is why a WDSI
@@ -260,7 +277,11 @@ evidence usable instead of buried in run logs:
 - A durable long-term fix is **code signing**; it is the only measure that systematically improves
   AV/OS reputation. The measures above are the zero-cost alternative until a signing path lands —
   the signing plan and its status live on the tracking issue (#157) and are deliberately not
-  documented here until a provider is approved and wired in (#159).
+  documented here until a provider is approved and wired in (#159). **SignPath risk (recorded
+  2026-10-07):** the SignPath application ticket has been unresponsive since 2026-09-10, so signing
+  is not a near-term plan but an open dependency nobody is currently moving — the maintainer
+  decision is to **reapply to SignPath after more stars and more downloads for `installer_win.exe`**
+  (#159 carries the reapply note). Until then the unsigned-binary posture above stands.
 - AV-shape changes are a lottery, not a dial: the 2026-09-07 PE subsystem bump (5.2 → 6.0, the
   XP-era "packer profile" signal) was reverted the same day because it _flipped_ Microsoft's ML
   verdict (#160 → #161). Do not churn binary bytes expecting a fix — the gate plus signing are the
@@ -554,6 +575,19 @@ publish tooling (ADR 0008).
 
 ## How the installer works (architecture)
 
+```mermaid
+flowchart TD
+    user["User runs installer_win / installer"] --> detect["Detect running browsers<br/>(process scan + profile lock files)"]
+    detect --> serve["Serve web UI on 127.0.0.1:8777<br/>(per-run session token; a second<br/>instance attaches to the same port)"]
+    serve --> tab["Open browser tab at localhost:8777/?t=token"]
+    tab --> fetch["TAB fetches from CORS hosts:<br/>utils.zip + fx-folder.zip (Pages),<br/>hashes.json, Waterfox/GitHub release lists"]
+    fetch -->|raw bytes POSTed to local server| verify["Verify against hashes.json<br/>(per-package SHA-256)"]
+    verify --> extract["Extract in-process (vendored miniz,<br/>no external tools)"]
+    extract --> copy1["Copy config → browser install dir<br/>(admin elevation when needed)"]
+    copy1 --> copy2["Copy utils → ProfD/chrome/utils/"]
+    copy2 --> updater["Daily in-browser updater takes over<br/>(docs/auto-updater.md)"]
+```
+
 The installer is a native C application that:
 
 1. **Detects running browsers** by scanning processes and inspecting their lock files for profile
@@ -598,6 +632,18 @@ all platforms, using wide-char APIs on Windows for non-ASCII paths. No external 
 — pure C with POSIX and Win32 APIs.
 
 ## Publishing a release
+
+```mermaid
+flowchart TD
+    dev["Developer on main<br/>(clean worktree, GITHUB_TOKEN_VAR)"] --> mode{"--mode?"}
+    mode -->|"--mode=prod<br/>(CI-only, main branch)| gate["build-and-upload.yml:<br/>cross-OS binary matrix"]
+    mode -->|"--mode=dev| local["publish:dev → disposable<br/>dev-build-id branch,<br/>-dev artifacts, jsDelivr"]
+    gate --> checks["Gates per binary:<br/>host AV scan → VirusTotal<br/>(threshold 3 + Microsoft veto);<br/>staging tree complete; E2E run for this SHA"]
+    checks --> assets["upload.mjs: utils.zip, fx-folder.zip,<br/>updater-ui.zip + hashes.json"]
+    assets --> pages["'latest' release + gh-pages branch"]
+    pages --> verify["pnpm release:verify re-derives<br/>post-publish facts"]
+    local -.->|"same gates, warn-only;<br/>STAGING banner rules"| checks
+```
 
 ### Prepare
 
@@ -662,6 +708,28 @@ users have received the fallback logic (ADR 0026 — republish into the same `DE
 installed test builds auto-update while the branch lives): `git push origin --delete dev-build-<id>`
 (CI test runs delete it automatically in a `finally`; `pnpm dev-clean` removes branches and their
 tags).
+
+### Staging guard and `FIREFOX_SCRIPTS_ALLOW_STAGING`
+
+Every real publish runs `tools/publish/stagingGuard.mjs` first: it compares the target the run would
+use (repo owner/name, Pages repo/branch, release name — read back from the environment) to
+`config/installer.conf`, the single source of truth (ADR
+[0013](./decisions/0013-installer-conf-source-of-truth.md)). A mismatch means a shell env var, a
+fork checkout or CI configuration is silently redirecting a prod publish somewhere unintended, so:
+
+- **prod → abort** with a loud STAGING banner **before anything is built or uploaded**;
+- **dev → warn-only** (dev artifacts are disposable and live in the `dev-build-<id>` namespace);
+- **`snapshot:*` / `--local` → never runs** (an offline snapshot touches no GitHub target).
+
+The escape hatch for an intentional staging rehearsal (e.g. pointing a publish at a fork to test the
+full path) is:
+
+```bash
+FIREFOX_SCRIPTS_ALLOW_STAGING=1 pnpm publish:all
+```
+
+which prints the banner and continues. It is documented in `.env-example`; an env var whose value
+_matches_ the conf is still reported — publishing must never depend on ambient shell state.
 
 ### Publish reference (upload.mjs)
 
@@ -978,6 +1046,33 @@ A `--local` or `--mode=dev` build identifies itself: the installer tab and the u
 a yellow **"Test build"** banner (from `/api/build-info` in the installer, from the generated
 config's `IS_DEV`/`IS_LOCAL`/`LOCAL_DIST_PATH`/`DEV_BRANCH` in the updater), telling the developer
 this is a test run and where the snapshot lives.
+
+**Pointing a real profile at a snapshot — `override.<KEY>` prefs.** The generated config's URLs can
+also be overridden at runtime by the string prefs `extensions.firefox-scripts.override.<KEY>`, where
+`<KEY>` is one of `HASHES_URL`, `ZIP_BASE_URL`, `UI_BASE_URL`, `HELPER_BASE_URL`. A set pref wins
+over the generated `CONFIG` value, which lets tests (and a developer) point the updater at any local
+snapshot — including one built on another OS — **without touching the config file**: the config
+ships inside `utils.zip` and is part of the hashed file set, so rewriting it would flip the package
+hash and break the staleness check. The same mechanism is what `test/e2e/shared/helpers.mjs` →
+`localConfigOverrides()` sets up when a cross-OS snapshot is served from a foreign path (unit
+coverage: `test/unit/e2e/localConfigOverrides.test.mjs`).
+
+### The dev loop
+
+The tight loop for a change to `core/`, `installer/`, or the publish tooling:
+
+1. **Edit** the source (`core/chrome/utils/` JS, `installer/src/` C, `installer/web/` UI — see
+   [Making changes](#making-changes)).
+2. **Gates:** `pnpm lint && pnpm format && pnpm test` (add `pnpm test:hash` when `installer/src/**`
+   or the hash inputs changed; `pnpm check:core-tests` enforces a `test/**` change alongside any
+   `core/**` change).
+3. **Rebuild** when C changed: `mingw32-make -C installer dist_win helper_win` (Windows; see
+   [Prerequisites](#windows)) — a commit touching `installer/**` must rebuild at the new HEAD so the
+   build-date provenance (ADR [0036](./decisions/0036-git-derived-build-dates.md)) stays consistent.
+4. **Run it:** `pnpm snapshot:prod` (or `snapshot:dev`) and drive the snapshot's installer/updater
+   as described above — offline, no GitHub involved.
+5. **Iterate** from step 1; publish only when the user explicitly asks (`publish:*`, see
+   [Publishing a release](#publishing-a-release)).
 
 ### Configurable constants
 

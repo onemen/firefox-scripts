@@ -359,8 +359,20 @@ try {
           'chrome://firefox-scripts/content/scriptsUpdater.sys.mjs'
         );
         initScriptsUpdater(win);
-      } catch {
-        // scriptsUpdater not available
+      } catch (e) {
+        // scriptsUpdater not available — the updater is dead and nobody says
+        // so (the #292 class): console.error styles it in the Browser
+        // Console, and the logStringMessage line (stable prefix) is the only
+        // channel the E2E console mirror sees — ConsoleAPI output never
+        // reaches nsIConsoleService observers.
+        console.error('Firefox Scripts updater: scriptsUpdater init failed', e);
+        try {
+          Services.console.logStringMessage(
+            `Firefox Scripts updater: scriptsUpdater init failed - ${e && e.message ? e.message : e}`
+          );
+        } catch {
+          // Console service unavailable (early shutdown) — console.error still stands.
+        }
       }
     }
   }, 'chrome-document-loaded');

@@ -594,6 +594,56 @@ test('pending update: the scheduler writes NO pref, the tab opens (the tab recor
   }
 });
 
+test('P2-10: a rejecting checkForUpdates is logged by the wrapper, never unhandled', async () => {
+  const store = {};
+  const {sandbox} = loadUpdater({store});
+  const layout = makeProfileLayout(sandbox);
+  writeUpToDateWorld(sandbox.Services.io, layout);
+  // Capture instead of print: the wrapper must own the rejection.
+  const errors = [];
+  sandbox.console = {
+    error: (...args) => errors.push(args),
+    debug() {},
+    log() {},
+    warn() {},
+    info() {},
+  };
+  // Reject at the very first pref read — before checkForUpdates' first await,
+  // so the whole fire-and-forget call rejects exactly like the unguardable
+  // addTrustedTab escape P2-10 pins.
+  sandbox.Services.prefs.getCharPref = () => {
+    throw new Error('pref backend gone');
+  };
+  const unhandled = [];
+  const onUnhandled = reason => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    sandbox.initScriptsUpdater(makeFakeWindow());
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(unhandled, [], 'the fire-and-forget check must never reject unhandled');
+    assert.equal(errors.length, 1, 'the wrapper logged the rejection exactly once');
+    assert.equal(errors[0][0], 'Firefox Scripts: update check failed (uncaught)');
+    assert.match(String(errors[0][1]), /pref backend gone/);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled);
+    layout.cleanup();
+  }
+});
+
+test('P2-10: no bare checkForUpdates() statement-call remains in the module', () => {
+  const src = fs.readFileSync(MODULE_PATH, 'utf-8');
+  // Statement-position calls (`checkForUpdates();`) are the fire-and-forget
+  // sites that used to leak rejections; every invocation must go through
+  // runCheckForUpdates() (which attaches .catch). A bare call as an argument
+  // (e.g. the timer seam) must not match.
+  const bareCalls = src.match(/^\s*checkForUpdates\(\);\s*$/gm) ?? [];
+  assert.deepEqual(bareCalls, [], 'every call site must be wrapped in runCheckForUpdates()');
+  assert.ok(
+    /function runCheckForUpdates\(\)\s*{\s*checkForUpdates\(\)\.catch\(/m.test(src),
+    'runCheckForUpdates must attach .catch to the check'
+  );
+});
+
 test('driver seam: checkForUpdates is exported and re-decides on demand (#309)', async () => {
   const store = {};
   const {sandbox} = loadUpdater({store, captureExports: true});
