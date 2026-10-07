@@ -4,8 +4,6 @@
 - **Supersedes:** [0001](./0001-versioninfo-and-gist.md) (`versionInfo.json` + Gist as the
   update-version mechanism)
 - **Date:** 2026-08-01
-- **Amended:** [0044](./0044-hash-manifest-schema-and-merge.md) — the manifest's exact schema and
-  its single-writer merge are recorded there
 
 ## Context
 

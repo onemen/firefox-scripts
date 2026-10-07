@@ -2,8 +2,6 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-09
-- **Amended:** [0042](./0042-two-pass-staged-publish.md) — its revisit-if (automated cross-OS
-  staging that then uploads once) is answered; prod is CI-only two-pass, recorded there
 
 ## Context
 

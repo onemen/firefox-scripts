@@ -4,8 +4,6 @@
 - **Date:** 2026-09-17
 - **Amended:** 2026-10-02 — a fourth role: `updater-ui` (the tab alone), see the amendment section
   below
-- **Amended:** [0041](./0041-publish-role-model.md) — the roles introduced here as the holdback
-  mechanism are the canonical publish vocabulary (channel × role legality recorded there)
 - **Amends:** [0024](./0024-release-asset-set.md) — its "the `latest` release carries exactly …"
   asset set now has a declared exception: a run may publish a subset when a role is deliberately
   held back

@@ -1,9 +1,7 @@
-# 0042: Two-pass staged publish with a single writer
+# 0040: Two-pass staged publish with a single writer
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **Amends:** [0009](./0009-unified-publish-modes.md) — 0009's revisit-if (automated cross-OS
-  staging that then uploads once) is answered; prod is CI-only two-pass, see here
 
 ## Context
 

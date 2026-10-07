@@ -1,10 +1,7 @@
-# 0043: AV + VirusTotal gate — a detection is a publish veto
+# 0041: AV + VirusTotal gate — a detection is a publish veto
 
 - **Status:** accepted
 - **Date:** 2026-10-07
-- **Amends:** [0032](./0032-pinned-build-toolchain.md) — the AV posture 0032's pin exists for is
-  recorded here as its own gate: scan-clean is a publish condition on exactly those pinned bytes,
-  ledgered per hash
 
 ## Context
 

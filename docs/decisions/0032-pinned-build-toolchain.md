@@ -2,8 +2,6 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-17
-- **Amended:** [0043](./0043-av-vt-publish-gate.md) — the AV posture this pin exists for is its own
-  gate: scan-clean is a publish condition, verdicts ledgered per hash
 
 ## Context
 

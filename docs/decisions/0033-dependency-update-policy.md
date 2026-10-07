@@ -2,8 +2,6 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-19
-- **Amended:** [0040](./0040-zero-runtime-npm-dependencies.md) — the runtime-zero boundary has its
-  own record; this policy governs the tooling tree only
 
 ## Context
 
