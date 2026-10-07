@@ -20,7 +20,7 @@ launch. That is Firefox's own "forced restart" mechanism (see
 ## How the restart works
 
 Relevant code: `installer/src/main.c` (restart helpers, `handle_api_restart`,
-`restart_worker_thread`), `installer/web/script.js` (restart button handler).
+`restart_worker_thread`), `installer/web/script/30-render.js` (restart button handler).
 
 ### Startup
 

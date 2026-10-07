@@ -4154,24 +4154,6 @@ function readPrefsGate(profileDir) {
 }
 
 /**
- * TEMP diagnostic (#384 follow-up): breadcrumb the seeded profile's updater.js
- * engineInit — engine entry, twin-tab outcome, and the checkCompleted value it
- * gates the shown-day write on. logStringMessage routes through the console
- * service into the mirror (console.* from the page would not).
- *
- * @param {string} chromeUtils - the seeded profile's chrome/utils dir
- */
-/**
- * TEMP diagnostic for the session-restore scenario: breadcrumb the seeded
- * profile updater UI. Inserted code NEVER contains a backslash escape (the
- * previous attempt produced "invalid escape sequence" SyntaxErrors in the page,
- * which killed the whole updater.js/updater-ui.js parse) — line breaks come
- * from String.fromCharCode(10) at page runtime.
- *
- * @param {string} chromeUtils - the seeded profile chrome/utils dir
- */
-
-/**
  * Overwrite the seeded profile's scheduler with the CURRENT source (the
  * snapshot's utils.zip may predate an in-review fix — scenario 10 sets the same
  * precedent). Fails loudly when the source file is missing.
@@ -4291,8 +4273,7 @@ async function runSessionRestoreScenario(counter, opts, snapshotDir, label) {
   overwriteSchedulerFromSource(seeded.chromeUtils);
   // Seed the updater UI from the snapshot (self-consistent with the
   // manifest): the scenario asserts the engine re-check on a RESTORED tab,
-  // not a ensureUpdaterUi download. Also gives the breadcrumb patch a file
-  // to work on.
+  // not a ensureUpdaterUi download.
   const uiZip11 = findZip(snapshotDir, ['updater-ui.zip', 'updater-ui-dev.zip']);
   if (uiZip11) {
     extractZip(uiZip11, path.join(seeded.chromeUtils, 'updater', 'ui'));

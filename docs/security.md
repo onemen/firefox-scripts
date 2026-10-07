@@ -24,8 +24,11 @@ Mitigations in place:
   is refused with 403 before routing. This is what stops DNS rebinding: a rebound name is
   same-origin from the browser's point of view, so "no CORS header" alone would not keep the
   response away from it. An absent `Host` (HTTP/1.0) is tolerated; no browser page can omit it.
-- **Hash-verified packages.** Zips are verified against the published manifest hash **before** any
-  extraction (updater) and before install (installer).
+- **Hash-verified packages.** The updater verifies each zip against the published manifest hash
+  before extraction and copies only manifest-listed files. The installer verifies uploads against
+  the manifest it ingested — candidate bytes before they are stored, stored zips when the manifest
+  arrives (`installer_verify_upload` / `installer_verify_stored_zips`). Exactly when that applies —
+  and when it does not — is spelled out under "Stated invariants" below.
 - **Zip-slip guard.** `extractZipFlatten`/`copyFileList` reject entry names that could escape the
   destination directory (absolute paths, backslashes, drive letters, `.`/`..`).
 - **Elevated-copy helper.** When an update lands in an admin-protected install dir, the updater tab
@@ -50,6 +53,32 @@ command-line/probe-filename overflow attempts are rejected with `EXIT_BAD_ARGS` 
 executed. Defense here is defense in depth — none of these checks is what stands between a web page
 and the helper; that distance is made of the updater's own sandbox and the hash-verified download
 chain.
+
+## Stated invariants (what the mitigations do NOT cover)
+
+Four boundaries the threat model must state explicitly rather than leave to code reading:
+
+- **Upload verification is conditional.** `installer_verify_upload()` checks a candidate upload
+  against the _ingested_ manifest before the zip is stored; `installer_verify_stored_zips()`
+  re-checks the stored zips when a manifest is ingested. But with no manifest reachable there is
+  nothing to verify against (the documented fallback — the zip is its own reference),
+  `updater-ui.zip` uploads are excluded (the `!is_ui` gate in `main.c`), and the EXTRACT states read
+  the stored buffers without re-verifying. The checks gate _storage_, not extraction.
+- **Privileged fetch URLs derive only from config.** The installer performs no network I/O; every
+  URL the tab fetches (zips, manifest, self-update payload, release lists) arrives via
+  `/api/package-urls`, which `main.c` builds from the `INSTALLER_*` macros generated from
+  `config/installer.conf`. The one hardcoded URL in the tab (`installer/web/script/20-banners.js`)
+  is a `window.open()` navigation to the human-facing `latest` release page — no bytes from it enter
+  the install chain.
+- **The manifest is an unsigned trust root.** `hashes.json` is served over HTTPS from gh-pages but
+  is not signed: the hash chain detects tampering in transit or at rest, not a compromised
+  publisher. Whoever can publish to the repository / pages controls the reference hashes; HTTPS plus
+  the GitHub publish path is the trust anchor.
+- **`--admin-copy` is an unrestricted elevated copy.** `admin_copy_mode()` copies arbitrary
+  `src`/`dst` argv pairs with no path validation beyond creating the destination's parent
+  directories (entry guard: `argc >= 4` in `main.c`). It is safe only because the relaunch
+  originates from our own installer/updater behind a single OS elevation prompt — treat the argument
+  surface as privileged and validate paths in any new caller.
 
 ## Audit checklist (per release candidate)
 

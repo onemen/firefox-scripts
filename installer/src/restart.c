@@ -595,13 +595,16 @@ static DWORD WINAPI restart_worker_thread(void *arg) {
         // The UI tab (about to be killed) was told to close itself via
         // window.close()/about:blank.  Wait a moment so that navigation commits
         // before the graceful close writes the session store, otherwise a
-        // later -restore could bring a stale copy of the installer tab back.
+        // later session restore could bring a stale copy of the installer tab
+        // back.
         log_msg("[restart] waiting for UI tab to close\n");
         Sleep(1500);
     }
 
     // Graceful close (WM_CLOSE) -> wait for exit -> relaunch with
-    // -purgecaches -restore and the UI URL on the command line.
+    // -purgecaches and the UI URL on the command line. Session restore goes
+    // through the one-shot resume_session_once pref (Firefox has no -restore
+    // CLI flag).
     do_restart_work(plan);
 
     log_msg("[restart] worker done\n");
