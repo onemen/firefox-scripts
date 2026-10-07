@@ -241,13 +241,20 @@ int query_param_equals(const char *query, const char *name, const char *value) {
     const char *p = query;
     while (*p) {
         const char *start = p;
-        while (*p && *p != '=') p++;
+        /* Key ends at '=' or '&' — stopping only at '=' would swallow a
+         * following parameter when a valueless one precedes it
+         * (?flag&t=…: the key would read "flag&t"). */
+        while (*p && *p != '=' && *p != '&') p++;
         size_t klen = (size_t)(p - start);
-        if (*p == '=') p++;
         const char *vstart = p;
-        while (*p && *p != '&') p++;
+        size_t vlen = 0;
+        if (*p == '=') {
+            p++;
+            vstart = p;
+            while (*p && *p != '&') p++;
+            vlen = (size_t)(p - vstart);
+        }
         if (klen == nlen && strncmp(start, name, nlen) == 0) {
-            size_t vlen = (size_t)(p - vstart);
             return vlen == strlen(value) && strncmp(vstart, value, vlen) == 0;
         }
         if (*p == '&') p++;

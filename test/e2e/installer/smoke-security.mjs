@@ -281,6 +281,14 @@ async function main() {
         'claim with no token reports current:0',
         bare.text.slice(0, 80)
       );
+      // Regression (ADR 0020 review of #452): a valueless parameter before
+      // t= must not be swallowed into the key.
+      const afterFlag = await hit('claim', {rawQuery: `flag&t=${token}`});
+      check(
+        afterFlag.text.includes('"current":1'),
+        'claim with ?flag&t=<valid> reports current:1 (valueless param before t=)',
+        afterFlag.text.slice(0, 80)
+      );
 
       const gateTrailing = await hit('manifest', {
         method: 'POST',
