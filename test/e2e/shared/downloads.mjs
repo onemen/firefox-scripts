@@ -193,7 +193,13 @@ export const DOWNLOADS = {
   },
 };
 
-/** Map Node's process.platform to the recipe keys. */
+/**
+ * Map Node's process.platform to the recipe keys. Accepts the shorthand the
+ * public helpers pass (`win`/`mac`) as well as Node's own platform names.
+ *
+ * @param {string} [platform]
+ * @returns {'win' | 'mac' | 'linux'}
+ */
 export function platformKey(platform = process.platform) {
   if (platform === 'win32') return 'win';
   if (platform === 'darwin') return 'mac';
@@ -554,18 +560,20 @@ async function downloadAttempt(url, dest, budgetEnd, resumeFrom) {
         // backpressured (disk full, closed fd) the drain event never fires.
         // Race the two so the promise always settles; the error path rethrows
         // through the same catch that flushes and resumes.
-        await new Promise((resolve, reject) => {
-          const onDrain = () => {
-            stream.off('error', onError);
-            resolve();
-          };
-          const onError = err => {
-            stream.off('drain', onDrain);
-            reject(err);
-          };
-          stream.once('drain', onDrain);
-          stream.once('error', onError);
-        });
+        await (/** @type {Promise<void>} */ (
+          new Promise((resolve, reject) => {
+            const onDrain = () => {
+              stream.off('error', onError);
+              resolve();
+            };
+            const onError = err => {
+              stream.off('drain', onDrain);
+              reject(err);
+            };
+            stream.once('drain', onDrain);
+            stream.once('error', onError);
+          })
+        ));
       }
       // Progress heartbeat — CI logs show the transfer is alive.
       if (written - lastLogBytes >= 10 * 1048576) {
@@ -577,7 +585,9 @@ async function downloadAttempt(url, dest, budgetEnd, resumeFrom) {
         lastLogBytes = written;
       }
     }
-    await new Promise((resolve, reject) => stream.end(err => (err ? reject(err) : resolve())));
+    await (/** @type {Promise<void>} */ (
+      new Promise((resolve, reject) => stream.end(err => (err ? reject(err) : resolve())))
+    ));
   } catch (err) {
     reader.cancel().catch(() => {});
     // Flush whatever reached the WriteStream before closing, so the partial
@@ -669,6 +679,9 @@ export async function downloadTo(url, dest) {
  * `<prefix>-<version>.exe`; otherwise the NEWEST match by mtime wins — the
  * newest file is the one the last successful save wrote, i.e. the release the
  * watchdog validated last. Exported for the unit tests.
+ *
+ * @param {string} browser
+ * @param {{filePrefix?: string, version?: string}} [opts]
  */
 export function findCachedInstaller(browser, {filePrefix = `${browser}-setup`, version} = {}) {
   const dir = downloadDir();
@@ -721,6 +734,10 @@ function prefersCachedInstaller() {
  * installed from cache, else null (caller proceeds with the normal download
  * flow — including the cold-bootstrap case, which then SAVES into the sticky
  * cache namespace the next unpinned leg restores).
+ *
+ * @param {string} browser
+ * @param {string[]} args
+ * @param {{filePrefix?: string}} [opts]
  */
 function installFromCacheIfAllowed(browser, args, {filePrefix} = {}) {
   const cached = findCachedInstaller(browser, {
@@ -779,6 +796,18 @@ export function isFileLockError(err, {platform = process.platform} = {}) {
   return status1 && !String(err?.stderr || '').trim() && !msg.includes('\n');
 }
 
+/**
+ * Run the installer with exponential backoff (issue #215).
+ *
+ * @param {string} cmd
+ * @param {{
+ *   attempts?: number;
+ *   delayMs?: number;
+ *   platform?: string;
+ *   run?: (cmd: string) => any;
+ *   sleep?: (ms: number) => any;
+ * }} [opts]
+ */
 export function runInstallerWithRetry(
   cmd,
   {attempts = 4, delayMs = 4000, platform, run, sleep} = {}

@@ -75,7 +75,7 @@ export function parseWorktrees(text) {
  * The shared main checkout. `git worktree list` lists the main worktree first
  * (git's documented order), and a bare clone has none to guard.
  *
- * @param {{path: string; bare: boolean}[]} worktrees
+ * @param {{path: string; bare: boolean; head?: string; branch?: string}[]} worktrees
  * @returns {{path: string; head: string; branch: string} | null}
  */
 export function mainWorktree(worktrees) {

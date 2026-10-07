@@ -216,7 +216,7 @@ export function parseFrontmatter(text, file = '<frontmatter>') {
  * the parsed text's first line, minus one: js-yaml's `mark.line` is 0-based.
  *
  * @param {string} file
- * @param {unknown} err
+ * @param {any} err
  * @param {number} lineOffset
  * @returns {{file: string; line: number; column: number; reason: string}}
  */

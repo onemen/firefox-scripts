@@ -197,18 +197,20 @@ const MAX_RETRY_AFTER_MS = 5_000;
 // Resolve as soon as `signal` aborts (or after ms), so a run-level rate-limit
 // abort is not held up by a pending retry timer. A double resolve is harmless.
 function sleep(ms, signal) {
-  return new Promise(resolve => {
-    if (signal?.aborted) return resolve();
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      {once: true}
-    );
-  });
+  return /** @type {Promise<void>} */ (
+    new Promise(resolve => {
+      if (signal?.aborted) return resolve();
+      const timer = setTimeout(resolve, ms);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        {once: true}
+      );
+    })
+  );
 }
 
 export async function request(provider, body, signal) {
@@ -507,6 +509,11 @@ export async function runReview(args = parseArgs(process.argv.slice(2))) {
       providers: providers.map(p => `${p.name} (${p.model})`),
       rdjson: {source: {name: args.name}, diagnostics: []},
       summary: files.map(file => `### \`${file}\`\n(dry run — not reviewed)`),
+      // Shape parity with the reviewed branch: a dry run reviews nothing, so
+      // the coverage fields are present but empty/absent — consumers never
+      // have to probe which arm of the union they hold.
+      totalFindings: 0,
+      coverage: undefined,
     };
   }
   if (providers.length === 0) {

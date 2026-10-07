@@ -58,7 +58,13 @@ import {
 const DEFAULT_STATE_DIR = '.watchdog-av';
 const LEDGER_FILE = 'vt-ledger.json';
 
-/** Minimal GitHub REST helper (contents + issues). */
+/**
+ * Minimal GitHub REST helper (contents + issues).
+ *
+ * @param {string} token
+ * @param {string} pathname
+ * @param {{method?: string, body?: any}} [opts]
+ */
 async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   const res = await fetch(`https://api.github.com${pathname}`, {
     method,

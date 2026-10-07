@@ -249,7 +249,7 @@ function worktreePath() {
  * @param {string} wtree absolute path of the temp worktree
  * @param {string} tempBranch the temp branch name
  * @param {{
- *   run?: typeof run;
+ *   run?: typeof spawnSyncGit;
  *   keep?: boolean;
  *   existsSync?: (p: string) => boolean;
  *   rmSync?: typeof fs.rmSync;
@@ -474,23 +474,6 @@ export function findingsTable(findings) {
 // and reported, because a cr run in another thread could still own it.
 
 /**
- * Remove stale `coderabbit-update-*` dirs from the OS temp dir.
- *
- * Injectable (readdirSync/statSync/rmSync/now/log) so the age rule is unit
- * tested without touching the filesystem.
- *
- * @param {{
- *   graceMs?: number;
- *   tmpDir?: string;
- *   readdirSync?: typeof fs.readdirSync;
- *   statSync?: typeof fs.statSync;
- *   rmSync?: typeof fs.rmSync;
- *   now?: () => number;
- *   log?: (...a: unknown[]) => void;
- * }} [opts]
- * @returns {{removed: string[]; kept: {path: string; ageMs: number}[]}}
- */
-/**
  * True when something still holds the directory open.
  *
  * The probe is an atomic rename to a scratch name: a live `cr` process keeps
@@ -520,6 +503,24 @@ export function defaultIsLocked(dir) {
   }
 }
 
+/**
+ * Remove stale `coderabbit-update-*` dirs from the OS temp dir.
+ *
+ * Injectable (readdirSync/statSync/rmSync/now/log) so the age rule is unit
+ * tested without touching the filesystem.
+ *
+ * @param {{
+ *   graceMs?: number;
+ *   tmpDir?: string;
+ *   readdirSync?: typeof fs.readdirSync;
+ *   statSync?: typeof fs.statSync;
+ *   rmSync?: typeof fs.rmSync;
+ *   now?: () => number;
+ *   log?: (...a: unknown[]) => void;
+ *   isLocked?: (dir: string) => boolean;
+ * }} [opts]
+ * @returns {{removed: string[]; kept: {path: string; ageMs: number}[]}}
+ */
 export function cleanupCoderabbitTemp({
   graceMs = 30 * 60_000,
   tmpDir = tmpdir(),

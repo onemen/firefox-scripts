@@ -440,7 +440,13 @@ export async function listActionsCaches(token, repo) {
   return out;
 }
 
-/** Minimal GitHub REST helper (issues only). */
+/**
+ * Minimal GitHub REST helper (issues only).
+ *
+ * @param {string} token
+ * @param {string} pathname
+ * @param {{method?: string, body?: any}} [opts]
+ */
 async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   const res = await fetch(`https://api.github.com${pathname}`, {
     method,

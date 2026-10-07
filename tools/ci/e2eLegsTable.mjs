@@ -139,16 +139,17 @@ function gh(args) {
 /**
  * The workflow's job map.
  *
- * @returns {Record<string, object>} job id → job
+ * @returns {Record<string, any>} job id → job
  */
 function loadJobs() {
-  return load(readFileSync(WORKFLOW_PATH, 'utf8')).jobs ?? {};
+  const doc = /** @type {any} */ (load(readFileSync(WORKFLOW_PATH, 'utf8')));
+  return doc.jobs ?? {};
 }
 
 /**
  * The gate contract: which job ids block a merge and which only warn.
  *
- * @param {Record<string, object>} jobs
+ * @param {Record<string, any>} jobs
  * @returns {{required: Set<string>; advisory: Set<string>}}
  */
 function gateContract(jobs) {
@@ -171,7 +172,7 @@ function gateContract(jobs) {
  * `null` inside the object means "not statically knowable" (a fromJSON dynamic
  * matrix), which leaves that axis unconstrained.
  *
- * @param {object} job
+ * @param {any} job
  * @returns {null | {
  *   os: null | string[];
  *   browser: null | string[];
@@ -256,9 +257,9 @@ function matchTemplate(template, name) {
  * render the same name shape (`updater E2E · <browser> · windows-latest`), so
  * it is the matrix, not the name, that separates them.
  *
- * @param {Record<string, object>} jobs
+ * @param {Record<string, any>} jobs
  * @param {{required: Set<string>; advisory: Set<string>}} gate
- * @returns {{jobId: string; name: string; matrix: object | null}[]}
+ * @returns {{jobId: string; name: string; matrix: any}[]}
  */
 function legCandidates(jobs, gate) {
   const tracked = new Set([...gate.required, ...gate.advisory]);
@@ -301,8 +302,8 @@ function attribute(name, candidates) {
  * The `.github/actions/setup-browser` step of a job, if it has one — the single
  * copy of the resolve/cache/install group every browser leg shares.
  *
- * @param {object} job
- * @returns {null | object} the step
+ * @param {any} job
+ * @returns {null | any} the step
  */
 function setupBrowserStep(job) {
   return (job?.steps ?? []).find(s => String(s?.uses ?? '').includes('setup-browser')) ?? null;
@@ -313,7 +314,7 @@ function setupBrowserStep(job) {
  * else the literal the setup-browser step is given. A leg with neither (snap —
  * it installs from the store) has no browser key.
  *
- * @param {object} job
+ * @param {any} job
  * @param {null | string} captured the `matrix.browser` value from the name
  * @returns {null | string} the downloads.mjs browser key
  */
@@ -332,7 +333,7 @@ function browserOf(job, captured) {
  * only restores, the save key when it also saves — or an em dash when it caches
  * nothing.
  *
- * @param {object} job
+ * @param {any} job
  * @param {{browser: null | string; os: string}} leg
  * @param {{forkBrowsers: Set<string>}} roles
  * @returns {string} the cell text
@@ -444,8 +445,8 @@ function table(headers, rows) {
  *
  * @param {string} runId
  * @returns {{
- *   run: object;
- *   jobs: Record<string, object>;
+ *   run: any;
+ *   jobs: Record<string, any>;
  *   legs: Row[];
  *   singles: Row[];
  * }}
