@@ -877,7 +877,8 @@ static int tcp_listening(int port) {
 /**
  * Cooperative multitasking status handler.
  * When state is not IDLE, this does ONE chunk of install work per call
- * (download config, extract config, download utils, extract utils, done).
+ * (extract config, extract utils, done — there are no download steps: the
+ * installer performs no network I/O, the web UI POSTs the zip bytes).
  * Each call advances one step so the server stays responsive to
  * other requests (e.g. status polling from JS UI).
  */

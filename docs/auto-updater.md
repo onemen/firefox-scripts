@@ -318,7 +318,7 @@ installer before the banner hands it to the user is a tracked follow-up. The upd
 | URLs/paths              | `config/installer.conf` → `generateUpdaterConfig.mjs` → `updater-config.sys.mjs`     |
 | Zip layout / flattening | `installer/src/file_utils.c::extract_zip_flatten()`                                  |
 | Elevation / admin copy  | `installer/src/helper/*` (built by `installer/Makefile`)                             |
-| Status display strings  | `installer/web/script.js` badge logic                                                |
+| Status display strings  | `installer/web/script/30-render.js` badge logic                                      |
 | Card UI / design system | `installer/web/style.css` + `tools/publish/updater.css`                              |
 
 ## 8. Security & safety considerations

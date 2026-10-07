@@ -173,12 +173,13 @@ The repo `.gitignore` contains ignore patterns that keep local-only files out of
 *.local
 ```
 
-These exclude files such as `UpdateNotification.local.sys.mjs` and the whole `styloaix.local/`
-directory, so `utils.zip` ships the full `core/chrome/utils` tree: the BootstrapLoader files
-(`BootstrapLoader.js`, `chrome.manifest`, `RDFDataSource.sys.mjs`, `RDFManifestConverter.sys.mjs`,
-`userChrome.js`, `xPref.sys.mjs`) **plus** the in-browser updater scheduler
-(`updater/scriptsUpdater.sys.mjs`, `updater/updater-config.sys.mjs`). The tab UI itself is a
-separate package — `updater-ui.zip` (see below). The canonical `files` list for utils in the
+These exclude local-only drafts — a scratch copy named e.g. `scriptsUpdater.local.mjs`, or a whole
+directory matched by `*.local` such as this repository's own `.local/` (local drafts; verified with
+`git check-ignore`) — so `utils.zip` ships the full `core/chrome/utils` tree: the BootstrapLoader
+files (`BootstrapLoader.js`, `chrome.manifest`, `RDFDataSource.sys.mjs`,
+`RDFManifestConverter.sys.mjs`, `userChrome.js`, `xPref.sys.mjs`) **plus** the in-browser updater
+scheduler (`updater/scriptsUpdater.sys.mjs`, `updater/updater-config.sys.mjs`). The tab UI itself is
+a separate package — `updater-ui.zip` (see below). The canonical `files` list for utils in the
 manifest covers the whole tree (see the generated list in the newest `dist/prod-*/hashes.json`
 snapshot, produced by `snapshot:prod`/`snapshot:dev`).
 
@@ -212,9 +213,10 @@ set matches the published list.
 **Zip layout is handled at install time.** The config package is installed with
 `extract_zip_flatten()` (`installer/src/file_utils.c`), which extracts into a temp dir, descends
 into a single top-level folder when the archive has one (the `fx-folder/` wrapper), and moves the
-contents into the browser's binary dir — so files land flat regardless of the zip layout. The
-zip-derived hash fallback applies the same descent (`find_flat_package_base`), so the published hash
-and the installed layout always agree.
+contents into the browser's binary dir — so files land flat regardless of the zip layout.The
+zip-derived hash fallback applies the same descent — `hash_zip_bytes()` extracts through
+`extract_zip_flatten()` and hashes the flattened tree with `compute_directory_sha256()` — so the
+published hash and the installed layout always agree.
 
 ### 2.2 Hash comparison rules
 
@@ -353,25 +355,25 @@ defaults/pref/config-prefs.js
 
 ## Where the code lives
 
-| Concern                                                   | File / function                                                                           |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Publish: zip creation + filters                           | `tools/publish/createZip.mjs`                                                             |
-| Publish: zip layout prefix (`fx-folder` wrapper)          | `tools/publish/createZip.mjs` — `zipPrefixFor()`                                          |
-| Publish: hash computation (+ canonical `files` list)      | `tools/publish/hashUtils.mjs` (`computeDirectoryHash` / `computeFileSetHash`)             |
-| Publish: orchestration + manifest update                  | `tools/publish/upload.mjs`                                                                |
-| Publish: Release asset helpers (module)                   | `tools/publish/uploadUtilsZip.mjs`                                                        |
-| Publish: Pages push (module)                              | `tools/publish/uploadToPages.mjs`                                                         |
-| Publish: filter helpers                                   | `tools/publish/gitignoreUtils.mjs`                                                        |
-| Shared config (owner/repo/URLs/gist)                      | `config/installer.conf`                                                                   |
-| Installer: hash check (config/utils)                      | `installer/src/detect_browser.c` — `check_config_status()` / `check_utils_status()`       |
-| Installer: directory hash computation                     | `installer/src/detect_browser.c` — `compute_directory_sha256()`                           |
-| Installer: remote hash + file-list fetch + cache          | `installer/src/detect_browser.c` — `fetch_remote_hashes()`                                |
-| Installer: manifest fetch at startup                      | `installer/src/detect_browser.c` — `prime_hash_cache()`                                   |
-| Installer: zip-derived fallback (list + hash)             | `installer/src/detect_browser.c` — `fetch_hashes_from_zips()` / `download_zip_and_hash()` |
-| Installer: obsolete files list                            | `installer/src/obsolete_files.h`                                                          |
-| Installer: zip extraction (config install strips wrapper) | `installer/src/file_utils.c` — `extract_zip_flatten()`                                    |
-| Installer: `--test-hash` from manifest                    | `installer/src/detect_browser.c` — `test_hash_from_manifest()`                            |
-| Installer: post-install refresh                           | `installer/src/detect_browser.c` — `refresh_install_status()`                             |
-| Installer: status API JSON                                | `installer/src/main.c` — `handle_api_browsers()`                                          |
-| Installer: badge rendering                                | `installer/web/script.js`                                                                 |
-| Reference hash test                                       | `installer/test/test_hash.mjs`                                                            |
+| Concern                                                   | File / function                                                                     |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Publish: zip creation + filters                           | `tools/publish/createZip.mjs`                                                       |
+| Publish: zip layout prefix (`fx-folder` wrapper)          | `tools/publish/createZip.mjs` — `zipPrefixFor()`                                    |
+| Publish: hash computation (+ canonical `files` list)      | `tools/publish/hashUtils.mjs` (`computeDirectoryHash` / `computeFileSetHash`)       |
+| Publish: orchestration + manifest update                  | `tools/publish/upload.mjs`                                                          |
+| Publish: Release asset helpers (module)                   | `tools/publish/uploadUtilsZip.mjs`                                                  |
+| Publish: Pages push (module)                              | `tools/publish/uploadToPages.mjs`                                                   |
+| Publish: filter helpers                                   | `tools/publish/gitignoreUtils.mjs`                                                  |
+| Shared config (owner/repo/URLs)                           | `config/installer.conf`                                                             |
+| Installer: hash check (config/utils)                      | `installer/src/detect_browser.c` — `check_config_status()` / `check_utils_status()` |
+| Installer: directory hash computation                     | `installer/src/detect_browser.c` — `compute_directory_sha256()`                     |
+| Installer: remote hash + file-list fetch + cache          | `installer/src/detect_browser.c` — `fetch_remote_hashes()`                          |
+| Installer: manifest fetch at startup                      | `installer/src/detect_browser.c` — `ingest_remote_manifest()`                       |
+| Installer: zip-derived fallback (list + hash)             | `installer/src/detect_browser.c` — `hash_uploaded_zip()` / `hash_zip_bytes()`       |
+| Installer: obsolete files list                            | `installer/src/obsolete_files.h`                                                    |
+| Installer: zip extraction (config install strips wrapper) | `installer/src/file_utils.c` — `extract_zip_flatten()`                              |
+| Installer: `--test-hash` from manifest                    | `installer/src/detect_browser.c` — `test_hash_from_manifest()`                      |
+| Installer: post-install refresh                           | `installer/src/detect_browser.c` — `refresh_install_status()`                       |
+| Installer: status API JSON                                | `installer/src/main.c` — `handle_api_browsers()`                                    |
+| Installer: badge rendering                                | `installer/web/script/30-render.js`                                                 |
+| Reference hash test                                       | `installer/test/test_hash.mjs`                                                      |
