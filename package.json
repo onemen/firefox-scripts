@@ -6,6 +6,14 @@
   "engines": {
     "node": ">=24"
   },
+  "packageManager": "pnpm@^12.0.0",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^24.0.0",
+      "onFail": "download"
+    }
+  },
   "scripts": {
     "lint": "pnpm run lint:js && pnpm run lint:ncpy && pnpm run lint:types && pnpm run lint:c && pnpm run lint:analyze && pnpm run lint:md && pnpm run lint:md-markers && pnpm run lint:yaml && pnpm run lint:skills",
     "lint:js": "eslint --config ./config/eslint.config.js --cache --cache-strategy content --cache-location ./config/.eslintcache --max-warnings 0",

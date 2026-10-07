@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <errno.h>
 #include <wchar.h>
 #ifdef _WIN32
 #include <tlhelp32.h>
@@ -27,9 +29,6 @@
 #include <sys/random.h>
 #endif
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic ignored "-Wformat-truncation"
-#endif
 #include <stdbool.h>
 
 // ===== Verbose logging =====
@@ -255,7 +254,8 @@ typedef enum {
     INSTALL_STATE_EXTRACT_CONFIG,  // Extract config zip
     INSTALL_STATE_EXTRACT_UTILS,   // Extract utils zip
     INSTALL_STATE_DONE,
-    INSTALL_STATE_ERROR
+    INSTALL_STATE_ERROR,
+    INSTALL_STATE_CANCELLED  // terminal: the user declined elevation (#431)
 } InstallState;
 
 static InstallState current_state = INSTALL_STATE_IDLE;
@@ -350,32 +350,67 @@ int session_installed_utils[MAX_BROWSERS];
 /**
  * Write a string escaped for JSON into a buffer.
  * Handles backslashes, double quotes, and control characters.
- * Returns the number of chars written (excluding null terminator).
+ * Returns the number of chars written (excluding null terminator),
+ * clamped to size - 1.  The clamp is the whole point (audit 2026-10-06, #431):
+ * a naive total += snprintf(...) accumulates snprintf's WOULD-BE length, so
+ * callers that reuse the return as a write offset (or a remaining-size input)
+ * underflow the next size computation.  Every offset arithmetic in this file
+ * now goes through appended(), which clamps the same way.
  */
 static int json_escape(char *buf, size_t size, const char *str) {
     int total = 0;
     for (const char *p = str; *p && (size_t)total < size - 1; p++) {
         unsigned char c = (unsigned char)*p;
+        char tmp[8];
+        int n;
         switch (c) {
-            case '\\': total += snprintf(buf + total, size - (size_t)total, "\\\\"); break;
-            case '"': total += snprintf(buf + total, size - (size_t)total, "\\\""); break;
-            case '\n': total += snprintf(buf + total, size - (size_t)total, "\\n"); break;
-            case '\r': total += snprintf(buf + total, size - (size_t)total, "\\r"); break;
-            case '\t': total += snprintf(buf + total, size - (size_t)total, "\\t"); break;
+            case '\\': n = snprintf(tmp, sizeof(tmp), "\\\\"); break;
+            case '"': n = snprintf(tmp, sizeof(tmp), "\\\""); break;
+            case '\n': n = snprintf(tmp, sizeof(tmp), "\\n"); break;
+            case '\r': n = snprintf(tmp, sizeof(tmp), "\\r"); break;
+            case '\t': n = snprintf(tmp, sizeof(tmp), "\\t"); break;
             default:
                 if (c < 0x20) {
-                    total += snprintf(buf + total, size - (size_t)total, "\\u%04x", c);
+                    n = snprintf(tmp, sizeof(tmp), "\\u%04x", c);
                 } else {
                     if ((size_t)total < size - 1) buf[total++] = c;
+                    continue;
                 }
                 break;
         }
+        if (n < 0) break;
+        for (int k = 0; k < n && (size_t)total < size - 1; k++) buf[total++] = tmp[k];
     }
     if ((size_t)total < size) buf[total] = '\0';
     return total;
 }
 
+/**
+ * Format and append at dst+off, clamping BOTH the offset and the copied
+ * length to dst's capacity.  Returns the NEW offset — never snprintf's
+ * would-be length.  Callers feed the return back as the next offset, so a
+ * truncated write can never make a later size computation underflow
+ * (audit 2026-10-06, #431: the /api/browsers stack OOB write).
+ */
+static int appendf(char *dst, size_t cap, int off, const char *fmt, ...) {
+    char tmp[8192];
+    va_list args;
+    va_start(args, fmt);
+    int n = vsnprintf(tmp, sizeof(tmp), fmt, args);
+    va_end(args);
+    if (n < 0) n = 0;
+    if ((size_t)n >= sizeof(tmp)) n = (int)sizeof(tmp) - 1;
+    if (off < 0) off = 0;
+    if (cap == 0) return 0;
+    if ((size_t)off > cap - 1) off = (int)(cap - 1);
+    if ((size_t)n > cap - 1 - (size_t)off) n = (int)(cap - 1 - (size_t)off);
+    if (n > 0) memcpy(dst + off, tmp, (size_t)n);
+    dst[off + n] = '\0';
+    return off + n;
+}
+
 // ===== File helpers for install =====
+// (json helpers above are shared by every JSON-emitting handler)
 
 /**
  * Copy a file from src to dst using platform-native copy.
@@ -467,6 +502,104 @@ int handle_api_ping(int client_fd, const char *query, const char *body, size_t b
  * URL; if it differs from the current installer's token, the tab belongs to a
  * previous (closed) installer run and should show a "closed" placeholder.
  */
+// ===== /api/browsers JSON serialization (shared by the handler and the
+// --test-json unit harness) =====
+
+#define SYNTH_PATH_LEN 1023
+
+/**
+ * Serialize `count` browsers from `list` into a malloc'd JSON array.
+ * The buffer is sized from the count (worst case per entry: two escaped
+ * MAX_PATH_LEN paths plus a fixed overhead term), and every append goes
+ * through appendf's clamp — the arithmetic that overflowed the old fixed
+ * 8192-byte stack buffer (audit 2026-10-06, #431) cannot recur.
+ * Returns NULL on allocation failure; the caller frees.
+ */
+static char *serialize_browsers_json(const RunningBrowser *list, int count) {
+    size_t cap = 2 * (size_t)(count > 0 ? count : 1) * (2 * MAX_PATH_LEN + 4096) + 64;
+    char *json = (char *)malloc(cap);
+    if (!json) return NULL;
+
+    int pos = 0;
+    pos = appendf(json, cap, pos, "[");
+    for (int i = 0; i < count; i++) {
+        if (i > 0) pos = appendf(json, cap, pos, ",");
+
+        char esc_name[256], esc_exe[64], esc_bin[MAX_PATH_LEN * 2], esc_prof[MAX_PATH_LEN * 2], esc_ver[160];
+        char esc_hg[768];
+        char hg_url[768];
+        json_escape(esc_name, sizeof(esc_name), list[i].identified_browser);
+        json_escape(esc_exe, sizeof(esc_exe), list[i].exe_name);
+        json_escape(esc_bin, sizeof(esc_bin), list[i].binary_path);
+        json_escape(esc_prof, sizeof(esc_prof), list[i].profile_path);
+        json_escape(esc_ver, sizeof(esc_ver), list[i].version);
+        get_hg_tags_url(list[i].binary_path, identify_variant_from_path(list[i].binary_path),
+                        hg_url, sizeof(hg_url));
+        json_escape(esc_hg, sizeof(esc_hg), hg_url);
+
+        pos = appendf(json, cap, pos,
+                      "{"
+                      "\"index\":%d,"
+                      "\"name\":\"%s\","
+                      "\"exe\":\"%s\","
+                      "\"pid\":%lu,"
+                      "\"binaryPath\":\"%s\","
+                      "\"profilePath\":\"%s\","
+                      "\"version\":\"%s\","
+                      "\"hgTagsUrl\":\"%s\","
+                      "\"configInstalled\":%d,"
+                      "\"utilsInstalled\":%d,"
+                      "\"configUpToDate\":%d,"
+                      "\"utilsUpToDate\":%d,"
+                      "\"hashCheckOk\":%d"
+                      "}",
+                      i, esc_name, esc_exe, list[i].pid, esc_bin, esc_prof, esc_ver, esc_hg,
+                      list[i].config_installed, list[i].utils_installed,
+                      list[i].config_up_to_date, list[i].utils_up_to_date,
+                      get_hash_check_available());
+    }
+    appendf(json, cap, pos, "]");
+    return json;
+}
+
+/**
+ * Unit-test harness shared by --test-json and the /api/browsers handler's
+ * shape: fabricate `count` browsers whose paths are SYNTH_PATH_LEN chars of
+ * hostile JSON content (quotes, backslashes) so the emission boundary is
+ * exercised at MAX_BROWSERS scale without a browser process to scan.
+ * Returns a malloc'd JSON array the caller frees, NULL on OOM.
+ */
+static char *build_test_browsers_json(int count) {
+    static RunningBrowser fake[MAX_BROWSERS];
+    if (count > MAX_BROWSERS) count = MAX_BROWSERS;
+    memset(fake, 0, sizeof(fake));
+    for (int i = 0; i < count; i++) {
+        fake[i].pid = (unsigned long)(4000 + i);
+        fake[i].config_installed = i % 2;
+        fake[i].utils_installed = (i + 1) % 2;
+        fake[i].config_up_to_date = 1;
+        fake[i].utils_up_to_date = 0;
+        snprintf(fake[i].identified_browser, sizeof(fake[i].identified_browser), "Test Browser %d", i);
+        snprintf(fake[i].exe_name, sizeof(fake[i].exe_name), "test%d.exe", i);
+        snprintf(fake[i].version, sizeof(fake[i].version), "199.%d", i);
+        for (int k = 0; k < SYNTH_PATH_LEN; k++) {
+            char c = (char)(k % 16);
+            fake[i].binary_path[k] =
+                (c == 0) ? 'q' : (c == 1) ? '"'
+                             : (c == 2)   ? '\\'
+                             : (c == 3)   ? 't'
+                                          : (char)('a' + (c % 23));
+            fake[i].profile_path[k] =
+                (c == 0) ? 'p' : (c == 1) ? '"'
+                             : (c == 2)   ? '\\'
+                                          : (char)('A' + (c % 23));
+        }
+        fake[i].binary_path[SYNTH_PATH_LEN] = '\0';
+        fake[i].profile_path[SYNTH_PATH_LEN] = '\0';
+    }
+    return serialize_browsers_json(fake, count);
+}
+
 int handle_api_claim(int client_fd, const char *query, const char *body, size_t body_len) {
     (void)body;
     (void)body_len;
@@ -493,59 +626,17 @@ int handle_api_browsers(int client_fd, const char *query, const char *body, size
     // Rescanning would pick up the browser that was just launched to show the UI.
     // Browsers are scanned once at startup; a rescan happens after each install completes.
 
-    // Build JSON response
-    char json[8192];
-    int pos = 0;
-    pos += snprintf(json + pos, sizeof(json) - (size_t)pos, "[");
-
-    for (int i = 0; i < detected_count && pos < (int)sizeof(json) - 256; i++) {
-        if (i > 0) pos += snprintf(json + pos, sizeof(json) - (size_t)pos, ",");
-
-        char esc_name[256], esc_exe[64], esc_bin[MAX_PATH_LEN * 2], esc_prof[MAX_PATH_LEN * 2], esc_ver[160];
-        char esc_hg[768];
-        char hg_url[768];
-        json_escape(esc_name, sizeof(esc_name), detected_browsers[i].identified_browser);
-        json_escape(esc_exe, sizeof(esc_exe), detected_browsers[i].exe_name);
-        json_escape(esc_bin, sizeof(esc_bin), detected_browsers[i].binary_path);
-        json_escape(esc_prof, sizeof(esc_prof), detected_browsers[i].profile_path);
-        json_escape(esc_ver, sizeof(esc_ver), detected_browsers[i].version);
-        get_hg_tags_url(detected_browsers[i].binary_path,
-                        identify_variant_from_path(detected_browsers[i].binary_path),
-                        hg_url, sizeof(hg_url));
-        json_escape(esc_hg, sizeof(esc_hg), hg_url);
-
-        pos += snprintf(json + pos, sizeof(json) - (size_t)pos,
-                        "{"
-                        "\"index\":%d,"
-                        "\"name\":\"%s\","
-                        "\"exe\":\"%s\","
-                        "\"pid\":%lu,"
-                        "\"binaryPath\":\"%s\","
-                        "\"profilePath\":\"%s\","
-                        "\"version\":\"%s\","
-                        "\"hgTagsUrl\":\"%s\","
-                        "\"configInstalled\":%d,"
-                        "\"utilsInstalled\":%d,"
-                        "\"configUpToDate\":%d,"
-                        "\"utilsUpToDate\":%d,"
-                        "\"hashCheckOk\":%d"
-                        "}",
-                        i,
-                        esc_name,
-                        esc_exe,
-                        detected_browsers[i].pid,
-                        esc_bin,
-                        esc_prof,
-                        esc_ver,
-                        esc_hg,
-                        detected_browsers[i].config_installed,
-                        detected_browsers[i].utils_installed,
-                        detected_browsers[i].config_up_to_date,
-                        detected_browsers[i].utils_up_to_date,
-                        get_hash_check_available());
+    // Serialization is shared with the --test-json unit harness (audit
+    // 2026-10-06, #431): the buffer is sized from detected_count and every
+    // append clamps, so a host with many long-path browsers can no longer
+    // overflow the response.
+    char *json = serialize_browsers_json(detected_browsers, detected_count);
+    if (!json) {
+        const char *err = "{\"error\":\"out of memory\"}";
+        send_json_response(client_fd, err, (int)strlen(err));
+        return 0;
     }
-
-    pos += snprintf(json + pos, sizeof(json) - (size_t)pos, "]");
+    int pos = (int)strlen(json);
 
     char header[512];
     int hlen = snprintf(header, sizeof(header),
@@ -563,6 +654,7 @@ int handle_api_browsers(int client_fd, const char *query, const char *body, size
     (void)write(client_fd, header, (size_t)hlen);
     (void)write(client_fd, json, (size_t)pos);
 #endif
+    free(json);
     return 0;
 }
 
@@ -826,7 +918,26 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
                 snprintf(fx_zip_path, sizeof(fx_zip_path), "%s%cfx-folder.zip", g_work_dir, PATH_SEPARATOR);
 
                 if (save_buf_to_file(fx_zip_path, (const char *)zip_data, zip_len) < 0) {
-                    set_install_error("Failed to save downloaded config zip to temp file");
+                    // Capture the CRT/Win32 error first — RS-10 CI failure
+                    // (#436): the status message must be attributable on its
+                    // own when the config-zip save fails on a runner.
+                    int save_errno = errno;
+#ifdef _WIN32
+                    DWORD save_win32 = GetLastError();
+#endif
+                    char save_err[512];
+#ifdef _WIN32
+                    snprintf(save_err, sizeof(save_err),
+                             "Failed to save downloaded config zip to temp file "
+                             "(path=%s, len=%zu, errno=%d, win32=%lu)",
+                             fx_zip_path, zip_len, save_errno, (unsigned long)save_win32);
+#else
+                    snprintf(save_err, sizeof(save_err),
+                             "Failed to save downloaded config zip to temp file "
+                             "(path=%s, len=%zu, errno=%d)",
+                             fx_zip_path, zip_len, save_errno);
+#endif
+                    set_install_error(save_err);
                     break;
                 }
 
@@ -866,7 +977,17 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
 
                 verbose_printf("[install] Copying config files to %s\n", g_binary_dir);
                 char copy_err[256] = "";
-                if (admin_copy_tree(staging, g_binary_dir, copy_err, sizeof(copy_err)) != 0) {
+                int copy_rc = admin_copy_tree(staging, g_binary_dir, copy_err, sizeof(copy_err));
+                if (copy_rc == ADMIN_COPY_CANCELLED) {
+                    // The user said no to the UAC prompt — a distinct terminal
+                    // state, not a failed install (audit 2026-10-06, #431).
+                    remove_dir_tree(staging);
+                    current_state = INSTALL_STATE_CANCELLED;
+                    snprintf(state_message, sizeof(state_message), "%s", copy_err);
+                    state_progress = 0;
+                    break;
+                }
+                if (copy_rc != 0) {
                     remove_dir_tree(staging);
                     set_install_error(copy_err[0] ? copy_err : "Failed to copy configuration files. "
                                                                "The directory may need administrator permissions.");
@@ -986,6 +1107,10 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
             step_str = "error";
             is_terminal = 1;
             break;
+        case INSTALL_STATE_CANCELLED:
+            step_str = "cancelled";
+            is_terminal = 1;
+            break;
         default: step_str = "unknown"; break;
     }
 
@@ -995,6 +1120,13 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
                  "Installation complete. Please restart the browser.");
     }
 
+    // state_message is interpolated unescaped — audit 2026-10-06, #431: it is
+    // filled from admin-copy errors carrying destination paths, so a path
+    // containing a double quote or backslash produced malformed JSON and a
+    // generic UI error.  Same escaping every other JSON call site uses.
+    char esc_msg[512];
+    json_escape(esc_msg, sizeof(esc_msg), state_message);
+
     char json[1024];
     int pos = snprintf(json, sizeof(json),
                        "{"
@@ -1003,7 +1135,7 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
                        "\"progress\":%d,"
                        "\"terminal\":%d"
                        "}",
-                       step_str, state_message, state_progress, is_terminal);
+                       step_str, esc_msg, state_progress, is_terminal);
 
     send_json_response(client_fd, json, pos);
 
@@ -1160,7 +1292,13 @@ int handle_api_install(int client_fd, const char *query, const char *body, size_
 #endif
     snprintf(g_work_dir, sizeof(g_work_dir), "%s%cfxs-installer-%ld",
              tmp_dir, PATH_SEPARATOR, work_dir_pid);
-    mkdir_recursive(g_work_dir);
+    if (mkdir_recursive(g_work_dir) != 0) {
+        // Propagated (audit 2026-10-06, #431): the state machine would only
+        // surface this later as a confusing per-file save failure.
+        const char *err = "{\"error\":\"Cannot create the installer work directory in the temp folder\"}";
+        send_json_response(client_fd, err, (int)strlen(err));
+        return 0;
+    }
 
     snprintf(g_binary_dir, MAX_PATH_LEN, "%s", detected_browsers[browser_idx].binary_path);
     get_parent_dir(g_binary_dir);
@@ -1970,6 +2108,60 @@ static int main_impl(int argc, char *argv[]) {
                 return 1;
             }
             return (test_hash_from_manifest(type, dir_path, manifest_path) == 0) ? 0 : 1;
+        }
+        if (strcmp(argv[1], "--test-json") == 0) {
+            /* Unit-test harness for the /api/browsers JSON emission (audit
+             * 2026-10-06, #431): serialize N synthetic browsers with
+             * hostile-length paths and print the JSON to stdout, so a unit
+             * test can parse it without a browser process to scan. */
+            if (argc < 3) {
+                fprintf(stderr, "Usage: %s --test-json <count>\n", argv[0]);
+                return 2;
+            }
+            char *end = NULL;
+            long n = strtol(argv[2], &end, 10);
+            if (!end || *end != '\0' || n < 0 || n > MAX_BROWSERS) {
+                fprintf(stderr, "Invalid count: %s (expected 0-%d)\n", argv[2], MAX_BROWSERS);
+                return 2;
+            }
+            char *out = build_test_browsers_json((int)n);
+            if (!out) {
+                fprintf(stderr, "out of memory\n");
+                return 2;
+            }
+            printf("%s\n", out);
+            free(out);
+            return 0;
+        }
+        if (strcmp(argv[1], "--test-admin-copy") == 0) {
+            /* Unit-test harness for the install status terminal states (audit
+             * 2026-10-06, #431): exercise the same JSON the /api/status
+             * handler emits for a cancelled-elevation run ("cancelled") and
+             * for a copy error whose message carries a double quote (the
+             * escaped-interpolation fix). */
+            const char *scenario = (argc >= 3) ? argv[2] : "cancelled";
+            current_state = INSTALL_STATE_CANCELLED;
+            state_progress = 30;
+            if (strcmp(scenario, "cancelled") == 0) {
+                snprintf(state_message, sizeof(state_message), "Elevation cancelled by the user");
+            } else if (strcmp(scenario, "quote") == 0) {
+                current_state = INSTALL_STATE_ERROR;
+                snprintf(state_message, sizeof(state_message),
+                         "Copy failed for C:\\progs\\\"weird\" dir\\file: error 5");
+            } else {
+                fprintf(stderr, "Unknown scenario: %s (use 'cancelled' or 'quote')\n", scenario);
+                return 2;
+            }
+            /* Reuse the status handler's JSON build by inlining its shape */
+            const char *step_str = (current_state == INSTALL_STATE_CANCELLED) ? "cancelled" : "error";
+            char esc_msg[512];
+            json_escape(esc_msg, sizeof(esc_msg), state_message);
+            char json[1024];
+            int pos = snprintf(json, sizeof(json),
+                               "{\"step\":\"%s\",\"message\":\"%s\",\"progress\":%d,\"terminal\":1}",
+                               step_str, esc_msg, state_progress);
+            printf("%.*s\n", pos, json);
+            return 0;
         }
         if (strcmp(argv[1], "--test-self-update") == 0) {
             /* Unit-test harness for the self-update logic: ingest a release

@@ -857,6 +857,13 @@ static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
     snprintf(work, sizeof(work), "%s%c.fsh_ziphash_%d_%u", base, PATH_SEPARATOR,
              (int)time(NULL), g_ziphash_counter++);
     if (mkdir_recursive(work) != 0) return -1;
+#ifndef _WIN32
+    // Audit 2026-10-06 P2-9: this scratch dir briefly holds the extracted
+    // package (privileged-JS candidates) before hashing. Only it needs the
+    // restrictive mode — not every mkdir_recursive target, which includes
+    // elevated install dirs a non-root browser must still read (#431 thread).
+    chmod(work, 0700);
+#endif
 
     char zip_path[MAX_PATH_LEN];
     snprintf(zip_path, sizeof(zip_path), "%s%cpackage.zip", work, PATH_SEPARATOR);

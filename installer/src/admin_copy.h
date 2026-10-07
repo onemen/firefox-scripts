@@ -4,6 +4,14 @@
 #include "platform.h"
 
 /**
+ * admin_copy_files() / admin_copy_tree() return code: the user declined the
+ * elevation prompt (UAC ERROR_CANCELLED).  Distinct from every failure code
+ * so the install state machine can surface a separate terminal "cancelled"
+ * step instead of a generic error (audit 2026-10-06, #431).
+ */
+#define ADMIN_COPY_CANCELLED (-10)
+
+/**
  * Copy a batch of files (src/dst pairs) into dst paths.
  *
  * On Windows, when any dst lives in a directory that the current process

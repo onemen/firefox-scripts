@@ -1,6 +1,7 @@
 #include "file_utils.h"
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include "vendor/miniz/miniz.h"
 
@@ -142,6 +143,21 @@ int extract_zip(const char *zip_path, const char *dest_dir) {
     return ret;
 }
 
+#ifdef _WIN32
+/** Directory (or file) exists at path. */
+static int win_path_exists(const WCHAR *wpath) {
+    return GetFileAttributesW(wpath) != INVALID_FILE_ATTRIBUTES;
+}
+#endif
+
+/**
+ * Create path and every missing parent directory.
+ * Returns 0 on success (or if the final directory already exists), -1 when a
+ * component could not be created for a reason other than "already there"
+ * (audit 2026-10-06, #431: the old version ignored every
+ * CreateDirectoryW/mkdir result, so its callers' checks were vacuous and a
+ * permission failure surfaced later as a confusing per-entry error).
+ */
 int mkdir_recursive(const char *path) {
     char tmp[MAX_PATH_LEN];
     snprintf(tmp, sizeof(tmp), "%s", path);
@@ -152,24 +168,33 @@ int mkdir_recursive(const char *path) {
 #ifdef _WIN32
             // Cutting at a separator always lands on a UTF-8 char boundary.
             WCHAR *wdir = utf8_to_wide(tmp);
-            if (wdir) {
-                CreateDirectoryW(wdir, NULL);
+            // Existence first: CreateDirectoryW on an existing dir is fine
+            // (183) but Windows Server answers other errors for edge shapes —
+            // e.g. the trailing "C:\...\Temp\" component built from
+            // GetTempPathA's own separator failed with ERROR_PATH_NOT_FOUND
+            // on CI runners while succeeding on desktop Windows (#436 RS-10).
+            if (wdir && !win_path_exists(wdir) &&
+                !CreateDirectoryW(wdir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
                 free(wdir);
+                return -1;
             }
+            free(wdir);
 #else
-            mkdir(tmp, 0755);
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
 #endif
             *p = PATH_SEPARATOR;
         }
     }
 #ifdef _WIN32
     WCHAR *wdir = utf8_to_wide(tmp);
-    if (wdir) {
-        CreateDirectoryW(wdir, NULL);
+    if (wdir && !win_path_exists(wdir) &&
+        !CreateDirectoryW(wdir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
         free(wdir);
+        return -1;
     }
+    free(wdir);
 #else
-    mkdir(tmp, 0755);
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
 #endif
     return 0;
 }
