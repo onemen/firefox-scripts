@@ -384,6 +384,12 @@ let gWindow = null;
 // checkForUpdates's attach block (sessionRestoredWait).
 let gSessionRestored = false;
 
+// Fire-and-forget entry for checkForUpdates(): the startup, window-churn and
+// daily-timer call sites do not await it, so the rejection handling lives here.
+function runCheckForUpdates() {
+  checkForUpdates().catch(e => console.error('Firefox Scripts: update check failed (uncaught)', e));
+}
+
 /**
  * Initialize the updater. Called per browser window on startup by
  * BootstrapLoader.js / userChrome.js; idempotent so double-init is harmless.
@@ -402,7 +408,7 @@ export function initScriptsUpdater(win) {
       // cheap: a same-day check no-ops right after the gate. Without this, a
       // user who closed window 1 mid-check misses the notification until the
       // next daily tick (review on #310).
-      checkForUpdates();
+      runCheckForUpdates();
     }
     return;
   }
@@ -438,10 +444,10 @@ export function initScriptsUpdater(win) {
   // bare setInterval never actually fired — its ReferenceError was swallowed
   // by the loader's catch for the updater's entire lifetime; found via the
   // #292 seeded-error experiment).
-  checkForUpdates();
+  runCheckForUpdates();
   gDailyTimer = Cc['@mozilla.org/timer;1'].createInstance(Ci.nsITimer);
   gDailyTimer.initWithCallback(
-    checkForUpdates,
+    runCheckForUpdates,
     CHECK_INTERVAL_MS,
     Ci.nsITimer.TYPE_REPEATING_SLACK
   );

@@ -359,8 +359,18 @@ try {
           'chrome://firefox-scripts/content/scriptsUpdater.sys.mjs'
         );
         initScriptsUpdater(win);
-      } catch {
-        // scriptsUpdater not available
+      } catch (e) {
+        // Two channels on purpose: ConsoleAPI output never reaches
+        // nsIConsoleService observers, so the logStringMessage line is the one
+        // the E2E console mirror sees.
+        console.error('Firefox Scripts updater: scriptsUpdater init failed', e);
+        try {
+          Services.console.logStringMessage(
+            `Firefox Scripts updater: scriptsUpdater init failed - ${e && e.message ? e.message : e}`
+          );
+        } catch {
+          // Console service unavailable (early shutdown); console.error stands.
+        }
       }
     }
   }, 'chrome-document-loaded');
