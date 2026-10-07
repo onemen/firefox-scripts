@@ -264,6 +264,48 @@ static inline void log_msg(const char *fmt, ...) {
     fflush(f);
 }
 
+#if !defined(_WIN32)
+#include <spawn.h>
+#include <fcntl.h>
+#include <sys/wait.h>
+extern char **environ;
+
+/**
+ * Spawn argv[0] with argv through posix_spawnp — PATH-searched ("open",
+ * "xdg-open" and bare browser names resolve like the old system() shell
+ * did), argument-array based (no shell, audit 2026-10-06 #432).
+ *
+ * wait_child: when nonzero, wait and return the child's exit status
+ * (0 = success, -1 on spawn/wait failure). When zero, return 0 once the
+ * child is running — for GUI programs that outlive the caller, the old
+ * system("… &") behavior; the child is reaped when this process exits.
+ * err_to_devnull: point the child's stderr at /dev/null, restoring the old
+ * shell redirect for xdg-open's noise.
+ */
+static inline int spawn_argv_ex(char *const argv[], int wait_child, int err_to_devnull) {
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_t *fap = NULL;
+    if (err_to_devnull) {
+        if (posix_spawn_file_actions_init(&fa) != 0) return -1;
+        posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+        fap = &fa;
+    }
+    pid_t pid = (pid_t)-1;
+    int rc = posix_spawnp(&pid, argv[0], fap, NULL, argv, environ);
+    if (fap) posix_spawn_file_actions_destroy(fap);
+    if (rc != 0) return -1;
+    if (!wait_child) return 0;
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+/** Spawn argv and wait for its exit status (short-lived children). */
+static inline int spawn_argv(char *const argv[]) {
+    return spawn_argv_ex(argv, 1, 0);
+}
+#endif
+
 /**
  * Open a URL in a browser.
  * When browser_exe is not NULL, use it to open the URL in that specific browser.
@@ -281,24 +323,20 @@ static inline int open_browser(const char *url, const char *browser_exe) {
     }
 #elif defined(__APPLE__)
     if (browser_exe) {
-        char cmd[MAX_PATH_LEN + 32];
-        snprintf(cmd, sizeof(cmd), "open -a \"%s\" \"%s\"", browser_exe, url);
-        return system(cmd);
-    } else {
-        char cmd[MAX_PATH_LEN + 32];
-        snprintf(cmd, sizeof(cmd), "open \"%s\"", url);
-        return system(cmd);
+        char *argv[] = { "open", "-a", (char *)browser_exe, (char *)url, NULL };
+        return spawn_argv(argv) == 0 ? 0 : -1;
     }
+    char *argv[] = { "open", (char *)url, NULL };
+    return spawn_argv(argv) == 0 ? 0 : -1;
 #else
     if (browser_exe) {
-        char cmd[MAX_PATH_LEN * 2 + 64];
-        snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" &", browser_exe, url);
-        return system(cmd);
-    } else {
-        char cmd[MAX_PATH_LEN + 32];
-        snprintf(cmd, sizeof(cmd), "xdg-open \"%s\"", url);
-        return system(cmd);
+        char *argv[] = { (char *)browser_exe, (char *)url, NULL };
+        // The browser outlives this process; fire and forget like the old
+        // system("\"browser\" \"url\" &") did — never wait for a session.
+        return spawn_argv_ex(argv, 0, 0) == 0 ? 0 : -1;
     }
+    char *argv[] = { "xdg-open", (char *)url, NULL };
+    return spawn_argv(argv) == 0 ? 0 : -1;
 #endif
 }
 
@@ -315,13 +353,13 @@ static inline int open_folder(const char *path) {
     free(wpath);
     return ((intptr_t)result > 32) ? 0 : -1;
 #elif defined(__APPLE__)
-    char cmd[MAX_PATH_LEN + 32];
-    snprintf(cmd, sizeof(cmd), "open \"%s\"", path);
-    return system(cmd);
+    char *argv[] = { "open", (char *)path, NULL };
+    return spawn_argv(argv) == 0 ? 0 : -1;
 #else
-    char cmd[MAX_PATH_LEN + 32];
-    snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" >/dev/null 2>&1", path);
-    return system(cmd);
+    /* xdg-open has no meaningful exit status here; silence its stderr the
+     * way the old shell redirect did. */
+    char *argv[] = { "xdg-open", (char *)path, NULL };
+    return spawn_argv_ex(argv, 1, 1) == 0 ? 0 : -1;
 #endif
 }
 
