@@ -636,8 +636,8 @@ all platforms, using wide-char APIs on Windows for non-ASCII paths. No external 
 ```mermaid
 flowchart TD
     dev["Developer on main<br/>(clean worktree, GITHUB_TOKEN_VAR)"] --> mode{"--mode?"}
-    mode -->|"--mode=prod<br/>(CI-only, main branch)| gate["build-and-upload.yml:<br/>cross-OS binary matrix"]
-    mode -->|"--mode=dev| local["publish:dev → disposable<br/>dev-build-id branch,<br/>-dev artifacts, jsDelivr"]
+    mode -->|"--mode=prod<br/>(CI-only, main branch)"| gate["build-and-upload.yml:<br/>cross-OS binary matrix"]
+    mode -->|"--mode=dev"| local["publish:dev → disposable<br/>dev-build-id branch,<br/>-dev artifacts, jsDelivr"]
     gate --> checks["Gates per binary:<br/>host AV scan → VirusTotal<br/>(threshold 3 + Microsoft veto);<br/>staging tree complete; E2E run for this SHA"]
     checks --> assets["upload.mjs: utils.zip, fx-folder.zip,<br/>updater-ui.zip + hashes.json"]
     assets --> pages["'latest' release + gh-pages branch"]
