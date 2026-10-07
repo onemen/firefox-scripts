@@ -45,14 +45,9 @@ export function scanThirdPartySkillDirs(root) {
 }
 
 /**
- * Resolve the third-party ignore list, failing CLOSED (ADR 0022 decision 3:
- * vendored skills are linted never). The previous version of this catch set the
- * list to `[]` — "fail open to linting everything except the known set" — which
- * lints every vendored skill, the one outcome ADR 0022 calls never, and nothing
- * in the repo noticed (pnpm format reads this file directly). An import failure
- * now falls back to the local frontmatter scan above; if that scan also finds
- * nothing while skills exist, the returned list is whatever the scan proved —
- * never a silent "lint it all".
+ * Resolve the third-party ignore list, failing CLOSED: an import failure falls
+ * back to the local frontmatter scan above, never to `[]` (ADR 0022 decision 3
+ * — vendored skills are linted never).
  *
  * @param {string} root repo root
  * @param {() => Promise<{loadInventory: (r: string) => {skill: string}[]}>} loadWatchdog

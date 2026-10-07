@@ -6,26 +6,20 @@
  *
  * House convention is the bounded copy `snprintf(dst, sizeof(dst), "%s", src)`:
  * always NUL-terminates, never over-reads the source, and keeps the tree clean
- * for SAST scanners (the semgrep rule behind bot PRs #163/#229 kept firing on
- * the idiom one site at a time). The 2026-09 sweep converted all 57 call sites;
- * this gate is what stops a refactor or a new platform variant from quietly
- * reintroducing the idiom (the way #214 re-seeded a fourth copy of it).
+ * for SAST scanners.
  *
- * Scope (widened 2026-10-07, audit P3-5): `strncpy`, `strncat`, `strcpy` and
- * the wide-char `wcsncpy`/`wcscpy`, across `.c`, `.h` AND `.inl` — the umbrella
- * header every file includes used to be the one place the convention was
- * unenforced, and `wcsncpy` was invisible to the old pattern. The bounded
- * counterparts stay `snprintf` (narrow) and `wmemcpy` + explicit terminator or
- * `swprintf` (wide): this repo uses no `*cpy_s` (Annex K is not portable to
- * every toolchain we build).
+ * Scope: `strncpy`, `strncat`, `strcpy` and the wide-char `wcsncpy`/`wcscpy`,
+ * across `.c`, `.h` AND `.inl` — the umbrella header every file includes would
+ * otherwise be unenforced, and `wcsncpy` was invisible to the old pattern. The
+ * bounded counterparts stay `snprintf` (narrow) and `wmemcpy` + explicit
+ * terminator or `swprintf` (wide): this repo uses no `*cpy_s` (Annex K is not
+ * portable to every toolchain we build).
  *
- * Zero tolerance — no allowlist for first-party code. The two `strncpy`
- * mentions that remain in the tree are gcc -fanalyzer workaround comments
- * explaining a deliberate non-use; the scanner matches call syntax across line
- * breaks, so prose is out of scope by construction. The scan is recursive under
- * installer/src (helper/ included) but skips vendor/ — vendored third-party
- * code (miniz) is pristine and read-only per AGENTS.md, so it is not ours to
- * gate.
+ * Zero tolerance — no allowlist for first-party code. The scanner matches call
+ * syntax across line breaks, so prose mentions are out of scope by
+ * construction. The scan is recursive under installer/src (helper/ included)
+ * but skips vendor/ — vendored third-party code (miniz) is pristine per
+ * AGENTS.md.
  *
  * Exit code 0 = no call sites. Run via `pnpm lint` (lint:ncpy stage).
  */

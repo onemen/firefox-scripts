@@ -1,13 +1,7 @@
-// test/unit/tools/eslint-skill-classification.test.mjs — pins the ADR 0022
-// fail-CLOSED skill classification behind `config/eslint.config.js`.
-//
-// The original code caught an import failure of tools/skills-watchdog.mjs and
-// set the third-party ignore list to [] — "fail open to linting everything
-// except the known set" — which lints every vendored skill, the one outcome
-// ADR 0022 decision 3 calls never, and nothing in the repo noticed. These
-// tests pin the inversion: when the watchdog cannot load, the classification
-// falls back to a local frontmatter scan and the vendored skills stay
-// ignored (the failing fixture is a loader that throws).
+// Pins the ADR 0022 fail-CLOSED skill classification in
+// config/eslint.config.js: when the watchdog cannot load, the classification
+// falls back to a local frontmatter scan and vendored skills stay ignored
+// (never `[]`).
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

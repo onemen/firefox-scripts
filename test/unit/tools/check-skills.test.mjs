@@ -67,8 +67,8 @@ metadata:
 
 Body.
 `,
-    // `license:` declared ⇒ the skill must ship the text (the license-file
-    // rule, audit P2-13); the base fixture is a skill that complies.
+    // `license:` declared ⇒ the skill must ship the text; the base fixture is
+    // a skill that complies.
     'LICENSE': 'MIT License\n\nCopyright (c) Acme\n',
   };
 }

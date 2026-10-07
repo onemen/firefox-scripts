@@ -111,10 +111,6 @@ test('ignores prose that merely mentions strncpy (no call syntax)', () => {
   }
 });
 
-// Audit P3-5 (2026-10-07): the gate widened from `.c`+strncpy to
-// `.c`/`.h`/`.inl` × {strncpy, strncat, strcpy, wcsncpy, wcscpy}. The umbrella
-// header every file includes used to be the one place the convention was
-// unenforced, and wcsncpy was invisible — these fixtures pin both widenings.
 test('scans .h and .inl, and still ignores non-C text files', () => {
   const dir = makeDir({
     'notes.txt': 'strncpy(a, b, c);',

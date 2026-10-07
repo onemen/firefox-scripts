@@ -29,7 +29,7 @@
  *   -path/-tree-sha`) and a parseable `github-repo` URL;
  * - every frontmatter key (top-level and `metadata.`) is on the known-key
  *   allow-list — a typo or an unreviewed upstream key fails the gate instead of
- *   passing silently (audit 2026-10-06 P2-13);
+ *   passing silently;
  * - a skill that declares `license:` ships the license text (third-party:
  *   LICENSE/NOTICE/COPYING in its directory, with recorded exceptions for
  *   upstreams that ship none — injecting a file would break the pristine
@@ -68,9 +68,8 @@ const GH_META_KEYS = ['github-repo', 'github-ref', 'github-path', 'github-tree-s
 const REPO_URL_RE =
   /^(?:(?:https?|ssh):\/\/(?:git@)?github\.com\/|git@github\.com:|github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
 
-// Unknown-key allow-list (audit 2026-10-06 P2-13): every frontmatter key in
-// use, so a typo or an upstream key nobody has seen fails the gate instead of
-// silently passing. Extend deliberately, in review — that is the point.
+// Every frontmatter key in use, so a typo or an upstream key nobody has seen
+// fails the gate instead of silently passing. Extend deliberately, in review.
 const TOP_LEVEL_KEYS = new Set([
   'name',
   'description',
@@ -90,8 +89,8 @@ const METADATA_KEYS = new Set([
 // A third-party skill that declares `license:` must ship the license text
 // (ADR 0022: "still MIT-attributed" needs a file to point at). Recorded
 // exceptions are upstream gaps we do not paper over by injecting files into
-// a pristine vendored tree (audit 2026-10-06 §4.4 — the file would diverge
-// from the installed tree `gh skill update` manages).
+// a pristine vendored tree — the file would diverge from the installed tree
+// `gh skill update` manages.
 const LICENSE_FILE_EXCEPTIONS = new Set(['lavish']);
 const LICENSE_FILE_NAMES = [
   'LICENSE',

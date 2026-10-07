@@ -1,37 +1,27 @@
 #!/usr/bin/env node
 
 /**
- * tools/check-skill-commands.mjs — validate the command tokens and relative
- * links in AUTHORED SKILL.md files (audit 2026-10-06 P2-14).
+ * tools/check-skill-commands.mjs — validate command tokens and relative links
+ * in AUTHORED SKILL.md files; vendored skills are out of scope (ADR 0022).
  *
- * Nothing in the repo checked that a `pnpm <name>` / `node <path>` / `make
- * <target>` token written in a skill resolves — proven live by four broken
- * commands at audit time. Vendored skills stay out of scope entirely (ADR 0022:
- * they are pristine and host-dependent by design; `AGENTS.md` carries the
- * host-dependence note), so this gate only ever reads authored skills.
- *
- * What is checked, per authored SKILL.md:
+ * Checked per authored SKILL.md:
  *
  * - `pnpm <script>` (and `pnpm run <script>`) must name a package.json script, or
  *   be a whitelisted pnpm builtin (`install`, `exec`, …). Bare `pnpm publish`
- *   is deliberately NOT whitelisted: this repo has no bare `pnpm publish`
- *   script (AGENTS.md) and the builtin would publish the package, not the
- *   release.
+ *   is deliberately NOT whitelisted: the builtin would publish the package, not
+ *   the release.
  * - `node <path>.mjs` must resolve from the repo root (flag tokens such as
  *   `--env-file-if-exists=.env` are skipped; globs are skipped — they are not
  *   files).
  * - `make <target>` must be a target of the Makefile it resolves against: `make
  *   -C <dir> <target>` uses that dir's Makefile, a bare `make <target>`
- *   resolves against `installer/Makefile` (there is no root Makefile; the
- *   installer build is what skills invoke).
+ *   resolves against `installer/Makefile` (there is no root Makefile).
  * - `[text](relative/target)` links must exist on disk — resolved against the
  *   SKILL.md's own directory first (skills link as `../../../docs/…`), then
  *   against the repo root. Absolute URLs, `#anchors` and `mailto:` are out of
  *   scope (no network in the lint chain).
  *
- * Commands are read from fenced code blocks and inline backtick spans only —
- * prose like "make it work" or "pnpm invoked from CI" is not a command.
- *
+ * Commands are read from fenced code blocks and inline backtick spans only.
  * Exit code 0 = every token resolves. Wired as `pnpm lint:skill-cmds` in the
  * `pnpm lint` chain; `--dry-run` prints without failing.
  */

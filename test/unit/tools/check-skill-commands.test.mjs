@@ -1,11 +1,6 @@
-// test/unit/tools/check-skill-commands.test.mjs — pins the SKILL.md command
-// and link validator (tools/check-skill-commands.mjs, audit 2026-10-06 P2-14).
-//
-// The audit's proof cases are the failing fixtures here: `pnpm publish -- …`
-// (the publishing skill's former footgun — this repo has no bare publish
-// script) and a `docs/agents/issue-tracker.md`-style link that does not exist
-// (the code-review skill's line 17, vendored and therefore never edited — its
-// shape lives on as a fixture instead).
+// Pins the SKILL.md command and link validator (tools/check-skill-commands.mjs).
+// The two proof fixtures are a bare `pnpm publish` (no such script in this
+// repo) and a link whose target does not exist on disk.
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -54,7 +49,7 @@ function check(root, text, skillRel = '.agents/skills/alpha') {
 
 // ── pnpm tokens ─────────────────────────────────────────────────────────────
 
-test('the audit footgun `pnpm publish -- …` is flagged (no bare publish script)', () => {
+test('`pnpm publish -- …` is flagged (no bare publish script)', () => {
   const root = makeRepo({});
   const errors = check(root, '```bash\npnpm publish --include=all\n```\n');
   assert.equal(errors.length, 1, JSON.stringify(errors));
@@ -141,7 +136,7 @@ test('alternation targets are checked piecewise', () => {
 
 // ── links ───────────────────────────────────────────────────────────────────
 
-test('the audit fixture: a link to docs/agents/issue-tracker.md does not exist', () => {
+test('a link to a missing target is flagged (docs/agents/issue-tracker.md)', () => {
   const root = makeRepo({});
   const errors = check(root, 'See [the tracker](docs/agents/issue-tracker.md) for details.\n');
   assert.equal(errors.length, 1, JSON.stringify(errors));
