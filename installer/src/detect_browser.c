@@ -758,10 +758,12 @@ static int collect_zip_tree_visitor(const char *full, void *ctx) {
 static unsigned int g_ziphash_counter = 0;
 
 /**
- * Compute the expected package hash and canonical file list from the
- * uploaded zip (the published package itself), used when the hash manifest
- * is missing or invalid.  The zip IS the published artifact, so hashes
- * computed from it are authoritative for the up-to-date comparison.
+ * Compute the expected package hash and canonical file list from a package
+ * zip's raw bytes (the published package itself), used when the hash manifest
+ * is missing or invalid — and by the manifest-verification path
+ * (installer_verify_upload / installer_verify_stored_zips, P0-5 / #445).
+ * The zip IS the published artifact, so hashes computed from it are
+ * authoritative for the up-to-date comparison.
  *
  * The zip is flatten-extracted to a temp dir (stripping the single
  * top-level wrapper, e.g. fx-folder.zip's 'fx-folder' dir, exactly like the
@@ -773,10 +775,8 @@ static unsigned int g_ziphash_counter = 0;
  * (caller frees with free_file_list()); -1 if the zip is unavailable or
  * unreadable.
  */
-static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
-                             char ***out_list, int *out_count) {
-    size_t len = 0;
-    const unsigned char *data = installer_uploaded_zip(is_utils, &len);
+static int hash_zip_bytes(const unsigned char *data, size_t len, char *out_hash,
+                          size_t hash_size, char ***out_list, int *out_count) {
     if (!data || len == 0) return -1;
 
     char base[MAX_PATH_LEN];
@@ -845,6 +845,130 @@ static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
 }
 
 /**
+ * Fetch the stored package zip and hash it — thin wrapper so the stored-zip
+ * callers keep their original shape after the bytes-first split above.
+ *
+ * Returns 0 with *out_hash/*out_list/*out_count set (caller frees with
+ * free_file_list()); -1 if the zip is unavailable or unreadable.
+ */
+static int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
+                             char ***out_list, int *out_count) {
+    size_t len = 0;
+    const unsigned char *data = installer_uploaded_zip(is_utils, &len);
+    return hash_zip_bytes(data, len, out_hash, hash_size, out_list, out_count);
+}
+
+/**
+ * Extract one package's published `hash` from a manifest body. `section` is
+ * the quoted section key ("\"utils\"" / "\"fx-folder\"") — the exact search
+ * ingest_remote_manifest() has always used; ingest and the upload/manifest
+ * verification share this one parser (audit 2026-10-06, group C / #445) so
+ * they can never disagree about what the manifest says. `json` must point at
+ * at least `len` bytes; the working copy is bounded by them.
+ *
+ * Returns 0 with out filled (64 hex + NUL), -1 when the manifest carries no
+ * hash for the package (out stays empty).
+ */
+static int manifest_package_hash(const char *json, size_t len, const char *section,
+                                 char *out, size_t out_size) {
+    out[0] = '\0';
+    if (!json || len == 0 || !section || out_size < 65) return -1;
+    char *copy = (char *)malloc(len + 1);
+    if (!copy) return -1;
+    memcpy(copy, json, len);
+    copy[len] = '\0';
+
+    int ret = -1;
+    const char *sec = strstr(copy, section);
+    if (sec) {
+        const char *hash_key = strstr(sec, "\"hash\"");
+        if (hash_key) {
+            const char *val_start = strchr(hash_key + 6, '"'); /* skip past "hash: */
+            if (val_start) {
+                val_start++;
+                const char *val_end = strchr(val_start, '"');
+                if (val_end) {
+                    size_t hlen = (size_t)(val_end - val_start);
+                    if (hlen > 0 && hlen < out_size) {
+                        memcpy(out, val_start, hlen);
+                        out[hlen] = '\0';
+                        ret = 0;
+                    }
+                }
+            }
+        }
+    }
+    free(copy);
+    return ret;
+}
+
+/**
+ * Compare a package zip's directory hash against the hash a manifest body
+ * publishes for it. Returns 0 when they match — and also when there is
+ * nothing to verify (no manifest, or no hash for that package: the
+ * documented no-manifest fallback, where the zip is its own reference, is
+ * unchanged). Returns -1 only for a real mismatch, or when a zip that
+ * SHOULD be verifiable cannot be hashed at all (fail closed).
+ */
+static int zip_matches_manifest_hash(const char *manifest_json, size_t manifest_len,
+                                     int is_utils, const unsigned char *zip,
+                                     size_t zip_len) {
+    if (!manifest_json || manifest_len == 0) return 0;
+    char expected[65];
+    if (manifest_package_hash(manifest_json, manifest_len,
+                              is_utils ? "\"utils\"" : "\"fx-folder\"",
+                              expected, sizeof(expected)) != 0) {
+        return 0; /* no published hash for this package — nothing to check */
+    }
+    char actual[65];
+    char **files = NULL;
+    int count = 0;
+    if (hash_zip_bytes(zip, zip_len, actual, sizeof(actual), &files, &count) != 0) {
+        free_file_list(&files, &count);
+        return -1; /* unverifiable (corrupt zip) — fail closed */
+    }
+    free_file_list(&files, &count);
+    return strcmp(actual, expected) == 0 ? 0 : -1;
+}
+
+/**
+ * Verify a candidate upload against the manifest already ingested
+ * (POST /api/upload, P0-5 / #445). Called BEFORE the zip is stored.
+ * Returns 0 when the bytes match or when no manifest reference exists yet;
+ * -1 on mismatch — the handler answers 403.
+ */
+int installer_verify_upload(int is_utils, const char *data, size_t len) {
+    if (!g_manifest_json) return 0; /* no reference yet — upload proceeds */
+    return zip_matches_manifest_hash(g_manifest_json, g_manifest_len, is_utils,
+                                     (const unsigned char *)data, len);
+}
+
+/**
+ * Verify the zips already stored against a CANDIDATE manifest body
+ * (POST /api/manifest, P0-5 / #445). Called BEFORE ingest, so a mismatched
+ * manifest is refused and the current state stays untouched. The manifest
+ * and the zips arrive in parallel (10-ingest.js), so this covers zip-first
+ * order while installer_verify_upload() covers manifest-first. Returns 0
+ * when everything matches or nothing is stored yet (the upload path will
+ * verify later); -1 on mismatch.
+ */
+int installer_verify_stored_zips(const char *manifest_json, size_t len) {
+    if (!manifest_json || len == 0) return 0;
+    size_t zlen = 0;
+    const unsigned char *zip = installer_uploaded_zip(1, &zlen);
+    if (zip && zlen > 0 &&
+        zip_matches_manifest_hash(manifest_json, len, 1, zip, zlen) != 0) {
+        return -1;
+    }
+    zip = installer_uploaded_zip(0, &zlen);
+    if (zip && zlen > 0 &&
+        zip_matches_manifest_hash(manifest_json, len, 0, zip, zlen) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+/**
  * Store + parse the package manifest (hashes.json) posted by
  * the web UI.  Populates the cached published hashes, the canonical
  * per-package file lists (from the manifest's `files` arrays) and the
@@ -882,42 +1006,16 @@ int ingest_remote_manifest(const char *json, size_t len) {
 
     const char *utils_section = strstr(copy, "\"utils\"");
     if (utils_section) {
-        const char *hash_key = strstr(utils_section, "\"hash\"");
-        if (hash_key) {
-            const char *val_start = strchr(hash_key + 6, '"'); /* skip past "hash: */
-            if (val_start) {
-                val_start++;
-                const char *val_end = strchr(val_start, '"');
-                if (val_end) {
-                    size_t hlen = (size_t)(val_end - val_start);
-                    if (hlen > 0 && hlen < sizeof(utils_hash)) {
-                        memcpy(utils_hash, val_start, hlen);
-                        utils_hash[hlen] = '\0';
-                    }
-                }
-            }
-        }
+        /* one shared hash parser — exactly what the upload/manifest
+         * verification compares against (audit 2026-10-06, group C / #445) */
+        manifest_package_hash(copy, len, "\"utils\"", utils_hash, sizeof(utils_hash));
         parse_json_string_field(utils_section, "\"date\"", utils_date, sizeof(utils_date));
     }
     parse_manifest_files(copy, "\"utils\"", &utils_files, &utils_count);
 
     const char *fx_section = strstr(copy, "\"fx-folder\"");
     if (fx_section) {
-        const char *hash_key = strstr(fx_section, "\"hash\"");
-        if (hash_key) {
-            const char *val_start = strchr(hash_key + 6, '"');
-            if (val_start) {
-                val_start++;
-                const char *val_end = strchr(val_start, '"');
-                if (val_end) {
-                    size_t hlen = (size_t)(val_end - val_start);
-                    if (hlen > 0 && hlen < sizeof(fx_hash)) {
-                        memcpy(fx_hash, val_start, hlen);
-                        fx_hash[hlen] = '\0';
-                    }
-                }
-            }
-        }
+        manifest_package_hash(copy, len, "\"fx-folder\"", fx_hash, sizeof(fx_hash));
         parse_json_string_field(fx_section, "\"date\"", fx_date, sizeof(fx_date));
     }
     parse_manifest_files(copy, "\"fx-folder\"", &fx_files, &fx_count);

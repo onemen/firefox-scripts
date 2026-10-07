@@ -19,6 +19,11 @@ Mitigations in place:
   on Windows, `getentropy` on POSIX); startup **fails closed** if secure randomness is unavailable.
 - **No CORS.** Responses carry no `Access-Control-Allow-Origin` header, so cross-origin pages cannot
   read installer responses (the UI is same-origin).
+- **Host/Origin validation.** A request whose `Host` is not `localhost:<port>` / `127.0.0.1:<port>`
+  for the port the server bound — or whose `Origin`, when present, is not that same local origin —
+  is refused with 403 before routing. This is what stops DNS rebinding: a rebound name is
+  same-origin from the browser's point of view, so "no CORS header" alone would not keep the
+  response away from it. An absent `Host` (HTTP/1.0) is tolerated; no browser page can omit it.
 - **Hash-verified packages.** Zips are verified against the published manifest hash **before** any
   extraction (updater) and before install (installer).
 - **Zip-slip guard.** `extractZipFlatten`/`copyFileList` reject entry names that could escape the

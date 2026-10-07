@@ -72,4 +72,18 @@ int handle_api_waterfox(int client_fd, const char *query, const char *body, size
 // Current installer session token (defined in main.c).
 const char *installer_session_token(void);
 
+// One query parameter's value, byte-exact (audit 2026-10-06, P1-9 / #445).
+// `query` is the raw query string without the leading '?': the name must
+// match in full and the value ends at '&' or the end of the string, so t=
+// need not be the last parameter and xt= is not t=. Returns 1 only when the
+// parameter exists and equals `value`; a missing/empty query never matches.
+int query_param_equals(const char *query, const char *name, const char *value);
+
+// Generic HTTP response writer (defined in http_server.c). Every handler,
+// including those in main.c, answers through this — non-200 statuses are how
+// a refused request is surfaced (403 from the Host/Origin check and from the
+// manifest-verification rejections).
+void send_response(int client_fd, int status_code, const char *content_type,
+                   const char *body, size_t body_len);
+
 #endif /* HTTP_SERVER_H */

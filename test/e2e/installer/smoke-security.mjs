@@ -87,11 +87,19 @@ function findInstaller() {
   );
 }
 
-/** GET (or POST) an installer API path; returns {status, text, acao}. */
-async function hit(route, {token, method = 'GET', body} = {}) {
+/**
+ * GET (or POST) an installer API path; returns {status, text, acao}. `rawQuery`
+ * (when given) replaces `token`, for the query-parsing cases that must place t=
+ * off the end (?t=<tok>&x=1) or use a non-parameter (?xt=…).
+ */
+async function hit(route, {token, method = 'GET', body, rawQuery} = {}) {
   const qs = new URLSearchParams();
   if (token) qs.set('t', token);
-  const url = `${BASE}/api/${route}${qs.size ? `?${qs}` : ''}`;
+  const search =
+    rawQuery ? `?${rawQuery}`
+    : qs.size ? `?${qs}`
+    : '';
+  const url = `${BASE}/api/${route}${search}`;
   const res = await fetch(url, {
     method,
     body,
@@ -103,6 +111,45 @@ async function hit(route, {token, method = 'GET', body} = {}) {
     text,
     acao: res.headers.get('access-control-allow-origin'),
   };
+}
+
+/**
+ * One raw HTTP request over a socket with caller-controlled headers — for the
+ * Host/Origin cases (audit 2026-10-06, P1-6 / #445): fetch() refuses to
+ * override Host, and undici never sends Origin at all (verified 2026-10-07).
+ * Resolves with the full response header block (status line + headers).
+ */
+function rawRequest(requestLine, headers) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect({host: '127.0.0.1', port: PORT});
+    let buf = '';
+    const giveUp = setTimeout(() => {
+      sock.destroy();
+      reject(new Error('raw request: no response within 10 s'));
+    }, 10_000);
+    sock.on('connect', () => {
+      const head = [
+        requestLine,
+        ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
+        '',
+        '',
+      ].join('\r\n');
+      sock.write(head);
+    });
+    sock.on('data', d => {
+      buf += d.toString();
+      const end = buf.indexOf('\r\n\r\n');
+      if (end >= 0) {
+        clearTimeout(giveUp);
+        sock.destroy();
+        resolve(buf.slice(0, end));
+      }
+    });
+    sock.on('error', err => {
+      clearTimeout(giveUp);
+      reject(err);
+    });
+  });
 }
 
 async function waitForServer(token, child) {
@@ -209,6 +256,95 @@ async function main() {
         good.text.slice(0, 80)
       );
       check(good.acao === null, '/api/claim has no Access-Control-Allow-Origin');
+    }
+
+    console.log('\nQuery parsing: t= need not be last, xt= is not t, bare claim is current:0');
+    {
+      // audit 2026-10-06 P1-9 (#445): the three token parsers used to
+      // disagree — claim assumed t= was the last parameter and had no
+      // &-boundary check, and a bare /api/claim answered current:1.
+      const trailing = await hit('claim', {rawQuery: `t=${token}&x=1`});
+      check(
+        trailing.text.includes('"current":1'),
+        'claim with ?t=<valid>&x=1 reports current:1',
+        trailing.text.slice(0, 80)
+      );
+      const embedded = await hit('claim', {rawQuery: `xt=${token}`});
+      check(
+        embedded.text.includes('"current":0'),
+        'claim with ?xt=<valid> reports current:0',
+        embedded.text.slice(0, 80)
+      );
+      const bare = await hit('claim');
+      check(
+        bare.text.includes('"current":0'),
+        'claim with no token reports current:0',
+        bare.text.slice(0, 80)
+      );
+
+      const gateTrailing = await hit('manifest', {
+        method: 'POST',
+        body: '{}',
+        rawQuery: `t=${token}&x=1`,
+      });
+      check(
+        !gateTrailing.text.includes(UNAUTHORIZED_REJECT_BODY),
+        'gate passes ?t=<valid>&x=1 (t= need not be the last parameter)',
+        gateTrailing.text.slice(0, 80)
+      );
+      const gateEmbedded = await hit('manifest', {
+        method: 'POST',
+        body: '{}',
+        rawQuery: `xt=${token}`,
+      });
+      check(
+        gateEmbedded.text.includes(UNAUTHORIZED_REJECT_BODY),
+        'gate rejects ?xt=<valid> as unauthorized',
+        gateEmbedded.text.slice(0, 80)
+      );
+      const shutEmbedded = await hit(SHUTDOWN_API_ROUTE, {rawQuery: `xt=${token}`});
+      check(
+        shutEmbedded.text.includes(SHUTDOWN_REJECT_BODY),
+        'shutdown ignores ?xt=<valid> (and stays up)',
+        shutEmbedded.text.slice(0, 80)
+      );
+    }
+
+    console.log('\nHost/Origin: a foreign Host or Origin is refused before routing');
+    {
+      // audit 2026-10-06 P1-6 (#445): DNS rebinding arrives as a foreign
+      // Host header; a cross-origin page arrives with a foreign Origin.
+      const evilHost = await rawRequest('GET /api/ping HTTP/1.1', {
+        Host: 'evil.example:8777',
+      });
+      check(evilHost.startsWith('HTTP/1.0 403'), 'foreign Host gets 403', `got: ${evilHost}`);
+      check(
+        !evilHost.includes('Access-Control-Allow-Origin'),
+        'the 403 refusal carries no Access-Control-Allow-Origin'
+      );
+      const evilOrigin = await rawRequest('GET /api/ping HTTP/1.1', {
+        Host: `localhost:${PORT}`,
+        Origin: 'https://evil.example',
+      });
+      check(
+        evilOrigin.startsWith('HTTP/1.0 403'),
+        'foreign Origin with a correct Host gets 403',
+        `got: ${evilOrigin}`
+      );
+      const localHost = await rawRequest('GET /api/ping HTTP/1.1', {
+        Host: `localhost:${PORT}`,
+      });
+      check(
+        localHost.startsWith('HTTP/1.0 200'),
+        'Host: localhost:<port> is accepted',
+        `got: ${localHost}`
+      );
+      const noHost = await rawRequest('GET /api/ping HTTP/1.0', {});
+      check(
+        noHost.startsWith('HTTP/1.0 200'),
+        'HTTP/1.0 request without Host is tolerated',
+        `got: ${noHost}`
+      );
     }
 
     console.log('\nRead-only routes work without a token and carry no CORS');

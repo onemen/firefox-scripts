@@ -101,6 +101,10 @@ static const char *find_header_token(const char *haystack, const char *needle, s
 
 static SOCKET server_socket = INVALID_SOCKET;
 static volatile bool server_running = false;
+/* The bound port (getsockname in http_server_start), kept for the
+ * Host/Origin validation — allowed values are exactly localhost:<port> and
+ * 127.0.0.1:<port> for THIS endpoint (audit 2026-10-06, P1-6 / #445). */
+static unsigned short server_port = 0;
 
 static struct {
     char route[MAX_ROUTE_LEN];
@@ -139,8 +143,120 @@ static route_handler_t find_handler(const char *path, char *query_out, size_t qu
     return NULL;
 }
 
-static void send_response(int client_fd, int status_code, const char *content_type,
-                          const char *body, size_t body_len) {
+/**
+ * Case-insensitive lookup of one header's value in the raw header block
+ * [req, req + header_len). Line-anchored: unlike find_header_token(), a
+ * match can only start at the beginning of a header line, so a value that
+ * merely contains "host:" cannot impersonate the header. `name` must be
+ * lowercase. The value is trimmed of surrounding whitespace and copied into
+ * out (NUL-terminated, truncated if longer than the buffer). Returns 1 when
+ * the header was found, 0 otherwise.
+ */
+static int find_header_value(const char *req, size_t header_len, const char *name,
+                             char *out, size_t out_size) {
+    if (!req || !name || !out || out_size == 0) return 0;
+    size_t nlen = strlen(name);
+    const char *end = req + header_len;
+    const char *p = req;
+    while (p < end) {
+        const char *nl = (const char *)memchr(p, '\n', (size_t)(end - p));
+        const char *line_end = nl ? nl : end;
+        if (line_end > p && line_end[-1] == '\r') line_end--;
+        const char *colon = (const char *)memchr(p, ':', (size_t)(line_end - p));
+        if (colon && (size_t)(colon - p) == nlen) {
+            size_t i = 0;
+            while (i < nlen) {
+                char a = p[i];
+                if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+                if (a != name[i]) break;
+                i++;
+            }
+            if (i == nlen) {
+                const char *v = colon + 1;
+                while (v < line_end && (*v == ' ' || *v == '\t')) v++;
+                const char *ve = line_end;
+                while (ve > v && (ve[-1] == ' ' || ve[-1] == '\t')) ve--;
+                size_t len = (size_t)(ve - v);
+                if (len >= out_size) len = out_size - 1;
+                memcpy(out, v, len);
+                out[len] = '\0';
+                return 1;
+            }
+        }
+        p = nl ? nl + 1 : end;
+    }
+    return 0;
+}
+
+/**
+ * Validate the request's Host (always) and Origin (when present) against
+ * this server's bound loopback endpoint — the DNS-rebinding defence that
+ * "no CORS header" alone cannot provide (audit 2026-10-06, P1-6 / #445): a
+ * rebound name arrives as Host: attacker.tld:<port>, and a cross-origin page
+ * arrives with a foreign Origin. Allowed: exactly localhost:<port> and
+ * 127.0.0.1:<port> — the two names the installer tab URL and every test
+ * harness use. An absent Host is an HTTP/1.0 client and is tolerated (no
+ * browser page can be one; see smoke-security.mjs, which pins this). A
+ * refusal is answered 403 before routing. Returns 1 when the request may be
+ * routed.
+ */
+static int host_origin_allowed(const char *req, size_t header_len) {
+    char value[512];
+    char expected[64];
+
+    if (find_header_value(req, header_len, "host", value, sizeof(value))) {
+        snprintf(expected, sizeof(expected), "localhost:%u", (unsigned)server_port);
+        int ok = strcmp(value, expected) == 0;
+        if (!ok) {
+            snprintf(expected, sizeof(expected), "127.0.0.1:%u", (unsigned)server_port);
+            ok = strcmp(value, expected) == 0;
+        }
+        if (!ok) return 0;
+    }
+
+    if (find_header_value(req, header_len, "origin", value, sizeof(value))) {
+        snprintf(expected, sizeof(expected), "http://localhost:%u", (unsigned)server_port);
+        int ok = strcmp(value, expected) == 0;
+        if (!ok) {
+            snprintf(expected, sizeof(expected), "http://127.0.0.1:%u", (unsigned)server_port);
+            ok = strcmp(value, expected) == 0;
+        }
+        if (!ok) return 0;
+    }
+    return 1;
+}
+
+/**
+ * Compare one query parameter's value against `value` (byte-exact).
+ * `query` is a raw query string without the leading '?'. The parameter name
+ * must match in full (so xt= is not t=) and the value ends at '&' or the end
+ * of the string (so t= need not be the last parameter) — exactly the two
+ * cases the three divergent parsers used to get wrong (audit 2026-10-06,
+ * P1-9 / #445). Returns 1 only when the parameter exists and matches; a
+ * missing or empty query never matches.
+ */
+int query_param_equals(const char *query, const char *name, const char *value) {
+    if (!query || !name || !value) return 0;
+    size_t nlen = strlen(name);
+    const char *p = query;
+    while (*p) {
+        const char *start = p;
+        while (*p && *p != '=') p++;
+        size_t klen = (size_t)(p - start);
+        if (*p == '=') p++;
+        const char *vstart = p;
+        while (*p && *p != '&') p++;
+        if (klen == nlen && strncmp(start, name, nlen) == 0) {
+            size_t vlen = (size_t)(p - vstart);
+            return vlen == strlen(value) && strncmp(vstart, value, vlen) == 0;
+        }
+        if (*p == '&') p++;
+    }
+    return 0;
+}
+
+void send_response(int client_fd, int status_code, const char *content_type,
+                   const char *body, size_t body_len) {
     char header[512];
     int n;
 
@@ -341,6 +457,7 @@ int http_server_start(unsigned short preferred_port) {
     socklen_t addr_len = sizeof(addr);
     if (getsockname(server_socket, (struct sockaddr *)&addr, &addr_len) == 0) {
         int actual_port = ntohs(addr.sin_port);
+        server_port = (unsigned short)actual_port;
 
         if (listen(server_socket, 32) < 0) {
 #ifdef _WIN32
@@ -417,6 +534,10 @@ void http_server_serve(void) {
         const char *body = NULL;
         size_t body_len = 0;
         int req_status = 0; /* 1 = complete+parsed, -1 = request too large, 0 = incomplete/closed */
+        /* Extent of the header block, set when a complete request is parsed
+         * below; kept at this scope so the Host/Origin check can use it. */
+        size_t he_off = 0;
+        int he_extra = 0;
 
         if (req) {
             for (;;) {
@@ -453,8 +574,6 @@ void http_server_serve(void) {
 
                 // Locate the end of the header block ("\r\n\r\n", tolerating bare "\n\n").
                 const char *he = strstr(req, "\r\n\r\n");
-                size_t he_off;
-                int he_extra;
                 if (he) {
                     he_off = (size_t)(he - req);
                     he_extra = 4;
@@ -502,7 +621,13 @@ void http_server_serve(void) {
             }
         }
 
-        if (req_status == 1) {
+        if (req_status == 1 && !host_origin_allowed(req, he_off)) {
+            // Host/Origin validation runs before anything else touches the
+            // request: a rebound or cross-origin request is answered 403 here
+            // and never reaches a handler (audit 2026-10-06, P1-6 / #445).
+            log_msg("[http] refused: foreign Host/Origin (%.*s)\n", 64, req);
+            send_response(client_fd, 403, "text/plain", "Forbidden", 9);
+        } else if (req_status == 1) {
             // Parse first line: "GET /path HTTP/1.0"
             char method[16], path[MAX_PATH_LEN];
             if (sscanf(req, "%15s %1023s", method, path) == 2) {
@@ -628,8 +753,7 @@ int handle_api_shutdown(int client_fd, const char *query, const char *body, size
         return 0;
     }
     {
-        const char *t = strstr(query, "t=");
-        if (!t || (t != query && t[-1] != '&') || strcmp(t + 2, current) != 0) {
+        if (!query_param_equals(query, "t", current)) {
             const char *ignored = "{\"status\":\"ignored\"}";
             send_response(client_fd, 200, "application/json; charset=utf-8",
                           ignored, (int)strlen(ignored));
