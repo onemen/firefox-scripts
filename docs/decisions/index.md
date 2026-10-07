@@ -125,6 +125,11 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0039](./0039-record-validation-keys-on-updater-legs.md) — The validated-versions record keys on
   the updater legs' result alone, not the aggregate gate; ADR 0021's partial-dispatch skip intact
   (amends [0021], #380)
+- [0040](./0040-two-pass-staged-publish.md) — Two-pass staged publish: parallel build-only staging,
+  then exactly one `--skip-build` writer; answers 0009's revisit-if (cross-refs [0009], #446)
+- [0041](./0041-av-vt-publish-gate.md) — AV + VirusTotal publish gate: any host-AV detection
+  refuses, VT fails at ≥3 engines or the Microsoft veto, verdicts ledgered per sha256 (cross-refs
+  [0032]/[0030], #446)
 
 ## Historical
 
