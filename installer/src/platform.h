@@ -167,7 +167,7 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
 #define INSTALLER_BINARY_NAME "installer_linux" INSTALLER_ASSET_SUFFIX
 #endif
 
-/* ===== Browser-uploaded package data (implemented in main.c) =====
+/* ===== Browser-uploaded package data (implemented in zip_store.c) =====
  * The web UI fetches the manifest and the package zips (CORS-enabled URLs)
  * and POSTs the raw bytes to the local server.  These accessors give the
  * hash/status code and the install state machine access to the uploaded
@@ -176,7 +176,7 @@ const unsigned char *installer_uploaded_zip(int is_utils, size_t *out_len);
 int installer_has_uploaded_zip(int is_utils);
 int installer_set_uploaded_zip(int is_utils, const char *data, size_t len);
 
-/* Manifest verification (implemented in detect_browser.c; P0-5 / #445).
+/* Manifest verification (implemented in manifest.c).
  * Both return 0 when the bytes match the published hash — or when there is
  * nothing to verify yet (no manifest ingested / no zip stored), preserving
  * the documented no-manifest fallback — and -1 on a mismatch, which the

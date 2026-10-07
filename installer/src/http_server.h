@@ -48,26 +48,7 @@ int handle_logo_waterfox(int client_fd, const char *query, const char *body, siz
 int handle_logo_zen(int client_fd, const char *query, const char *body, size_t body_len);
 int handle_logo_librewolf(int client_fd, const char *query, const char *body, size_t body_len);
 int handle_logo_floorp(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_ping(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_build_info(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_claim(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_browsers(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_install(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_status(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_self_update(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_restart(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_close_browser(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_open_folder(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_rescan(int client_fd, const char *query, const char *body, size_t body_len);
 int handle_api_shutdown(int client_fd, const char *query, const char *body, size_t body_len);
-
-// Browser-upload ingest endpoints (implemented in main.c).  The web UI does
-// all network fetching (CORS-enabled URLs) and POSTs the raw bytes here.
-// /api/self-update doubles as an ingest endpoint: a POST (body present)
-// stores the latest-release JSON, a GET parses it.
-int handle_api_manifest(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_upload(int client_fd, const char *query, const char *body, size_t body_len);
-int handle_api_waterfox(int client_fd, const char *query, const char *body, size_t body_len);
 
 // Current installer session token (defined in main.c).
 const char *installer_session_token(void);

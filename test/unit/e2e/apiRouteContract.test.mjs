@@ -362,16 +362,19 @@ test('apiRouteContract: the serve loop refuses a foreign Host/Origin (P1-6)', ()
 });
 
 test('apiRouteContract: uploads are verified against the manifest (P0-5)', () => {
-  const detect = sources.get('detect_browser.c');
+  // Both verifiers live in the manifest module since detect_browser.c was
+  // split (group M / #450); pin them there so a move to an unexpected file
+  // still fails.
+  const manifestModule = sources.get('manifest.c');
   assert.match(
-    detect,
+    manifestModule,
     /^int installer_verify_upload\(/m,
-    'detect_browser.c must define installer_verify_upload()'
+    'manifest.c must define installer_verify_upload()'
   );
   assert.match(
-    detect,
+    manifestModule,
     /^int installer_verify_stored_zips\(/m,
-    'detect_browser.c must define installer_verify_stored_zips()'
+    'manifest.c must define installer_verify_stored_zips()'
   );
 
   const upload = functionBody('handle_api_upload');
