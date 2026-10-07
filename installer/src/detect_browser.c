@@ -141,6 +141,9 @@ static void console_printf(const char *fmt, ...) {
  */
 int g_hash_check_available = 0;
 
+/* Hash-related diagnostics always print: the whole point of the status flag is
+   to surface remote-hash failures instead of silently falling back. */
+
 /**
  * Flag set to 1 while scan_and_filter_browsers() is running its initial scan.
  * When set, check_package_status() skips the network-backed hash check and
@@ -149,9 +152,6 @@ int g_hash_check_available = 0;
  * check runs normally on subsequent status API polls.
  */
 static int g_is_initial_scan = 0;
-
-/* Hash-related diagnostics always print: the whole point of the status flag is
-   to surface remote-hash failures instead of silently falling back. */
 
 /**
  * Static cache for remote hashes from the publish-branch hash manifest.

@@ -111,18 +111,65 @@ test('ignores prose that merely mentions strncpy (no call syntax)', () => {
   }
 });
 
-test('ignores non-C files', () => {
-  const dir = makeDir({'notes.txt': 'strncpy(a, b, c);', 'code.h': 'strncpy(a, b, c);'});
+test('scans .h and .inl, and still ignores non-C text files', () => {
+  const dir = makeDir({
+    'notes.txt': 'strncpy(a, b, c);',
+    'code.h': 'strncpy(a, b, c);',
+    'more.inl': 'wcsncpy(a, b, n);',
+  });
   try {
+    const findings = findStrncpyCalls(
+      [path.join(dir, 'notes.txt'), path.join(dir, 'code.h'), path.join(dir, 'more.inl')],
+      dir
+    );
     assert.deepEqual(
-      findStrncpyCalls([path.join(dir, 'notes.txt'), path.join(dir, 'code.h')], dir),
-      []
+      findings.map(f => [f.file, f.line, f.text]),
+      [
+        ['code.h', 1, 'strncpy(a, b, c);'],
+        ['more.inl', 1, 'wcsncpy(a, b, n);'],
+      ]
     );
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
   }
 });
 
-test('repo invariant: installer/src has zero strncpy call sites', () => {
+test('flags every forbidden family member', () => {
+  const dir = makeDir({
+    'all.c': [
+      'strncpy(a, b, n);',
+      'strncat(a, b, n);',
+      'strcpy(a, b);',
+      'wcsncpy(a, b, n);',
+      'wcscpy(a, b);',
+    ].join('\n'),
+  });
+  try {
+    const findings = findStrncpyCalls([path.join(dir, 'all.c')], dir);
+    assert.deepEqual(
+      findings.map(f => f.line),
+      [1, 2, 3, 4, 5]
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('the bounded counterparts (snprintf, wmemcpy) are not flagged', () => {
+  const dir = makeDir({
+    'bounded.c': [
+      'snprintf(dst, sizeof(dst), "%s", src);',
+      'wmemcpy(dst, src, n + 1);',
+      'dst[n] = 0;',
+    ].join('\n'),
+  });
+  try {
+    assert.deepEqual(findStrncpyCalls([path.join(dir, 'bounded.c')], dir), []);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('repo invariant: installer/src has zero strncpy-family call sites', () => {
   assert.deepEqual(findStrncpyCalls(), []);
 });

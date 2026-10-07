@@ -2,6 +2,8 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-05
+- **Amended:** 2026-10-07 — decision gains the authored-skills content contract (audit 2026-10-06
+  P3-11): what we author is gated for content, not just provenance
 
 _Problem surface:_ agent skills tooling (`.agents/skills/`, installers, drift detection)
 
@@ -45,6 +47,14 @@ One tool, one classification, one root:
    never auto-merged: upstream skill text is a prompt-injection surface.
 6. **Scope split**: repo-shared skills are committed here; personal skills live in user scope
    (`~/.agents/skills/`), installed with the same tool, never committed.
+7. **Authored skills carry a content contract** (amended 2026-10-07): decisions 1–6 say how
+   third-party skills are _kept_; this clause says what we _author_. The `description` carries the
+   trigger sentence ("Use when …") so host dispatch works without opening the file; SKILL.md stays a
+   checklist and detail beyond it moves to `references/` rather than growing the front page; and
+   every skill keeps its AGENTS.md Skills-table row. The gates are structural, never editorial:
+   `check-skills.mjs` (frontmatter schema + table drift), `check-skill-commands.mjs` (command and
+   link resolution) — gates that validate apply to everything we author, exactly as decision 3
+   exempts what we do not.
 
 ## Consequences
 

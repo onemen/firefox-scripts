@@ -108,8 +108,9 @@ task worktrees.)
 | Generated-file sources           | `node tools/publish/syncGeneratedFiles.mjs`                                           |
 | Packaging / publish scripts      | `pnpm snapshot:prod`                                                                  |
 
-This table mirrors AGENTS.md → "Testing & QA" (the source of truth); if the two ever disagree, fix
-AGENTS.md first and this table second.
+This table is the source of truth for the change→command mapping; AGENTS.md → "Testing & QA" owns
+the pre-PR gate rules. If a gate rule changes there, fold the delta into this table — the two must
+not disagree (each used to point at the other as authoritative; audit 2026-10-06 P3-11).
 
 Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test. **Do not claim tests
 passed if the required toolchain or environment was unavailable.**

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
@@ -17,16 +18,59 @@ import globals from 'globals';
 // rather than a whole-file regex that a prose mention of "github-repo:" could
 // fool. Missing/unparseable SKILL.md → treated as authored (linted).
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-let thirdPartySkills = [];
-try {
-  const watchdogUrl = pathToFileURL(path.join(repoRoot, 'tools', 'skills-watchdog.mjs')).href;
-  const {loadInventory} = await import(watchdogUrl);
-  thirdPartySkills = loadInventory(repoRoot).map(i => `**/.agents/skills/${i.skill}`);
-} catch (err) {
-  // Config must load even if the tool tree is unavailable (rare: partial
-  // checkout). Fail open to linting everything except the known set.
-  console.error(`eslint config: skill classification unavailable (${err.message})`);
+
+/**
+ * Local fallback classification: scan each skill's FRONTMATTER block only
+ * (never the prose body) for an indented `github-repo:` key. Used when the
+ * watchdog module cannot be imported — the gate must still know which skills
+ * are vendored.
+ *
+ * @param {string} root repo root
+ * @returns {string[]} eslint ignore globs for third-party skill dirs
+ */
+export function scanThirdPartySkillDirs(root) {
+  const skillsRoot = path.join(root, '.agents', 'skills');
+  const ignores = [];
+  if (!fs.existsSync(skillsRoot)) return ignores;
+  for (const entry of fs.readdirSync(skillsRoot, {withFileTypes: true})) {
+    if (!entry.isDirectory()) continue;
+    const file = path.join(skillsRoot, entry.name, 'SKILL.md');
+    if (!fs.existsSync(file)) continue;
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(file, 'utf8'));
+    if (fm && /^[ \t]+github-repo:/m.test(fm[1])) {
+      ignores.push(`**/.agents/skills/${entry.name}`);
+    }
+  }
+  return ignores.sort((a, b) => a.localeCompare(b));
 }
+
+/**
+ * Resolve the third-party ignore list, failing CLOSED: an import failure falls
+ * back to the local frontmatter scan above, never to `[]` (ADR 0022 decision 3
+ * — vendored skills are linted never).
+ *
+ * @param {string} root repo root
+ * @param {() => Promise<{loadInventory: (r: string) => {skill: string}[]}>} loadWatchdog
+ *   dynamic import of tools/skills-watchdog.mjs (injectable for tests)
+ * @returns {Promise<string[]>} eslint ignore globs
+ */
+export async function classifyThirdPartySkills(root, loadWatchdog) {
+  try {
+    const {loadInventory} = await loadWatchdog();
+    return loadInventory(root).map(i => `**/.agents/skills/${i.skill}`);
+  } catch (err) {
+    console.error(
+      `eslint config: watchdog classification failed (${err.message}); ` +
+        'falling back to a local frontmatter scan (fail closed)'
+    );
+    return scanThirdPartySkillDirs(root);
+  }
+}
+
+const thirdPartySkills = await classifyThirdPartySkills(
+  repoRoot,
+  () => import(pathToFileURL(path.join(repoRoot, 'tools', 'skills-watchdog.mjs')).href)
+);
 
 // Deep-import only the two environments this repo uses instead of loading the
 // whole plugin: `eslint-plugin-mozilla`'s index eagerly imports all 58 rules,

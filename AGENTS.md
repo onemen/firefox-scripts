@@ -154,7 +154,8 @@ Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**
 
 ## Testing & QA
 
-Match the change to its validation — the full matrix is the `change-workflow` skill; the rules:
+Match the change to its validation — the per-subsystem matrix lives in the `change-workflow` skill
+(that table, not this file, owns the change→command mapping); the rules:
 
 - Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test (`pnpm test:hash`).
 - **Do not claim tests passed if the required toolchain or environment was unavailable.**
@@ -166,23 +167,13 @@ Match the change to its validation — the full matrix is the `change-workflow` 
 ## AI review of PRs
 
 Per [ADR 0020](./docs/decisions/0020-local-agent-ai-review.md), AI review is a local, agent-run
-step. When a PR is ready for review, the agent that created it runs `pnpm review:local`, assesses
-each finding right / wrong / useless — quoting the disputed line, on the PR's own head, before
-rejecting one (an unquoted "wrong" is unverified, not disproved) — and posts each accepted finding
-as its own line-anchored,individually resolvable PR review thread (fallback: one
-`gh pr review <n> --comment` body; never `gh pr comment`), resolving each thread as its fix lands
-and every remaining thread before merging (main requires conversation resolution). Every
-agent-posted review begins with a one-line 🤖 provenance marker (e.g.
-`🤖 AI review triage (Codebuff agent — result of the CodeRabbit review:batch run)`) — reviews go out
-under the user's own account, and the marker is what separates agent from human activity. The review
-is not gated on CI — it can help debug failing checks. Add no CI/repo AI secret. External review
-triggers — CodeRabbit `@coderabbitai review` and `pnpm review:batch` — are **operator-initiated
-only**: the agent never invokes them unprompted. When the operator runs `review:batch`, the agent
-triages its findings and posts accepted ones per the protocol above — and then **stops**: the batch
-pass reviews PRs it does not own, including other agents' PRs, so it writes **no fixes and resolves
-no threads**. The owning agent re-assesses each open thread, fixes what it accepts, and resolves
-what it fixed. Full protocol: the `ai-review` skill; the ownership rule: the `cr-batch-review` skill
-and ADR 0020.
+step: the PR owner runs `pnpm review:local`, triages every finding right / wrong / useless — quoting
+the disputed line before any rejection — and posts each accepted finding as a line-anchored,
+individually resolvable thread under a one-line 🤖 provenance marker, resolving every thread before
+merging. External triggers — CodeRabbit `@coderabbitai review` and `pnpm review:batch` — are
+**operator-initiated only**; the batch pass reviews PRs it does not own, so it writes **no fixes and
+resolves no threads** — the owning agent fixes and resolves. Protocol: the `ai-review` skill; batch
+ownership: the `cr-batch-review` skill and ADR 0020.
 
 ## Agent workflow
 
@@ -197,7 +188,7 @@ Before changing code:
 
 1. Identify the affected subsystem.
 2. Read the relevant `docs/`, and the decision log `docs/decisions/index.md`.
-3. If a skill in `.agents/skills/` matches the task (review, publishing, generated files), load it.
+3. If a skill in `.agents/skills/` matches the task (see the Skills table above), load it.
 4. Check whether the affected files are generated.
 5. Make the smallest appropriate change.
 6. Regenerate generated files on demand when their sources change (make / createZip /
