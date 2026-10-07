@@ -1,7 +1,7 @@
 # 0036: Build dates are derived from git per binary — not hand-stamped
 
-- **Status:** accepted (amended 2026-09-26 — release-identity embed is dev/local-only; the PE epoch
-  is per binary)
+- **Status:** accepted
+- **Amended:** 2026-09-26 — release-identity embed is dev/local-only; the PE epoch is per binary
 - **Amends:** [0019](./0019-release-versioning.md) (its 2026-09-13 self-update amendment — the date
   that feeds the date-based self-update is now derived, not hand-stamped; declared per the ADR 0029
   convention)

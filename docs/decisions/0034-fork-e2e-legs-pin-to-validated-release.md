@@ -1,6 +1,7 @@
 # 0034: Fork E2E legs pin to the last validated release; hard gates track latest
 
-- **Status:** accepted (amended 2026-09-23: cache-first sticky installer cache for the fork legs)
+- **Status:** accepted
+- **Amended:** 2026-09-23 — cache-first sticky installer cache for the fork legs
 - **Supersedes:** [0023](./0023-e2e-browser-version-pinning.md) (latest-at-run-time default for
   every browser; its pin semantics, non-pinnable Firefox rule and per-run ground truth are carried
   forward below)

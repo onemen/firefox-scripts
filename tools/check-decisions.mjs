@@ -163,6 +163,10 @@ export function checkDecisionsDir(dir) {
     }
 
     const fields = parseStatusBlock(lines);
+    const dateField = fields.get('Date')?.[0] ?? '';
+    if (!/^\d{4}-\d{2}-\d{2}/.test(dateField)) {
+      fail(entry, 'missing or malformed Date: field (YYYY-MM-DD required)');
+    }
     const status = fields.get('Status')?.[0] ?? '';
     const superseded = status.match(supersededPattern);
     if (status.startsWith('superseded by') && !superseded) {
@@ -217,6 +221,26 @@ export function checkDecisionsDir(dir) {
   // declaration (2026-09-16 — what changed); anything else link-free, and any
   // `Amends:` value with no record link at all, is a declared-but-empty field.
   const dateDeclarationPattern = /^\d{4}-\d{2}-\d{2}\s+—\s+\S/;
+  // P1-5 (audit 2026-10-06, #429): the Status value must be one of the
+  // documented forms — a bare known state, a date declaration, or
+  // 'superseded by [NNNN](...)'. Free-prose statuses defeat the
+  // machine-readable bookkeeping this checker exists to enforce.
+  const knownStatuses = new Set(['accepted', 'proposed', 'draft', 'deprecated']);
+  for (const record of records) {
+    const st = record.status;
+    const ok =
+      knownStatuses.has(st) ||
+      st.startsWith('superseded by') ||
+      supersededPattern.test(st) ||
+      dateDeclarationPattern.test(st) ||
+      st === '';
+    if (!ok) {
+      fail(
+        record.file,
+        `non-standard status: "${st}" (use accepted / proposed / a date declaration / superseded by [NNNN](...))`
+      );
+    }
+  }
   for (const record of records) {
     for (const field of ['Amends', 'Amended']) {
       for (const value of record.fields.get(field) ?? []) {

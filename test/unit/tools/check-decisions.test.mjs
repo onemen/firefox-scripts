@@ -212,6 +212,46 @@ test('ADR 0029: missing target, non-record target, number mismatch, self-link', 
   }
 });
 
+test('P1-5: a free-prose Status value fails; known states and date declarations pass', () => {
+  const mk = status => {
+    const dir = makeDir({
+      'index.md': index(['0001-a.md']),
+      '0001-a.md': record('0001', 'a').replace('- **Status:** accepted', `- **Status:** ${status}`),
+    });
+    try {
+      return errorsFor(checkDecisionsDir(dir));
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+  };
+  assert.ok(
+    mk('accepted (amended 2026-09-23: some prose)').some(e => e.includes('non-standard status')),
+    'prose status is rejected'
+  );
+  assert.deepEqual(mk('accepted'), []);
+  assert.deepEqual(
+    mk('2026-09-15 — clarified the fallback wording'),
+    [],
+    'date declaration passes'
+  );
+});
+
+test('P1-5: a record without a Date: field fails', () => {
+  const dir = makeDir({
+    'index.md': index(['0001-a.md']),
+    '0001-a.md': record('0001', 'a').replace('- **Date:** 2026-09-16\n', ''),
+  });
+  try {
+    const errors = errorsFor(checkDecisionsDir(dir));
+    assert.ok(
+      errors.some(e => e.includes('missing or malformed Date: field')),
+      errors.join('\n')
+    );
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('ADR 0029: date-only Amended line carries no link and is accepted', () => {
   const dir = makeDir({
     'index.md': index(['0001-a.md']),
