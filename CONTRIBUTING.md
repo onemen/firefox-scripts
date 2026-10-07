@@ -46,10 +46,10 @@ and ADR `docs/decisions/0008-generated-files-untracked.md`). Edit the sources
 Before opening a PR, run the local checks:
 
 ```bash
-pnpm lint          # the full gate (9 stages, fail-fast): eslint, check-strncpy, tsc,
+pnpm lint          # the full gate (10 stages, fail-fast): eslint, check-strncpy, tsc,
                    # C format check, gcc -fanalyzer, markdownlint, md-list markers,
-                   # YAML frontmatter, check-skills (needs the C toolchain — see
-                   # docs/DEVELOPING.md → Prerequisites)
+                   # YAML frontmatter, check-skills, skill commands/links (needs the
+                   # C toolchain — see docs/DEVELOPING.md → Prerequisites)
 pnpm format        # prettier + C format check (read-only)
 pnpm test          # unit tests (pure Node, no build needed)
 pnpm test:hash     # C vs JS hash parity (see installer/test/README.md) — needs a

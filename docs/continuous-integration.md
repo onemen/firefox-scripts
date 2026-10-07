@@ -6,7 +6,7 @@ checklist that points; the content is authoritative here.
 ## Workflow inventory, path filters and gates
 
 **The `$/` local-action form is load-bearing — never "clean it up" to `./`.** `uses: $/.github/...`
-(19 uses across 4 workflows) tells the runner to materialize the local action from the triggering
+(21 uses across 5 workflows) tells the runner to materialize the local action from the triggering
 commit without a checkout step — that is what lets shared prologue jobs like
 `.github/actions/setup-repo` run as the _first_ step of a job. A `./` local action can only resolve
 after `actions/checkout`, so swapping the prefix silently breaks the very jobs the form enables, and
@@ -25,10 +25,11 @@ stay SHA-pinned (`.github/dependabot.yml`).
   log — informational only, no threshold gate.
 - **lint stages** (#230) — `pnpm lint` is a strict fail-fast `&&` chain composed from granular
   `pnpm lint:*` scripts (`lint:js`, `lint:ncpy`, `lint:types`, `lint:c`, `lint:analyze`, `lint:md`,
-  `lint:md-markers`, `lint:yaml`, `lint:skills`) — CI and the pre-push hook enforce only the
-  aggregate, so the granular views cannot drift from what CI gates. For local iteration,
-  `pnpm lint:all` (npm-run-all2 `run-s --continue-on-error --print-label`) runs every stage and
-  reports all findings at once; it is a developer convenience and never used by CI or hooks.
+  `lint:md-markers`, `lint:yaml`, `lint:skills`, `lint:skill-cmds`) — CI and the pre-push hook
+  enforce only the aggregate, so the granular views cannot drift from what CI gates. For local
+  iteration, `pnpm lint:all` (npm-run-all2 `run-s --continue-on-error --print-label`) runs every
+  stage and reports all findings at once; it is a developer convenience and never used by CI or
+  hooks.
 - **publish gate** (Windows / Linux / macOS) — `pnpm snapshot:dev` rebuilds every package zip and
   the native binaries for the runner's OS, so regressions in generated files, hashes or the Makefile
   fail the PR before they reach a release.

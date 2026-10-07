@@ -25,11 +25,12 @@ branch after testing (`pnpm dev-clean` automates it).
 
 A **partial publish** (`--include=<roles>`, ADR
 [0030](../../../docs/decisions/0030-partial-publishes.md)) publishes exactly the named roles —
-`packages`, `installer`, `helper`, or `all`. The flag is required on every run (missing, empty or
-unknown roles fail loudly; `all` is the explicit full publish). A role left out is not built,
-scanned or uploaded and its `hashes.json` entry stays frozen — the AV holdback (issue #157) that
-keeps the zips, and with them script delivery, flowing while a flagged binary is withheld. CI takes
-the same list in the `include` input (`gh workflow run pages.yml -f mode=prod -f include=packages`).
+`packages`, `updater-ui`, `installer`, `helper`, or `all`. The flag is required on every run
+(missing, empty or unknown roles fail loudly; `all` is the explicit full publish). A role left out
+is not built, scanned or uploaded and its `hashes.json` entry stays frozen — the AV holdback (issue
+#157) that keeps the zips, and with them script delivery, flowing while a flagged binary is
+withheld. CI takes the same list in the `include` input
+(`gh workflow run pages.yml -f mode=prod -f include=packages`).
 
 ## Commands
 
@@ -40,11 +41,10 @@ pnpm snapshot:prod                  # snapshot to dist/prod-<branch>-<hash>/
 
 # Real publish (needs GITHUB_TOKEN_VAR in .env; GITHUB_TOKEN_VAR is the fixed name — never rename)
 pnpm publish:dev                    # dev-build-<id> branch + optional pre-release (-- --tag)
-pnpm publish:all                    # full prod publish — dispatches CI (gh workflow run pages.yml)
+pnpm publish:all                    # full prod publish (--include=all) — dispatches CI (gh workflow run pages.yml)
 
 # CI dispatch front doors (thin alias for gh workflow run pages.yml; the same
 # gates apply — prod stays main-only):
-pnpm publish:all                    # full prod publish (--include=all)
 pnpm publish:packages               # zips + updater-ui only (--include=packages)
 pnpm publish:installer              # installer + helper only (--include=installer)
 node tools/publish/release.mjs --include=packages,helper --mode=dev --ref=<branch>   # any combination
