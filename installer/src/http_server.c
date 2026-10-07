@@ -783,4 +783,5 @@ int handle_api_shutdown(int client_fd, const char *query, const char *body, size
     return 0;
 }
 
-// handle_api_* functions are defined in main.c and declared in http_server.h
+// handle_api_* functions are defined and declared in main.c (P2-15, #450);
+// this server only sees them as http_server_register() function pointers.

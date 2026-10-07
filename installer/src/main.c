@@ -262,71 +262,6 @@ static int install_browser_index = -1;
 static int install_config = 0;
 static int install_utils = 0;
 
-/* ===== Browser-uploaded package zips =====
- * The web UI fetches fx-folder.zip, utils.zip and updater-ui.zip from the
- * CORS-enabled Pages host and POSTs the raw bytes to
- * /api/upload?kind=config|utils|ui.  The install state machine extracts
- * straight from these in-memory buffers (one copy per package, reused across
- * installs of multiple profiles).  updater-ui.zip is optional: it rides along
- * with utils and is skipped silently when its fetch failed. */
-static char *g_uploaded_config_zip = NULL;
-static size_t g_uploaded_config_len = 0;
-static char *g_uploaded_utils_zip = NULL;
-static size_t g_uploaded_utils_len = 0;
-static char *g_uploaded_ui_zip = NULL;
-static size_t g_uploaded_ui_len = 0;
-
-const unsigned char *installer_uploaded_zip(int is_utils, size_t *out_len) {
-    if (is_utils) {
-        if (out_len) *out_len = g_uploaded_utils_len;
-        return (const unsigned char *)g_uploaded_utils_zip;
-    }
-    if (out_len) *out_len = g_uploaded_config_len;
-    return (const unsigned char *)g_uploaded_config_zip;
-}
-
-int installer_has_uploaded_zip(int is_utils) {
-    if (is_utils) return (g_uploaded_utils_zip && g_uploaded_utils_len > 0);
-    return (g_uploaded_config_zip && g_uploaded_config_len > 0);
-}
-
-int installer_set_uploaded_zip(int is_utils, const char *data, size_t len) {
-    if (!data || len == 0) return -1;
-    char *copy = (char *)malloc(len);
-    if (!copy) return -1;
-    memcpy(copy, data, len);
-    if (is_utils) {
-        free(g_uploaded_utils_zip);
-        g_uploaded_utils_zip = copy;
-        g_uploaded_utils_len = len;
-    } else {
-        free(g_uploaded_config_zip);
-        g_uploaded_config_zip = copy;
-        g_uploaded_config_len = len;
-    }
-    return 0;
-}
-
-const unsigned char *installer_uploaded_ui_zip(size_t *out_len) {
-    if (out_len) *out_len = g_uploaded_ui_len;
-    return (const unsigned char *)g_uploaded_ui_zip;
-}
-
-int installer_has_uploaded_ui_zip(void) {
-    return (g_uploaded_ui_zip && g_uploaded_ui_len > 0);
-}
-
-int installer_set_uploaded_ui_zip(const char *data, size_t len) {
-    if (!data || len == 0) return -1;
-    char *copy = (char *)malloc(len);
-    if (!copy) return -1;
-    memcpy(copy, data, len);
-    free(g_uploaded_ui_zip);
-    g_uploaded_ui_zip = copy;
-    g_uploaded_ui_len = len;
-    return 0;
-}
-
 static char g_work_dir[MAX_PATH_LEN];
 static char g_binary_dir[MAX_PATH_LEN];
 static char g_profile_dir[MAX_PATH_LEN];
@@ -478,6 +413,31 @@ static void send_json_response(int client_fd, const char *json, int json_len) {
 }
 
 // ===== API handlers =====
+
+/* ===== HTTP API handlers (defined below; registered in main_impl) =====
+ * Declared here, next to their definitions (audit 2026-10-06 P2-15, #450):
+ * http_server.h no longer speaks for functions it does not own — the server
+ * dispatches through http_server_register() function pointers, so main.c is
+ * their only consumer. */
+int handle_api_ping(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_build_info(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_claim(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_browsers(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_install(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_status(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_self_update(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_restart(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_close_browser(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_open_folder(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_rescan(int client_fd, const char *query, const char *body, size_t body_len);
+
+// Browser-upload ingest endpoints.  The web UI does all network fetching
+// (CORS-enabled URLs) and POSTs the raw bytes here.  /api/self-update
+// doubles as an ingest endpoint: a POST (body present) stores the
+// latest-release JSON, a GET parses it.
+int handle_api_manifest(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_upload(int client_fd, const char *query, const char *body, size_t body_len);
+int handle_api_waterfox(int client_fd, const char *query, const char *body, size_t body_len);
 
 /**
  * Lightweight liveness endpoint for the UI's heartbeat.
