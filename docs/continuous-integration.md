@@ -6,7 +6,7 @@ checklist that points; the content is authoritative here.
 ## Workflow inventory, path filters and gates
 
 **The `$/` local-action form is load-bearing — never "clean it up" to `./`.** `uses: $/.github/...`
-(19 uses across 4 workflows) tells the runner to materialize the local action from the triggering
+(21 uses across 5 workflows) tells the runner to materialize the local action from the triggering
 commit without a checkout step — that is what lets shared prologue jobs like
 `.github/actions/setup-repo` run as the _first_ step of a job. A `./` local action can only resolve
 after `actions/checkout`, so swapping the prefix silently breaks the very jobs the form enables, and
