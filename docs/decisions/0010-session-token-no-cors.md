@@ -4,6 +4,8 @@
 - **Date:** 2026-08-21
 - **Amended:** 2026-09-15 — entropy note corrected (true 128-bit; earlier builds yielded 64 bits),
   see the Decision section
+- **Amended:** 2026-10-07 — requests with a foreign `Host`/`Origin` are refused with 403 before
+  routing (audit 2026-10-06 P1-6), see the Decision section
 
 ## Context
 
@@ -18,6 +20,13 @@ tab's URL, generated from the OS CSPRNG with a fail-closed startup (never a time
 Responses carry no `Access-Control-Allow-Origin` header, so cross-origin pages cannot read them. A
 security smoke test asserts every `/api/*` route rejects a missing/wrong token and no response has
 the CORS header (`44a7e2e`, `e0411c8`).
+
+**Host/Origin validation (2026-10-07 amendment).** Every request is also checked before routing: the
+`Host` header must be exactly `localhost:<port>` or `127.0.0.1:<port>` for the port the server
+bound, and an `Origin` header, when present, must be that same local origin — anything else is
+refused with 403. This is the DNS-rebinding defence the missing CORS header alone cannot provide: a
+rebound name is same-origin from the browser's point of view, so the response would be readable
+without it. An absent `Host` (an HTTP/1.0 client) is tolerated — no browser page can be one.
 
 ## Consequences
 

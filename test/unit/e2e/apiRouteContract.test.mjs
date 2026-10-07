@@ -256,3 +256,136 @@ test('apiRouteContract: open routes are readable without a token', () => {
     }
   }
 });
+
+// ── Localhost request contract (audit 2026-10-06, group C / #445) ───────────
+//
+// P1-9: the three divergent `t=` parsers (request_has_valid_token,
+// /api/claim, /api/shutdown) must be gone in favour of one
+// query_param_equals() helper, and /api/claim must not answer current:1
+// without a token. P1-6: the serve loop must refuse a foreign Host/Origin
+// before routing. P0-5: an upload is verified against the manifest before it
+// is stored, and a candidate manifest is checked against the stored zips
+// before it is ingested.
+//
+// These are static checks — `pnpm test` has no C compiler. The SEMANTIC cases
+// (?t=<tok>&x=1, ?xt=<tok>, no-token claim, foreign Host/Origin) run against
+// the real binary in test/e2e/installer/smoke-security.mjs.
+
+/**
+ * Body of a named function from any installer/src top-level `.c` file, sliced
+ * from its definition to the next definition in the same file — the same rule
+ * handlerBodies() uses (see its comment for why no brace matching).
+ *
+ * @param {string} name
+ * @returns {string} the definition text, or '' when the function is absent
+ */
+function functionBody(name) {
+  // Anchored, single-line signature match over our own C sources (never
+  // untrusted input) — the unsafe-regex warning is the same false positive
+  // as the one on handlerBodies()' defRe above.
+  // eslint-disable-next-line security/detect-unsafe-regex
+  const defRe = /^(?:static\s+)?(?:int|void)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{]*\)\s*\{/gm;
+  for (const text of sources.values()) {
+    const defs = [...text.matchAll(defRe)];
+    const i = defs.findIndex(d => d[1] === name);
+    if (i >= 0) {
+      const end = i + 1 < defs.length ? defs[i + 1].index : text.length;
+      return text.slice(defs[i].index, end);
+    }
+  }
+  return '';
+}
+
+test('apiRouteContract: one query_param_equals() serves every token parse (P1-9)', () => {
+  const all = [...sources.values()].join('\n');
+  assert.equal(
+    (all.match(/^int query_param_equals\(/gm) ?? []).length,
+    1,
+    'installer/src must define query_param_equals() exactly once'
+  );
+  assert.ok(
+    !all.includes('strstr(query, "t=")'),
+    'the raw t= parsers are gone — every token parse routes through query_param_equals()'
+  );
+
+  const gate = functionBody('request_has_valid_token');
+  assert.match(
+    gate,
+    /query_param_equals\(\s*query\s*,\s*"t"/,
+    'request_has_valid_token() must compare through query_param_equals()'
+  );
+
+  const claim = functionBody('handle_api_claim');
+  assert.match(
+    claim,
+    /query_param_equals\(\s*query\s*,\s*"t"/,
+    '/api/claim must compare through query_param_equals()'
+  );
+  assert.ok(
+    !/is_current\s*=\s*1\b/.test(claim),
+    '/api/claim must not default to current:1 — no token means current:0'
+  );
+  assert.ok(
+    claim.includes('\\"current\\"'),
+    '/api/claim still reports "current" (the smoke test asserts current:0/1)'
+  );
+
+  const shutdown = functionBody('handle_api_shutdown');
+  assert.match(
+    shutdown,
+    /query_param_equals\(\s*query\s*,\s*"t"/,
+    '/api/shutdown must compare through query_param_equals()'
+  );
+});
+
+test('apiRouteContract: the serve loop refuses a foreign Host/Origin (P1-6)', () => {
+  const src = sources.get('http_server.c');
+  assert.match(
+    src,
+    /static\s+int\s+host_origin_allowed\s*\(/,
+    'http_server.c must define host_origin_allowed()'
+  );
+  const checkBody = functionBody('host_origin_allowed');
+  assert.match(checkBody, /"host"/, 'the check inspects the Host header');
+  assert.match(checkBody, /"origin"/, 'the check inspects the Origin header');
+  assert.ok(
+    checkBody.includes('localhost:%u') && checkBody.includes('127.0.0.1:%u'),
+    'only localhost:<port> / 127.0.0.1:<port> carrying the bound port are allowed'
+  );
+
+  const serve = functionBody('http_server_serve');
+  const checked = serve.indexOf('host_origin_allowed(');
+  const routed = serve.indexOf('find_handler(');
+  assert.ok(checked >= 0, 'the serve loop calls host_origin_allowed()');
+  assert.ok(routed >= 0 && checked < routed, 'validation runs before routing');
+  assert.match(serve, /403/, 'a refused request is answered 403');
+});
+
+test('apiRouteContract: uploads are verified against the manifest (P0-5)', () => {
+  const detect = sources.get('detect_browser.c');
+  assert.match(
+    detect,
+    /^int installer_verify_upload\(/m,
+    'detect_browser.c must define installer_verify_upload()'
+  );
+  assert.match(
+    detect,
+    /^int installer_verify_stored_zips\(/m,
+    'detect_browser.c must define installer_verify_stored_zips()'
+  );
+
+  const upload = functionBody('handle_api_upload');
+  const verified = upload.indexOf('installer_verify_upload(');
+  const stored = upload.indexOf('installer_set_uploaded_zip(');
+  assert.ok(
+    verified >= 0,
+    'the upload handler verifies candidate bytes when the manifest is known'
+  );
+  assert.ok(stored >= 0 && verified < stored, 'verification runs before the zip is stored');
+
+  const manifest = functionBody('handle_api_manifest');
+  const vAt = manifest.indexOf('installer_verify_stored_zips(');
+  const iAt = manifest.indexOf('ingest_remote_manifest(');
+  assert.ok(vAt >= 0, 'the manifest handler verifies stored zips against the candidate manifest');
+  assert.ok(iAt >= 0 && vAt < iAt, 'verification runs before ingest');
+});

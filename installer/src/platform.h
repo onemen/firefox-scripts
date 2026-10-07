@@ -176,6 +176,18 @@ const unsigned char *installer_uploaded_zip(int is_utils, size_t *out_len);
 int installer_has_uploaded_zip(int is_utils);
 int installer_set_uploaded_zip(int is_utils, const char *data, size_t len);
 
+/* Manifest verification (implemented in detect_browser.c; P0-5 / #445).
+ * Both return 0 when the bytes match the published hash — or when there is
+ * nothing to verify yet (no manifest ingested / no zip stored), preserving
+ * the documented no-manifest fallback — and -1 on a mismatch, which the
+ * handler answers with HTTP 403. installer_verify_upload checks a CANDIDATE
+ * zip against the ingested manifest (before it is stored);
+ * installer_verify_stored_zips checks the STORED zips against a candidate
+ * manifest body (before it is ingested). Together they cover both arrival
+ * orders: the tab fetches the manifest and the zips in parallel. */
+int installer_verify_upload(int is_utils, const char *data, size_t len);
+int installer_verify_stored_zips(const char *manifest_json, size_t len);
+
 /* updater-ui.zip rides along with utils (the update tab lives in the profile).
  * It is not hash-checked or shown in the UI: it is extracted silently and is
  * optional when the fetch failed. */

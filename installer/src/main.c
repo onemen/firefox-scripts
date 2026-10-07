@@ -149,15 +149,12 @@ const char *installer_session_token(void) {
 // A request carrying the CURRENT run's session token (the UI embeds it in
 // every URL as ?t=<token>).  Every state-changing endpoint requires it, so a
 // random local web page can never drive the installer API (cross-origin pages
-// are additionally refused via CORS).  Returns 1 when the query string holds
-// exactly this run's token, 0 when missing or stale.
+// are additionally refused via CORS and a foreign Host/Origin via
+// host_origin_allowed).  Returns 1 when the query string holds exactly this
+// run's token, 0 when missing or stale — parsed by query_param_equals(), so
+// the token does not have to be the last parameter (audit 2026-10-06, P1-9).
 static int request_has_valid_token(const char *query) {
-    if (!query) return 0;
-    const char *t = strstr(query, "t=");
-    // 't=' must start a parameter (start of query or after '&'), not match
-    // inside another value like "xt=...".
-    if (!t || (t != query && t[-1] != '&')) return 0;
-    return strcmp(t + 2, g_session_token) == 0;
+    return query_param_equals(query, "t", g_session_token);
 }
 
 #ifdef _WIN32
@@ -603,14 +600,10 @@ static char *build_test_browsers_json(int count) {
 int handle_api_claim(int client_fd, const char *query, const char *body, size_t body_len) {
     (void)body;
     (void)body_len;
-    int is_current = 1;
-    if (query) {
-        const char *t = strstr(query, "t=");
-        if (t) {
-            t += 2;
-            is_current = (strcmp(t, g_session_token) == 0);
-        }
-    }
+    // current:0 without a token: a bare /api/claim (or a stale tab that lost
+    // its query string) must never claim to be the live installer — the old
+    // default was 1 (audit 2026-10-06, P1-9 / #445).
+    int is_current = query_param_equals(query, "t", g_session_token);
     char json[128];
     int pos = snprintf(json, sizeof(json), "{\"ok\":1,\"current\":%d}", is_current);
     send_json_response(client_fd, json, pos);
@@ -1434,6 +1427,18 @@ int handle_api_manifest(int client_fd, const char *query, const char *body, size
         send_json_response(client_fd, err, (int)strlen(err));
         return 0;
     }
+    // Check the CANDIDATE manifest against the zips already stored before
+    // ingesting it (P0-5 / #445): the manifest and the zips arrive in
+    // parallel (10-ingest.js), so this covers zip-first order while
+    // installer_verify_upload() covers manifest-first. No stored zip means
+    // nothing to verify. A mismatch is refused with 403 and the current
+    // manifest state is left untouched.
+    if (installer_verify_stored_zips(body, body_len) != 0) {
+        const char *err = "{\"error\":\"package hash verification failed\"}";
+        send_response(client_fd, 403, "application/json; charset=utf-8", err,
+                      strlen(err));
+        return 0;
+    }
     if (ingest_remote_manifest(body, body_len) != 0) {
         const char *err = "{\"error\":\"Could not parse package manifest\"}";
         send_json_response(client_fd, err, (int)strlen(err));
@@ -1479,6 +1484,18 @@ int handle_api_upload(int client_fd, const char *query, const char *body, size_t
     if (!body || body_len == 0) {
         const char *err = "{\"error\":\"Empty zip upload\"}";
         send_json_response(client_fd, err, (int)strlen(err));
+        return 0;
+    }
+    // Verify the candidate bytes against the published manifest BEFORE the
+    // zip is stored (P0-5 / #445). No manifest ingested yet means nothing to
+    // verify — the documented no-manifest fallback is unchanged — but when a
+    // manifest IS known, an upload that does not match it is refused with
+    // 403 (a non-200 status so the tab's postRaw sees it and fails the
+    // ingest, instead of treating an error JSON body as success).
+    if (!is_ui && installer_verify_upload(is_utils, body, body_len) != 0) {
+        const char *err = "{\"error\":\"package hash verification failed\"}";
+        send_response(client_fd, 403, "application/json; charset=utf-8", err,
+                      strlen(err));
         return 0;
     }
     int stored = is_ui ? installer_set_uploaded_ui_zip(body, body_len)
