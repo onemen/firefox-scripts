@@ -2,6 +2,7 @@
 #include <shellapi.h>
 #include <string.h>
 #include <stdlib.h>
+#include <wchar.h> /* wmemcpy — bounded wide copy, the wcsncpy/wcscpy replacement */
 
 #define EXIT_SUCCESS 0
 #define EXIT_BAD_ARGS 1
@@ -59,7 +60,7 @@ static WCHAR *get_dir(const WCHAR *path) {
     WCHAR *dir = (WCHAR *)malloc((len + 1) * sizeof(WCHAR));
     if (!dir)
         return NULL;
-    wcsncpy(dir, path, len);
+    wmemcpy(dir, path, len);
     dir[len] = 0;
     return dir;
 }
@@ -79,7 +80,7 @@ static int can_write_to(const WCHAR *dst_path) {
      * unbounded — same bound re-checked at the use site). */
     if (dlen > MAX_PATH - PROBE_SUFFIX_W) return 0;
     WCHAR dir[MAX_PATH];
-    wcsncpy(dir, dst_path, dlen);
+    wmemcpy(dir, dst_path, dlen);
     dir[dlen] = 0;
 
     for (;;) {
@@ -125,7 +126,8 @@ static WCHAR *make_extended_path(const WCHAR *path) {
     if (wcsncmp(path, L"\\\\", 2) == 0) {
         WCHAR *ext = (WCHAR *)malloc((len + 8) * sizeof(WCHAR));
         if (!ext) return NULL;
-        wcscpy(ext, L"\\\\?\\UNC\\");
+        const WCHAR prefix[] = L"\\\\?\\UNC\\";
+        wmemcpy(ext, prefix, sizeof(prefix) / sizeof(prefix[0]));
         wcscat(ext, path + 2);
         return ext;
     }
@@ -133,7 +135,8 @@ static WCHAR *make_extended_path(const WCHAR *path) {
     if (path[0] && path[1] == L':') {
         WCHAR *ext = (WCHAR *)malloc((len + 5) * sizeof(WCHAR));
         if (!ext) return NULL;
-        wcscpy(ext, L"\\\\?\\");
+        const WCHAR prefix[] = L"\\\\?\\";
+        wmemcpy(ext, prefix, sizeof(prefix) / sizeof(prefix[0]));
         wcscat(ext, path);
         return ext;
     }

@@ -555,3 +555,15 @@ test('issueBody: newer-tag section carries the tag, the cooldown phrasing and th
 test('ISSUE_TITLE: stable dedup key', () => {
   assert.equal(ISSUE_TITLE, '[skills-watchdog] third-party skill drift');
 });
+
+test('the PR leg fires on skill edits, and check:skills-drift is wired locally', () => {
+  const workflow = fs.readFileSync(
+    path.join(REPO_ROOT, '.github', 'workflows', 'skills-watchdog.yml'),
+    'utf8'
+  );
+  const prSection = workflow.split('pull_request:')[1].split('merge_group:')[0];
+  assert.match(prSection, /- '\.agents\/skills\/\*\*'/);
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts['check:skills-drift'], 'node tools/skills-watchdog.mjs --dry-run');
+});

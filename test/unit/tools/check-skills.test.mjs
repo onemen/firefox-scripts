@@ -67,8 +67,84 @@ metadata:
 
 Body.
 `,
+    // `license:` declared ⇒ the skill must ship the text; the base fixture is
+    // a skill that complies.
+    'LICENSE': 'MIT License\n\nCopyright (c) Acme\n',
   };
 }
+
+test('unknown top-level frontmatter key is flagged (known-key allow-list)', () => {
+  const dir = makeSkillsDir({
+    alpha: {
+      'SKILL.md': '---\nname: alpha\ndescription: d\nverson: 1\n---\n\nBody.\n',
+    },
+  });
+  try {
+    const errors = checkSkillsDir(dir);
+    assert.equal(errors.length, 1, JSON.stringify(errors));
+    assert.match(errors[0].message, /unknown key "verson"/);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('unknown metadata key is flagged (known-key allow-list)', () => {
+  const files = thirdParty('alpha');
+  files['SKILL.md'] = files['SKILL.md'].replace(
+    '    github-path: skills/alpha',
+    '    github-pth: skills/alpha'
+  );
+  const dir = makeSkillsDir({alpha: files});
+  try {
+    const errors = checkSkillsDir(dir);
+    // The renamed key is both unknown AND leaves github-path missing — exactly
+    // the typo signature the allow-list exists to catch.
+    assert.ok(
+      errors.some(e => /metadata\.github-pth is unknown/.test(e.message)),
+      JSON.stringify(errors)
+    );
+    assert.ok(errors.some(e => /metadata\.github-path is missing/.test(e.message)));
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('license: declared without a license file is flagged (third-party)', () => {
+  const files = thirdParty('alpha');
+  delete files.LICENSE;
+  const dir = makeSkillsDir({alpha: files});
+  try {
+    const errors = checkSkillsDir(dir);
+    assert.equal(errors.length, 1, JSON.stringify(errors));
+    assert.match(errors[0].message, /declares license: but ships no LICENSE/);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('license: declared by an authored skill is not gated (repo license lives in package.json)', () => {
+  const files = authored('alpha');
+  files['SKILL.md'] = '---\nname: alpha\ndescription: d\nlicense: MIT\n---\n\nBody.\n';
+  const dir = makeSkillsDir({alpha: files});
+  try {
+    assert.deepEqual(checkSkillsDir(dir), []);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('a recorded license-file exception passes — upstream ships no text', () => {
+  // `lavish` is the recorded exception: ADR 0022 forbids injecting a file
+  // into a pristine vendored tree, so the gap is recorded, not papered over.
+  const files = thirdParty('lavish');
+  delete files.LICENSE;
+  const dir = makeSkillsDir({lavish: files});
+  try {
+    assert.deepEqual(checkSkillsDir(dir), []);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
 
 test('accepts the authored and third-party shapes in use', () => {
   const dir = makeSkillsDir({alpha: authored('alpha'), beta: thirdParty('beta')});
@@ -435,7 +511,9 @@ test('the batch pass is documented as review-only, in the skill, the ADR and AGE
   assert.match(adr, /including \*\*PRs opened by other agents\*\*/);
   assert.match(adr, /leaves open threads by design/);
 
-  assert.match(agents, /it writes \*\*no fixes and resolves\s+no threads\*\*/);
+  // \s+ at the wrap points: prose reflows under prettier's proseWrap:always,
+  // and the pin is about the rule, not about which line the words land on.
+  assert.match(agents, /it writes\s+\*\*no fixes and\s+resolves\s+no threads\*\*/);
 
   // A rejected finding is posted as a record and left open; an earlier draft
   // also said "delete it on the spot", which cancelled the record it had just

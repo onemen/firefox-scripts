@@ -388,8 +388,7 @@ static inline int get_temp_dir(char *out, size_t size) {
     if (!tmp) tmp = getenv("TMP");
     if (!tmp) tmp = "/tmp";
     if (strlen(tmp) < size) {
-        strncpy(out, tmp, size);
-        out[size - 1] = '\0';
+        snprintf(out, size, "%s", tmp);
         return 0;
     }
     return -1;

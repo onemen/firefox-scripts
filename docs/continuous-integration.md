@@ -25,10 +25,11 @@ stay SHA-pinned (`.github/dependabot.yml`).
   log — informational only, no threshold gate.
 - **lint stages** (#230) — `pnpm lint` is a strict fail-fast `&&` chain composed from granular
   `pnpm lint:*` scripts (`lint:js`, `lint:ncpy`, `lint:types`, `lint:c`, `lint:analyze`, `lint:md`,
-  `lint:md-markers`, `lint:yaml`, `lint:skills`) — CI and the pre-push hook enforce only the
-  aggregate, so the granular views cannot drift from what CI gates. For local iteration,
-  `pnpm lint:all` (npm-run-all2 `run-s --continue-on-error --print-label`) runs every stage and
-  reports all findings at once; it is a developer convenience and never used by CI or hooks.
+  `lint:md-markers`, `lint:yaml`, `lint:skills`, `lint:skill-cmds`) — CI and the pre-push hook
+  enforce only the aggregate, so the granular views cannot drift from what CI gates. For local
+  iteration, `pnpm lint:all` (npm-run-all2 `run-s --continue-on-error --print-label`) runs every
+  stage and reports all findings at once; it is a developer convenience and never used by CI or
+  hooks.
 - **publish gate** (Windows / Linux / macOS) — `pnpm snapshot:dev` rebuilds every package zip and
   the native binaries for the runner's OS, so regressions in generated files, hashes or the Makefile
   fail the PR before they reach a release.
