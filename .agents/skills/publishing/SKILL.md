@@ -47,7 +47,7 @@ pnpm publish:all                    # full prod publish — dispatches CI (gh wo
 pnpm publish:all                    # full prod publish (--include=all)
 pnpm publish:packages               # zips + updater-ui only (--include=packages)
 pnpm publish:installer              # installer + helper only (--include=installer)
-pnpm publish -- --include=packages,helper --mode=dev --ref=<branch>   # any combination
+node tools/publish/release.mjs --include=packages,helper --mode=dev --ref=<branch>   # any combination
 ```
 
 Prerequisites: Node ≥ 24 + pnpm; token with `contents:write` in the untracked root `.env` (copied

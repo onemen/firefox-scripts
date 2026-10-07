@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * generatedRegistry.mjs — the single list of this repo's four generated files
+ * generatedRegistry.mjs — the single list of this repo's six generated files
  * and how they enter the publish hashes and the zips (ADR 0008: generated files
  * are untracked, so the publish hashes must cover their TRUE sources — see the
  * ADR's stated trap: adding/removing a generated file without updating the hash

@@ -18,7 +18,7 @@
 # indent or the aligned `#define NAME   value` columns; both were dropped in
 # favor of the formatter's canonical output.
 #
-# Run via `pnpm format:c` / `pnpm lint:c` (see tools/format-c.mjs).
+# Run via `pnpm format:fix` (write) / `pnpm format` (check) — see tools/format-c.mjs.
 BasedOnStyle: LLVM
 IndentWidth: 4
 TabWidth: 4

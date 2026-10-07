@@ -27,9 +27,15 @@
 //                                         # status (local API; hash lookup first), the WDSI paste block and
 //                                         # Next steps. Interrupt-safe: re-running resumes (the run exists).
 //                                         # (--ref accepts branch/tag/SHA; a SHA is staged exactly.)
-//   pnpm publish -- --include=installer,helper   # any ADR 0030 role list
-//   pnpm publish -- --include=all --ref=<branch> # dispatch another branch's workflow
-//   pnpm publish -- --include=all --force        # rebuild + re-upload even when unchanged
+//   node tools/publish/release.mjs --include=installer,helper  # any ADR 0030 role list
+//   node tools/publish/release.mjs --include=all --ref=<branch> # dispatch another branch's workflow
+//   node tools/publish/release.mjs --include=all --force        # rebuild + re-upload even when unchanged
+//
+// There is no bare `pnpm publish` script — the pnpm presets above are the
+// documented front doors, and this file is the generic form they wrap. It
+// exists because `--include` is a UNION, so a preset cannot be narrowed to an
+// exact role list (`publish:installer -- --include=packages` = installer AND
+// packages); `--mode`, by contrast, is last-wins.
 //
 // The publish scope is OPT-IN and REQUIRED: `--include=<roles>` (or a preset
 // above; `all` = full publish). A missing, empty or invalid --include fails

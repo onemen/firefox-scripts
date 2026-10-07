@@ -1,6 +1,7 @@
 {
   "name": "firefox_scripts",
   "version": "1.0.0",
+  "private": true,
   "description": "Scripts for installing legacy extension on Firefox",
   "engines": {
     "node": ">=24"

@@ -1,7 +1,7 @@
 ---
 name: generated-files
 description:
-  Handle the four untracked, generated build files of this repository — their sources, the three
+  Handle the six untracked, generated build files of this repository — their sources, the three
   regeneration moments (Makefile, publish, manual sync), and why they are untracked. Use when a
   build fails on a missing/stale generated file, when installer.conf or installer/web changes, or
   when the user mentions regeneration or sync.
@@ -9,7 +9,7 @@ description:
 
 # Generated files
 
-Four files are **gitignored and regenerated on demand** — never hand-edit them, never commit them
+Six files are **gitignored and regenerated on demand** — never hand-edit them, never commit them
 (rationale and hash-input consequences: ADR
 [0008](../../../docs/decisions/0008-generated-files-untracked.md)):
 
@@ -33,7 +33,7 @@ Generated files are produced **when they are needed**, not on every edit:
 3. **Manual** — anything else (inspection, a missing file, a stale value):
 
    ```bash
-   node tools/publish/syncGeneratedFiles.mjs    # regenerate all four
+   node tools/publish/syncGeneratedFiles.mjs    # regenerate all six
    ```
 
 You do **not** need to regenerate after editing a source — the next build/publish does it. There are
