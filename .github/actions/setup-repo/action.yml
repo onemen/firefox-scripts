@@ -1,30 +1,27 @@
 # .github/actions/setup-repo/action.yml — Shared job prologue for every
-# CI / E2E / publish job: checkout, install Node, make pnpm available, and
-# install dependencies.
+# CI / E2E / publish job: checkout, install pnpm + Node, and install
+# dependencies.
 #
 # Everything here used to be duplicated in every job of ci.yml / e2e.yml /
 # pages.yml; fixes to the setup steps now land in one place. All actions are
 # pinned to full commit SHAs (see .github/dependabot.yml).
 #
-# pnpm comes from the official standalone build (single self-contained
-# binary from the pnpm GitHub release, cached per OS+arch) rather than
-# pnpm/action-setup's npm-bootstrap tree — that tree relies on shims,
-# self-update junctions and PNPM_HOME internals, which break when restored
-# from the Actions cache on Windows (msys /c/... paths invisible to Node,
-# EPERM on junction realpath).
+# pnpm/setup installs pnpm's self-contained release binary and the requested
+# Node runtime in a single step, replacing actions/setup-node, and caches the
+# pnpm store between runs. The pnpm version is read from the packageManager
+# field in package.json — a ^12 range shared by CI and local dev, resolved by
+# pnpm against the supply-chain policy (minimumReleaseAge), so no lockfile
+# packageManager pin exists to age-gate (audit 2026-10-06, #433). The action
+# ref itself is pinned to a full commit SHA.
 
 name: Setup repository
-description: Checkout, Node + cached pnpm, pnpm install
+description: Checkout, pnpm + Node via pnpm/setup, pnpm install
 
 inputs:
   node-version:
-    description: Node.js version to install
+    description: Node.js runtime for pnpm/setup to install
     required: false
     default: '24'
-  pnpm-version:
-    description: pnpm version (major) to make available
-    required: false
-    default: '11'
   install:
     description:
       Run `pnpm install --frozen-lockfile` (set 'false' when the job must run other steps first)
@@ -40,67 +37,15 @@ runs:
       with:
         fetch-depth: 0
 
-    # The standalone pnpm binary (~15 MB, bundles its own Node) is cached per
-    # OS+arch. First run downloads it from the official pnpm release; later
-    # runs restore it and skip the download.
-    - name: Cache pnpm binary
-      id: pnpm-bin
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    # Single action for pnpm + Node (docs: https://pnpm.io/continuous-integration).
+    # install: false — the strict frozen install runs below so every job gets
+    # exactly one install path.
+    - name: Install pnpm and Node.js
+      uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
       with:
-        path: ~/pnpm-bin
-        key: pnpm-bin-${{ runner.os }}-${{ runner.arch }}-${{ inputs.pnpm-version }}
-
-    - name: Download pnpm standalone
-      if: steps.pnpm-bin.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        mkdir -p "$HOME/pnpm-bin"
-        # pnpm's standalone builds: tar.gz on Linux/macOS, zip on Windows
-        # (assets renamed since v11; see the pnpm GitHub release).
-        case "${{ runner.os }}-${{ runner.arch }}" in
-          Linux-X64)     ASSET="pnpm-linux-x64.tar.gz" ;;
-          Linux-ARM64)   ASSET="pnpm-linux-arm64.tar.gz" ;;
-          macOS-X64)     ASSET="pnpm-darwin-x64.tar.gz" ;;
-          macOS-ARM64)   ASSET="pnpm-darwin-arm64.tar.gz" ;;
-          Windows-X64)   ASSET="pnpm-win32-x64.zip" ;;
-          Windows-ARM64) ASSET="pnpm-win32-arm64.zip" ;;
-          *) echo "::error::unsupported runner ${{ runner.os }}-${{ runner.arch }}" && exit 1 ;;
-        esac
-        curl -fsSL -o "$HOME/pnpm-bin/pnpm.${{ runner.os }}" \
-          "https://github.com/pnpm/pnpm/releases/latest/download/$ASSET"
-        if [ "${{ runner.os }}" = "Windows" ]; then
-          unzip -o "$HOME/pnpm-bin/pnpm.Windows" -d "$HOME/pnpm-bin"
-          rm "$HOME/pnpm-bin/pnpm.Windows"
-        else
-          tar -xzf "$HOME/pnpm-bin/pnpm.${{ runner.os }}" -C "$HOME/pnpm-bin"
-          rm "$HOME/pnpm-bin/pnpm.${{ runner.os }}"
-        fi
-        chmod +x "$HOME/pnpm-bin/pnpm" 2>/dev/null || true
-        ls -la "$HOME/pnpm-bin" | head -5
-
-    - name: Add pnpm to PATH
-      shell: bash
-      run: |
-        # msys HOME is /c/... — Windows-native tools (setup-node's which)
-        # cannot resolve such entries. The runner prepends GITHUB_PATH
-        # verbatim, so write Windows-style paths there while keeping the
-        # msys form for the in-step check.
-        if command -v cygpath >/dev/null 2>&1; then
-          echo "$(cygpath -w "$HOME/pnpm-bin")" >> "$GITHUB_PATH"
-        else
-          echo "$HOME/pnpm-bin" >> "$GITHUB_PATH"
-        fi
-        export PATH="$HOME/pnpm-bin:$PATH"
-        if ! command -v pnpm >/dev/null 2>&1; then
-          echo "::error::cached pnpm unusable — delete the 'pnpm-bin-${{ runner.os }}-${{ runner.arch }}-${{ inputs.pnpm-version }}' Actions cache and re-run"
-          exit 1
-        fi
-        pnpm --version
-
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-      with:
-        node-version: ${{ inputs.node-version }}
-        cache: pnpm
+        runtime: node@${{ inputs.node-version }}
+        cache: true
+        install: false
 
     - name: Install dependencies
       if: inputs.install == 'true'
