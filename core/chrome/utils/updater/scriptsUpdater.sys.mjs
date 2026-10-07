@@ -384,15 +384,8 @@ let gWindow = null;
 // checkForUpdates's attach block (sessionRestoredWait).
 let gSessionRestored = false;
 
-/**
- * Fire-and-forget entry for checkForUpdates() (audit P2-10): startup, the
- * window-churn re-check and the daily timer all invoke it without awaiting, and
- * the async body can reject outside its own try/catches — the unguardable
- * liveWin.gBrowser.addTrustedTab() when the tab target died mid-check, for one.
- * Without this wrapper each such rejection lands as an unhandled promise
- * rejection with no updater context, and it never reaches the E2E console
- * mirror either.
- */
+// Fire-and-forget entry for checkForUpdates(): the startup, window-churn and
+// daily-timer call sites do not await it, so the rejection handling lives here.
 function runCheckForUpdates() {
   checkForUpdates().catch(e => console.error('Firefox Scripts: update check failed (uncaught)', e));
 }

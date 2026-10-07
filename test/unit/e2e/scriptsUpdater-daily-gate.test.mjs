@@ -594,7 +594,7 @@ test('pending update: the scheduler writes NO pref, the tab opens (the tab recor
   }
 });
 
-test('P2-10: a rejecting checkForUpdates is logged by the wrapper, never unhandled', async () => {
+test('a rejecting checkForUpdates is logged by the wrapper, never unhandled', async () => {
   const store = {};
   const {sandbox} = loadUpdater({store});
   const layout = makeProfileLayout(sandbox);
@@ -608,9 +608,8 @@ test('P2-10: a rejecting checkForUpdates is logged by the wrapper, never unhandl
     warn() {},
     info() {},
   };
-  // Reject at the very first pref read — before checkForUpdates' first await,
-  // so the whole fire-and-forget call rejects exactly like the unguardable
-  // addTrustedTab escape P2-10 pins.
+  // Reject before checkForUpdates' first await so the whole fire-and-forget
+  // call rejects, as an unguarded call would.
   sandbox.Services.prefs.getCharPref = () => {
     throw new Error('pref backend gone');
   };
@@ -630,12 +629,10 @@ test('P2-10: a rejecting checkForUpdates is logged by the wrapper, never unhandl
   }
 });
 
-test('P2-10: no bare checkForUpdates() statement-call remains in the module', () => {
+test('no bare checkForUpdates() statement-call remains in the module', () => {
   const src = fs.readFileSync(MODULE_PATH, 'utf-8');
-  // Statement-position calls (`checkForUpdates();`) are the fire-and-forget
-  // sites that used to leak rejections; every invocation must go through
-  // runCheckForUpdates() (which attaches .catch). A bare call as an argument
-  // (e.g. the timer seam) must not match.
+  // Statement-position calls bypass runCheckForUpdates() and leak rejections;
+  // a bare call used as an argument (the timer seam) must not match.
   const bareCalls = src.match(/^\s*checkForUpdates\(\);\s*$/gm) ?? [];
   assert.deepEqual(bareCalls, [], 'every call site must be wrapped in runCheckForUpdates()');
   assert.ok(

@@ -47,8 +47,8 @@ function mockElement() {
  * enumeration at the bottom of the file.
  */
 function makeSandbox(platformVersion) {
-  // Observer registry + console recorders, exposed on the returned sandbox:
-  // the P2-11 tests fire the chrome-document-loaded observer exactly like
+  // Observer registry + console recorders, exposed on the returned sandbox so
+  // tests can fire the chrome-document-loaded observer exactly as
   // Services.obs.notifyObservers would and assert on what was logged.
   const observers = {};
   const routed = [];
@@ -393,13 +393,8 @@ test('createElement: on* handler mixed with regular attrs', () => {
   assert.equal(el.listeners[0].handler, handler);
 });
 
-// ── scriptsUpdater init failure (P2-11) ─────────────────────────────────────
-//
-// The chrome-document-loaded observer used to swallow every import/init
-// failure ("the updater is dead and nobody says so", the #292 class). The
-// catch must now route one line through Services.console.logStringMessage
-// with the stable "Firefox Scripts updater: " prefix so the E2E console
-// mirror sees it (ConsoleAPI never reaches nsIConsoleService observers).
+// ConsoleAPI never reaches nsIConsoleService observers, so the catch routes a
+// line through logStringMessage for the E2E console mirror to see.
 
 /** Evaluate userChrome.js and return the live sandbox (observers + recorders). */
 function evaluateSandbox(platformVersion = '153.0') {
@@ -416,7 +411,7 @@ function fireLoaded(sandbox, uri = 'chrome://browser/content/browser.xhtml') {
   for (const cb of cbs) cb({documentURI: uri, defaultView: {id: 'win'}});
 }
 
-test('P2-11: a failed scriptsUpdater import is routed to the console mirror', () => {
+test('a failed scriptsUpdater import is routed to the console mirror', () => {
   const sandbox = evaluateSandbox();
   // Default importESModule() returns {} — destructuring initScriptsUpdater
   // yields undefined and calling it throws, exactly like a dead import.
@@ -430,14 +425,14 @@ test('P2-11: a failed scriptsUpdater import is routed to the console mirror', ()
   assert.equal(sandbox.__consoleErrors.length, 1, 'console.error keeps the Browser Console entry');
 });
 
-test('P2-11: an import failure does not stop the observer for later documents', () => {
+test('an import failure does not stop the observer for later documents', () => {
   const sandbox = evaluateSandbox();
   fireLoaded(sandbox);
   fireLoaded(sandbox);
   assert.equal(sandbox.__routed.length, 2, 'every failed document reports its own line');
 });
 
-test('P2-11: a successful init routes nothing', () => {
+test('a successful init routes nothing', () => {
   const sandbox = evaluateSandbox();
   let inited = 0;
   sandbox.ChromeUtils.importESModule = () => ({
@@ -452,7 +447,7 @@ test('P2-11: a successful init routes nothing', () => {
   assert.deepEqual(sandbox.__consoleErrors, [], 'the happy path stays silent');
 });
 
-test('P2-11: non-browser.xhtml documents never reach the import', () => {
+test('non-browser.xhtml documents never reach the import', () => {
   const sandbox = evaluateSandbox();
   fireLoaded(sandbox, 'chrome://browser/content/hiddenWindow.html');
   assert.deepEqual(sandbox.__routed, [], 'only browser.xhtml triggers the updater init');
