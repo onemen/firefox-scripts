@@ -15,15 +15,16 @@ kind of "no" that gets re-litigated.
 
 ## Decision
 
-No byte is published unless it clears the scans. The **host AV gate** scans the exact bytes about to
-be uploaded (Windows Defender on Windows, ClamAV elsewhere): any detection hard-fails the run and
-_refuses to publish_; a missing scanner only warns. The **VirusTotal gate** (when `VT_API_KEY` is
-set) fails on multi-engine consensus — `malicious >= threshold` (default 3), not a single-engine
-false positive — or on a **veto engine** (Microsoft) reporting malicious at any count; any fail
-verdict returns before the publishing section, so no asset is uploaded. Unavailability (missing key,
-transient API error, analysis never completing) degrades to a warning, never a silent pass. Verdicts
-are ledgered per sha256 (`tools/ci/avLedger.mjs`, re-scanned by the `av-watchdog`): skipped engines
-are recorded as `unknown`, never as clean, and the ledger is never the reason a release fails.
+A detection blocks the publish; an unavailable scan warns but does not block. The **host AV gate**
+scans the exact bytes about to be uploaded (Windows Defender on Windows, ClamAV elsewhere): any
+detection hard-fails the run and _refuses to publish_; a missing scanner only warns. The
+**VirusTotal gate** (when `VT_API_KEY` is set) fails on multi-engine consensus —
+`malicious >= threshold` (default 3), not a single-engine false positive — or on a **veto engine**
+(Microsoft) reporting malicious at any count; any fail verdict returns before the publishing
+section, so no asset is uploaded. Unavailability (missing key, transient API error, analysis never
+completing) degrades to a warning, never a silent pass. Verdicts are ledgered per sha256
+(`tools/ci/avLedger.mjs`, re-scanned by the `av-watchdog`): skipped engines are recorded as
+`unknown`, never as clean, and the ledger is never the reason a release fails.
 
 ## Consequences
 
