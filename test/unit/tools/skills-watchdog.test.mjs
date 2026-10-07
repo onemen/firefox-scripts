@@ -555,3 +555,20 @@ test('issueBody: newer-tag section carries the tag, the cooldown phrasing and th
 test('ISSUE_TITLE: stable dedup key', () => {
   assert.equal(ISSUE_TITLE, '[skills-watchdog] third-party skill drift');
 });
+
+// The PR leg must fire when a skill changes — before 2026-10-07 its path
+// filter listed only the watchdog's own tool/test/workflow, so any PR editing
+// `.agents/skills/**` waited until Monday's schedule (audit P3-6). The path
+// filter and the local `check:skills-drift` entry point are the two halves of
+// that fix; this pins the workflow half.
+test('the PR leg fires on skill edits, and check:skills-drift is wired locally', () => {
+  const workflow = fs.readFileSync(
+    path.join(REPO_ROOT, '.github', 'workflows', 'skills-watchdog.yml'),
+    'utf8'
+  );
+  const prSection = workflow.split('pull_request:')[1].split('merge_group:')[0];
+  assert.match(prSection, /- '\.agents\/skills\/\*\*'/);
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts['check:skills-drift'], 'node tools/skills-watchdog.mjs --dry-run');
+});

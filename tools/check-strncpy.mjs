@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * tools/check-strncpy.mjs — forbid new `strncpy(` call sites in installer/src.
+ * tools/check-strncpy.mjs — forbid new `strncpy(`-family call sites in
+ * installer/src.
  *
  * House convention is the bounded copy `snprintf(dst, sizeof(dst), "%s", src)`:
  * always NUL-terminates, never over-reads the source, and keeps the tree clean
@@ -9,6 +10,14 @@
  * the idiom one site at a time). The 2026-09 sweep converted all 57 call sites;
  * this gate is what stops a refactor or a new platform variant from quietly
  * reintroducing the idiom (the way #214 re-seeded a fourth copy of it).
+ *
+ * Scope (widened 2026-10-07, audit P3-5): `strncpy`, `strncat`, `strcpy` and
+ * the wide-char `wcsncpy`/`wcscpy`, across `.c`, `.h` AND `.inl` — the umbrella
+ * header every file includes used to be the one place the convention was
+ * unenforced, and `wcsncpy` was invisible to the old pattern. The bounded
+ * counterparts stay `snprintf` (narrow) and `wmemcpy` + explicit terminator or
+ * `swprintf` (wide): this repo uses no `*cpy_s` (Annex K is not portable to
+ * every toolchain we build).
  *
  * Zero tolerance — no allowlist for first-party code. The two `strncpy`
  * mentions that remain in the tree are gcc -fanalyzer workaround comments
@@ -28,7 +37,11 @@ import {fileURLToPath} from 'url';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCAN_DIR = path.join(REPO_ROOT, 'installer', 'src');
 
-const CALL_RE = /\bstrncpy\s*\(/g;
+// One literal regex (not a RegExp built from a list): the security lint
+// forbids non-literal RegExp arguments, and the test suite — 'flags every
+// forbidden family member' — is what keeps this alternation complete.
+const CALL_RE = /\b(?:strncpy|strncat|strcpy|wcsncpy|wcscpy)\s*\(/g;
+const C_LIKE = /\.(c|h|inl)$/;
 
 function listCSources(dir) {
   const out = [];
@@ -41,7 +54,7 @@ function listCSources(dir) {
       // not ours to gate or modify.
       if (e.name === 'vendor') continue;
       out.push(...listCSources(full));
-    } else if (e.isFile() && /\.c$/.test(e.name)) {
+    } else if (e.isFile() && C_LIKE.test(e.name)) {
       out.push(full);
     }
   }
@@ -49,13 +62,13 @@ function listCSources(dir) {
 }
 
 /**
- * Find every line carrying a `strncpy(` call in the given C sources. Matches
- * across line breaks (a `(` on the next line is still a call), and non-.c paths
+ * Find every line carrying a forbidden call in the given C sources. Matches
+ * across line breaks (a `(` on the next line is still a call), and non-C paths
  * are ignored so callers cannot widen the scope by accident.
  */
 export function findStrncpyCalls(files = listCSources(SCAN_DIR), root = REPO_ROOT) {
   const findings = [];
-  for (const file of files.filter(f => /\.c$/.test(f))) {
+  for (const file of files.filter(f => C_LIKE.test(f))) {
     const text = fs.readFileSync(file, 'utf8');
     for (const m of text.matchAll(CALL_RE)) {
       const allLines = text.split(/\r?\n/);
@@ -75,7 +88,7 @@ function main() {
   if (findings.length > 0) {
     console.error(
       [
-        `check-strncpy: ${findings.length} strncpy call site(s) found — use snprintf(dst, sizeof(dst), "%s", src) instead.`,
+        `check-strncpy: ${findings.length} strncpy-family call site(s) found — use snprintf(dst, sizeof(dst), "%s", src) (wide: wmemcpy/swprintf) instead.`,
         ...findings.map(f => `  ${f.file}:${f.line}: ${f.text}`),
         'snprintf always NUL-terminates and never over-reads the source;',
         'see the 2026-09 strncpy-sweep PR for the conversion pattern.',
@@ -83,7 +96,9 @@ function main() {
     );
     process.exit(1);
   }
-  console.log('check-strncpy: no strncpy call sites in installer/src (0 findings).');
+  console.log(
+    'check-strncpy: no strncpy-family call sites in installer/src (.c/.h/.inl, 0 findings).'
+  );
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

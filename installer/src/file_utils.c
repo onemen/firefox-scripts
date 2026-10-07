@@ -7,6 +7,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <wchar.h> /* wmemcpy — bounded wide copy used by walk_dir_entries() */
 #else
 #include <unistd.h>
 #include <dirent.h>
@@ -239,7 +240,9 @@ int walk_dir_entries(const char *dir, dir_visitor_fn visitor, void *ctx) {
         free(wdir);
         return -1;
     }
-    wcscpy(pattern, wdir);
+    // dlen == wcslen(wdir): the copy (NUL included) fits the (dlen + 3)
+    // allocation by construction — bounded by the allocation itself.
+    wmemcpy(pattern, wdir, dlen + 1);
     wcscat(pattern, L"\\*");
 
     WIN32_FIND_DATAW fd;

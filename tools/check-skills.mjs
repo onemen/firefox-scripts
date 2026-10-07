@@ -26,7 +26,14 @@
  *   at all — a partial block is the manually-copied-skill signature that ADR
  *   0022 retired;
  * - third-party skills carry all four gh-injected keys (`github-repo/-ref/
- *   -path/-tree-sha`) and a parseable `github-repo` URL.
+ *   -path/-tree-sha`) and a parseable `github-repo` URL;
+ * - every frontmatter key (top-level and `metadata.`) is on the known-key
+ *   allow-list — a typo or an unreviewed upstream key fails the gate instead of
+ *   passing silently (audit 2026-10-06 P2-13);
+ * - a skill that declares `license:` ships the license text (third-party:
+ *   LICENSE/NOTICE/COPYING in its directory, with recorded exceptions for
+ *   upstreams that ship none — injecting a file would break the pristine
+ *   vendored tree ADR 0022 requires).
  *
  * Frontmatter is parsed with js-yaml (the same parse the `lint:yaml` gate
  * reports on, #413) — one parser, one classification (`metadata.github-repo` =
@@ -61,6 +68,40 @@ const GH_META_KEYS = ['github-repo', 'github-ref', 'github-path', 'github-tree-s
 const REPO_URL_RE =
   /^(?:(?:https?|ssh):\/\/(?:git@)?github\.com\/|git@github\.com:|github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
 
+// Unknown-key allow-list (audit 2026-10-06 P2-13): every frontmatter key in
+// use, so a typo or an upstream key nobody has seen fails the gate instead of
+// silently passing. Extend deliberately, in review — that is the point.
+const TOP_LEVEL_KEYS = new Set([
+  'name',
+  'description',
+  'metadata',
+  'license',
+  'compatibility',
+  'disable-model-invocation',
+]);
+const METADATA_KEYS = new Set([
+  ...GH_META_KEYS,
+  'argument-hint',
+  'author',
+  'hermes-category',
+  'hermes-tags',
+]);
+
+// A third-party skill that declares `license:` must ship the license text
+// (ADR 0022: "still MIT-attributed" needs a file to point at). Recorded
+// exceptions are upstream gaps we do not paper over by injecting files into
+// a pristine vendored tree (audit 2026-10-06 §4.4 — the file would diverge
+// from the installed tree `gh skill update` manages).
+const LICENSE_FILE_EXCEPTIONS = new Set(['lavish']);
+const LICENSE_FILE_NAMES = [
+  'LICENSE',
+  'LICENSE.md',
+  'LICENSE.txt',
+  'NOTICE',
+  'NOTICE.md',
+  'COPYING',
+];
+
 /**
  * Read a SKILL.md's frontmatter with js-yaml (the same parse the `lint:yaml`
  * gate reports on) and normalize the two shapes every caller here needs: `name`
@@ -79,19 +120,28 @@ const REPO_URL_RE =
  *   name: string | null;
  *   description: string | null;
  *   metadata: Record<string, string>;
+ *   topKeys: string[];
  *   error: string | null;
  * }}
  */
 export function readSkillFrontmatter(text, file) {
   const parsed = parseFrontmatter(text, file);
   if (!parsed.present)
-    return {present: false, name: null, description: null, metadata: {}, error: null};
+    return {
+      present: false,
+      name: null,
+      description: null,
+      metadata: {},
+      topKeys: [],
+      error: null,
+    };
   if (parsed.error) {
     return {
       present: true,
       name: null,
       description: null,
       metadata: {},
+      topKeys: [],
       error: `${parsed.error.reason} (frontmatter line ${parsed.error.line}:${parsed.error.column})`,
     };
   }
@@ -105,6 +155,7 @@ export function readSkillFrontmatter(text, file) {
     metadata: Object.fromEntries(
       Object.entries(meta).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)])
     ),
+    topKeys: Object.keys(data),
     error: null,
   };
 }
@@ -174,10 +225,37 @@ export function checkSkillsDir(skillsDir) {
       errors.push({file: `${rel}/SKILL.md`, message: 'no frontmatter block'});
       continue;
     }
-    const {name, description, metadata, error} = fm;
+    const {name, description, metadata, topKeys, error} = fm;
     if (error !== null) {
       errors.push({file: `${rel}/SKILL.md`, message: `frontmatter is not valid YAML: ${error}`});
       continue;
+    }
+    for (const key of topKeys) {
+      if (!TOP_LEVEL_KEYS.has(key)) {
+        errors.push({
+          file: `${rel}/SKILL.md`,
+          message: `frontmatter has unknown key "${key}" — extend TOP_LEVEL_KEYS in tools/check-skills.mjs if it is intentional`,
+        });
+      }
+    }
+    for (const key of Object.keys(metadata)) {
+      if (!METADATA_KEYS.has(key)) {
+        errors.push({
+          file: `${rel}/SKILL.md`,
+          message: `metadata.${key} is unknown — extend METADATA_KEYS in tools/check-skills.mjs if it is intentional`,
+        });
+      }
+    }
+    if (topKeys.includes('license') && metadata['github-repo']) {
+      const skillDirAbs = path.join(skillsDir, entry.name);
+      const hasLicenseFile = LICENSE_FILE_NAMES.some(f => fs.existsSync(path.join(skillDirAbs, f)));
+      if (!hasLicenseFile && !LICENSE_FILE_EXCEPTIONS.has(entry.name)) {
+        errors.push({
+          file: `${rel}/SKILL.md`,
+          message:
+            'declares license: but ships no LICENSE/NOTICE/COPYING file — ship the text or record the upstream gap in LICENSE_FILE_EXCEPTIONS',
+        });
+      }
     }
     if (!name) {
       errors.push({file: `${rel}/SKILL.md`, message: 'frontmatter has no non-empty name:'});
