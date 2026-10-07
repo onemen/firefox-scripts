@@ -415,7 +415,7 @@ static void send_json_response(int client_fd, const char *json, int json_len) {
 // ===== API handlers =====
 
 /* ===== HTTP API handlers (defined below; registered in main_impl) =====
- * Declared here, next to their definitions (audit 2026-10-06 P2-15, #450):
+ * Declared here, next to their definitions:
  * http_server.h no longer speaks for functions it does not own — the server
  * dispatches through http_server_register() function pointers, so main.c is
  * their only consumer. */

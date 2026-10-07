@@ -3,10 +3,10 @@
 
 /*
  * detect_browser_internal.h — the internal surface shared by the three
- * modules the 2026-10-06 audit split out of detect_browser.c (P2-15,
- * #450): hashing.c (SHA-256 over directories and uploaded zips),
- * manifest.c (the strstr JSON parsing of hashes.json / Waterfox releases /
- * hg tags) and detect_browser.c (browser, process and profile detection).
+ * modules split out of detect_browser.c: hashing.c (SHA-256 over directories
+ * and uploaded zips), manifest.c (the strstr JSON parsing of hashes.json /
+ * Waterfox releases / hg tags) and detect_browser.c (browser, process and
+ * profile detection).
  *
  * Everything declared here is file-local BY DESIGN: a helper two of the
  * three modules need that the installer API (platform.h /

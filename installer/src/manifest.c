@@ -51,7 +51,7 @@ void free_file_list(char ***list, int *count);
 
 /**
  * True when a manifest files[] relative path must be rejected before it is
- * ever joined onto a base directory (audit 2026-10-06, #432).  The list is
+ * ever joined onto a base directory.  The list is
  * attacker-controlled input (POST /api/manifest); the JS side applies the
  * same policy to the same list via isUnsafeZipEntryName
  * (scriptsUpdater.sys.mjs).  Rejects empty names, absolute paths, Windows
@@ -444,8 +444,8 @@ static int parse_manifest_files(const char *json, const char *section,
 
         /* Validate BEFORE copying on: the files list is attacker-controlled
          * input (POST /api/manifest), and a rel is later joined into a full
-         * path and - historically - interpolated into a shell command (audit
-         * 2026-10-06, #432).  Mirror the JS guard the updater applies to the
+         * path and - historically - interpolated into a shell command.
+         * Mirror the JS guard the updater applies to the
          * same list (isUnsafeZipEntryName, scriptsUpdater.sys.mjs). */
         if (manifest_rel_unsafe(s, len)) {
             free_file_list(&list, &count);
@@ -496,7 +496,7 @@ int is_obsolete_file(const char *rel) {
  * Extract one package's published `hash` from a manifest body. `section` is
  * the quoted section key ("\"utils\"" / "\"fx-folder\"") — the exact search
  * ingest_remote_manifest() has always used; ingest and the upload/manifest
- * verification share this one parser (audit 2026-10-06, group C / #445) so
+ * verification share this one parser so
  * they can never disagree about what the manifest says. `json` must point at
  * at least `len` bytes; the working copy is bounded by them.
  *
@@ -567,7 +567,7 @@ static int zip_matches_manifest_hash(const char *manifest_json, size_t manifest_
 
 /**
  * Verify a candidate upload against the manifest already ingested
- * (POST /api/upload, P0-5 / #445). Called BEFORE the zip is stored.
+ * for POST /api/upload. Called BEFORE the zip is stored.
  * Returns 0 when the bytes match or when no manifest reference exists yet;
  * -1 on mismatch — the handler answers 403.
  */
@@ -579,7 +579,7 @@ int installer_verify_upload(int is_utils, const char *data, size_t len) {
 
 /**
  * Verify the zips already stored against a CANDIDATE manifest body
- * (POST /api/manifest, P0-5 / #445). Called BEFORE ingest, so a mismatched
+ * for POST /api/manifest. Called BEFORE ingest, so a mismatched
  * manifest is refused and the current state stays untouched. The manifest
  * and the zips arrive in parallel (10-ingest.js), so this covers zip-first
  * order while installer_verify_upload() covers manifest-first. Returns 0
@@ -641,7 +641,7 @@ int ingest_remote_manifest(const char *json, size_t len) {
     const char *utils_section = strstr(copy, "\"utils\"");
     if (utils_section) {
         /* one shared hash parser — exactly what the upload/manifest
-         * verification compares against (audit 2026-10-06, group C / #445) */
+         * verification compares against */
         manifest_package_hash(copy, len, "\"utils\"", utils_hash, sizeof(utils_hash));
         parse_json_string_field(utils_section, "\"date\"", utils_date, sizeof(utils_date));
     }

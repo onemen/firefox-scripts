@@ -49,8 +49,7 @@ int hash_uploaded_zip(int is_utils, char *out_hash, size_t hash_size,
 /**
  * Compute the SHA-256 of a file bytes with the inlined FIPS 180-4
  * implementation (sha256.c) — no process spawn, no output-format dependency
- * on certutil/sha256sum, no mkstemp-then-hand-the-path-to-a-subprocess TOCTOU
- * (audit 2026-10-06, #432).
+ * on certutil/sha256sum, no mkstemp-then-hand-the-path-to-a-subprocess TOCTOU.
  * Returns 0 on success with 64-char lowercase hex (+ NUL) in out_hash.
  */
 static int compute_file_sha256(const char *filepath, char *out_hash, size_t hash_size) {
@@ -146,10 +145,9 @@ int compute_directory_sha256(const char *base_dir,
     if (!base_dir || !rel_paths || num_files <= 0 || !out_hash || hash_size < 65)
         return -1;
 
-    // Hash the stream in memory (audit 2026-10-06, #432): the old
-    // mkstemp/GetTempFileName staging file existed only to be handed to an
-    // external hashing tool — a TOCTOU window and a pointless disk round-trip.
-    // The inline SHA-256 consumes the same bytes directly.
+    // Hash the stream in memory: a staging file that exists only to be handed
+    // to an external hashing tool is a TOCTOU window and a pointless disk
+    // round-trip. The inline SHA-256 consumes the same bytes directly.
     Sha256Ctx ctx;
     sha256_init(&ctx);
 
@@ -268,7 +266,7 @@ static unsigned int g_ziphash_counter = 0;
  * Compute the expected package hash and canonical file list from a package
  * zip's raw bytes (the published package itself), used when the hash manifest
  * is missing or invalid — and by the manifest-verification path
- * (installer_verify_upload / installer_verify_stored_zips, P0-5 / #445).
+ * (installer_verify_upload / installer_verify_stored_zips).
  * The zip IS the published artifact, so hashes computed from it are
  * authoritative for the up-to-date comparison.
  *
@@ -303,10 +301,10 @@ int hash_zip_bytes(const unsigned char *data, size_t len, char *out_hash,
              (int)time(NULL), g_ziphash_counter++);
     if (mkdir_recursive(work) != 0) return -1;
 #ifndef _WIN32
-    // Audit 2026-10-06 P2-9: this scratch dir briefly holds the extracted
-    // package (privileged-JS candidates) before hashing. Only it needs the
-    // restrictive mode — not every mkdir_recursive target, which includes
-    // elevated install dirs a non-root browser must still read (#431 thread).
+    // This scratch dir briefly holds the extracted package (privileged-JS
+    // candidates) before hashing. Only it needs the restrictive mode — not
+    // every mkdir_recursive target, which includes elevated install dirs a
+    // non-root browser must still read.
     chmod(work, 0700);
 #endif
 

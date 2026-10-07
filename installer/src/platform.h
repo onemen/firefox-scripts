@@ -176,7 +176,7 @@ const unsigned char *installer_uploaded_zip(int is_utils, size_t *out_len);
 int installer_has_uploaded_zip(int is_utils);
 int installer_set_uploaded_zip(int is_utils, const char *data, size_t len);
 
-/* Manifest verification (implemented in manifest.c; P0-5 / #445).
+/* Manifest verification (implemented in manifest.c).
  * Both return 0 when the bytes match the published hash — or when there is
  * nothing to verify yet (no manifest ingested / no zip stored), preserving
  * the documented no-manifest fallback — and -1 on a mismatch, which the
