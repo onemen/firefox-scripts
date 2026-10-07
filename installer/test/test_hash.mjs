@@ -54,7 +54,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  * @returns {string} Hex-encoded SHA256 digest
  */
 function computeDirectoryHash(dirPath, relFiles) {
-  const sorted = [...relFiles].sort((a, b) => a.localeCompare(b));
+  // P2-5 (audit 2026-10-06, #429): sort with the canonical comparator from
+  // hashUtils.mjs (already imported) — localeCompare's order is locale-
+  // dependent and is exactly what the canonical rule forbids.
+  const sorted = [...relFiles].sort(compareCaseInsensitive);
   const hash = crypto.createHash('sha256');
   for (const rel of sorted) {
     hash.update(rel + '\n');
