@@ -16,11 +16,20 @@
 // 2026-10-05: 10.7 GB against a 10 GB cap, with the portable-dir entries alone
 // at ~2.6 GB across four releases.
 //
+// The keep count is NOT uniform: the release-keyed browser families (see
+// keepFor()) keep ONE entry per layout, because a vendor bump mints a brand-new
+// key and the superseded one can never be restored again — keeping three of
+// them is three downloads no leg will ever ask for. Measure 2026-10-08: 130
+// entries / 9.94 GB against the 10 GB cap, 2.44 GB of it superseded browser
+// entries; sitting at the cap is what makes GitHub start evicting.
+//
 // Usage:
 //   node tools/ci/prune-caches.mjs [--keep 3] [--dry-run]
 //                                  [--prefix <regex>]...
 //
-//   --keep <n>    versions to keep per stem (default 3)
+//   --keep <n>    versions to keep per family for everything EXCEPT the
+//                 release-keyed browser families, which always keep 1 per
+//                 layout (default 3)
 //   --dry-run     list what would be deleted without deleting
 //   --prefix <re> only touch keys matching this regex (repeatable); default
 //                 is every key. Example: --prefix '^firefox-dl-'
@@ -104,6 +113,90 @@ export function stem(key) {
   return s.replace(/-+$/, '');
 }
 
+/**
+ * Families keyed on the browser release they hold: a bump mints a brand-new key
+ * (a new download URL hash, a new `-v<version>`, a new snap revision) and the
+ * superseded entry can never be restored again — GitHub's per-key version cap
+ * never fires on it either. One entry per layout is the whole useful set.
+ */
+const RELEASE_KEYED = /^(firefox-dl|firefox-portable|browser-dl|esr-portable|snap-firefox)(?:-|$)/;
+
+/** The ref whose copies every branch can restore (caches are ref-scoped). */
+const MAIN = 'refs/heads/main';
+
+/**
+ * The layout half of a release-keyed group. A portable leg saves TWO entries
+ * under one family — the installer and its extracted dir (`…-x`, or the fork
+ * namespace's `…-dir`) — and a single leg restores BOTH (observed seconds apart
+ * in one run), so they must never compete for the same keep slot: keep "1"
+ * there would delete the half the leg is about to ask for.
+ *
+ * @param {string} key a GitHub Actions cache key
+ * @returns {'plain' | 'x' | 'dir'} which copy of the release this key is
+ */
+export function layout(key) {
+  if (key.endsWith('-x')) return 'x';
+  if (/-dir(-|$)/.test(key)) return 'dir';
+  return 'plain';
+}
+
+/**
+ * The group a key's keep-slot is counted in: family + layout for the
+ * release-keyed browser families (installer and extracted dir each keep their
+ * own newest), the bare family for everything else.
+ *
+ * @param {string} key a GitHub Actions cache key
+ * @returns {string} the group id
+ */
+export function groupOf(key) {
+  const family = stem(key);
+  return RELEASE_KEYED.test(family) ? `${family} :: ${layout(key)}` : family;
+}
+
+/**
+ * Versions to keep for a group: one for the release-keyed browser families, the
+ * caller's `keep` for everything else — toolchain caches rotate on the
+ * lockfile/config hash and the watchdog/validated records are sub-kilobyte
+ * history the publish pre-flight reads (an evicted copy is indistinguishable
+ * from "never validated", so those keep whatever the operator asks for).
+ *
+ * @param {string} group a group id from {@link groupOf}
+ * @param {number} keep the default count for non-release-keyed groups
+ * @returns {number} how many entries of this group survive
+ */
+export function keepFor(group, keep) {
+  return RELEASE_KEYED.test(group.split(' :: ')[0]) ? 1 : keep;
+}
+
+/**
+ * Which caches to delete. Inside a group: a `main`-branch copy outranks a
+ * same-key copy saved on a PR branch (caches are ref-scoped — the main copy is
+ * the only one every branch can restore, so dropping it to keep a PR-scoped
+ * twin would cold-start every other branch), then newest first.
+ *
+ * @param {{key: string; created_at: string; ref?: string}[]} caches
+ * @param {number} keep default count for the non-release-keyed groups
+ * @returns {object[]} the same objects, selected for deletion
+ */
+export function planDeletes(caches, keep) {
+  const byGroup = new Map();
+  for (const c of caches) {
+    const g = groupOf(c.key);
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(c);
+  }
+  const toDelete = [];
+  for (const [g, group] of byGroup) {
+    group.sort(
+      (a, b) =>
+        (b.ref === MAIN ? 1 : 0) - (a.ref === MAIN ? 1 : 0) ||
+        new Date(b.created_at) - new Date(a.created_at)
+    );
+    toDelete.push(...group.slice(keepFor(g, keep)));
+  }
+  return toDelete;
+}
+
 async function main() {
   const repo = repoSlug();
   const auth = `Bearer ${token()}`;
@@ -131,17 +224,13 @@ async function main() {
     byStem.get(s).push(c);
   }
 
-  const toDelete = [];
-  for (const [, group] of byStem) {
-    group.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    for (const c of group.slice(KEEP)) toDelete.push(c);
-  }
+  const toDelete = planDeletes(inScope, KEEP);
 
   const totalSize = inScope.reduce((n, c) => n + c.size_in_bytes, 0);
   console.log(
     `repo ${repo}: ${caches.length} caches, ${inScope.length} in scope ` +
-      `(${(totalSize / 1e6).toFixed(1)} MB), keeping ${KEEP} per family, ` +
-      `${byStem.size} families`
+      `(${(totalSize / 1e6).toFixed(1)} MB), keeping ${KEEP} per family ` +
+      `(1 per release-keyed family/layout), ${byStem.size} families`
   );
   for (const [s, group] of [...byStem.entries()].sort(
     (a, b) =>
