@@ -841,17 +841,24 @@ What a run publishes (the hash comparison itself is [status-logic.md](./status-l
 - **dev → GitHub** — the same artifact set (with `-dev` names) to the `dev-build-<id>` branch via
   the git-data API, content-addressed: unchanged files create no commit. No release unless `--tag`.
 
-### Release state: the runbook checklist
+### The release checklist
 
-A release walks the same steps every time (stage CI bytes → WDSI → publish → verify); the state
-memory is the per-release runbook (`.local/release/runbook-<date>.md`, archived to
-`.local/release/history/` afterwards): a checkbox list whose items ARE the commands. Mechanical
-steps each have exactly one script name — `pnpm release:stage` (the ONE local staging command:
-reuse-or-dispatch the CI staging run, wait, download, write the evidence folder — below),
-`pnpm fetch:release` (download the manual-test set: gh-pages by default, `-- --dev <branch>` for a
-dev-build branch, `-- --run <id>` for a staging run), `pnpm release:verify` (re-derives the
-post-publish facts from GitHub, so a stale checkbox cannot mislead). Human gates — filing the WDSI
-form, the explicit publish go — stay MANUAL items in the checklist by design.
+Every release walks these steps, in this order. Each mechanical step has exactly one script name;
+the two human gates are manual by design:
+
+1. **Stage the CI bytes** — `pnpm release:stage` reuses or dispatches the CI staging run, waits,
+   downloads it, and writes the evidence folder (below). Its VT lookup is the do-I-need-a-fresh-
+   filing signal, not a separate step.
+2. **Human gate — WDSI filing** for `installer_win.exe` / `helper_win.exe`, from the staged
+   summary's paste block; then wait out the Microsoft review.
+3. **Human gate — the publish go** — `pnpm publish:all` dispatches the prod CI matrix.
+4. **Verify** — `pnpm release:verify` re-derives the post-publish facts (assets, gh-pages, tag, AV)
+   from GitHub, so a stale step list cannot mislead.
+5. **Manual test** — `pnpm fetch:release` takes the manual-test set from gh-pages
+   (`-- --dev <branch>`, `-- --run <id>` for a dev build or a staging run).
+
+The order is the point: step 1 freezes the bytes the submission describes, step 3 ships exactly
+those bytes, and step 4 re-reads them from GitHub.
 
 ### The staging command: `pnpm release:stage`
 
