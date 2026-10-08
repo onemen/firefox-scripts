@@ -800,6 +800,28 @@ test('renderHistory: baseline seed vs real update entries', () => {
   );
 });
 
+test('renderHistory: a first-run update renders "new <version>", never "undefined →" (#462)', () => {
+  // A first run after state loss emits a new-version finding WITHOUT a
+  // prevVersion — the history row must not render the absent value.
+  const firstRun = renderHistory([
+    {
+      date: '2026-10-08T13:05:14Z',
+      runUrl: 'https://github.com/o/r/actions/runs/2',
+      changes: [
+        {
+          browser: 'firefox',
+          newVersion: '157.0.1',
+          size: 93428100,
+          sha256: '71dc62c9f1d2c39ea11f4d9d30ff5ee39f0b0f43be2ee35e5bbf5b0f2d9e13a1',
+          downloadMs: 1000,
+        },
+      ],
+    },
+  ]);
+  assert.match(firstRun, /update: firefox new 157\.0\.1 · 89\.1 MB · `71dc62…` · 1s$/);
+  assert.doesNotMatch(firstRun, /undefined/);
+});
+
 test('buildMetaIssueBody: status table + history, no date in the header', () => {
   const table = '| Browser | Last verified | ...';
   const body = buildMetaIssueBody({
@@ -869,13 +891,16 @@ test('planDispatches: mixed release → fork escapes + one full dispatch', () =>
   );
 });
 
-test('planDispatches: first-run findings never dispatch (cache eviction ≠ release)', () => {
+test('planDispatches: first-run findings dispatch like new-version (state loss must rebuild the validated record, #462)', () => {
+  // Reversed 2026-10-08 (was "cache eviction ≠ release"): after a wipe the
+  // record is empty and the publish gate fails closed on it — the dispatch is
+  // the only path that rebuilds it, so a re-baseline must fire one.
   assert.deepEqual(
     planDispatches([
       {kind: 'first-run', browser: 'librewolf'},
       {kind: 'first-run', browser: 'firefox'},
     ]),
-    []
+    [{browser: 'librewolf', ref: 'main'}, {ref: 'main'}]
   );
 });
 

@@ -943,20 +943,21 @@ export async function main() {
         checkedAt: new Date().toISOString(),
         checkedUrl: runUrl,
       };
-      results[browser] = {status: change === 'first-run' ? 'first-run' : 'new-version'};
-      if (change === 'new-version') {
-        findings.push({
-          kind: 'new-version',
-          browser,
-          prevVersion: prev.version,
-          newVersion: version,
-          size: verified.size,
-          sha256: verified.sha256,
-          downloadMs: verified.downloadMs,
-        });
-      } else {
-        console.log('  first run — baseline recorded');
-      }
+      // A first run is treated exactly like a new release: status, ledger
+      // row, and an E2E dispatch. After a state loss (cache eviction, wipe)
+      // the validated-versions record is empty and the publish drift gate
+      // fails closed on it (#462) — the dispatch is what rebuilds it.
+      results[browser] = {status: 'new-version'};
+      findings.push({
+        kind: 'new-version',
+        browser,
+        ...(change === 'new-version' ? {prevVersion: prev.version} : {}),
+        newVersion: version,
+        size: verified.size,
+        sha256: verified.sha256,
+        downloadMs: verified.downloadMs,
+      });
+      if (change === 'first-run') console.log('  first run — baseline recorded');
       return;
     }
 

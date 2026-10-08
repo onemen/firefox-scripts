@@ -11,7 +11,7 @@
 # deduped error issues that auto-close once a later run checks green again.
 #
 # Three modes (see tools/check-browser-downloads.mjs):
-# - Weekly (schedule/dispatch): version baseline + history in the Actions cache
+# - Nightly (schedule/dispatch): version baseline + history in the Actions cache
 #   (.watchdog/baseline.json), status meta issue, deduped error issues.
 # - Report-only (dispatch with report-only=true): no vendor calls — rebuilds
 #   the status table from the baseline + the LIVE Actions-cache inventory, so

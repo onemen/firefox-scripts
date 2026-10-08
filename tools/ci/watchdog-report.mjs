@@ -30,7 +30,7 @@ export const BROWSERS = [
 /**
  * Informational ledger rows: tracked in the meta issue (version + last check)
  * but never drift-blocking, never dispatched, never validated. Nightly changes
- * DAILY, so a normal ledger row would put permanent drift between weekly
+ * DAILY, so a normal ledger row would put permanent drift between nightly
  * watchdog runs and churn the version history — its real coverage stays the
  * required 3-OS `updater` E2E legs on every core/updater PR (ADR 0021
  * tiering).
@@ -187,7 +187,7 @@ export const VALIDATED_BROWSERS = ['firefox', 'firefox-dev', 'waterfox'];
 export const FORK_BROWSERS = ['librewolf', 'floorp', 'zen'];
 
 export const WATCHDOG_LABEL = 'url-watchdog';
-/** Single status + ledger issue updated after each weekly run. */
+/** Single status + ledger issue updated after each run. */
 export const META_ISSUE_TITLE = '[url-watchdog] status';
 
 /**
@@ -214,9 +214,12 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  *   gate reads. One dispatch, never two — a second full dispatch would land in
  *   the same cancel-in-progress concurrency group and kill the first.
  *
- * `first-run` findings are deliberately excluded: a cache eviction re-baselines
- * without any release having shipped. Fork dispatches are capped at the fork
- * browser set, so a malformed findings list cannot spam the API.
+ * First-run findings dispatch like new-version ones (reversed 2026-10-08, was
+ * "cache eviction ≠ release"): after a state loss the validated-versions record
+ * is EMPTY and the prod publish pre-flight fails closed on it (#462) — the
+ * dispatch is the only path that rebuilds it, so a re-baseline must fire one.
+ * Fork dispatches are capped at the fork browser set, so a malformed findings
+ * list cannot spam the API.
  *
  * @param {{kind: string; browser: string}[]} findings
  * @returns {{browser?: string; ref: string}[]} dispatch payloads in issue order
@@ -224,9 +227,11 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  */
 export function planDispatches(findings) {
   // Informational rows (nightly) never dispatch — their coverage is the PR
-  // legs, and a weekly-churning channel would spam the dispatch API.
+  // legs, and a nightly-churning channel would spam the dispatch API.
   const newVersions = findings.filter(
-    f => f.kind === 'new-version' && !INFORMATIONAL_BROWSERS.includes(f.browser)
+    f =>
+      (f.kind === 'new-version' || f.kind === 'first-run') &&
+      !INFORMATIONAL_BROWSERS.includes(f.browser)
   );
   const forks = [
     ...new Set(newVersions.map(f => f.browser).filter(b => FORK_BROWSERS.includes(b))),
@@ -662,7 +667,9 @@ export function renderHistory(history) {
           if (h.kind === 'baseline') {
             return `${c.browser} ${c.version} · ${formatSize(c.size)} · ${sha}${dl}`;
           }
-          return `${c.browser} ${c.prevVersion} → ${c.newVersion} · ${formatSize(c.size)} · ${sha}${dl}`;
+          return `${c.browser} ${c.prevVersion ? `${c.prevVersion} → ` : 'new '}${
+            c.newVersion
+          } · ${formatSize(c.size)} · ${sha}${dl}`;
         })
         .join(' · ');
       const label =
@@ -677,12 +684,12 @@ export function renderHistory(history) {
  * bot-maintained. Constant, so it never churns the body on its own — the body
  * still only changes when the table or the history changes.
  */
-const WATCHDOG_INTRO = `This is the status page for the **URL watchdog** — the weekly workflow
+const WATCHDOG_INTRO = `This is the status page for the **URL watchdog** — the nightly workflow
 (.github/workflows/url-watchdog.yml) that re-resolves every browser's latest version from its
 vendor API, verifies the download endpoint, and re-baselines the SHA-256 ledger on new releases
-(each new release also dispatches the browser E2E). The table and history below are bot-maintained
-and rewritten each run; download failures and size changes open separate [url-watchdog] issues that
-auto-close once the browser checks green again.`;
+(each new release — and a first run after state loss — also dispatches the browser E2E). The table
+and history below are bot-maintained and rewritten each run; download failures and size changes
+open separate [url-watchdog] issues that auto-close once the browser checks green again.`;
 
 /**
  * Meta-issue body: the static intro + the status table + the version history.
