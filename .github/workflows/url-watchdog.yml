@@ -154,15 +154,21 @@ jobs:
       # GitHub's LRU eviction to eat the watchdog's own state caches (#462).
       # The prune script keeps keep-one groups (browser releases, pnpm store)
       # plus the operator count for everything else; keep-1 there is the same
-      # policy tools/ci/prune-caches.mjs documents.
+      # policy tools/ci/prune-caches.mjs documents. The token must be passed
+      # explicitly — the job's actions: write permission does not export an
+      # env var, and the script reads only GITHUB_TOKEN_VAR/GH_TOKEN.
       - name: Prune stale Actions caches
+        env:
+          GITHUB_TOKEN_VAR: ${{ github.token }}
         run: node tools/ci/prune-caches.mjs --keep=3
 
     # Job-level scoping (the E2E workflow's precedent): dispatching the browser
     # E2E when a new release is recorded needs actions: write; the issue
-    # surface needs issues: write. The PR job below needs neither.
+    # surface needs issues: write; seeding the durable ci-browser-cache store
+    # (#465, tools/ci/browserStore.mjs — release create/upload/asset delete)
+    # needs contents: write. The PR job below needs none of these.
     permissions:
-      contents: read
+      contents: write
       issues: write
       actions: write
 
