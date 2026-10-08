@@ -1,19 +1,23 @@
 name: Cache cleanup
 
 # Prunes old GitHub Actions caches (tools/ci/prune-caches.mjs) so stale keys
-# from Firefox-version bumps and lockfile changes don't accumulate forever.
-# GitHub only auto-evicts (LRU) past the 10 GB total, so old keys otherwise
-# burn quota on every run that tries to restore them.
+# from Firefox-version bumps, pnpm/setup's per-run store keys and lockfile
+# changes don't accumulate forever. GitHub only auto-evicts (LRU) past the
+# 10 GB total, so old keys otherwise burn quota on every run that tries to
+# restore them.
 #
-# Runs weekly, and can be triggered manually:
-#   gh workflow run cache-cleanup.yml
+# The SCHEDULED prune lives in the url-watchdog's nightly tick (22:00 UTC —
+# the repo's only cron, #380): a fresh pnpm/browser save lands every night, so
+# a weekly window let the repo sit at the 10 GB cap for days and invited
+# GitHub's LRU eviction to eat the watchdog's own state caches (#462). This
+# workflow remains for manual runs:
 #
-# Only the default branch (main) schedules — the workflow file there is the
-# one that runs.
+#   gh workflow run cache-cleanup.yml --field keep=3 --field dry_run=true
+#
+# Only the default branch (main) schedules the nightly; this file is
+# dispatch-only by design.
 
 on:
-  schedule:
-    - cron: '0 3 * * 0' # Sunday 03:00 UTC
   workflow_dispatch:
     inputs:
       keep:
@@ -32,9 +36,9 @@ permissions:
 jobs:
   prune:
     runs-on: ubuntu-24.04
-    # Weekly prune of a non-critical janitorial task: 15 min is ~10x the
-    # observed run time; the workflow shares no concurrency group, but an
-    # untimed actions:write job is still an unbounded failure surface.
+    # Prune of a non-critical janitorial task: 15 min is ~10x the observed run
+    # time; the workflow shares no concurrency group, but an untimed
+    # actions:write job is still an unbounded failure surface.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

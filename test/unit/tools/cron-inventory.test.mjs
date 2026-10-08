@@ -41,7 +41,10 @@ const EXPECTED = {
   'skills-watchdog.yml': ['0 14 * * 1'],
   'runner-watchdog.yml': ['0 20 * * 1'],
   'av-watchdog.yml': ['0 5 * * 1'],
-  'cache-cleanup.yml': ['0 3 * * 0'],
+  // Dispatch-only since #464: the scheduled prune moved into the url-watchdog's
+  // nightly tick (the repo's only cron) — a weekly window let the repo sit at
+  // the 10 GB cache cap for days (#462).
+  'cache-cleanup.yml': [],
 };
 
 test('every workflow with a schedule: block carries at least one cron expression', () => {

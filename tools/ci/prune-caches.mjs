@@ -16,11 +16,28 @@
 // 2026-10-05: 10.7 GB against a 10 GB cap, with the portable-dir entries alone
 // at ~2.6 GB across four releases.
 //
+// The other chronic grower is pnpm/setup's `cache: true`: it keys the pnpm
+// store `<prefix>-<lockfile hashes>-<run_id>-1-<uuid>` — a UNIQUE key per run,
+// so GitHub's per-key version cap never fires there either and every job on
+// every OS mints a fresh ~65 MB entry with byte-identical content. Measure
+// 2026-10-08: 81 entries / 5.26 GB, all the same lockfile state. The run tail
+// peels off in stem(), collapsing them into one family per OS/arch that
+// keeps a single newest entry.
+//
+// The keep count is NOT uniform: the release-keyed browser families (see
+// keepFor()) keep ONE entry per layout, because a vendor bump mints a brand-new
+// key and the superseded one can never be restored again — keeping three of
+// them is three downloads no leg will ever ask for. Measure 2026-10-08: 130
+// entries / 9.94 GB against the 10 GB cap, 2.44 GB of it superseded browser
+// entries; sitting at the cap is what makes GitHub start evicting.
+//
 // Usage:
 //   node tools/ci/prune-caches.mjs [--keep 3] [--dry-run]
 //                                  [--prefix <regex>]...
 //
-//   --keep <n>    versions to keep per stem (default 3)
+//   --keep <n>    versions to keep per family for everything EXCEPT the
+//                 release-keyed browser families, which always keep 1 per
+//                 layout (default 3)
 //   --dry-run     list what would be deleted without deleting
 //   --prefix <re> only touch keys matching this regex (repeatable); default
 //                 is every key. Example: --prefix '^firefox-dl-'
@@ -76,11 +93,14 @@ function token() {
  * esr-portable-Windows-8769a05370997233 → esr-portable-Windows
  * snap-firefox-8995 → snap-firefox browser-validated-37359307092 →
  * browser-validated url-watchdog-baseline-2026-10-05 → url-watchdog-baseline
+ * pnpm-cache-Linux-x64-<h>-<h>-<h>-37739280981-1-1f11f359-398b-…-5381 →
+ * pnpm-cache-Linux-x64
  *
- * The suffixes are peeled in a loop because they stack (`…-dir-v1.23b`): one
- * pass would leave the inner marker behind and split the family in two. The
- * sticky version is anchored to a leading digit (`-v1.23b`, `-v157.0`) so the
- * peel cannot eat a plain word that merely starts with `v` (`-validated`). The
+ * The suffixes are peeled in a loop because they stack (`…-dir-v1.23b`, and the
+ * pnpm tail stacks a run id, a `-1` and a uuid under the hash combo): one pass
+ * would leave the inner marker behind and split the family in two. The sticky
+ * version is anchored to a leading digit (`-v1.23b`, `-v157.0`) so the peel
+ * cannot eat a plain word that merely starts with `v` (`-validated`). The
  * content hash takes a `-` OR a `:` separator, because the msys2 key spells it
  * `files:<64 hex>`. The trailing dash is dropped last so a hashed key and its
  * legacy unhashed predecessor (`firefox-portable-macOS`, saved before the
@@ -91,8 +111,12 @@ function token() {
  */
 export function stem(key) {
   let s = key;
-  for (let i = 0; i < 4; i++) {
+  // The hash-combo peel needs up to 5 passes (run tail → run id → 3 hashes);
+  // 8 is headroom without being unbounded.
+  for (let i = 0; i < 8; i++) {
     const next = s
+      // pnpm/setup's per-run suffix: `-<run_id>-1-<uuid v4>`.
+      .replace(/-\d+-1-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '')
       .replace(/-dir$/, '')
       .replace(/-x$/, '')
       .replace(/-v\d[^-]*$/, '')
@@ -102,6 +126,101 @@ export function stem(key) {
     s = next;
   }
   return s.replace(/-+$/, '');
+}
+
+/**
+ * Families where superseded entries are worthless, so exactly one survives:
+ *
+ * - The release-keyed browser families: a bump mints a brand-new key (a new
+ *   download URL hash, a new `-v<version>`, a new snap revision) and the
+ *   superseded entry can never be restored again — GitHub's per-key version cap
+ *   never fires on it either. One entry per layout is the whole useful set.
+ * - `pnpm-cache-*`: the content is fully determined by the key's lockfile hashes,
+ *   so entries sharing a peeled stem are byte-identical duplicates — pnpm/setup
+ *   mints one per run (see the header comment) and only the newest is ever
+ *   restored. Old lockfile states only served restore-keys warm-fill; a cold
+ *   store after a bump costs one ~1 min re-download, not 5.26 GB of eviction
+ *   pressure.
+ */
+const KEEP_ONE =
+  /^(firefox-dl|firefox-portable|browser-dl|esr-portable|snap-firefox|pnpm-cache)(?:-|$)/;
+
+/** The ref whose copies every branch can restore (caches are ref-scoped). */
+const MAIN = 'refs/heads/main';
+
+/**
+ * The layout half of a release-keyed group. A portable leg saves TWO entries
+ * under one family — the installer and its extracted dir (`…-x`, or the fork
+ * namespace's `…-dir`) — and a single leg restores BOTH (observed seconds apart
+ * in one run), so they must never compete for the same keep slot: keep "1"
+ * there would delete the half the leg is about to ask for.
+ *
+ * @param {string} key a GitHub Actions cache key
+ * @returns {'plain' | 'x' | 'dir'} which copy of the release this key is
+ */
+export function layout(key) {
+  if (key.endsWith('-x')) return 'x';
+  if (/-dir(-|$)/.test(key)) return 'dir';
+  return 'plain';
+}
+
+/**
+ * The group a key's keep-slot is counted in: family + layout for the
+ * release-keyed browser families (installer and extracted dir each keep their
+ * own newest), the bare family for everything else.
+ *
+ * @param {string} key a GitHub Actions cache key
+ * @returns {string} the group id
+ */
+export function groupOf(key) {
+  const family = stem(key);
+  return KEEP_ONE.test(family) ? `${family} :: ${layout(key)}` : family;
+}
+
+/**
+ * Versions to keep for a group: one for the keep-one families (browser releases
+ *
+ * - pnpm store duplicates), the caller's `keep` for everything else — toolchain
+ *   caches rotate on the lockfile/config hash and the watchdog/validated
+ *   records are sub-kilobyte history the publish pre-flight reads (an evicted
+ *   copy is indistinguishable from "never validated", so those keep whatever
+ *   the operator asks for).
+ *
+ * @param {string} group a group id from {@link groupOf}
+ * @param {number} keep the default count for non-release-keyed groups
+ * @returns {number} how many entries of this group survive
+ */
+export function keepFor(group, keep) {
+  return KEEP_ONE.test(group.split(' :: ')[0]) ? 1 : keep;
+}
+
+/**
+ * Which caches to delete. Inside a group: a `main`-branch copy outranks a
+ * same-key copy saved on a PR branch (caches are ref-scoped — the main copy is
+ * the only one every branch can restore, so dropping it to keep a PR-scoped
+ * twin would cold-start every other branch), then newest first.
+ *
+ * @param {{key: string; created_at: string; ref?: string}[]} caches
+ * @param {number} keep default count for the non-release-keyed groups
+ * @returns {object[]} the same objects, selected for deletion
+ */
+export function planDeletes(caches, keep) {
+  const byGroup = new Map();
+  for (const c of caches) {
+    const g = groupOf(c.key);
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(c);
+  }
+  const toDelete = [];
+  for (const [g, group] of byGroup) {
+    group.sort(
+      (a, b) =>
+        (b.ref === MAIN ? 1 : 0) - (a.ref === MAIN ? 1 : 0) ||
+        new Date(b.created_at) - new Date(a.created_at)
+    );
+    toDelete.push(...group.slice(keepFor(g, keep)));
+  }
+  return toDelete;
 }
 
 async function main() {
@@ -131,16 +250,13 @@ async function main() {
     byStem.get(s).push(c);
   }
 
-  const toDelete = [];
-  for (const [, group] of byStem) {
-    group.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    for (const c of group.slice(KEEP)) toDelete.push(c);
-  }
+  const toDelete = planDeletes(inScope, KEEP);
 
   const totalSize = inScope.reduce((n, c) => n + c.size_in_bytes, 0);
   console.log(
     `repo ${repo}: ${caches.length} caches, ${inScope.length} in scope ` +
-      `(${(totalSize / 1e6).toFixed(1)} MB), keeping ${KEEP} per family, ` +
+      `(${(totalSize / 1e6).toFixed(1)} MB), keeping ${KEEP} per family ` +
+      `(1 per keep-one family/layout: browser releases + pnpm store), ` +
       `${byStem.size} families`
   );
   for (const [s, group] of [...byStem.entries()].sort(
@@ -164,7 +280,10 @@ async function main() {
         method: 'DELETE',
         headers: {'authorization': auth, 'x-github-api-version': '2022-11-28'},
       });
-      if (!res.ok) throw new Error(`delete ${c.key} failed: ${res.status} ${await res.text()}`);
+      // 404 = another prune (nightly tick, post-gate job, publish pre-flight)
+      // deleted the same superseded entry first — that IS success.
+      if (!res.ok && res.status !== 404)
+        throw new Error(`delete ${c.key} failed: ${res.status} ${await res.text()}`);
     }
   }
   console.log(DRY_RUN ? `would delete ${toDelete.length}` : `deleted ${toDelete.length}`);

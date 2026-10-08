@@ -21,7 +21,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const pruneUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'ci', 'prune-caches.mjs')).href;
 
-const {stem} = await import(pruneUrl);
+const {stem, layout, groupOf, keepFor, planDeletes} = await import(pruneUrl);
 
 /** The families every observed key must collapse into. */
 const EXPECTED = [
@@ -70,6 +70,28 @@ const EXPECTED = [
     'msys2-pkgs-upd:false-conf:69844c46-files',
   ],
   ['pnpm-bin-Windows-X64-11', 'pnpm-bin-Windows-X64'],
+
+  // pnpm/setup's per-run tail: `<hashes>-<run_id>-1-<uuid v4>` — a unique key
+  // per run that must collapse into one family per OS/arch. Real key observed
+  // 2026-10-08 (81 live entries / 5.26 GB, all byte-identical content).
+  [
+    'pnpm-cache-Linux-x64-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9' +
+      '-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903' +
+      '-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae' +
+      '-37739280981-1-1f11f359-398b-4756-b7a7-183ba9805381',
+    'pnpm-cache-Linux-x64',
+  ],
+  [
+    'pnpm-cache-Windows-x64-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9' +
+      '-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903' +
+      '-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae' +
+      '-37712948603-1-d3e9dfad-9049-4fa1-a5ea-78d7086453e3',
+    'pnpm-cache-Windows-x64',
+  ],
+  [
+    'pnpm-lockfile-verified-Linux-x64-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903',
+    'pnpm-lockfile-verified-Linux-x64',
+  ],
 ];
 
 test('every observed cache key collapses into its family', () => {
@@ -91,4 +113,154 @@ test('the family stem is stable across a vendor bump', () => {
 test('a key that is only its family is left alone', () => {
   assert.equal(stem('url-watchdog-baseline'), 'url-watchdog-baseline');
   assert.equal(stem('firefox-dl-Windows'), 'firefox-dl-Windows');
+  assert.equal(stem('pnpm-cache-Linux-x64'), 'pnpm-cache-Linux-x64');
+});
+
+test('every run-tail pnpm key collapses into one keep-one group per OS/arch', () => {
+  const runKey = (os, run, uuid) =>
+    `pnpm-cache-${os}-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9` +
+    `-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903` +
+    `-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae` +
+    `-${run}-1-${uuid}`;
+  // Every run of one OS lands in the same group...
+  const g1 = groupOf(runKey('Linux-x64', 37739280981, '1f11f359-398b-4756-b7a7-183ba9805381'));
+  const g2 = groupOf(runKey('Linux-x64', 37712948603, '6f4d447c-27a8-43fa-84fb-b1153fac2b39'));
+  assert.equal(g1, 'pnpm-cache-Linux-x64 :: plain');
+  assert.equal(g2, g1);
+  // ...but a different OS does not (its store is a different ~65 MB payload).
+  assert.notEqual(
+    groupOf(runKey('Windows-x64', 37712948603, 'd3e9dfad-9049-4fa1-a5ea-78d7086453e3')),
+    g1
+  );
+  // And keep-one applies: only the newest run's entry survives.
+  const caches = [
+    {
+      key: runKey('Linux-x64', 37739280981, '1f11f359-398b-4756-b7a7-183ba9805381'),
+      created_at: '2026-10-08T02:00:00Z',
+      ref: 'refs/heads/main',
+    },
+    {
+      key: runKey('Linux-x64', 37712948603, '6f4d447c-27a8-43fa-84fb-b1153fac2b39'),
+      created_at: '2026-10-07T02:00:00Z',
+      ref: 'refs/heads/main',
+    },
+    {
+      key: runKey('Linux-x64', 37600000000, '8a30e83f-dd59-474a-96ac-a67c9d7b561a'),
+      created_at: '2026-10-06T02:00:00Z',
+      ref: 'refs/pull/464/merge',
+    },
+  ];
+  const deletes = planDeletes(caches, 3);
+  assert.equal(deletes.length, 2);
+  assert.ok(deletes.every(c => c.created_at !== '2026-10-08T02:00:00Z'));
+});
+
+test('pnpm entries across a lockfile bump keep the newest state only', () => {
+  // The hash-combo is deliberately peeled: old-lockfile entries are the old
+  // store's duplicates, and only the newest entry (new state) is worth
+  // keeping — a cold re-download after a bump costs a minute, not gigabytes.
+  const a =
+    'pnpm-cache-Linux-x64-1111111111111111111111111111111111111111111111111111111111111111-37739280981-1-1f11f359-398b-4756-b7a7-183ba9805381';
+  const b =
+    'pnpm-cache-Linux-x64-2222222222222222222222222222222222222222222222222222222222222222-37739280981-1-1f11f359-398b-4756-b7a7-183ba9805381';
+  assert.equal(stem(a), stem(b));
+  const deletes = planDeletes(
+    [
+      {key: a, created_at: '2026-10-06T02:00:00Z', ref: 'refs/heads/main'},
+      {key: b, created_at: '2026-10-08T02:00:00Z', ref: 'refs/heads/main'},
+    ],
+    3
+  );
+  assert.deepEqual(
+    deletes.map(c => c.key),
+    [a]
+  );
+});
+
+// ── The keep policy: one entry per release-keyed family/layout ────────────
+//
+// A vendor bump mints a brand-new key, so the superseded entry is dead weight
+// no leg can ever restore — measured 2026-10-08 at 9.94 GB against the 10 GB
+// cap, 2.44 GB of it superseded browser entries. The installer and its
+// extracted dir are separate layouts precisely because one leg restores both.
+
+test('layout separates an installer from its extracted dir', () => {
+  assert.equal(layout('firefox-portable-Windows-ca6cc4d5e2db5f9a'), 'plain');
+  assert.equal(layout('firefox-portable-Windows-ca6cc4d5e2db5f9a-x'), 'x');
+  assert.equal(layout('firefox-dl-Windows-ca6cc4d5e2db5f9a'), 'plain');
+  assert.equal(layout('browser-dl-Windows-zen-portable-dir-v1.23b'), 'dir');
+  assert.equal(layout('browser-dl-Windows-floorp-portable-dir'), 'dir');
+  assert.equal(layout('browser-dl-Windows-zen-v1.23b'), 'plain');
+});
+
+test('release-keyed browser families keep exactly one entry per layout', () => {
+  for (const key of [
+    'firefox-dl-Windows-ca6cc4d5e2db5f9a',
+    'firefox-portable-macOS-7d497ffee63f5925-x',
+    'browser-dl-Windows-zen-portable-v1.23b',
+    'browser-dl-Windows-librewolf-v157.0',
+    'esr-portable-Windows-8769a05370997233',
+    'snap-firefox-8996',
+  ]) {
+    assert.equal(keepFor(groupOf(key), 3), 1, key);
+  }
+});
+
+test('toolchain and state families keep the operator-supplied count', () => {
+  for (const key of [
+    'browser-validated-37359307092',
+    'browser-fork-validated-37359307092',
+    'url-watchdog-baseline-2026-10-05',
+    'node-cache-macOS-arm64-pnpm-56ec8155b91741b1a6a9d9371adcd546f0eb97c8c62bd35d9468602d8387c9f8',
+  ]) {
+    assert.equal(keepFor(groupOf(key), 3), 3, key);
+  }
+  // pnpm-cache is keep-one now — see the run-tail test above.
+  assert.equal(keepFor(groupOf('pnpm-cache-Windows-x64-2fb24468351ea046'), 3), 1);
+});
+
+/** A cache entry as the API returns it. */
+const entry = (key, created_at, ref = 'refs/heads/main') => ({key, created_at, ref});
+
+test('planDeletes: superseded browser versions go, the current pair stays', () => {
+  const caches = [
+    // Three Firefox downloads, oldest first.
+    entry('firefox-dl-Windows-1111111111111111', '2026-10-06T01:00:00Z'),
+    entry('firefox-dl-Windows-2222222222222222', '2026-10-07T01:00:00Z'),
+    entry('firefox-dl-Windows-3333333333333333', '2026-10-08T01:00:00Z'),
+    // Two portable releases, each saved as installer + extracted dir.
+    entry('firefox-portable-Linux-4444444444444444', '2026-10-06T01:00:00Z'),
+    entry('firefox-portable-Linux-4444444444444444-x', '2026-10-06T01:00:01Z'),
+    entry('firefox-portable-Linux-5555555555555555', '2026-10-08T01:00:00Z'),
+    entry('firefox-portable-Linux-5555555555555555-x', '2026-10-08T01:00:01Z'),
+  ];
+  const deleted = new Set(planDeletes(caches, 3).map(c => c.key));
+  assert.deepEqual([...deleted].sort(), [
+    'firefox-dl-Windows-1111111111111111',
+    'firefox-dl-Windows-2222222222222222',
+    'firefox-portable-Linux-4444444444444444',
+    'firefox-portable-Linux-4444444444444444-x',
+  ]);
+});
+
+test('planDeletes: the main copy of a key survives a PR-scoped twin', () => {
+  const caches = [
+    entry('firefox-dl-macOS-7d497ffee63f5925', '2026-10-06T01:00:00Z', 'refs/heads/main'),
+    entry('firefox-dl-macOS-7d497ffee63f5925', '2026-10-08T01:00:00Z', 'refs/pull/462/head'),
+  ];
+  const deleted = planDeletes(caches, 3);
+  assert.equal(deleted.length, 1, 'the duplicate goes');
+  assert.equal(
+    deleted[0].ref,
+    'refs/pull/462/head',
+    'never the branch every other ref restores from'
+  );
+});
+
+test('planDeletes: state and toolchain groups keep the requested count', () => {
+  const validated = [1, 2, 3, 4].map(n =>
+    entry(`browser-validated-373593070${n}`, `2026-10-0${n}T01:00:00Z`)
+  );
+  assert.equal(planDeletes(validated, 3).length, 1, 'three of four validated records survive');
+  assert.equal(planDeletes(validated, 5).length, 0, 'a higher --keep never deletes');
 });

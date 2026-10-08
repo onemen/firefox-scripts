@@ -1688,6 +1688,34 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: node tools/ci/cleanupCiDownloads.mjs
 
+  # ── Post-gate cache hygiene (#463/#464) ───────────────────────────────
+  # "Clear the old cache when a new one is saved": GitHub cache keys are
+  # immutable — a save cannot overwrite an entry — so the working equivalent
+  # is deleting the SUPERSEDED entries right after the run that saved their
+  # replacements. This job prunes once per run, on main only (caches are
+  # ref-scoped; a PR run must not delete what main's legs restored). The
+  # keep-one policy (browser releases, pnpm per-run store dupes) lives in the
+  # script; a 404 from a concurrent prune is tolerated there. The nightly
+  # watchdog tick + publish pre-flights run the same prune as backstops.
+  prune-caches:
+    name: prune superseded caches
+    needs: [e2e-gate]
+    if: >-
+      always() && github.ref == 'refs/heads/main' && needs.e2e-gate.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write # delete caches
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Prune superseded cache entries
+        env:
+          GITHUB_TOKEN_VAR: ${{ secrets.GITHUB_TOKEN }}
+        run: node tools/ci/prune-caches.mjs --keep=3
+
   # ── Nightly triage (#380) ──────────────────────────────────────────────
   # The nightly revalidation is the only E2E run main gets: the workflow's own
   # push and schedule triggers are gone, so a red leg there is invisible unless

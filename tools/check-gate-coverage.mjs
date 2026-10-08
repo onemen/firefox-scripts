@@ -437,12 +437,17 @@ const CONTRACTS = [
     // e2e-triage is post-gate too (#380): it reads the run's job list through
     // the API and files the nightly failure issue — a reporter, not a gate
     // input, and it needs the gate so a cancelled run skips it.
+    // prune-caches is post-gate cache hygiene (#464): it deletes SUPERSEDED
+    // cache entries after the run that saved their replacements (keys are
+    // immutable, so this is the working clear-on-save). Main-ref only, never
+    // a gate input — a cache delete must not be able to block a merge.
     postGate: [
       'record-validation',
       'record-fork-validation',
       'cleanup-ci-downloads',
       'snap-store-watch',
       'e2e-triage',
+      'prune-caches',
     ],
   },
   {
