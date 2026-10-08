@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // tools/publish/releaseVerify.mjs — re-derive the post-publish facts from GitHub.
 //
-// `pnpm release:verify` is step 7 of the release workflow (see
-// docs/release-workflow.plan.local.md): the runbook checklist can go stale,
-// these checks cannot — every line is re-fetched from GitHub at run time.
+// `pnpm release:verify` is step 7 of the release workflow: the runbook
+// checklist can go stale, these checks cannot — every line is re-fetched from
+// GitHub at run time.
 // Each check prints PASS/FAIL; the script exits 1 when anything failed.
 //
 // Checks:
