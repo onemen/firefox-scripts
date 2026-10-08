@@ -4,8 +4,8 @@
 #include <stddef.h>
 
 /*
- * Minimal FIPS 180-4 SHA-256, inlined into the installer (audit 2026-10-06,
- * #432): the previous implementation shelled out to certutil/sha256sum per
+ * Minimal FIPS 180-4 SHA-256, inlined into the installer: the previous
+ * implementation shelled out to certutil/sha256sum per
  * hash, making a security primitive depend on the output format of an
  * external tool and costing a process spawn per package per browser on the
  * single-threaded serve loop.  Parity with the JS reference

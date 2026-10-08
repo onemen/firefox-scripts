@@ -7,8 +7,7 @@
 // lists were hand-maintained. A route added to installer/src/main.c without a
 // matching entry would silently escape the security smoke test entirely. This
 // test parses the C sources instead, so plain `pnpm test` fails the moment C
-// reality and the classified sets diverge (issue #30-adjacent; flagged by the
-// 2026-09-15 audit).
+// reality and the classified sets diverge (issue #30-adjacent).
 //
 // The parse is deliberately shallow but exact for the two things that matter:
 // the `http_server_register()` table (the only place routes are declared) and
@@ -257,15 +256,14 @@ test('apiRouteContract: open routes are readable without a token', () => {
   }
 });
 
-// ── Localhost request contract (audit 2026-10-06, group C / #445) ───────────
+// ── Localhost request contract ─────────────────────────────────────────────
 //
-// P1-9: the three divergent `t=` parsers (request_has_valid_token,
-// /api/claim, /api/shutdown) must be gone in favour of one
-// query_param_equals() helper, and /api/claim must not answer current:1
-// without a token. P1-6: the serve loop must refuse a foreign Host/Origin
-// before routing. P0-5: an upload is verified against the manifest before it
-// is stored, and a candidate manifest is checked against the stored zips
-// before it is ingested.
+// The three divergent `t=` parsers (request_has_valid_token, /api/claim,
+// /api/shutdown) stay collapsed into one query_param_equals() helper, and
+// /api/claim must not answer current:1 without a token. The serve loop must
+// refuse a foreign Host/Origin before routing. An upload is verified against
+// the manifest before it is stored, and a candidate manifest is checked
+// against the stored zips before it is ingested.
 //
 // These are static checks — `pnpm test` has no C compiler. The SEMANTIC cases
 // (?t=<tok>&x=1, ?xt=<tok>, no-token claim, foreign Host/Origin) run against
@@ -296,7 +294,7 @@ function functionBody(name) {
   return '';
 }
 
-test('apiRouteContract: one query_param_equals() serves every token parse (P1-9)', () => {
+test('apiRouteContract: one query_param_equals() serves every token parse', () => {
   const all = [...sources.values()].join('\n');
   assert.equal(
     (all.match(/^int query_param_equals\(/gm) ?? []).length,
@@ -338,7 +336,7 @@ test('apiRouteContract: one query_param_equals() serves every token parse (P1-9)
   );
 });
 
-test('apiRouteContract: the serve loop refuses a foreign Host/Origin (P1-6)', () => {
+test('apiRouteContract: the serve loop refuses a foreign Host/Origin', () => {
   const src = sources.get('http_server.c');
   assert.match(
     src,
@@ -361,9 +359,9 @@ test('apiRouteContract: the serve loop refuses a foreign Host/Origin (P1-6)', ()
   assert.match(serve, /403/, 'a refused request is answered 403');
 });
 
-test('apiRouteContract: uploads are verified against the manifest (P0-5)', () => {
+test('apiRouteContract: uploads are verified against the manifest', () => {
   // Both verifiers live in the manifest module since detect_browser.c was
-  // split (group M / #450); pin them there so a move to an unexpected file
+  // split; pin them there so a move to an unexpected file
   // still fails.
   const manifestModule = sources.get('manifest.c');
   assert.match(

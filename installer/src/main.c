@@ -152,7 +152,7 @@ const char *installer_session_token(void) {
 // are additionally refused via CORS and a foreign Host/Origin via
 // host_origin_allowed).  Returns 1 when the query string holds exactly this
 // run's token, 0 when missing or stale — parsed by query_param_equals(), so
-// the token does not have to be the last parameter (audit 2026-10-06, P1-9).
+// the token does not have to be the last parameter.
 static int request_has_valid_token(const char *query) {
     return query_param_equals(query, "t", g_session_token);
 }
@@ -252,7 +252,7 @@ typedef enum {
     INSTALL_STATE_EXTRACT_UTILS,   // Extract utils zip
     INSTALL_STATE_DONE,
     INSTALL_STATE_ERROR,
-    INSTALL_STATE_CANCELLED  // terminal: the user declined elevation (#431)
+    INSTALL_STATE_CANCELLED  // terminal: the user declined elevation
 } InstallState;
 
 static InstallState current_state = INSTALL_STATE_IDLE;
@@ -283,7 +283,7 @@ int session_installed_utils[MAX_BROWSERS];
  * Write a string escaped for JSON into a buffer.
  * Handles backslashes, double quotes, and control characters.
  * Returns the number of chars written (excluding null terminator),
- * clamped to size - 1.  The clamp is the whole point (audit 2026-10-06, #431):
+ * clamped to size - 1.  The clamp is the whole point:
  * a naive total += snprintf(...) accumulates snprintf's WOULD-BE length, so
  * callers that reuse the return as a write offset (or a remaining-size input)
  * underflow the next size computation.  Every offset arithmetic in this file
@@ -321,8 +321,7 @@ static int json_escape(char *buf, size_t size, const char *str) {
  * Format and append at dst+off, clamping BOTH the offset and the copied
  * length to dst's capacity.  Returns the NEW offset — never snprintf's
  * would-be length.  Callers feed the return back as the next offset, so a
- * truncated write can never make a later size computation underflow
- * (audit 2026-10-06, #431: the /api/browsers stack OOB write).
+ * truncated write can never make a later size computation underflow.
  */
 static int appendf(char *dst, size_t cap, int off, const char *fmt, ...) {
     char tmp[8192];
@@ -468,8 +467,8 @@ int handle_api_ping(int client_fd, const char *query, const char *body, size_t b
  * Serialize `count` browsers from `list` into a malloc'd JSON array.
  * The buffer is sized from the count (worst case per entry: two escaped
  * MAX_PATH_LEN paths plus a fixed overhead term), and every append goes
- * through appendf's clamp — the arithmetic that overflowed the old fixed
- * 8192-byte stack buffer (audit 2026-10-06, #431) cannot recur.
+ * through appendf's clamp, so the overflow the clamp prevents cannot
+ * recur.
  * Returns NULL on allocation failure; the caller frees.
  */
 static char *serialize_browsers_json(const RunningBrowser *list, int count) {
@@ -561,8 +560,7 @@ int handle_api_claim(int client_fd, const char *query, const char *body, size_t 
     (void)body;
     (void)body_len;
     // current:0 without a token: a bare /api/claim (or a stale tab that lost
-    // its query string) must never claim to be the live installer — the old
-    // default was 1 (audit 2026-10-06, P1-9 / #445).
+    // its query string) must never claim to be the live installer.
     int is_current = query_param_equals(query, "t", g_session_token);
     char json[128];
     int pos = snprintf(json, sizeof(json), "{\"ok\":1,\"current\":%d}", is_current);
@@ -579,10 +577,9 @@ int handle_api_browsers(int client_fd, const char *query, const char *body, size
     // Rescanning would pick up the browser that was just launched to show the UI.
     // Browsers are scanned once at startup; a rescan happens after each install completes.
 
-    // Serialization is shared with the --test-json unit harness (audit
-    // 2026-10-06, #431): the buffer is sized from detected_count and every
-    // append clamps, so a host with many long-path browsers can no longer
-    // overflow the response.
+    // Serialization is shared with the --test-json unit harness: the
+    // buffer is sized from detected_count and every append clamps, so a
+    // host with many long-path browsers cannot overflow the response.
     char *json = serialize_browsers_json(detected_browsers, detected_count);
     if (!json) {
         const char *err = "{\"error\":\"out of memory\"}";
@@ -650,7 +647,7 @@ int handle_api_package_urls(int client_fd, const char *query, const char *body, 
     json_escape(esc_fx_date, sizeof(esc_fx_date), get_package_date(0));
     json_escape(esc_utils_date, sizeof(esc_utils_date), get_package_date(1));
 
-    // Managed self-update payload on the artifact branch (issue #341) — the
+    // Managed self-update payload on the artifact branch — the
     // post-cutover ingest surface (the tab decides via the payload's
     // mechanismSince vs this binary's build date).  Local snapshots serve it
     // from the installer's own directory like hashes.json.
@@ -872,9 +869,9 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
                 snprintf(fx_zip_path, sizeof(fx_zip_path), "%s%cfx-folder.zip", g_work_dir, PATH_SEPARATOR);
 
                 if (save_buf_to_file(fx_zip_path, (const char *)zip_data, zip_len) < 0) {
-                    // Capture the CRT/Win32 error first — RS-10 CI failure
-                    // (#436): the status message must be attributable on its
-                    // own when the config-zip save fails on a runner.
+                    // Capture the CRT/Win32 error first: the status message
+                    // must be attributable on its own when the config-zip
+                    // save fails on a runner.
                     int save_errno = errno;
 #ifdef _WIN32
                     DWORD save_win32 = GetLastError();
@@ -934,7 +931,8 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
                 int copy_rc = admin_copy_tree(staging, g_binary_dir, copy_err, sizeof(copy_err));
                 if (copy_rc == ADMIN_COPY_CANCELLED) {
                     // The user said no to the UAC prompt — a distinct terminal
-                    // state, not a failed install (audit 2026-10-06, #431).
+                    // state, not a failed install (the UI maps it to its own
+                    // "cancelled" step).
                     remove_dir_tree(staging);
                     current_state = INSTALL_STATE_CANCELLED;
                     snprintf(state_message, sizeof(state_message), "%s", copy_err);
@@ -1074,10 +1072,10 @@ int handle_api_status(int client_fd, const char *query, const char *body, size_t
                  "Installation complete. Please restart the browser.");
     }
 
-    // state_message is interpolated unescaped — audit 2026-10-06, #431: it is
-    // filled from admin-copy errors carrying destination paths, so a path
-    // containing a double quote or backslash produced malformed JSON and a
-    // generic UI error.  Same escaping every other JSON call site uses.
+    // state_message is interpolated unescaped — it is filled from
+    // admin-copy errors carrying destination paths, so it must go through
+    // the same escaping every other JSON call site uses or a path containing
+    // a double quote or backslash produces malformed JSON.
     char esc_msg[512];
     json_escape(esc_msg, sizeof(esc_msg), state_message);
 
@@ -1247,8 +1245,8 @@ int handle_api_install(int client_fd, const char *query, const char *body, size_
     snprintf(g_work_dir, sizeof(g_work_dir), "%s%cfxs-installer-%ld",
              tmp_dir, PATH_SEPARATOR, work_dir_pid);
     if (mkdir_recursive(g_work_dir) != 0) {
-        // Propagated (audit 2026-10-06, #431): the state machine would only
-        // surface this later as a confusing per-file save failure.
+        // Surfaced here rather than at save time: the state machine would
+        // only surface this later as a confusing per-file save failure.
         const char *err = "{\"error\":\"Cannot create the installer work directory in the temp folder\"}";
         send_json_response(client_fd, err, (int)strlen(err));
         return 0;
@@ -1389,7 +1387,7 @@ int handle_api_manifest(int client_fd, const char *query, const char *body, size
         return 0;
     }
     // Check the CANDIDATE manifest against the zips already stored before
-    // ingesting it (P0-5 / #445): the manifest and the zips arrive in
+    // ingesting it: the manifest and the zips arrive in
     // parallel (10-ingest.js), so this covers zip-first order while
     // installer_verify_upload() covers manifest-first. No stored zip means
     // nothing to verify. A mismatch is refused with 403 and the current
@@ -1448,7 +1446,7 @@ int handle_api_upload(int client_fd, const char *query, const char *body, size_t
         return 0;
     }
     // Verify the candidate bytes against the published manifest BEFORE the
-    // zip is stored (P0-5 / #445). No manifest ingested yet means nothing to
+    // zip is stored. No manifest ingested yet means nothing to
     // verify — the documented no-manifest fallback is unchanged — but when a
     // manifest IS known, an upload that does not match it is refused with
     // 403 (a non-200 status so the tab's postRaw sees it and fails the
@@ -2088,10 +2086,10 @@ static int main_impl(int argc, char *argv[]) {
             return (test_hash_from_manifest(type, dir_path, manifest_path) == 0) ? 0 : 1;
         }
         if (strcmp(argv[1], "--test-json") == 0) {
-            /* Unit-test harness for the /api/browsers JSON emission (audit
-             * 2026-10-06, #431): serialize N synthetic browsers with
-             * hostile-length paths and print the JSON to stdout, so a unit
-             * test can parse it without a browser process to scan. */
+            /* Unit-test harness for the /api/browsers JSON emission:
+             * serialize N synthetic browsers with hostile-length paths and
+             * print the JSON to stdout, so a unit test can parse it without
+             * a browser process to scan. */
             if (argc < 3) {
                 fprintf(stderr, "Usage: %s --test-json <count>\n", argv[0]);
                 return 2;
@@ -2112,11 +2110,11 @@ static int main_impl(int argc, char *argv[]) {
             return 0;
         }
         if (strcmp(argv[1], "--test-admin-copy") == 0) {
-            /* Unit-test harness for the install status terminal states (audit
-             * 2026-10-06, #431): exercise the same JSON the /api/status
-             * handler emits for a cancelled-elevation run ("cancelled") and
-             * for a copy error whose message carries a double quote (the
-             * escaped-interpolation fix). */
+            /* Unit-test harness for the install status terminal states:
+             * exercise the same JSON the /api/status handler emits for a
+             * cancelled-elevation run ("cancelled") and for a copy error
+             * whose message carries a double quote (the escaped-interpolation
+             * fix). */
             const char *scenario = (argc >= 3) ? argv[2] : "cancelled";
             current_state = INSTALL_STATE_CANCELLED;
             state_progress = 30;
