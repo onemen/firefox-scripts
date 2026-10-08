@@ -387,8 +387,8 @@ const CONTRACTS = [
     gate: 'e2e-gate',
     // Independent filter outputs (installer/updater/core) — each gated job
     // must carry exactly its expected changed-paths `if:` and be listed in
-    // the gate's `applicability:` block. The 2026-09-19 dispatch audit:
-    // dorny/paths-filter diffs HEAD against its parent on workflow_dispatch
+    // the gate's `applicability:` block. dorny/paths-filter diffs HEAD against
+    // its parent on workflow_dispatch
     // (an arbitrary, unrelated diff), so PATH-BASED legs must never key off a
     // raw filter output on dispatches — the changes job dispatch-guards its
     // outputs instead (full dispatch = full revalidation set; partial escape =

@@ -11,8 +11,8 @@
 //   line references the harness's temp-dir prefixes (`fxs-e2e`,
 //   `fxs-installer-ui`) or whose EXECUTABLE (argv[0]) is one of the
 //   harness-built installer binaries under dist/.build / dist/ — a command
-//   that merely contains the installer name is left alone (2026-09-18 audit,
-//   finding T5; see isE2eProcess below).
+//   that merely contains the installer name is left alone (see isE2eProcess
+//   below).
 //
 // - removeProfileCompatibilityIni(profileDir): deletes compatibility.ini after
 //   profile seeding so Firefox cannot reuse stale GRE-compatibility state from
@@ -34,8 +34,8 @@ import path from 'node:path';
 // All three express the same matcher: `fxs-e2e`/`fxs-installer-ui` anywhere,
 // or installer_<os>[.exe] in the argv[0] position (optionally quoted path
 // prefix), so `ls dist/installer_win.exe` / `grep installer_win …` no
-// longer match (2026-09-18 audit, finding T5: the bare-substring form killed a
-// calling shell whose command line referenced the installer by name).  The
+// longer match: the bare-substring form killed a calling shell whose command
+// line referenced the installer by name.  The
 // optional `-dev` arm is legacy tolerance: #282 dropped the suffix, older
 // snapshots may still have it.
 
@@ -66,8 +66,7 @@ export const INSTALLER_ARGV0_ERE =
  * harness always spawns the binary as the executable. A shell command that
  * merely CONTAINS the literal (`ls dist/installer_win.exe`, `grep installer_win
  * …`) does not match: the bare-substring form killed a calling shell whose
- * command line referenced the installer by name (2026-09-18 audit, finding T5).
- * Exported for unit tests.
+ * command line referenced the installer by name. Exported for unit tests.
  *
  * The installer branch accepts an unquoted space-free path, a quoted path
  * (spaces allowed), or a bare binary name; dev-suffixed, `.exe`-suffixed and

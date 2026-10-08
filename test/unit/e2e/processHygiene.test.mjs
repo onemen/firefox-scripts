@@ -126,10 +126,9 @@ test('isE2eProcess: matches the harness-built installer binary as argv[0]', () =
   assert.ok(isE2eProcess('"C:\\repo\\dist\\.build\\installer\\installer_win.exe" --smoke-test'));
 });
 
-test('isE2eProcess: does NOT match commands that merely contain the name (T5)', () => {
-  // The 2026-09-18 audit's T5: the old bare-substring form killed a calling
-  // shell whose command line referenced the installer as an ARGUMENT. The
-  // binary must now be argv[0] to match.
+test('isE2eProcess: does NOT match commands that merely contain the name', () => {
+  // A command that merely references the installer as an ARGUMENT must not
+  // match: the binary has to be argv[0].
   assert.equal(isE2eProcess('bash -c "ls dist/installer_win.exe"'), false);
   assert.equal(isE2eProcess('ls dist/installer_win.exe'), false);
   assert.equal(isE2eProcess('grep installer_win /tmp/manifest.json'), false);

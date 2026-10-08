@@ -12,9 +12,8 @@
  * (syncGeneratedFiles.mjs GENERATED/PREVIEW, upload.mjs
  * GENERATED_UPDATER_CONFIG/GENERATED_UI_CSS/HASH_EXCLUDE/collectDirEntries
  * exclude list) — exactly the hand-maintained coupling ADR 0008 warns about,
- * and the reason the 2026-09-15 audit asked for a registry ↔ hash-inputs test.
- * The test/unit/generatedRegistry.test.mjs assertions now mechanically close
- * the trap:
+ * and the reason a registry ↔ hash-inputs test exists. The
+ * test/unit/generatedRegistry.test.mjs assertions mechanically close the trap:
  *
  * 1. every {rel, absPath} entry the publish hashing adds back (extraFiles) is a
  *    registry `ships: true` file's rel inside its package root;

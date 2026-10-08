@@ -1,5 +1,5 @@
 // installer/test/snapshotProvenance.mjs — shared snapshot-provenance guard for
-// the binary-in-the-loop tests (2026-09-18 audit, finding T1).
+// the binary-in-the-loop tests.
 //
 // Both suites (test_hash.mjs, test_self_update.mjs) run whatever binary sits
 // in the newest snapshot dir under dist/. A snapshot built from older sources
@@ -8,9 +8,8 @@
 // hash the installer was built from; this module recomputes it from the
 // current sources and refuses to continue on drift.
 //
-// test_self_update.mjs carried this guard inline since the 2026-09-15 audit;
-// the 2026-09-18 audit found test_hash.mjs had no such check (T1) — this
-// module is the shared helper both now call.
+// test_self_update.mjs carried this guard inline; test_hash.mjs had no such
+// check — this module is the shared helper both now call.
 
 import fs from 'fs';
 import path from 'path';

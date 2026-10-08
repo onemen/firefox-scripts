@@ -229,7 +229,7 @@ export default defineConfig([
 
   // The updater tab ships as updater-ui.zip and renders server/browser-fetched
   // content paths; AGENTS.md's "no innerHTML in the updater tab" convention is
-  // enforced here rather than remembered (2026-09-15 audit P2). XML-parsed
+  // enforced here rather than remembered. XML-parsed
   // XHTML + hidden toggles are the house pattern. installer/web/script.js is
   // deliberately out of scope: it renders only the installer's own embedded
   // UI, is reviewed separately, and is not shipped in a zip.

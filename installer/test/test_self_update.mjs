@@ -116,7 +116,7 @@ function main() {
     process.exit(1);
   }
 
-  // ── staleness guard (2026-09-15 audit, finding T1) — shared helper ────────
+  // ── staleness guard — shared helper ──────────────────────────────────────
   requireFreshSnapshot({snapshotDir});
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-self-update-'));

@@ -54,7 +54,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  * @returns {string} Hex-encoded SHA256 digest
  */
 function computeDirectoryHash(dirPath, relFiles) {
-  // P2-5 (audit 2026-10-06, #429): sort with the canonical comparator from
+  // Sort with the canonical comparator from
   // hashUtils.mjs (already imported) — localeCompare's order is locale-
   // dependent and is exactly what the canonical rule forbids.
   const sorted = [...relFiles].sort(compareCaseInsensitive);
@@ -151,7 +151,7 @@ function main() {
   const MANIFEST_PATH = path.join(snapshotDir, 'hashes.json');
   const INSTALLER = getInstallerPath(snapshotDir);
 
-  // Staleness guard (2026-09-18 audit, finding T1): refuse to compare the C
+  // Staleness guard: refuse to compare the C
   // hash of a binary built from older sources — parity against a stale
   // snapshot proves nothing about main. Shared with test_self_update.mjs.
   requireFreshSnapshot({snapshotDir});
