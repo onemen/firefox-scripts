@@ -2,9 +2,9 @@
 
 /**
  * tools/check-skills.mjs — validate SKILL.md frontmatter and run the vendored
- * skills' own tests (the 2026-09-15 audit's last unowned P2: the weekly
- * skills-watchdog parses frontmatter for drift detection, but nothing gates on
- * the metadata being well-formed, and the vendored skills' tests never run).
+ * skills' own tests: the weekly skills-watchdog parses frontmatter for drift
+ * detection, but nothing gates on the metadata being well-formed, and the
+ * vendored skills' tests never run.
  *
  * ADR 0022 draws the line this tool stays behind: "gates that mutate apply to
  * things we author; gates that validate apply to everything." Nothing here

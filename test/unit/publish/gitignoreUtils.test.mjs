@@ -1,6 +1,6 @@
 // test/unit/publish/gitignoreUtils.test.mjs — unit tests for the gitignore walk
-// that decides zip contents AND the publish hash input set (2026-09-15 audit:
-// the module had no tests; a bug here silently changes what users install).
+// that decides zip contents AND the publish hash input set: a bug here
+// silently changes what users install.
 //
 // Two behavioral subtleties these tests pin deliberately:
 // - shouldIgnore is FIRST-match-wins: the first pattern that matches decides,

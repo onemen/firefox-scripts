@@ -1,7 +1,7 @@
 // test/unit/generatedRegistry.test.mjs — the generated-file registry ↔
-// publish-hash-inputs consistency gate (the 2026-09-15 audit's P2: closes
-// ADR 0008's stated trap — "adding/removing a generated file without updating
-// the hash inputs silently stops updates propagating").
+// publish-hash-inputs consistency gate: closes ADR 0008's stated trap —
+// "adding/removing a generated file without updating the hash inputs silently
+// stops updates propagating").
 //
 // generatedRegistry.mjs is the single source both syncGeneratedFiles.mjs (the
 // generator list) and upload.mjs (hash inputs, zip re-adds, scan excludes)
@@ -135,7 +135,7 @@ test('registry: obsolete files stay excluded from the hash/manifest pipeline', (
 
 test('upload.mjs: hash + zip wiring reads the registry helpers, not hand lists', () => {
   const upload = read('tools/publish/upload.mjs');
-  // The three hand-maintained literals the audit flagged are gone.
+  // The three hand-maintained literals are gone.
   assert.ok(!upload.includes("rel: 'updater/updater-config.sys.mjs'"), 'hand literal leaked back');
   assert.ok(!upload.includes("rel: 'updater.css'"), 'hand literal leaked back');
   assert.ok(!upload.includes("'_config.h',\n      'resources.h'"), 'hand literal leaked back');

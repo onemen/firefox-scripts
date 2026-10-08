@@ -10,7 +10,7 @@
 // is what the installer and updater hash against (ADR 0002).
 //
 // The reader is `test/shared/zipReader.mjs` (pure Node, parses the central
-// directory directly) rather than the yauzl devDep the audit suggested: same
+// directory directly) rather than the yauzl devDep: same
 // read-only guarantee, zero new dependencies. The zips are built here through
 // the REAL pipeline — the same createZip + loadSharedPatterns calls
 // upload.mjs's buildPackages makes — into a temp dir, so the test runs in the

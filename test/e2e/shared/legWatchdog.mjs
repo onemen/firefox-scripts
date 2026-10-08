@@ -17,7 +17,7 @@
 import {killStrayProcesses} from './processHygiene.mjs';
 
 /**
- * Default per-leg budget in minutes. Derived from the audited leg profile: the
+ * Default per-leg budget in minutes. Derived from the measured leg profile: the
  * UI layer (installer scan + real Firefox + full assertion set) is the slowest
  * legal leg at ≤2.5 min on windows-latest; 6 min ≈ 2.4× that, and the sum of
  * all four default-on legs (0.5 + 0.5 + 3 + 6) stays under the 10-min global
