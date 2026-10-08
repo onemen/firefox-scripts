@@ -154,10 +154,10 @@ static int win_path_exists(const WCHAR *wpath) {
 /**
  * Create path and every missing parent directory.
  * Returns 0 on success (or if the final directory already exists), -1 when a
- * component could not be created for a reason other than "already there"
- * (audit 2026-10-06, #431: the old version ignored every
- * CreateDirectoryW/mkdir result, so its callers' checks were vacuous and a
- * permission failure surfaced later as a confusing per-entry error).
+ * component could not be created for a reason other than "already there".
+ * Every CreateDirectoryW/mkdir result IS checked — callers rely on -1 to
+ * detect a permission failure here rather than a confusing per-entry error
+ * later.
  */
 int mkdir_recursive(const char *path) {
     char tmp[MAX_PATH_LEN];
@@ -173,7 +173,7 @@ int mkdir_recursive(const char *path) {
             // (183) but Windows Server answers other errors for edge shapes —
             // e.g. the trailing "C:\...\Temp\" component built from
             // GetTempPathA's own separator failed with ERROR_PATH_NOT_FOUND
-            // on CI runners while succeeding on desktop Windows (#436 RS-10).
+            // on CI runners while succeeding on desktop Windows.
             if (wdir && !win_path_exists(wdir) &&
                 !CreateDirectoryW(wdir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
                 free(wdir);

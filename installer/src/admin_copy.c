@@ -132,8 +132,8 @@ int admin_copy_files(const char *const srcs[], const char *const dsts[], int cou
         }
         int pos = snprintf(params, cap, "--admin-copy");
         for (int i = 0; i < count; i++) {
-            // Guard the remaining capacity before appending (audit 2026-09-18
-            // C5): cap over-allocates 8 bytes per pair, which is correct only
+            // Guard the remaining capacity before appending: cap
+            // over-allocates 8 bytes per pair, which is correct only
             // while the " \"%s\" \"%s\"" shape below costs <= 8 + len_src +
             // len_dst. If that shape ever grows, a bare cap - pos could
             // underflow into an out-of-bounds write. Fail loudly instead.
@@ -173,9 +173,8 @@ int admin_copy_files(const char *const srcs[], const char *const dsts[], int cou
         free(wparams);
         if (!ok) {
             // The standalone helper distinguishes cancel (exit 2); the
-            // installer must too (audit 2026-10-06, #431): the UI maps
-            // ERROR_CANCELLED to a distinct "cancelled" terminal state, not a
-            // scary failed-install error.
+            // installer must too: the UI maps ERROR_CANCELLED to a distinct
+            // "cancelled" terminal state, not a scary failed-install error.
             DWORD err = GetLastError();
             if (err == ERROR_CANCELLED) {
                 snprintf(error_msg, error_size, "Elevation cancelled by the user");

@@ -29,7 +29,7 @@ typedef int SOCKET;
 #define MAX_REQUEST_HEADER (64 * 1024)
 #define MAX_REQUEST_BODY (4 * 1024 * 1024)
 
-/* Per-connection timeouts (audit 2026-09-15, P1 Reliability): the serve loop
+/* Per-connection timeouts: the serve loop
  * is single-threaded, so one stalled connection stalls every request behind
  * it. Two independent bounds close the gap a socket option alone leaves:
  *  - IDLE: SO_RCVTIMEO aborts a connection that sends nothing at all.
@@ -103,7 +103,7 @@ static SOCKET server_socket = INVALID_SOCKET;
 static volatile bool server_running = false;
 /* The bound port (getsockname in http_server_start), kept for the
  * Host/Origin validation — allowed values are exactly localhost:<port> and
- * 127.0.0.1:<port> for THIS endpoint (audit 2026-10-06, P1-6 / #445). */
+ * 127.0.0.1:<port> for THIS endpoint. */
 static unsigned short server_port = 0;
 
 static struct {
@@ -191,7 +191,7 @@ static int find_header_value(const char *req, size_t header_len, const char *nam
 /**
  * Validate the request's Host (always) and Origin (when present) against
  * this server's bound loopback endpoint — the DNS-rebinding defence that
- * "no CORS header" alone cannot provide (audit 2026-10-06, P1-6 / #445): a
+ * "no CORS header" alone cannot provide: a
  * rebound name arrives as Host: attacker.tld:<port>, and a cross-origin page
  * arrives with a foreign Origin. Allowed: exactly localhost:<port> and
  * 127.0.0.1:<port> — the two names the installer tab URL and every test
@@ -230,9 +230,8 @@ static int host_origin_allowed(const char *req, size_t header_len) {
  * Compare one query parameter's value against `value` (byte-exact).
  * `query` is a raw query string without the leading '?'. The parameter name
  * must match in full (so xt= is not t=) and the value ends at '&' or the end
- * of the string (so t= need not be the last parameter) — exactly the two
- * cases the three divergent parsers used to get wrong (audit 2026-10-06,
- * P1-9 / #445). Returns 1 only when the parameter exists and matches; a
+ * of the string (so t= need not be the last parameter). Returns 1 only
+ * when the parameter exists and matches; a
  * missing or empty query never matches.
  */
 int query_param_equals(const char *query, const char *name, const char *value) {
@@ -282,9 +281,9 @@ void send_response(int client_fd, int status_code, const char *content_type,
     } else {
         // Use body_len in both branches: the header's Content-Length must
         // match the bytes actually written below (send/write use body_len).
-        // The old strlen(body) here agreed with every current caller only by
-        // convention (audit 2026-09-18 C4) — a NUL-containing or explicitly
-        // length'd body would desynchronize header and payload.
+        // The header's count and the bytes written below must agree by
+        // construction, not by caller convention — a NUL-containing or
+        // explicitly length'd body would otherwise desynchronize them.
         n = snprintf(header, sizeof(header),
                      "HTTP/1.0 %d Error\r\n"
                      "Content-Type: text/plain\r\n"
@@ -631,7 +630,7 @@ void http_server_serve(void) {
         if (req_status == 1 && !host_origin_allowed(req, he_off)) {
             // Host/Origin validation runs before anything else touches the
             // request: a rebound or cross-origin request is answered 403 here
-            // and never reaches a handler (audit 2026-10-06, P1-6 / #445).
+            // and never reaches a handler.
             log_msg("[http] refused: foreign Host/Origin (%.*s)\n", 64, req);
             send_response(client_fd, 403, "text/plain", "Forbidden", 9);
         } else if (req_status == 1) {
