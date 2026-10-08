@@ -22,9 +22,8 @@
 /* True if any path component of `path` is exactly ".." (the parent-directory
  * alias). Components are separated by '\\' or '/'. Bounds: `path[i + 2]` is
  * only read after proving `i + 2 < len` (when `i + 2 == len` the component
- * ends the string); `path[i + 1]` only after proving `i + 1 < len` — this is
- * the bounds-correct form of the #272 proposal, which read ahead before the
- * bounds check. */
+ * ends the string); `path[i + 1]` only after proving `i + 1 < len` — each
+ * index is proven in bounds before it is read. */
 static int has_dotdot_component(const WCHAR *path) {
     size_t len = wcslen(path);
     for (size_t i = 0; i < len; i++) {
@@ -177,8 +176,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     }
 
     /* Every path argument must be a real path, not a traversal out of the
-     * install dir (issue #274, bounds-correct form of the #272 proposal).
-     * Applied to BOTH src and dst: the pairs come from our own updater tab,
+     * install dir. Applied to BOTH src and dst: the pairs come from our own
+     * updater tab,
      * so this is hardening against a confused/delegated caller, not a
      * privilege boundary — cheap to enforce on all of argv. */
     for (int i = 1; i < argc; i++) {
@@ -201,8 +200,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     if (!is_elevated() && needs_elevation) {
         /* Compute the quoted relaunch command line's exact length first and
          * fail with EXIT_BAD_ARGS on overflow: lstrcatW has no destination
-         * bound, so appending without a length check would run off paramsW
-         * (issue #274). argv[0] (this exe) is not quoted — ShellExecuteExW
+         * bound, so appending without a length check would run off paramsW.
+         * argv[0] (this exe) is not quoted — ShellExecuteExW
          * receives it via sei.lpFile. */
         size_t params_len = 0;
         for (int i = 1; i < argc; i++) {

@@ -1,7 +1,7 @@
 /*
  * restart.c — browser close / relaunch / restart orchestration.
  *
- * Extracted verbatim from main.c (2026-09, audit §3.1 modularity splits):
+ * Extracted verbatim from main.c (2026-09 modularity split):
  * graceful WM_CLOSE-based shutdown, session-restore pref handling, snap
  * launcher quirks, profile relaunch, and the async restart worker. The
  * HTTP surface (/api/restart, /api/close_browser) stays in main.c; this
@@ -180,8 +180,7 @@ void close_browser_by_pid(unsigned long pid, int wait_ms) {
  *
  * Matching is by full image path, not by executable name — several Firefox
  * family installs can run at once under the same image name (e.g. ESR and
- * Nightly are both firefox.exe); an image-name kill would close all of them
- * (#180).
+ * Nightly are both firefox.exe); an image-name kill would close all of them.
  */
 void close_browser_binary(const char *binary_path, int wait_ms) {
 #ifdef _WIN32
@@ -510,7 +509,7 @@ int do_restart_work(const restart_plan_t *plan) {
         // path — they all share the config dir).  WM_CLOSE lets Firefox write a
         // valid session store.  Never kill by image name: ESR and Nightly both
         // run as firefox.exe, so an image-name kill would close unrelated
-        // installs too (#180).
+        // installs.
         verbose_printf("[restart] Config updated -> closing all instances of %s\n",
                        plan->binary_path);
         log_msg("[restart] closing all instances of %s\n", plan->binary_path);

@@ -69,8 +69,8 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
 
 // ===== Configurable constants =====
 
-/* Date-based self-update (ADR 0019 amendment): the build date is DERIVED
- * (issue #322) — _builddate.h (generated) carries per-binary dates from the
+/* Date-based self-update (ADR 0019 amendment): the build date is DERIVED —
+ * _builddate.h (generated) carries per-binary dates from the
  * last commit touching each binary's inputs; the installer consumes its own.
  * Replaces the former INSTALLER_VERSION — the repo ships unversioned,
  * date-stamped artifacts, so a version constant could never converge with
@@ -96,7 +96,7 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
 #define INSTALLER_ZIP_URL CFG_ZIP_BASE_URL
 #endif
 #define INSTALLER_HASHES_URL CFG_HASHES_URL
-/* Managed self-update payload file name on the artifact branch (issue #341):
+/* Managed self-update payload file name on the artifact branch:
  * self-update.json sits next to hashes.json; the tab combines it with
  * INSTALLER_ZIP_PAGES_URL (so a local snapshot serves it from the installer's
  * own directory like every other Pages artifact). */
@@ -285,7 +285,7 @@ extern char **environ;
 /**
  * Spawn argv[0] with argv through posix_spawnp — PATH-searched ("open",
  * "xdg-open" and bare browser names resolve like the old system() shell
- * did), argument-array based (no shell, audit 2026-10-06 #432).
+ * did), argument-array based — no shell is ever invoked.
  *
  * wait_child: when nonzero, wait and return the child's exit status
  * (0 = success, -1 on spawn/wait failure). When zero, return 0 once the
