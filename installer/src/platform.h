@@ -142,7 +142,7 @@ static inline char *wide_to_utf8(const WCHAR *wide) {
  * banner via /api/build-info, which early-returns unless isLocal||isDev. In a
  * prod build it is "" BY DESIGN — an embedded HEAD hash would re-roll the PE
  * bytes on every commit and invalidate WDSI hash submissions without any
- * installer-scoped change (2026-09-26 Phase 2R finding; ADR 0036 amendment).
+ * installer-scoped change (ADR 0036).
  * Provenance in prod rides the release tag/manifest, not the binary. */
 #ifdef CFG_DEV_BRANCH
 #define INSTALLER_DEV_BRANCH CFG_DEV_BRANCH
@@ -283,16 +283,16 @@ static inline void log_msg(const char *fmt, ...) {
 extern char **environ;
 
 /**
- * Spawn argv[0] with argv through posix_spawnp — PATH-searched ("open",
- * "xdg-open" and bare browser names resolve like the old system() shell
- * did), argument-array based — no shell is ever invoked.
+ * Spawn argv[0] with argv through posix_spawnp — PATH-searched, the way a
+ * shell resolves "open", "xdg-open" and bare browser names — argument-array
+ * based, so no shell is ever invoked.
  *
  * wait_child: when nonzero, wait and return the child's exit status
  * (0 = success, -1 on spawn/wait failure). When zero, return 0 once the
- * child is running — for GUI programs that outlive the caller, the old
- * system("… &") behavior; the child is reaped when this process exits.
- * err_to_devnull: point the child's stderr at /dev/null, restoring the old
- * shell redirect for xdg-open's noise.
+ * child is running, for GUI programs that outlive the caller; the child is
+ * reaped when this process exits.
+ * err_to_devnull: point the child's stderr at /dev/null, to swallow
+ * xdg-open's own noise.
  */
 static inline int spawn_argv_ex(char *const argv[], int wait_child, int err_to_devnull) {
     posix_spawn_file_actions_t fa;

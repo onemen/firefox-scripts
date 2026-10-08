@@ -2,11 +2,10 @@
 #define DETECT_BROWSER_INTERNAL_H
 
 /*
- * detect_browser_internal.h — the internal surface shared by the three
- * modules split out of detect_browser.c: hashing.c (SHA-256 over directories
- * and uploaded zips), manifest.c (the strstr JSON parsing of hashes.json /
- * Waterfox releases / hg tags) and detect_browser.c (browser, process and
- * profile detection).
+ * detect_browser_internal.h — the internal surface shared by hashing.c
+ * (SHA-256 over directories and uploaded zips), manifest.c (the strstr JSON
+ * parsing of hashes.json / Waterfox releases / hg tags) and detect_browser.c
+ * (browser, process and profile detection).
  *
  * Everything declared here is file-local BY DESIGN: a helper two of the
  * three modules need that the installer API (platform.h /

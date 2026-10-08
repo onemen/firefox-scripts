@@ -414,10 +414,9 @@ static void send_json_response(int client_fd, const char *json, int json_len) {
 // ===== API handlers =====
 
 /* ===== HTTP API handlers (defined below; registered in main_impl) =====
- * Declared here, next to their definitions:
- * http_server.h no longer speaks for functions it does not own — the server
- * dispatches through http_server_register() function pointers, so main.c is
- * their only consumer. */
+ * Declared here, next to their definitions: the server dispatches through
+ * http_server_register() function pointers, so main.c is their only
+ * consumer. */
 int handle_api_ping(int client_fd, const char *query, const char *body, size_t body_len);
 int handle_api_build_info(int client_fd, const char *query, const char *body, size_t body_len);
 int handle_api_claim(int client_fd, const char *query, const char *body, size_t body_len);
@@ -1233,10 +1232,9 @@ int handle_api_install(int client_fd, const char *query, const char *body, size_
     // Per-process scratch root, so it is both unique (one installer at a time
     // — the port probe in main() refuses a second live instance) and
     // reclaimable: the fxs- prefix is what pruneStaleTempRoots() and the
-    // test-hygiene gate match on.  The old fixed name left an empty directory
-    // in the user's temp dir forever, and a run killed between writing and
-    // removing a package zip left that zip there with nothing able to reclaim
-    // it.  Mirrors the updater's own fxs-updater-ui-<pid> staging dir.
+    // test-hygiene gate match on, so a run killed between writing and removing
+    // a package zip leaves that zip reclaimable.  Mirrors the updater's own
+    // fxs-updater-ui-<pid> staging dir.
 #ifdef _WIN32
     long work_dir_pid = (long)_getpid();
 #else
@@ -1566,9 +1564,8 @@ int handle_api_close_browser(int client_fd, const char *query, const char *body,
     verbose_printf("[close-browser] Closing %s (PID: %lu, binary: %s)\n",
                    b->identified_browser, b->pid, b->binary_path);
 
-    // Close THIS install only (#180 follow-up: the old fallbacks matched by
-    // image name — taskkill /f /im + Get-Process — which also killed every
-    // other same-image install, e.g. ESR and Nightly are both firefox.exe).
+    // Close THIS install only: matching by image name would also close every
+    // other same-image install (ESR and Nightly are both firefox.exe).
     //
     // Everything here matches by FULL BINARY PATH, never by the detection-time
     // PID: after a restart the detected PID is stale, and acting on a recycled
@@ -1641,8 +1638,8 @@ int handle_api_open_folder(int client_fd, const char *query, const char *body, s
     (void)body;
     (void)body_len;
 
-    // Require this run's session token (previously only stale tokens were
-    // rejected; a missing token must be refused too).
+    // Require this run's session token — a missing token is refused, not
+    // only a stale one.
     if (!request_has_valid_token(query)) {
         const char *err = "{\"error\":\"unauthorized\"}";
         send_json_response(client_fd, err, (int)strlen(err));
@@ -1739,8 +1736,8 @@ int handle_api_rescan(int client_fd, const char *query, const char *body, size_t
     (void)body;
     (void)body_len;
 
-    // Require this run's session token (previously only stale tokens were
-    // rejected; a missing token must be refused too).
+    // Require this run's session token — a missing token is refused, not
+    // only a stale one.
     if (!request_has_valid_token(query)) {
         const char *err = "{\"error\":\"unauthorized\"}";
         send_json_response(client_fd, err, (int)strlen(err));
@@ -1990,9 +1987,8 @@ static int main_impl(int argc, char *argv[]) {
     // the whole group the console's inherited "ignore Ctrl+C" attribute, and
     // the group is then excluded from the broadcast: Windows PowerShell 5.1
     // starts native processes with CREATE_NEW_PROCESS_GROUP, so the keypress
-    // reached no handler at all and the banner's "Press Ctrl+C to stop the
-    // installer" was a lie.  SetConsoleCtrlHandler(NULL, FALSE) is the
-    // documented API that restores normal Ctrl+C processing for that
+    // reaches no handler in the child.  SetConsoleCtrlHandler(NULL, FALSE) is
+    // the documented API that restores normal Ctrl+C processing for that
     // inherited attribute — measured against a new-group parent: plain child
     // = no CTRL_C_EVENT, re-enabled child = CTRL_C_EVENT.  Ctrl+C only ever
     // originates from OUR console, so no foreground-window check is needed.

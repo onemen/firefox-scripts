@@ -1,8 +1,7 @@
 /*
  * zip_store.c — the in-memory store for the browser-uploaded package zips
  * (fx-folder.zip, utils.zip, updater-ui.zip) that /api/upload fills and the
- * install state machine extracts from.  Extracted from main.c unchanged;
- * the accessors live in platform.h.
+ * install state machine extracts from.  The accessors live in platform.h.
  */
 
 #include "platform.h"

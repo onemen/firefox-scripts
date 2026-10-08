@@ -1,13 +1,11 @@
 /*
- * restart.c — browser close / relaunch / restart orchestration.
- *
- * Extracted verbatim from main.c (2026-09 modularity split):
- * graceful WM_CLOSE-based shutdown, session-restore pref handling, snap
- * launcher quirks, profile relaunch, and the async restart worker. The
- * HTTP surface (/api/restart, /api/close_browser) stays in main.c; this
- * module owns the "how" of restarting browsers. Shared installer state
- * (detected browsers, session install flags, UI URL/token) is declared
- * in restart.h and defined in main.c.
+ * restart.c — browser close / relaunch / restart orchestration: graceful
+ * WM_CLOSE-based shutdown, session-restore pref handling, snap launcher
+ * quirks, profile relaunch, and the async restart worker. The HTTP surface
+ * (/api/restart, /api/close_browser) lives in main.c; this module owns the
+ * "how" of restarting browsers. Shared installer state (detected browsers,
+ * session install flags, UI URL/token) is declared in restart.h and defined
+ * in main.c.
  */
 
 #include "platform.h"
@@ -61,9 +59,9 @@ static ULONGLONG process_creation_time(unsigned long pid) {
 /**
  * Terminate `pid` and its descendants, deepest first.
  *
- * `taskkill /T` used to do this; walking the process snapshot is equivalent
- * and avoids launching a command interpreter — the binary no longer spawns a
- * shell at all (see docs/DEVELOPING.md → AV false positives).  Children are
+ * Walking the process snapshot instead of shelling out to `taskkill /T` keeps
+ * the binary free of any command interpreter (see docs/DEVELOPING.md → AV
+ * false positives).  Children are
  * collected and killed before their parent so a dying parent cannot orphan
  * them mid-walk, and the recursion depth is bounded.
  *
@@ -613,10 +611,8 @@ static DWORD WINAPI restart_worker_thread(void *arg) {
 }
 
 int restart_start_async(const restart_plan_t *plan) {
-    // Single-flight: exactly one worker may run at a time (the pristine
-    // main.c spawn block, moved verbatim behind a function seam so the
-    // caller stays readable and the guard state stays internal to this
-    // module).
+    // Single-flight: exactly one worker may run at a time; the guard state
+    // stays internal to this module.
     if (g_restart_worker_running) return 0;
     restart_plan_t *heap_plan = (restart_plan_t *)malloc(sizeof(restart_plan_t));
     if (!heap_plan) return 0;

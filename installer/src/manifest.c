@@ -444,7 +444,7 @@ static int parse_manifest_files(const char *json, const char *section,
 
         /* Validate BEFORE copying on: the files list is attacker-controlled
          * input (POST /api/manifest), and a rel is later joined into a full
-         * path and - historically - interpolated into a shell command.
+         * path that reaches a shell command line on some platforms.
          * Mirror the JS guard the updater applies to the
          * same list (isUnsafeZipEntryName, scriptsUpdater.sys.mjs). */
         if (manifest_rel_unsafe(s, len)) {
