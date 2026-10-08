@@ -1,8 +1,7 @@
 // tools/ci/watchdog-report.mjs — the URL watchdog's pure reporting layer
-// (extracted from tools/check-browser-downloads.mjs, 2026-09 — the §3.1
-// modularity split). No imports, no I/O: everything here is a pure function of
-// its arguments, so the whole layer is unit-testable without network or
-// GitHub API access.
+// (extracted from tools/check-browser-downloads.mjs). No imports, no I/O:
+// everything here is a pure function of its arguments, so the whole layer is
+// unit-testable without network or GitHub API access.
 //
 // Ownership:
 // - domain constants shared by the watchdog and the publish pre-flight

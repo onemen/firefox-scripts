@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * tools/ci/ciDownload.mjs — the manual escape hatch (ADR 0021, plan:
- * docs/browser-downloads-resilience.local.md §5 PR A.5).
+ * tools/ci/ciDownload.mjs — the manual escape hatch (ADR 0021).
  *
  * When every vendor mirror for a browser's installer is down (or a version must
  * be tested before its release is visible to the resolver), the maintainer
@@ -26,8 +25,9 @@
  * Flags: `--browser <name>`, `--version <v>` (inference overrides),
  * `--no-dispatch` (upload only), `--clean` (delete release + tag, no upload).
  *
- * Requires gh CLI auth with repo scope. The installer is typically the one the
- * maintainer's firefox-updater already downloaded (.local.downloads/).
+ * Requires gh CLI auth with repo scope. The installer is typically one the
+ * maintainer's firefox-updater already downloaded to its shared download
+ * cache.
  */
 
 import {execFileSync} from 'node:child_process';
@@ -88,7 +88,7 @@ function runGh(args, {input} = {}) {
 const USAGE = `Usage: pnpm ci:download -- <installer-file> [--browser <name>] [--version <v>]
                  [--no-dispatch] [--clean]
 
-  <installer-file>   path to the installer (e.g. from firefox-updater's .local.downloads/)
+  <installer-file>   path to the installer (e.g. from firefox-updater's download cache)
   --browser <name>   override browser inference (librewolf|waterfox|floorp|zen)
   --version <v>      override version inference (also pins the E2E dispatch)
   --no-dispatch      upload only — do not dispatch the E2E run
@@ -205,7 +205,7 @@ export function ciDownload({argv, gh = runGh, log = console.log} = {}) {
 
   // ② upload the asset under the resolver's expected name. A renamed copy is
   // staged in a fresh temp dir (never next to the user's file — the file may
-  // sit in a shared cache dir such as firefox-updater's .local.downloads/).
+  // sit in a shared cache dir such as firefox-updater's download cache).
   const renamed = path.basename(file) !== assetName;
   let tmpAsset = null;
   try {

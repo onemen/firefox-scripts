@@ -29,7 +29,7 @@ on:
       - '.github/workflows/skills-watchdog.yml'
       # Skill edits are exactly when a drift finding changes — without this
       # the PR leg never fired on `.agents/skills/**` and a finding waited
-      # for Monday's schedule (audit 2026-10-06 P3-6).
+      # for Monday's schedule.
       - '.agents/skills/**'
   merge_group:
   schedule:
