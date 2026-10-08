@@ -146,6 +146,18 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           VALIDATED_DIR: .watchdog-validated
 
+      # Nightly cache prune (replaces the former weekly cache-cleanup cron,
+      # #463/#464): the nightly tick is the repo's only cron, the check job
+      # already carries actions: write, and a daily cadence matters because a
+      # fresh pnpm/browser save-mint lands every night — the old weekly window
+      # let the repo sit at the 10 GB cap for days, which is what invited
+      # GitHub's LRU eviction to eat the watchdog's own state caches (#462).
+      # The prune script keeps keep-one groups (browser releases, pnpm store)
+      # plus the operator count for everything else; keep-1 there is the same
+      # policy tools/ci/prune-caches.mjs documents.
+      - name: Prune stale Actions caches
+        run: node tools/ci/prune-caches.mjs --keep=3
+
     # Job-level scoping (the E2E workflow's precedent): dispatching the browser
     # E2E when a new release is recorded needs actions: write; the issue
     # surface needs issues: write. The PR job below needs neither.

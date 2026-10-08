@@ -23,8 +23,10 @@ const {
   resolveBrowserVersion,
   resolveInstallerUrl,
   findCiDownloadsAsset,
+  findBrowserStoreAsset,
   resetCiDownloadsProbe,
   ciDownloadsAssetName,
+  storeAssetNameFor,
   compareWaterfoxVersions,
   parseWaterfoxVersion,
   verifySha256,
@@ -241,6 +243,56 @@ test('findCiDownloadsAsset: silent null on 404 (steady state: no release)', asyn
   } finally {
     restore();
   }
+});
+
+test('findBrowserStoreAsset: silent null on 404 (steady state: store not seeded yet)', async () => {
+  resetCiDownloadsProbe();
+  const {restore, calls} = stubFetch([['releases/tags/ci-browser-cache', () => httpError(404)]]);
+  try {
+    assert.equal(await findBrowserStoreAsset('firefox--firefox-157.0.1-setup-win64.exe'), null);
+    assert.ok(!calls.some(c => /warn|error/i.test(c.url)), 'no noisy retry');
+  } finally {
+    restore();
+  }
+});
+
+test('findBrowserStoreAsset: resolves the namespaced asset URL', async () => {
+  resetCiDownloadsProbe();
+  const {restore} = stubFetch([
+    [
+      'releases/tags/ci-browser-cache',
+      () =>
+        okJson({
+          assets: [
+            {
+              name: 'firefox--firefox-157.0.1-setup-win64.exe',
+              browser_download_url: 'https://x/store-ff.exe',
+            },
+          ],
+        }),
+    ],
+  ]);
+  try {
+    assert.equal(
+      await findBrowserStoreAsset(storeAssetNameFor('firefox', 'firefox-157.0.1-setup.exe')),
+      'https://x/store-ff.exe'
+    );
+    assert.equal(await findBrowserStoreAsset('firefox--firefox-156.0-setup-win64.exe'), null);
+  } finally {
+    restore();
+  }
+});
+
+test('storeAssetNameFor matches the seeder name and keeps siblings disjoint', () => {
+  assert.equal(
+    storeAssetNameFor('firefox', 'firefox-157.0.1-setup.exe'),
+    'firefox--firefox-157.0.1-setup-win64.exe'
+  );
+  assert.match(storeAssetNameFor('firefox-dev', 'firefox-158.0b5-setup.exe'), /^firefox-dev--/);
+  assert.match(
+    storeAssetNameFor('firefox-esr-140', 'firefox-140.3.1esr-setup.exe'),
+    /^firefox-esr-140--/
+  );
 });
 
 test('findCiDownloadsAsset: resolves the matching asset URL', async () => {

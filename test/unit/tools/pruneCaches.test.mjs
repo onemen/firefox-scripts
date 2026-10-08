@@ -70,6 +70,28 @@ const EXPECTED = [
     'msys2-pkgs-upd:false-conf:69844c46-files',
   ],
   ['pnpm-bin-Windows-X64-11', 'pnpm-bin-Windows-X64'],
+
+  // pnpm/setup's per-run tail: `<hashes>-<run_id>-1-<uuid v4>` — a unique key
+  // per run that must collapse into one family per OS/arch. Real key observed
+  // 2026-10-08 (81 live entries / 5.26 GB, all byte-identical content).
+  [
+    'pnpm-cache-Linux-x64-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9' +
+      '-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903' +
+      '-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae' +
+      '-37739280981-1-1f11f359-398b-4756-b7a7-183ba9805381',
+    'pnpm-cache-Linux-x64',
+  ],
+  [
+    'pnpm-cache-Windows-x64-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9' +
+      '-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903' +
+      '-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae' +
+      '-37712948603-1-d3e9dfad-9049-4fa1-a5ea-78d7086453e3',
+    'pnpm-cache-Windows-x64',
+  ],
+  [
+    'pnpm-lockfile-verified-Linux-x64-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903',
+    'pnpm-lockfile-verified-Linux-x64',
+  ],
 ];
 
 test('every observed cache key collapses into its family', () => {
@@ -91,6 +113,68 @@ test('the family stem is stable across a vendor bump', () => {
 test('a key that is only its family is left alone', () => {
   assert.equal(stem('url-watchdog-baseline'), 'url-watchdog-baseline');
   assert.equal(stem('firefox-dl-Windows'), 'firefox-dl-Windows');
+  assert.equal(stem('pnpm-cache-Linux-x64'), 'pnpm-cache-Linux-x64');
+});
+
+test('every run-tail pnpm key collapses into one keep-one group per OS/arch', () => {
+  const runKey = (os, run, uuid) =>
+    `pnpm-cache-${os}-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9` +
+    `-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903` +
+    `-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae` +
+    `-${run}-1-${uuid}`;
+  // Every run of one OS lands in the same group...
+  const g1 = groupOf(runKey('Linux-x64', 37739280981, '1f11f359-398b-4756-b7a7-183ba9805381'));
+  const g2 = groupOf(runKey('Linux-x64', 37712948603, '6f4d447c-27a8-43fa-84fb-b1153fac2b39'));
+  assert.equal(g1, 'pnpm-cache-Linux-x64 :: plain');
+  assert.equal(g2, g1);
+  // ...but a different OS does not (its store is a different ~65 MB payload).
+  assert.notEqual(
+    groupOf(runKey('Windows-x64', 37712948603, 'd3e9dfad-9049-4fa1-a5ea-78d7086453e3')),
+    g1
+  );
+  // And keep-one applies: only the newest run's entry survives.
+  const caches = [
+    {
+      key: runKey('Linux-x64', 37739280981, '1f11f359-398b-4756-b7a7-183ba9805381'),
+      created_at: '2026-10-08T02:00:00Z',
+      ref: 'refs/heads/main',
+    },
+    {
+      key: runKey('Linux-x64', 37712948603, '6f4d447c-27a8-43fa-84fb-b1153fac2b39'),
+      created_at: '2026-10-07T02:00:00Z',
+      ref: 'refs/heads/main',
+    },
+    {
+      key: runKey('Linux-x64', 37600000000, '8a30e83f-dd59-474a-96ac-a67c9d7b561a'),
+      created_at: '2026-10-06T02:00:00Z',
+      ref: 'refs/pull/464/merge',
+    },
+  ];
+  const deletes = planDeletes(caches, 3);
+  assert.equal(deletes.length, 2);
+  assert.ok(deletes.every(c => c.created_at !== '2026-10-08T02:00:00Z'));
+});
+
+test('pnpm entries across a lockfile bump keep the newest state only', () => {
+  // The hash-combo is deliberately peeled: old-lockfile entries are the old
+  // store's duplicates, and only the newest entry (new state) is worth
+  // keeping — a cold re-download after a bump costs a minute, not gigabytes.
+  const a =
+    'pnpm-cache-Linux-x64-1111111111111111111111111111111111111111111111111111111111111111-37739280981-1-1f11f359-398b-4756-b7a7-183ba9805381';
+  const b =
+    'pnpm-cache-Linux-x64-2222222222222222222222222222222222222222222222222222222222222222-37739280981-1-1f11f359-398b-4756-b7a7-183ba9805381';
+  assert.equal(stem(a), stem(b));
+  const deletes = planDeletes(
+    [
+      {key: a, created_at: '2026-10-06T02:00:00Z', ref: 'refs/heads/main'},
+      {key: b, created_at: '2026-10-08T02:00:00Z', ref: 'refs/heads/main'},
+    ],
+    3
+  );
+  assert.deepEqual(
+    deletes.map(c => c.key),
+    [a]
+  );
 });
 
 // ── The keep policy: one entry per release-keyed family/layout ────────────
@@ -128,10 +212,11 @@ test('toolchain and state families keep the operator-supplied count', () => {
     'browser-fork-validated-37359307092',
     'url-watchdog-baseline-2026-10-05',
     'node-cache-macOS-arm64-pnpm-56ec8155b91741b1a6a9d9371adcd546f0eb97c8c62bd35d9468602d8387c9f8',
-    'pnpm-cache-Windows-x64-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9',
   ]) {
     assert.equal(keepFor(groupOf(key), 3), 3, key);
   }
+  // pnpm-cache is keep-one now — see the run-tail test above.
+  assert.equal(keepFor(groupOf('pnpm-cache-Windows-x64-2fb24468351ea046'), 3), 1);
 });
 
 /** A cache entry as the API returns it. */
