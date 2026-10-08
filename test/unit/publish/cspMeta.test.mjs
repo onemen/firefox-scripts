@@ -1,6 +1,6 @@
 // test/unit/publish/cspMeta.test.mjs — pins the Content-Security-Policy meta
-// declared on the two shipped HTML surfaces (the audit's P3: neither page
-// declared a CSP, so both ran under the browser default).
+// declared on the two shipped HTML surfaces — neither page may run under the
+// browser default.
 //
 // The policies are deliberately closed:
 // - installer page (installer/web/index.html): same-origin for everything;
@@ -140,7 +140,7 @@ test('both pages stay free of inline handlers and inline scripts the CSP would b
     // Scoped to the updater tab: the installer page still has two (index.html
     // network-error banner "display: none", 30-render.js progress fill) — both
     // embedded in installer_win.exe, so they wait for the post-release CSP
-    // cleanup (see docs/review.local.2026-09-18.md §9.10).
+    // cleanup.
     if (label === 'updater tab') {
       assert.ok(!/\sstyle="[^"]*"/.test(html), `${label}: no inline style attributes`);
     }

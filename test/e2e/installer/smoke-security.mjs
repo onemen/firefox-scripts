@@ -115,9 +115,9 @@ async function hit(route, {token, method = 'GET', body, rawQuery} = {}) {
 
 /**
  * One raw HTTP request over a socket with caller-controlled headers — for the
- * Host/Origin cases (audit 2026-10-06, P1-6 / #445): fetch() refuses to
- * override Host, and undici never sends Origin at all (verified 2026-10-07).
- * Resolves with the full response header block (status line + headers).
+ * Host/Origin cases: fetch() refuses to override Host, and undici never sends
+ * Origin at all. Resolves with the full response header block (status line +
+ * headers).
  */
 function rawRequest(requestLine, headers) {
   return new Promise((resolve, reject) => {
@@ -260,9 +260,6 @@ async function main() {
 
     console.log('\nQuery parsing: t= need not be last, xt= is not t, bare claim is current:0');
     {
-      // audit 2026-10-06 P1-9 (#445): the three token parsers used to
-      // disagree — claim assumed t= was the last parameter and had no
-      // &-boundary check, and a bare /api/claim answered current:1.
       const trailing = await hit('claim', {rawQuery: `t=${token}&x=1`});
       check(
         trailing.text.includes('"current":1'),
@@ -281,8 +278,7 @@ async function main() {
         'claim with no token reports current:0',
         bare.text.slice(0, 80)
       );
-      // Regression (ADR 0020 review of #452): a valueless parameter before
-      // t= must not be swallowed into the key.
+      // A valueless parameter before t= must not be swallowed into the key.
       const afterFlag = await hit('claim', {rawQuery: `flag&t=${token}`});
       check(
         afterFlag.text.includes('"current":1'),
@@ -320,8 +316,8 @@ async function main() {
 
     console.log('\nHost/Origin: a foreign Host or Origin is refused before routing');
     {
-      // audit 2026-10-06 P1-6 (#445): DNS rebinding arrives as a foreign
-      // Host header; a cross-origin page arrives with a foreign Origin.
+      // DNS rebinding arrives as a foreign Host header; a cross-origin page
+      // arrives with a foreign Origin.
       const evilHost = await rawRequest('GET /api/ping HTTP/1.1', {
         Host: 'evil.example:8777',
       });
