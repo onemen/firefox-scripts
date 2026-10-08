@@ -244,6 +244,8 @@ export function planDispatches(findings) {
   const esr = newVersions.some(
     f => typeof f.browser === 'string' && f.browser.startsWith(ESR_BROWSER_PREFIX)
   );
+  // `browser` absent = full matrix (see the @returns contract above).
+  /** @type {{browser?: string; ref: string}[]} */
   const plans = forks.map(browser => ({browser, ref: 'main'}));
   if (esr) plans.push({browser: 'firefox-esr', ref: 'main'});
   if (hardGates) plans.push({ref: 'main'});
@@ -559,6 +561,15 @@ export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {})
  * presence + age for the shared Mozilla namespace — instead of the
  * baseline-derived approximation. Omitted (local runs, PR mode): the column
  * renders exactly as before. `now` pins the clock for deterministic tests.
+ *
+ * @param {{
+ *   results: any;
+ *   baseline: any;
+ *   validated: any;
+ *   browsers?: string[];
+ *   cache?: any;
+ *   now?: number;
+ * }} opts
  */
 export function buildStatusTable({results, baseline, validated, browsers = BROWSERS, cache, now}) {
   const rows = browsers.map(browser => {
@@ -717,6 +728,10 @@ export function isFailureIssueTitle(browser, title) {
 /**
  * The dedup key for an issue: exact-title match against open issues carrying
  * the url-watchdog label, so a re-run never duplicates an open finding.
+ *
+ * @param {string} kind
+ * @param {string} browser
+ * @param {{prevVersion?: string; newVersion?: string; reason?: string}} [opts]
  */
 export function issueTitle(kind, browser, {prevVersion, newVersion, reason} = {}) {
   if (kind === 'rot') {
@@ -749,6 +764,7 @@ export function issueTitle(kind, browser, {prevVersion, newVersion, reason} = {}
  *   newSize?: number;
  *   size?: number;
  *   sha256?: string;
+ *   context?: string;
  * }} f
  * @param {string} runUrl
  */

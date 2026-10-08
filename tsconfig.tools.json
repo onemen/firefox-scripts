@@ -10,6 +10,6 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["tools/publish/*.mjs"],
+  "include": ["tools/**/*.mjs"],
   "exclude": ["**/*.d.ts", "**/@types/**"]
 }

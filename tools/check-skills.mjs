@@ -144,7 +144,9 @@ export function readSkillFrontmatter(text, file) {
       error: `${parsed.error.reason} (frontmatter line ${parsed.error.line}:${parsed.error.column})`,
     };
   }
-  const data = parsed.data && typeof parsed.data === 'object' ? parsed.data : {};
+  const data = /** @type {Record<string, any>} */ (
+    parsed.data && typeof parsed.data === 'object' ? parsed.data : {}
+  );
   const scalar = value => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
   const meta = data.metadata && typeof data.metadata === 'object' ? data.metadata : {};
   return {

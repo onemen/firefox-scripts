@@ -57,7 +57,7 @@ const KNOWN_BROWSERS = ['librewolf', 'waterfox', 'floorp', 'zen'];
  */
 export function inferBrowserVersion(filename) {
   const base = path.basename(filename);
-  const patterns = [
+  const patterns = /** @type {[RegExp, string][]} */ ([
     // librewolf-155.0-1-windows-x86_64-setup.exe (our asset name + vendor shape)
     // eslint-disable-next-line security/detect-unsafe-regex
     [/^librewolf-(\d+(?:\.\d+)*-\d+)-/, 'librewolf'],
@@ -72,7 +72,7 @@ export function inferBrowserVersion(filename) {
     // zen: zen-1.21.16b-installer.exe / zen.installer.exe (no version)
     // eslint-disable-next-line security/detect-unsafe-regex
     [/^zen[-.](\d+(?:\.\d+)*[a-z]?)[.-]/i, 'zen'],
-  ];
+  ]);
   for (const [re, browser] of patterns) {
     const m = re.exec(base);
     if (m) return {browser, version: m[1]};
@@ -80,7 +80,12 @@ export function inferBrowserVersion(filename) {
   return null;
 }
 
-/** Run gh, throwing with the captured stderr on failure. */
+/**
+ * Run gh, throwing with the captured stderr on failure.
+ *
+ * @param {string[]} args
+ * @param {{input?: string}} [opts]
+ */
 function runGh(args, {input} = {}) {
   return execFileSync('gh', args, {encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe']});
 }
@@ -95,8 +100,11 @@ const USAGE = `Usage: pnpm ci:download -- <installer-file> [--browser <name>] [-
   --clean            delete the ci-downloads release + tag and exit`;
 
 /**
+ * `opts` itself defaults to `{}`, so `argv` reads optional in the type — every
+ * caller passes it.
+ *
  * @param {{
- *   argv: string[];
+ *   argv?: string[];
  *   gh?: (args: string[], opts?: {input?: string}) => string;
  *   log?: (...data: any[]) => void;
  * }} opts

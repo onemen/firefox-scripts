@@ -67,7 +67,7 @@ const EXCLUDED_PREFIX = '.agents/skills/';
  * overrides everything (tests, manual runs). A file with no resolvable base is
  * treated as fully changed (worst case).
  *
- * @param {string[]} argv extra CLI args (unused; reserved)
+ * @param {string[]} _argv extra CLI args (unused; reserved)
  * @param {{cwd?: string; baseSha?: string; runGit?: typeof execFileSync}} [io]
  *   test seams
  * @returns {string[]}

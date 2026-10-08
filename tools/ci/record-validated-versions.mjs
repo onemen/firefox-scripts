@@ -218,7 +218,10 @@ export function collectForkVersions(dir) {
  * not run keeps its earlier entry. Pure, so the cumulative semantics are
  * unit-testable without a cache or a network.
  *
- * @param {{forks?: Record<string, object>} | null} previous the restored record
+ * @param {{
+ *   forks?: Record<string, {version: string; validatedAt: string}>;
+ * } | null} previous
+ *   the restored record
  * @param {Record<string, {os: string; version: string}>} found this run's forks
  * @param {{
  *   validatedAt: string;
@@ -226,7 +229,8 @@ export function collectForkVersions(dir) {
  *   runUrl: string | null;
  *   sha: string | null;
  * }} meta
- * @returns {Record<string, object>} the cumulative fork map
+ * @returns {Record<string, {version: string; validatedAt: string}>} the
+ *   cumulative fork map
  */
 export function mergeForkRecord(previous, found, meta) {
   const out = {...(previous?.forks ?? {})};
@@ -365,7 +369,13 @@ async function main() {
   await notifyMetaIssue(record);
 }
 
-/** Minimal GitHub REST helper (issues/comments only). */
+/**
+ * Minimal GitHub REST helper (issues/comments only).
+ *
+ * @param {string} token
+ * @param {string} pathname
+ * @param {{method?: string; body?: any}} [opts]
+ */
 async function ghJson(token, pathname, {method = 'GET', body} = {}) {
   const res = await fetch(`https://api.github.com${pathname}`, {
     method,

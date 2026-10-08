@@ -279,10 +279,34 @@ export function ageInDays(dateIso, now) {
  * actionable (tag age ≥ cooldownDays, or age unknown — report honestly rather
  * than stay silent); `infos` are in-cooldown tags, logged but never issued.
  *
+ * `behindBy` lives on the shared row shape but is set only on drift rows
+ * (collectDrift) — both row kinds render jointly below.
+ *
  * @param {Awaited<ReturnType<typeof loadInventory>>} inventory
  * @param {(pathname: string) => Promise<any>} fetchJson
  * @param {{now?: Date; cooldownDays?: number}} [opts]
- * @returns {Promise<{findings: object[]; infos: object[]}>}
+ * @returns {Promise<{
+ *   findings: {
+ *     skill: string;
+ *     repo: string;
+ *     ref: string;
+ *     dir: string;
+ *     kind: string;
+ *     reason?: string;
+ *     fromTag?: string;
+ *     toTag?: string;
+ *     ageDays?: number | null;
+ *     behindBy?: number;
+ *   }[];
+ *   infos: {
+ *     skill: string;
+ *     repo: string;
+ *     ref: string;
+ *     dir: string;
+ *     toTag: string;
+ *     ageDays: number;
+ *   }[];
+ * }>}
  */
 export async function collectNewerTags(
   inventory,
@@ -364,8 +388,12 @@ export async function refToCommit(fetchJson, repo, ref) {
  *     kind: string;
  *     reason?: string;
  *     aheadBy?: number | null;
+ *     behindBy?: number;
  *     localTreeSha?: string;
  *     upstreamTreeSha?: string | null;
+ *     fromTag?: string;
+ *     toTag?: string;
+ *     ageDays?: number | null;
  *   }[]
  * >}
  */
@@ -494,7 +522,13 @@ export function issueBody(findings, runUrl = 'local') {
   );
 }
 
-/** Minimal GitHub REST helper (issues + reads; token optional for reads). */
+/**
+ * Minimal GitHub REST helper (issues + reads; token optional for reads).
+ *
+ * @param {string} token
+ * @param {string} pathname
+ * @param {{method?: string; body?: any}} [opts]
+ */
 export async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   const res = await fetch(`https://api.github.com${pathname}`, {
     method,
@@ -509,8 +543,8 @@ export async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(
-      `GitHub API ${method} ${pathname}: HTTP ${res.status} ${json.message || ''}`
+    const err = /** @type {Error & {status?: number}} */ (
+      new Error(`GitHub API ${method} ${pathname}: HTTP ${res.status} ${json.message || ''}`)
     );
     err.status = res.status;
     throw err;

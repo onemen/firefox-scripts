@@ -324,8 +324,12 @@ function installerChainFor(browser) {
  * @param {string} browser
  * @param {{pin?: string | null}} [opts] `pin` short-circuits the chain (the
  *   manual escape's single-browser dispatch pins the version explicitly).
- * @returns {Promise<{version: string; source: string}>} throws after every
- *   source in the chain failed
+ * @returns {Promise<{
+ *   version: string;
+ *   source: string;
+ *   release?: {assets?: {browser_download_url?: string}[]};
+ * }>}
+ *   throws after every source in the chain failed
  */
 export async function resolveBrowserVersion(browser, {pin = null} = {}) {
   // Manual escape: e2e.yml exports BROWSER_PIN_VERSION from the dispatch's

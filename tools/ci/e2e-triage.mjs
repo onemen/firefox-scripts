@@ -154,7 +154,7 @@ async function ghApi(token, pathname, {method = 'GET', body} = {}) {
  * @param {string} token
  * @param {string} repo
  * @param {string} runId
- * @returns {Promise<object[]>}
+ * @returns {Promise<{name: string; conclusion: string; html_url?: string}[]>}
  */
 async function listRunJobs(token, repo, runId) {
   const jobs = [];
@@ -174,7 +174,7 @@ async function listRunJobs(token, repo, runId) {
  *
  * @param {string} token
  * @param {string} repo
- * @returns {Promise<object[]>}
+ * @returns {Promise<{number: number; title: string}[]>}
  */
 async function openTriageIssues(token, repo) {
   const open = await ghApi(
