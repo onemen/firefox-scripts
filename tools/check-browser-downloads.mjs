@@ -63,10 +63,10 @@
  * The pure reporting layer — the domain constants, drift classification, the
  * E2E dispatch planner, and all GitHub-visible rendering (status table, version
  * history, meta-issue body, issue titles/bodies) — lives in
- * tools/ci/watchdog-report.mjs (§3.1 split, 2026-09). This file keeps the
- * network resolution, baseline persistence, GitHub API calls and CLI
- * orchestration, and re-exports the reporting names for its existing importers
- * (the unit tests, record-validated-versions.mjs).
+ * tools/ci/watchdog-report.mjs. This file keeps the network resolution,
+ * baseline persistence, GitHub API calls and CLI orchestration, and re-exports
+ * the reporting names for its existing importers (the unit tests,
+ * record-validated-versions.mjs).
  */
 
 import {createHash} from 'node:crypto';
@@ -263,7 +263,7 @@ export async function dispatchRevalidation({token, repo, dryRun}) {
     return;
   }
   const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
-  // Consume the plan BEFORE dispatching (batch-review finding, 2026-10-06):
+  // Consume the plan BEFORE dispatching:
   // the plan lives inside the baseline cache's directory, so the next run's
   // restore would otherwise bring it back and replay the previous night's
   // dispatches — a second full nightly e2e run, a second core-smoke, the

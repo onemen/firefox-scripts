@@ -18,7 +18,7 @@ void close_browser_by_pid(unsigned long pid, int wait_ms);
 
 /**
  * Gracefully close every running main process of the given install (matched
- * by full binary path, never image name — #180), plus its child processes.
+ * by full binary path, never image name), plus its child processes.
  * Used when a config update happened.
  */
 void close_browser_binary(const char *binary_path, int wait_ms);

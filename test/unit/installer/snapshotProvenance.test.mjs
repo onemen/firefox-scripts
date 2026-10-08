@@ -1,6 +1,6 @@
 // test/unit/installer/snapshotProvenance.test.mjs — unit tests for the shared
-// snapshot-provenance guard (installer/test/snapshotProvenance.mjs, 2026-09-18
-// audit finding T1): the helper both binary-in-the-loop suites call before
+// snapshot-provenance guard (installer/test/snapshotProvenance.mjs): the helper
+// both binary-in-the-loop suites call before
 // running the newest dist/ snapshot's installer.
 //
 // Pure Node, no installer binary involved: the hash computation runs against
@@ -72,7 +72,7 @@ test('requireFreshSnapshot: passes when the snapshot was built from current sour
   }
 });
 
-test('requireFreshSnapshot: exits 1 on a snapshot built from older sources (T1)', () => {
+test('requireFreshSnapshot: exits 1 on a snapshot built from older sources', () => {
   const dir = fakeSnapshot({installer: {hash: '0'.repeat(64), date: '2026-09-01'}});
   try {
     const errors = [];

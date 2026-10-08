@@ -169,7 +169,7 @@ jobs:
               - 'installer/src/helper/**'
               # updater-ui.zip sources — remote-ui/updater.js IS the updater's
               # runtime engine (shipped inside the ui package), so engine
-              # changes must run the updater legs (#174 skip audit).
+              # changes must run the updater legs (#174).
               - 'tools/publish/remote-ui/**'
               # Snapshot-shaping tooling: the legs build their snapshot with
               # upload.mjs, whose generator flag passthrough decides the baked
@@ -1733,7 +1733,7 @@ jobs:
     # the post-gate jobs it starts alongside were `in_progress` at that moment —
     # a failed record-validation (the job that keeps the publish drift gate
     # unblocked) would never reach a triage issue, while the green-night path
-    # closed issues as if the run were clean (batch-review finding, 2026-10-06).
+    # closed issues as if the run were clean.
     # Waiting for the record job settles the listing; its result still feeds
     # the failure detection through the jobs API, not through `needs` (so the
     # post-gate contract — the gate among the needs, never in the gate's own

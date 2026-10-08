@@ -212,7 +212,7 @@ test('ADR 0029: missing target, non-record target, number mismatch, self-link', 
   }
 });
 
-test('P1-5: a free-prose Status value fails; known states and date declarations pass', () => {
+test('a free-prose Status value fails; known states and date declarations pass', () => {
   const mk = status => {
     const dir = makeDir({
       'index.md': index(['0001-a.md']),
@@ -236,7 +236,7 @@ test('P1-5: a free-prose Status value fails; known states and date declarations 
   );
 });
 
-test('P1-5: a record without a Date: field fails', () => {
+test('a record without a Date: field fails', () => {
   const dir = makeDir({
     'index.md': index(['0001-a.md']),
     '0001-a.md': record('0001', 'a').replace('- **Date:** 2026-09-16\n', ''),

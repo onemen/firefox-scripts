@@ -1,14 +1,13 @@
 // test/unit/installer/apiBrowsersJson.test.mjs — first unit coverage for the C
-// installer's JSON emission (audit 2026-10-06, group A / #431). The hidden
+// installer's JSON emission. The hidden
 // --test-json / --test-admin-copy modes run the SAME build_browsers_json() /
 // build_status_json() code paths the HTTP handlers use, so these assertions
 // hold at the exact boundary the web UI reads.
 //
-// Overflow fix: the old fixed 8192-byte stack buffer overflowed once ~5
-// browsers carried ordinary-length paths (snprintf's would-be length was
-// accumulated into the write offset, and the offset then fed the next size
-// computation). --test-json 50 with 1023-byte hostile paths proves the buffer
-// is sized from the browser count and the emitted JSON is complete and valid.
+// The response buffer is sized from the browser count, never a fixed stack
+// buffer: snprintf's would-be length is clamped at every append, so a host
+// with many long-path browsers cannot overflow the response. --test-json 50
+// with 1023-byte hostile paths proves the emitted JSON is complete and valid.
 //
 // The installer binary is built by `make -C installer` (MSYS2 UCRT64 on
 // Windows); CI's unit-test job does not build C, so the suite skips with a
@@ -110,7 +109,7 @@ test(
     const status = JSON.parse(runInstaller(['--test-admin-copy', 'quote']));
     assert.equal(status.step, 'error');
     // The message itself contains a raw double quote — valid only because the
-    // status JSON escaped it (the audit's unescaped-interpolation finding).
+    // status JSON escaped it.
     assert.ok(status.message.includes('"'), 'message carries the raw quote character');
   }
 );

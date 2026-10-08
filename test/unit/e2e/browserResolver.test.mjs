@@ -1,6 +1,5 @@
 // test/unit/e2e/browserResolver.test.mjs — Unit tests for
-// test/e2e/shared/browserResolver.mjs (ADR 0021, plan:
-// docs/browser-downloads-resilience.local.md).
+// test/e2e/shared/browserResolver.mjs (ADR 0021).
 //
 // Tests: fetchJsonWithRetry ladder, resolveBrowserVersion chains (bsys6-first
 // LibreWolf, waterfox GitHub→CDN, chain exhaustion), waterfox version
