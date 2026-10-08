@@ -452,7 +452,7 @@ async function notifyMetaIssue(record) {
     );
     const meta = issues.find(i => i.title === META_ISSUE_TITLE);
     if (!meta) {
-      // The watchdog creates the meta issue on its next weekly run.
+      // The watchdog creates the meta issue on its next run.
       console.log('meta issue not found yet — validation comment deferred to the watchdog');
       return;
     }

@@ -61,7 +61,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── Weekly: baseline + issues ─────────────────────────────────────────────
+  # ── Nightly: baseline + issues ────────────────────────────────────────────
   check:
     name: check browser download URLs
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
@@ -79,7 +79,7 @@ jobs:
           node-version: 24
 
       # Baseline = last-seen version + size (+ one-time sha256 per release).
-      # Weekly access keeps the 7-day cache TTL rolling; a missed run just
+      # Nightly access keeps the 7-day cache TTL rolling; a missed run just
       # re-baselines. Keys ROTATE per run (run_id): the cache service skips a
       # save whose exact key already exists, so a fixed key would silently
       # never persist the updated baseline after the first run. Restore falls

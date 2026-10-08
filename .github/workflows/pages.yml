@@ -73,7 +73,7 @@ env:
   GITHUB_TOKEN_VAR: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  # Pre-publish gate: a browser released since the last weekly watchdog run
+  # Pre-publish gate: a browser released since the last nightly watchdog run
   # would ship unvalidated against the new version. The gate itself is the
   # shared `.github/actions/drift-gate` composite — ONE implementation, also
   # called by build-and-upload.yml and the drift-check.yml probe the
@@ -124,7 +124,7 @@ jobs:
             echo "::error::no successful E2E workflow run for commit ${{ github.sha }} — let the E2E run on main finish (or re-run it), then re-dispatch the publish."
           fi
           exit 1
-      # Release-gate cache hygiene (#47): the same prune the weekly workflow
+      # Release-gate cache hygiene (#47): the same prune the nightly watchdog
       # runs, executed once more before any publish so a prod upload always
       # starts from a lean cache (stale firefox-dl-*/node-cache-* keys would
       # otherwise linger until Sunday).

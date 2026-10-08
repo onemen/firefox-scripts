@@ -2,7 +2,7 @@
 //
 // The scheduled surface is a deliberate, small set: ONE cron drives the
 // nightly revalidation (the url-watchdog's 22:00 UTC), the rest are the
-// weekly watchdogs and Dependabot. Nothing else may gain a cron without a
+// nightly watchdogs and Dependabot. Nothing else may gain a cron without a
 // test change, and — the failure this test exists for — a `schedule:` block
 // that loses its `cron:` expression is VALID YAML that GitHub accepts and
 // then never fires: the nightly revalidation would silently stop and the

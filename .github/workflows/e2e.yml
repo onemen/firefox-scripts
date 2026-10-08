@@ -649,7 +649,7 @@ jobs:
   # NOT on the PR path (since 2026-09-22): the snap store is the flakiest
   # dependency in the matrix (CDN 502s, snapd self-refresh deadlocks — a
   # red leg never blocked anything, it just burned ~4 min of every
-  # updater-PR run), so the leg runs on the WEEKLY schedule + manual
+  # updater-PR run), so the leg runs on the NIGHTLY schedule + manual
   # dispatch only. The store revision is probed via the store API and the
   # .snap + assertion are downloaded with plain retryable HTTPS (snap
   # download), cached by revision, and installed OFFLINE (snap ack + snap
@@ -1254,7 +1254,7 @@ jobs:
     # ESR is a Firefox back-compat surface — it has nothing to do with fork
     # releases. Path-based triggers (core/** or updater-impacting changes) run
     # on PRs and main pushes only; on workflow_dispatch the ONLY way in is the
-    # explicit `browser=firefox-esr` escape (the weekly watchdog's ESR-drift
+    # explicit `browser=firefox-esr` escape (the nightly watchdog's ESR-drift
     # validation). Fork escapes and full revalidation dispatches never run the
     # ESR legs — a same-day fork-release dispatch storm must not re-run them.
     if:

@@ -106,7 +106,7 @@ export const DOWNLOADS = {
       // Nightly is a first-party Mozilla channel, so it is a required leg on
       // ALL 3 OSes like stable and Dev Edition (#4 plan section). It is
       // deliberately NOT in the url-watchdog ledger or VALIDATED_BROWSERS: the
-      // version changes DAILY, which would put permanent drift between weekly
+      // version changes DAILY, which would put permanent drift between nightly
       // watchdog runs and make the publish gates unsatisfiable (ADR 0021
       // tiering). The PR-time hard-gate legs are the nightly coverage.
       win: {
