@@ -383,7 +383,7 @@ test('getUiBaseUrl legacy fallback: empty UI keys fall back to the zip base (pre
   assert.equal(stable.getUiBaseUrl(), stable.getZipBaseUrl());
 });
 
-/* ---------------- dead-test-channel fallback (ADR 0026 §3) ---------------- */
+/* ------------------- dead-test-channel fallback (ADR 0026) ----------------- */
 
 test('dead dev manifest: falls back to stable, migrates, resolves stable URLs', async () => {
   const routes = {
