@@ -202,7 +202,14 @@ export function keepFor(group, keep) {
  *
  * @param {{key: string; created_at: string; ref?: string}[]} caches
  * @param {number} keep default count for the non-release-keyed groups
- * @returns {object[]} the same objects, selected for deletion
+ * @returns {{
+ *   key: string;
+ *   created_at: string;
+ *   ref?: string;
+ *   size_in_bytes?: number;
+ *   id?: number;
+ * }[]}
+ *   the same objects, selected for deletion
  */
 export function planDeletes(caches, keep) {
   const byGroup = new Map();
@@ -216,7 +223,7 @@ export function planDeletes(caches, keep) {
     group.sort(
       (a, b) =>
         (b.ref === MAIN ? 1 : 0) - (a.ref === MAIN ? 1 : 0) ||
-        new Date(b.created_at) - new Date(a.created_at)
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
     toDelete.push(...group.slice(keepFor(g, keep)));
   }

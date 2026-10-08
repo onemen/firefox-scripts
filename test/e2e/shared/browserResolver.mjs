@@ -328,7 +328,8 @@ function installerChainFor(browser) {
  *   version: string;
  *   source: string;
  *   release?: {assets?: {browser_download_url?: string}[]};
- * }>} throws after every source in the chain failed
+ * }>}
+ *   throws after every source in the chain failed
  */
 export async function resolveBrowserVersion(browser, {pin = null} = {}) {
   // Manual escape: e2e.yml exports BROWSER_PIN_VERSION from the dispatch's

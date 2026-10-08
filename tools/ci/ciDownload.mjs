@@ -100,8 +100,11 @@ const USAGE = `Usage: pnpm ci:download -- <installer-file> [--browser <name>] [-
   --clean            delete the ci-downloads release + tag and exit`;
 
 /**
+ * `opts` itself defaults to `{}`, so `argv` reads optional in the type — every
+ * caller passes it.
+ *
  * @param {{
- *   argv: string[];
+ *   argv?: string[];
  *   gh?: (args: string[], opts?: {input?: string}) => string;
  *   log?: (...data: any[]) => void;
  * }} opts

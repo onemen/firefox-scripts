@@ -202,7 +202,13 @@ export const DEFAULT_FETCH_TIMEOUT_MS = 120_000;
  * the local file paths in manifest order. A checksum mismatch or a missing file
  * throws — never a "close enough" toolchain.
  *
- * @param {{manifest?: any, dir?: string, log?: (...data: any[]) => void, fetchImpl?: any, timeoutMs?: number}} [opts]
+ * @param {{
+ *   manifest?: any;
+ *   dir?: string;
+ *   log?: (...data: any[]) => void;
+ *   fetchImpl?: any;
+ *   timeoutMs?: number;
+ * }} [opts]
  */
 export async function fetchPackages({
   manifest,
@@ -384,7 +390,7 @@ export function expectedVersionFor(tool, expected) {
  * all come from ONE bin directory that `roots`, when given, recognizes. `make`
  * is version-checked but may live elsewhere (it ships as an MSYS package).
  *
- * @param {{tools?: any, expected?: any, roots?: string[]}} [opts]
+ * @param {{tools?: any; expected?: any; roots?: string[]}} [opts]
  */
 export function provenanceReport({tools, expected = {}, roots = []} = {}) {
   const problems = [];
@@ -600,7 +606,12 @@ function pacman(args, opts = {}) {
  * is expected and fine: `pacman -U` accepts an older file), then assert every
  * pinned version is the installed one.
  *
- * @param {{manifest?: any, files?: any, verify?: boolean, log?: (...data: any[]) => void}} [opts]
+ * @param {{
+ *   manifest?: any;
+ *   files?: any;
+ *   verify?: boolean;
+ *   log?: (...data: any[]) => void;
+ * }} [opts]
  */
 export function installPinned({manifest, files, verify = true, log = console.log} = {}) {
   log(`  pacman -U ${files.length} pinned package(s)`);
@@ -614,7 +625,7 @@ export function installPinned({manifest, files, verify = true, log = console.log
 /**
  * Assert every pinned package is installed at exactly its pinned version.
  *
- * @param {{manifest?: any, log?: (...data: any[]) => void}} [opts]
+ * @param {{manifest?: any; log?: (...data: any[]) => void}} [opts]
  */
 export function verifyInstalled({manifest, log = console.log} = {}) {
   const drifts = [];
@@ -671,7 +682,12 @@ export function optionValue(argv, name) {
  * `<prefix>/ucrt64/bin/gcc` — put that bin dir first on PATH and the Makefile's
  * `CC ?= gcc` / `WINDRES ?= windres` resolve to the pinned ones.
  *
- * @param {{manifest?: any, files?: any, prefix?: string, log?: (...data: any[]) => void}} [opts]
+ * @param {{
+ *   manifest?: any;
+ *   files?: any;
+ *   prefix?: string;
+ *   log?: (...data: any[]) => void;
+ * }} [opts]
  */
 export function extractPrefix({manifest, files, prefix = DEFAULT_PREFIX, log = console.log} = {}) {
   const mingw = manifest.packages.filter(p => p.role === 'mingw');

@@ -191,6 +191,10 @@ export function ageToUnixSeconds(age) {
   return Math.floor(Date.now() / 1000) - Number(m[1]) * mult;
 }
 
+/**
+ * @param {{since?: string}} [opts] --since age (e.g. '30d'); absent = no age
+ *   filter
+ */
 function openPrBranches({since} = {}) {
   const jq =
     since ?

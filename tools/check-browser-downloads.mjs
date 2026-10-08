@@ -231,6 +231,14 @@ async function dispatchWorkflow(token, repo, {workflow, inputs}) {
  */
 export function buildDispatchPlan(findings) {
   const nightly = process.env.GITHUB_EVENT_NAME === 'schedule';
+  // CORE_SMOKE takes no inputs, so `inputs` stays permissive here (the
+  // declared @returns above types it as `object`).
+  /**
+   * @type {{
+   *   workflow: string;
+   *   inputs: {browser?: string; version?: string; nightly?: boolean};
+   * }[]}
+   */
   const plans = planDispatches(findings).map(plan => ({
     workflow: E2E_WORKFLOW,
     inputs: {browser: plan.browser || 'all', version: ''},
@@ -445,7 +453,7 @@ export async function listActionsCaches(token, repo) {
  *
  * @param {string} token
  * @param {string} pathname
- * @param {{method?: string, body?: any}} [opts]
+ * @param {{method?: string; body?: any}} [opts]
  */
 async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   const res = await fetch(`https://api.github.com${pathname}`, {
@@ -784,6 +792,9 @@ export async function main() {
     process.exit(0);
   }
 
+  // Baseline record: per-browser entries plus the ledger extras (`esr`
+  // state machine, `history`) — all optional on a cache miss / first run.
+  /** @type {{esr?: any; history?: any; [browser: string]: any}} */
   let baseline = {};
   // Report-only reads the baseline too — it is the table's data source.
   const baselineFound = !prMode && fs.existsSync(baselineFile);

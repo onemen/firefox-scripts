@@ -87,11 +87,13 @@ export function isDeprecationAnnotation(annotation) {
  *   level: string;
  *   workflow: string;
  *   job: string;
+ *   path?: string;
  * }[]} raw
  * @returns {{
  *   message: string;
  *   level: string;
  *   workflows: string[];
+ *   paths: string[];
  *   jobs: number;
  * }[]}
  */
@@ -177,7 +179,8 @@ export function findingId(message) {
  */
 export function isOursFinding(runPaths, repoRoot) {
   if (runPaths.length === 0) return false;
-  let names = [];
+  /** @type {Set<string>} */
+  let names = new Set();
   try {
     names = new Set(readdirSync(path.join(repoRoot, '.github', 'workflows')));
   } catch {
@@ -379,7 +382,9 @@ export function buildIssueBody({
 
   const ledger = {
     firstSeen: Object.fromEntries(
-      findingRows.concat(announcementRows).map(f => [f.id, f.firstSeen])
+      // Spread (not concat): announcement rows carry only `id`/`firstSeen`,
+      // which is all the ledger reads — same order, same entries.
+      [...findingRows, ...announcementRows].map(f => [f.id, f.firstSeen])
     ),
     handled: Object.fromEntries(
       findingRows
@@ -391,7 +396,11 @@ export function buildIssueBody({
   return lines.join('\n');
 }
 
-/** Minimal GitHub REST client over fetch; injectable in unit tests. */
+/**
+ * Minimal GitHub REST client over fetch; injectable in unit tests.
+ *
+ * @param {{token?: string}} [opts]
+ */
 export function makeFetchJson({token} = {}) {
   return async function fetchJson(path, init = {}) {
     const response = await fetch(`${API_ROOT}${path}`, {

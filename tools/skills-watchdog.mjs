@@ -279,11 +279,14 @@ export function ageInDays(dateIso, now) {
  * actionable (tag age ≥ cooldownDays, or age unknown — report honestly rather
  * than stay silent); `infos` are in-cooldown tags, logged but never issued.
  *
+ * `behindBy` lives on the shared row shape but is set only on drift rows
+ * (collectDrift) — both row kinds render jointly below.
+ *
  * @param {Awaited<ReturnType<typeof loadInventory>>} inventory
  * @param {(pathname: string) => Promise<any>} fetchJson
  * @param {{now?: Date; cooldownDays?: number}} [opts]
  * @returns {Promise<{
- *   findings: ({
+ *   findings: {
  *     skill: string;
  *     repo: string;
  *     ref: string;
@@ -293,15 +296,16 @@ export function ageInDays(dateIso, now) {
  *     fromTag?: string;
  *     toTag?: string;
  *     ageDays?: number | null;
- *   })[];
- *   infos: ({
+ *     behindBy?: number;
+ *   }[];
+ *   infos: {
  *     skill: string;
  *     repo: string;
  *     ref: string;
  *     dir: string;
  *     toTag: string;
  *     ageDays: number;
- *   })[];
+ *   }[];
  * }>}
  */
 export async function collectNewerTags(
@@ -523,7 +527,7 @@ export function issueBody(findings, runUrl = 'local') {
  *
  * @param {string} token
  * @param {string} pathname
- * @param {{method?: string, body?: any}} [opts]
+ * @param {{method?: string; body?: any}} [opts]
  */
 export async function ghApi(token, pathname, {method = 'GET', body} = {}) {
   const res = await fetch(`https://api.github.com${pathname}`, {

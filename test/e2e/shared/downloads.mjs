@@ -560,7 +560,7 @@ async function downloadAttempt(url, dest, budgetEnd, resumeFrom) {
         // backpressured (disk full, closed fd) the drain event never fires.
         // Race the two so the promise always settles; the error path rethrows
         // through the same catch that flushes and resumes.
-        await (/** @type {Promise<void>} */ (
+        await /** @type {Promise<void>} */ (
           new Promise((resolve, reject) => {
             const onDrain = () => {
               stream.off('error', onError);
@@ -573,7 +573,7 @@ async function downloadAttempt(url, dest, budgetEnd, resumeFrom) {
             stream.once('drain', onDrain);
             stream.once('error', onError);
           })
-        ));
+        );
       }
       // Progress heartbeat — CI logs show the transfer is alive.
       if (written - lastLogBytes >= 10 * 1048576) {
@@ -585,9 +585,9 @@ async function downloadAttempt(url, dest, budgetEnd, resumeFrom) {
         lastLogBytes = written;
       }
     }
-    await (/** @type {Promise<void>} */ (
+    await /** @type {Promise<void>} */ (
       new Promise((resolve, reject) => stream.end(err => (err ? reject(err) : resolve())))
-    ));
+    );
   } catch (err) {
     reader.cancel().catch(() => {});
     // Flush whatever reached the WriteStream before closing, so the partial
@@ -681,7 +681,7 @@ export async function downloadTo(url, dest) {
  * watchdog validated last. Exported for the unit tests.
  *
  * @param {string} browser
- * @param {{filePrefix?: string, version?: string}} [opts]
+ * @param {{filePrefix?: string; version?: string}} [opts]
  */
 export function findCachedInstaller(browser, {filePrefix = `${browser}-setup`, version} = {}) {
   const dir = downloadDir();
@@ -770,6 +770,9 @@ function installFromCacheIfAllowed(browser, args, {filePrefix} = {}) {
  *
  * `platform` is injectable so unit tests can exercise the Windows-only
  * signature from any OS runner; production callers get `process.platform`.
+ *
+ * @param {any} err rejection/exit surrogate (message/stderr/code inspected)
+ * @param {{platform?: string}} [opts]
  */
 export function isFileLockError(err, {platform = process.platform} = {}) {
   if (platform !== 'win32') return false;
@@ -853,7 +856,7 @@ export function runInstallerWithRetry(
  * @param {string} [label] browser name for the failure message
  * @param {object} [opts] test seams
  * @param {Function} [opts.spawn] spawnSync replacement (unit tests)
- * @param {Function} [opts.sleep] sleep replacement (unit tests)
+ * @param {(ms: number) => any} [opts.sleep] sleep replacement (unit tests)
  * @returns {{error?: Error; status: number | null}} the last spawn result
  */
 export function runNsisInstallerWithRetry(exe, args, label = 'installer', {spawn, sleep} = {}) {
