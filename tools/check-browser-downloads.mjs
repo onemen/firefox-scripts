@@ -74,13 +74,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {
-  ciDownloadsAssetName,
-  fetchJsonWithRetry,
-  resolveBrowserVersion,
-} from '../test/e2e/shared/browserResolver.mjs';
+import {fetchJsonWithRetry, resolveBrowserVersion} from '../test/e2e/shared/browserResolver.mjs';
 import {downloadTo, resolveDownloadUrl} from '../test/e2e/shared/downloads.mjs';
-import {seedBrowserStore} from './ci/browserStore.mjs';
 import {
   BROWSERS,
   FORK_BROWSERS,
@@ -407,14 +402,10 @@ export async function sha256File(file) {
 
 /**
  * One-time full download + hash for a release, proving the whole file transfers
- * (not just the first KB) and recording a known-good SHA-256. The bytes are
- * then seeded into the durable browser-installer store (#465, keep-1 per
- * browser) before the temp file is removed — previously they were thrown away
- * here, and the store's whole point is that a verified download should not be a
- * cost but an asset. Seeding is best-effort (browserStore.mjs never throws);
- * the file is always cleaned up.
+ * (not just the first KB) and recording a known-good SHA-256. The temp file is
+ * removed afterwards — only the hash persists in the baseline.
  */
-async function verifyFullDownload(url, browser, version) {
+async function verifyFullDownload(url, browser) {
   const tmp = path.join(os.tmpdir(), `watchdog-${browser}-${process.pid}.exe`);
   const startedAt = Date.now();
   try {
@@ -423,12 +414,6 @@ async function verifyFullDownload(url, browser, version) {
     // duration; hashing (1-2s for a 158 MB installer) is verification.
     const downloadMs = Date.now() - startedAt;
     const sha256 = await sha256File(tmp);
-    await seedBrowserStore({
-      browser,
-      file: tmp,
-      installerName: ciDownloadsAssetName(browser, version),
-      sha256,
-    });
     return {ok: true, size: fs.statSync(tmp).size, sha256, downloadMs};
   } catch (err) {
     return {ok: false, reason: `full download failed: ${err.message}`};
@@ -939,7 +924,7 @@ export async function main() {
         `  ${change === 'first-run' ? 'first run' : `new version: ${prev.version} → ${version}`}` +
           ' — verifying full download + SHA-256'
       );
-      const verified = await verifyFullDownload(url, browser, version);
+      const verified = await verifyFullDownload(url, browser);
       if (!verified.ok) {
         console.log(`  ✗ ${verified.reason}`);
         // Mark the failure so the meta issue does not render this browser as
@@ -990,7 +975,7 @@ export async function main() {
       console.log(
         `  nightly replaced its binary within the same ${version} window — re-verifying full download + SHA-256`
       );
-      const verified = await verifyFullDownload(url, browser, version);
+      const verified = await verifyFullDownload(url, browser);
       if (!verified.ok) {
         console.log(`  ✗ ${verified.reason}`);
         results[browser] = {status: 'download-failed'};

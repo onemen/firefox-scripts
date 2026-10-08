@@ -164,11 +164,9 @@ jobs:
 
     # Job-level scoping (the E2E workflow's precedent): dispatching the browser
     # E2E when a new release is recorded needs actions: write; the issue
-    # surface needs issues: write; seeding the durable ci-browser-cache store
-    # (#465, tools/ci/browserStore.mjs — release create/upload/asset delete)
-    # needs contents: write. The PR job below needs none of these.
+    # surface needs issues: write. The PR job below needs neither.
     permissions:
-      contents: write
+      contents: read
       issues: write
       actions: write
 

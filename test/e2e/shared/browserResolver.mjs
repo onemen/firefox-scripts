@@ -447,16 +447,6 @@ function fetchTextWithRetry(url) {
 export const CI_DOWNLOADS_TAG = 'ci-downloads';
 
 /**
- * The durable installer store (#465): a permanent release holding the newest
- * SHA-256-verified installer per browser, seeded by the url-watchdog's full
- * download (tools/ci/browserStore.mjs). The fallback UNDER the evictable
- * Actions caches — release assets are neither counted against the 10 GB cache
- * cap nor LRU-evicted (#462). Never touched by the ci-downloads cleanup or
- * av-watchdog (it only scans `latest` + `installer-YYYY-MM-DD` tags).
- */
-export const BROWSER_STORE_TAG = 'ci-browser-cache';
-
-/**
  * Check the temporary `ci-downloads` release for an asset with the expected
  * name. A missing release is the normal steady state — 404 resolves to null
  * silently (no warning, no retry). The release is probed once per process and
@@ -477,17 +467,12 @@ export async function findCiDownloadsAsset(assetName) {
 /** Per-process memo: asset-name → download URL, or null when no release exists. */
 let ciDownloadsAssets; // Map | null
 
-/** Same memo for the durable ci-browser-cache store (#465). */
-let browserStoreAssets; // Map | null
-
 /**
- * Forget the memoized release probes — the releases can appear or disappear
- * mid-process (ci-downloads: `pnpm ci:download` / CI cleanup; the store: a
- * watchdog seed landing a first asset).
+ * Forget the memoized ci-downloads probe — the release can appear (created by
+ * `pnpm ci:download`) or disappear (`--clean`, CI cleanup) mid-process.
  */
 export function resetCiDownloadsProbe() {
   ciDownloadsAssets = undefined;
-  browserStoreAssets = undefined;
 }
 
 async function probeCiDownloads() {
@@ -502,43 +487,6 @@ async function probeCiDownloads() {
     // the cached-installer fallback still apply.
     return null;
   }
-}
-
-/**
- * Probe the durable store release (#465) — same shape as the ci-downloads
- * probe, but the release is PERMANENT, so a 404 here just means "the watchdog
- * has not seeded this repo's store yet" (also steady state, equally silent).
- * Asset names carry the `browser--` namespace and the win64 marker, so the
- * caller probes with storeAssetName(); a miss never blocks the mirrors-first
- * chain.
- */
-async function probeBrowserStore() {
-  try {
-    const release = await fetchJsonWithRetry(
-      `https://api.github.com/repos/${repoSlug()}/releases/tags/${BROWSER_STORE_TAG}`,
-      {attempts: 1, timeoutMs: 15_000}
-    );
-    return new Map((release.assets || []).map(a => [a.name, a.browser_download_url]));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Look an installer up in the durable store (#465). `storeName` is the
- * namespaced asset name (storeAssetName(browser, installerName)); mirrors probe
- * FIRST — the store is the fallback tier under them.
- *
- * @param {string} storeName
- * @returns {Promise<string | null>} asset download URL, or null
- */
-export async function findBrowserStoreAsset(storeName) {
-  if (browserStoreAssets === undefined) {
-    browserStoreAssets = await probeBrowserStore();
-  }
-  const url = browserStoreAssets?.get(storeName) ?? null;
-  if (url) console.log(`  ${BROWSER_STORE_TAG}: found ${storeName}`);
-  return url;
 }
 
 /** owner/repo for the current checkout (CI env or git remote, cached). */
@@ -665,25 +613,6 @@ export function ciDownloadsAssetName(browser, version) {
   return chain.assetName(version);
 }
 
-/**
- * The asset filename a browser's installer carries inside the durable
- * `ci-browser-cache` store (#465): `<browser>--<installer minus
- * ext>-win64<ext>`. The `--` separator keeps sibling browsers (firefox-dev,
- * firefox-esr-<n>) out of each other's keep-1 roll namespace. Same name the
- * seeder uses — tools/ci/browserStore.mjs storeAssetName() — shared via a local
- * duplicate here to avoid tools/ importing from test/ side effects.
- *
- * @param {string} browser
- * @param {string} installerName resolver-normalized installer filename
- * @returns {string}
- */
-export function storeAssetNameFor(browser, installerName) {
-  const dot = installerName.lastIndexOf('.');
-  const base = dot === -1 ? installerName : installerName.slice(0, dot);
-  const ext = dot === -1 ? '' : installerName.slice(dot);
-  return `${browser}--${base}-win64${ext}`;
-}
-
 // The generic `firefox-esr` key (the cold-cache matrix fallback in
 // watchdog-report.mjs buildEsrMatrix) tracks the SERVING ESR only — the
 // concrete-major keys do the two-ESR watching and need baseline state.
@@ -777,19 +706,6 @@ export async function resolveInstallerUrl(browser, {version = null} = {}) {
   const ciUrl = await findCiDownloadsAsset(chain.assetName(v));
   if (ciUrl) {
     return {url: ciUrl, source: CI_DOWNLOADS_TAG, sha256Url: null, version: v};
-  }
-
-  // ④ the durable store (#465) — the watchdog-seeded, SHA-256-verified copy
-  // of exactly this installer. Probed after ci-downloads because that escape
-  // is maintainer-curated for the exact run at hand; the store serves the
-  // newest seeded release, which is by construction the one the watchdog
-  // last verified.
-  const storeUrl = await findBrowserStoreAsset(storeAssetNameFor(browser, chain.assetName(v)));
-  if (storeUrl) {
-    // The store's ledger (release body) records the SHA-256 the watchdog
-    // computed over these exact bytes; there is no vendor .sha256sum URL to
-    // hand back, the provenance is the seeding itself.
-    return {url: storeUrl, source: BROWSER_STORE_TAG, sha256Url: null, version: v};
   }
 
   throw new Error(
