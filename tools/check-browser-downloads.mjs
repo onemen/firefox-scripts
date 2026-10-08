@@ -7,7 +7,7 @@
  * Runs in three modes (two driven by .github/workflows/url-watchdog.yml, one by
  * the Pages publish pre-flight):
  *
- * - Weekly (schedule/workflow_dispatch). For each browser CI installs it:
+ * - Nightly (schedule/workflow_dispatch). For each browser CI installs it:
  *
  *   1. VERSION — reads the current release version from the vendor's API (Firefox
  *        product-details, LibreWolf Codeberg packages, Floorp / Zen / Waterfox

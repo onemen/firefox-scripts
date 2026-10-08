@@ -227,7 +227,7 @@ const runUrl =
 
 // Fail-soft by design: this job re-scans bytes that are already published, and
 // a listing outage (GitHub API hiccup, CDN flake) must not turn a scheduled run
-// into a red build — the next weekly run picks it up. A *verdict* is a finding;
+// into a red build — the next weekly run picks it up (the AV watchdog is weekly). A *verdict* is a finding;
 // an unreachable listing is not.
 let listing = [];
 let releaseFiles = [];

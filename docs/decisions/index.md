@@ -161,5 +161,5 @@ Micro-decisions deliberately left out of the log so nobody re-adds them:
   of [0012]'s own pref model, amended inline on that record — no new primitive, so no new record.
   (The once-proposed ADR 0037 number was later taken by the Snap cache-seed record; free-number
   claims live in the checker now, not in prose.)
-- URL watchdog internals (weekly + PR modes, per-release SHA-256 ledger in issues, baseline in the
+- URL watchdog internals (nightly + PR modes, per-release SHA-256 ledger in issues, baseline in the
   Actions cache) — monitoring tooling, see `.github/workflows/url-watchdog.yml` and ADR 0017.
