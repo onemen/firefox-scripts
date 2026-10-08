@@ -11,7 +11,7 @@
 # pnpm store between runs. The pnpm version is read from the packageManager
 # field in package.json — a ^12 range shared by CI and local dev, resolved by
 # pnpm against the supply-chain policy (minimumReleaseAge), so no lockfile
-# packageManager pin exists to age-gate (audit 2026-10-06, #433). The action
+# packageManager pin exists to age-gate. The action
 # ref itself is pinned to a full commit SHA.
 
 name: Setup repository

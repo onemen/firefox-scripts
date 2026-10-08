@@ -221,10 +221,10 @@ export function checkDecisionsDir(dir) {
   // declaration (2026-09-16 — what changed); anything else link-free, and any
   // `Amends:` value with no record link at all, is a declared-but-empty field.
   const dateDeclarationPattern = /^\d{4}-\d{2}-\d{2}\s+—\s+\S/;
-  // P1-5 (audit 2026-10-06, #429): the Status value must be one of the
-  // documented forms — a bare known state, a date declaration, or
-  // 'superseded by [NNNN](...)'. Free-prose statuses defeat the
-  // machine-readable bookkeeping this checker exists to enforce.
+  // The Status value must be one of the documented forms — a bare known
+  // state, a date declaration, or 'superseded by [NNNN](...)'. Free-prose
+  // statuses defeat the machine-readable bookkeeping this checker exists to
+  // enforce.
   const knownStatuses = new Set(['accepted', 'proposed', 'draft', 'deprecated']);
   for (const record of records) {
     const st = record.status;

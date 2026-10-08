@@ -1,14 +1,14 @@
 // test/e2e/shared/browserResolver.mjs — resilient browser version + installer
 // resolution for the E2E matrix and the publish pre-flight.
 //
-// One module, two chains per browser (plan: docs/browser-downloads-resilience.local.md):
+// One module, two chains per browser:
 //
 // - resolveBrowserVersion(browser) — "what is the current release?" Chain of
 //   vendor version APIs; first source that answers wins. LibreWolf prefers the
 //   Codeberg bsys6 releases API (sampled ~20× faster than the packages registry
 //   that stalled the Sep 2026 publish), waterfox falls back to its CDN releases
 //   index. Endpoint knowledge adapted from the maintainer's firefox-updater
-//   project (not an import — see the plan doc, §4).
+//   project (endpoint knowledge, not an import).
 //
 // - resolveInstallerUrl(browser, version?) — "where do I download it?" Chain of
 //   installer hosts; first that answers wins. Ends with the temporary
@@ -80,7 +80,7 @@ export function fetchJsonWithRetry(url, opts = {}) {
  * maintainer's firefox-updater daily). Returns the tag (`155.0-1`) plus the
  * asset list, so the installer chain can reuse the URLs without templating.
  * Endpoint order: ① bsys6 releases API, ② the Gitea packages registry — both on
- * Codeberg, so a full outage still defeats the chain (accepted, plan §8).
+ * Codeberg, so a full outage still defeats the chain (accepted).
  */
 const LIBREWOLF_VERSION_CHAIN = [
   {
@@ -702,7 +702,7 @@ export async function resolveInstallerUrl(browser, {version = null} = {}) {
   }
 
   // ③ ci-downloads (manual escape hatch) — no vendor .sha256sum sibling;
-  // accepted unverified (maintainer trust boundary, plan §8).
+  // accepted unverified (maintainer trust boundary).
   const ciUrl = await findCiDownloadsAsset(chain.assetName(v));
   if (ciUrl) {
     return {url: ciUrl, source: CI_DOWNLOADS_TAG, sha256Url: null, version: v};
