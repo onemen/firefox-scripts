@@ -53,7 +53,7 @@ int handle_api_shutdown(int client_fd, const char *query, const char *body, size
 // Current installer session token (defined in main.c).
 const char *installer_session_token(void);
 
-// One query parameter's value, byte-exact (audit 2026-10-06, P1-9 / #445).
+// One query parameter's value, byte-exact.
 // `query` is the raw query string without the leading '?': the name must
 // match in full and the value ends at '&' or the end of the string, so t=
 // need not be the last parameter and xt= is not t=. Returns 1 only when the
