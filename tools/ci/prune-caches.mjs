@@ -16,13 +16,19 @@
 // 2026-10-05: 10.7 GB against a 10 GB cap, with the portable-dir entries alone
 // at ~2.6 GB across four releases.
 //
-// The other chronic grower is pnpm/setup's `cache: true`: it keys the pnpm
+// The other chronic grower WAS pnpm/setup's `cache: true`: it keys the pnpm
 // store `<prefix>-<lockfile hashes>-<run_id>-1-<uuid>` — a UNIQUE key per run,
 // so GitHub's per-key version cap never fires there either and every job on
 // every OS mints a fresh ~65 MB entry with byte-identical content. Measure
-// 2026-10-08: 81 entries / 5.26 GB, all the same lockfile state. The run tail
-// peels off in stem(), collapsing them into one family per OS/arch that
-// keeps a single newest entry.
+// 2026-10-08: 81 entries / 5.26 GB, all the same lockfile state; 2026-10-09:
+// 65 entries / 4.18 GB, the bulk of the 10.79 GB that put the repo back over
+// the cap — the cap-sitting that let the LRU eviction take the URL watchdog's
+// state caches (#462). setup-repo now caches the store itself, on a stable
+// lockfile+platform key (pinned by test/unit/tools/pnpmStoreCache.test.mjs), so
+// the per-run shape is no longer minted; stem() still peels the legacy tail,
+// because entries carrying it live until they expire and a revert would mint
+// them again. The peel collapses them into one family per OS/arch that keeps a
+// single newest entry.
 //
 // The keep count is NOT uniform: the release-keyed browser families (see
 // keepFor()) keep ONE entry per layout, because a vendor bump mints a brand-new
@@ -136,11 +142,10 @@ export function stem(key) {
  *   superseded entry can never be restored again — GitHub's per-key version cap
  *   never fires on it either. One entry per layout is the whole useful set.
  * - `pnpm-cache-*`: the content is fully determined by the key's lockfile hashes,
- *   so entries sharing a peeled stem are byte-identical duplicates — pnpm/setup
- *   mints one per run (see the header comment) and only the newest is ever
- *   restored. Old lockfile states only served restore-keys warm-fill; a cold
- *   store after a bump costs one ~1 min re-download, not 5.26 GB of eviction
- *   pressure.
+ *   so entries sharing a peeled stem are byte-identical duplicates — only the
+ *   newest is ever restored. Old lockfile states only served restore-keys
+ *   warm-fill; a cold store after a bump costs one ~1 min re-download, not 5.26
+ *   GB of eviction pressure.
  */
 const KEEP_ONE =
   /^(firefox-dl|firefox-portable|browser-dl|esr-portable|snap-firefox|pnpm-cache)(?:-|$)/;
