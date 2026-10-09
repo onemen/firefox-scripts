@@ -11,8 +11,8 @@
 `e2e-gate` is the E2E branch-protection check, and its `needs:` list held every leg — required and
 advisory alike (ADR [0017](./0017-ci-validation-contract.md) made the fork legs advisory,
 [0021](./0021-tiered-publish-gating-shared-resolver.md) / [0025](./0025-waterfox-hard-gate.md) the
-tiering). `verify.sh` accepted a non-green *advisory* result with a `::warning::` and still exited 0,
-so those legs never blocked a merge. They did something worse: they decided **when** the required
+tiering). `verify.sh` accepted a non-green _advisory_ result with a `::warning::` and still exited
+0, so those legs never blocked a merge. They did something worse: they decided **when** the required
 check went green, because a job cannot report before every job in its `needs:` list is terminal.
 
 Measured on run `37555489120` (2026-10-07): slowest required leg `portable-firefox · windows`
