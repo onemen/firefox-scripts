@@ -203,6 +203,12 @@ runs:
         # like a URL was, so the key shape and the pruner are unchanged.
         IDENTITY=$(node test/e2e/shared/downloads.mjs "$BROWSER" --cache-identity)
         HASH=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$IDENTITY")
+        # Name the release the key belongs to. Without this a log shows a hash
+        # and nothing else, so a restored entry cannot be told from a cold one,
+        # nor the key from a stale one — the question that cost a session when
+        # the three `latest` channels keyed on their constant URLs.
+        echo "cache identity: $IDENTITY"
+        echo "cache hash: $HASH"
         # One release, two payloads: the installer and the tree extracted from
         # it share the identity hash and differ only in type/layout.
         echo "installer-key=$NAME-dl-$OS-$HASH-plain" >> "$GITHUB_OUTPUT"
