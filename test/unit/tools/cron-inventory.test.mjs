@@ -34,14 +34,14 @@ function hasScheduleTrigger(file) {
 
 /** The exact schedule inventory the repo is allowed to have. */
 const EXPECTED = {
-  'url-watchdog.yml': ['0 22 * * *'], // the repo's ONLY cron — the nightly revalidation driver
+  'url-watchdog.yml': ['0 22 * * *'], // the repo's only nightly cron — the nightly revalidation driver
   'core-smoke-nightly.yml': [], // dispatched nightly by the watchdog; no cron of its own
   'e2e.yml': [], // no schedule, no push:[main] — the nightly is main's only E2E run
   'skills-watchdog.yml': ['0 14 * * 1'],
   'runner-watchdog.yml': ['0 20 * * 1'],
   'av-watchdog.yml': ['0 5 * * 1'],
   // Dispatch-only: the scheduled prune moved into the url-watchdog's
-  // nightly tick (the repo's only cron) — a weekly window would let the repo
+  // nightly tick (the repo's only nightly cron) — a weekly window would let the repo
   // sit at the 10 GB cache cap for days.
   'cache-cleanup.yml': [],
 };

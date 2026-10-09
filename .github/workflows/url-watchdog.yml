@@ -37,7 +37,7 @@ on:
   # merge queue too (a required check must report on merge_group).
   merge_group:
   schedule:
-    # 22:00 UTC daily — this is the repo's only cron now. It drives the
+    # 22:00 UTC daily — this is the repo's only nightly cron now. It drives the
     # nightly revalidation: the `Dispatch nightly revalidation` step below
     # dispatches a full e2e.yml run plus core-smoke-nightly.yml after the
     # baseline save. GitHub's cron fires late (measured +2h56…+7h02 over six
@@ -146,8 +146,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           VALIDATED_DIR: .watchdog-validated
 
-      # Nightly cache prune (replaces the former weekly cache-cleanup cron,
-      # #463/#464): the nightly tick is the repo's only cron, the check job
+      # Nightly cache prune (replaces the former weekly cache-cleanup cron):
+      # the nightly tick is the repo's only nightly cron, the check job
       # already carries actions: write, and a daily cadence matters because a
       # fresh pnpm/browser save-mint lands every night — a weekly window would
       # let the repo sit at the 10 GB cap for days, which invites
