@@ -148,17 +148,78 @@ export function esrLedgerNames(esrState) {
 }
 
 /**
+ * The cache name of one watched ESR major (ADR 0045): the serving line is
+ * `esr`, the line it replaced is `esr-prev`, and any older watched line carries
+ * its own major (`esr-prev-<major>`) so a third major can never collide with
+ * either.
+ *
+ * The order lives here because this module owns the ESR window; a consumer that
+ * has no window to hand (a local run, a leg outside the matrix) falls back to
+ * `esr-<major>` in downloads.mjs's cacheName — unique and stable, just not the
+ * canonical name.
+ *
+ * @param {string[] | null | undefined} majors the watched majors, lowest first
+ * @param {string} major
+ * @returns {string}
+ */
+export function esrCacheName(majors, major) {
+  const list = Array.isArray(majors) ? majors : [];
+  const at = list.indexOf(String(major));
+  // Not in the window (dropped, or no window at all): the major names itself,
+  // the same fallback downloads.mjs's cacheName() uses. Unique and stable —
+  // just not the canonical name.
+  if (at === -1) return `esr-${major}`;
+  const rank = list.length - 1 - at;
+  if (rank === 0) return 'esr';
+  if (rank === 1) return 'esr-prev';
+  return `esr-prev-${major}`;
+}
+
+/**
  * The dynamic matrix JSON for the `esr-portable` E2E job: one leg per watched
- * ESR major. Empty state (cold cache) → the generic serving-ESR key
- * (`firefox-esr`), which resolves its version at run time from Mozilla's keys —
- * degradation, never a hardcoded version.
+ * ESR major.
+ *
+ * Every element must be the browser KEY, a string: the dimension is
+ * `matrix.browser`, so an object element makes `matrix.browser` a mapping and
+ * the leg cannot even dispatch ("A mapping was not expected", 2026-10-09). The
+ * cache name its keys use (ADR 0045) therefore travels BESIDE the matrix, in
+ * {@link buildEsrCacheNames}, keyed by these same browser keys.
+ *
+ * Empty state (cold cache) → the generic serving-ESR key (`firefox-esr`), which
+ * resolves its version at run time from Mozilla's keys: degradation, never a
+ * hardcoded version.
  *
  * @param {{majors: string[]} | null | undefined} esrState
- * @returns {string} e.g. '["firefox-esr-140", "firefox-esr-153"]'
+ * @returns {string} e.g. '["firefox-esr-140","firefox-esr-153"]'
  */
 export function buildEsrMatrix(esrState) {
   const names = esrLedgerNames(esrState);
   return JSON.stringify(names.length > 0 ? names : ['firefox-esr']);
+}
+
+/**
+ * The cache name (ADR 0045) of every leg {@link buildEsrMatrix} emits, keyed by
+ * the browser key the matrix carries — the leg reads its own entry
+ * (`fromJSON(needs.esr-matrix.outputs.cacheNames)[matrix.browser]`).
+ *
+ * Resolved HERE, in the one place the watched-major order is known, so the leg
+ * needs neither a network call nor a second source of truth. The generic
+ * cold-state leg (`firefox-esr`) is the `esr` line by definition.
+ *
+ * @param {{majors: string[]} | null | undefined} esrState
+ * @returns {string} e.g.
+ *   '{"firefox-esr-140":"esr-prev","firefox-esr-153":"esr"}'
+ */
+export function buildEsrCacheNames(esrState) {
+  const majors = Array.isArray(esrState?.majors) ? esrState.majors : [];
+  const legs = esrLedgerNames(esrState);
+  const named = (legs.length > 0 ? legs : ['firefox-esr']).map(browser => [
+    browser,
+    browser === 'firefox-esr' ? 'esr' : (
+      esrCacheName(majors, browser.slice(ESR_BROWSER_PREFIX.length))
+    ),
+  ]);
+  return JSON.stringify(Object.fromEntries(named));
 }
 
 /**
@@ -453,33 +514,50 @@ export function escapeTableCell(value) {
 }
 
 /**
- * Cache-key prefixes per (non-fork) browser ledger name, used to attribute
- * opaque URL-hash cache keys to browsers. The Mozilla namespace is SHARED:
- * firefox, firefox-dev, nightly and waterfox all cache under `firefox-dl-`
- * (different URLs → different hashes, indistinguishable offline). Attribution
- * is therefore at NAMESPACE level and duplicated across the consumers (each
- * sees the whole namespace's keys) — the inventory proves presence/age; the
- * VERSION still comes from the baseline entry (what the last verified download
- * cached). `firefox` also matches the portable job's namespace; the advisory
- * ESR legs use `esr-portable-`.
+ * The cache name for a browser ledger row (ADR 0045): every registry browser IS
+ * its own name, and only ESR needs the watched window to resolve it (`esr` /
+ * `esr-prev`). Used to attribute cache entries to browsers.
+ *
+ * @param {string} browser
+ * @param {{majors: string[]} | null | undefined} [esrState]
+ * @returns {string}
  */
-export function cacheKeyPrefixesFor(browser) {
-  if (FORK_BROWSERS.includes(browser)) return []; // sticky namespace, parsed separately
-  if (browser === 'firefox') return ['firefox-dl-', 'firefox-portable-'];
-  if (browser.startsWith('firefox-esr')) return ['esr-portable-'];
-  return ['firefox-dl-']; // firefox-dev, nightly, waterfox
+function cacheNameForLedger(browser, esrState) {
+  if (browser === 'firefox-esr') return 'esr';
+  if (browser.startsWith(ESR_BROWSER_PREFIX)) {
+    return esrCacheName(esrState?.majors, browser.slice(ESR_BROWSER_PREFIX.length));
+  }
+  return browser;
 }
 
 /**
- * One sticky fork cache key: `browser-dl-<OS>-<browser>[-portable]-v<version>`
- * (ADR 0034). The extracted-dir twin (`…-portable-dir-v…`) does NOT match — the
- * `dir` segment cannot be absorbed by `[a-z]+`, so dir entries never double-
- * count the same release. Hard-gate URL-hash keys (`<prefix>-<OS>-<hex>`) can't
- * match either: hex hashes contain no dash before `-v` and never start with a
- * letter followed by a `-v` boundary. (Old dead fork keys from the URL-hash
- * regime, `browser-dl-<OS>-<hex>`, are hex — also no match.)
+ * Cache-key prefixes per browser ledger name (ADR 0045), used to attribute
+ * cache entries. Each key names the browser and the payload it holds
+ * (`<name>-dl-<os>-…`, `<name>-portable-<os>-…`), so attribution is exact — the
+ * old scheme shared one `firefox-dl-<os>` namespace between firefox,
+ * firefox-dev, nightly and waterfox (and one `esr-portable-` between the ESR
+ * majors), which is why the column had to say "namespace shared" and could not
+ * claim a per-browser hit. `firefox` still covers the snap payload
+ * (`firefox-dl-snap-…`): it is Firefox, cached by revision.
+ *
+ * @param {string} browser
+ * @param {{majors: string[]} | null | undefined} [esrState]
+ * @returns {string[]}
  */
-const FORK_STICKY_RE = /^browser-dl-[^-]+-([a-z]+)(?:-portable)?-v(\S+)$/;
+export function cacheKeyPrefixesFor(browser, esrState) {
+  const name = cacheNameForLedger(browser, esrState);
+  return [`${name}-dl-`, `${name}-portable-`];
+}
+
+/**
+ * A sticky fork key's version: `<name>-dl-<os>-v<version>-plain` (the
+ * installer) or `<name>-portable-<os>-v<version>-dir` (its extracted dir). Only
+ * the installer regex feeds the version cell — one release, one answer.
+ */
+// Built from this module's own FORK_BROWSERS constant (never external input), so
+// the alternation cannot drift from the set that defines what a fork leg is.
+// eslint-disable-next-line security/detect-non-literal-regexp
+const FORK_STICKY_RE = new RegExp(`^(${FORK_BROWSERS.join('|')})-dl-([^-]+)-v(\\S+)-plain$`);
 
 /**
  * Group the repo's Actions-cache entries (as returned by the caches API:
@@ -489,17 +567,12 @@ const FORK_STICKY_RE = /^browser-dl-[^-]+-([a-z]+)(?:-portable)?-v(\S+)$/;
  * consumer of a namespace sees that namespace's whole key list. Unknown keys
  * (pnpm, node-cache, the watchdog's own caches) land nowhere.
  */
-export function groupCacheKeysByBrowser(entries, browsers) {
+export function groupCacheKeysByBrowser(entries, browsers, esrState) {
   const groups = {};
   for (const name of browsers) groups[name] = [];
   for (const entry of entries) {
-    const sticky = FORK_STICKY_RE.exec(entry.key);
-    if (sticky && FORK_BROWSERS.includes(sticky[1])) {
-      groups[sticky[1]]?.push(entry);
-      continue;
-    }
     for (const name of browsers) {
-      if (cacheKeyPrefixesFor(name).some(prefix => entry.key.startsWith(prefix))) {
+      if (cacheKeyPrefixesFor(name, esrState).some(prefix => entry.key.startsWith(prefix))) {
         groups[name].push(entry);
       }
     }
@@ -514,13 +587,10 @@ export function groupCacheKeysByBrowser(entries, browsers) {
  *   the ground truth — it is named after the installed version that saved it),
  *   so the cell cannot drift from the cache the way a baseline-derived cell
  *   could.
- * - Non-fork browsers: the URL-hash keys are opaque (the hash is of the URL, not
- *   of the browser) and the Mozilla namespace is SHARED across
- *   firefox/firefox-dev/nightly/waterfox — a key in it cannot be attributed to
- *   one browser. The cell reports namespace-level presence + age and says so:
- *   `cached (namespace shared) · <age>` instead of claiming a per-browser
- *   `cached: <version>` the keys cannot prove (the baseline version remains
- *   visible in the 'Last verified' column).
+ * - Non-fork browsers: the key names the browser but not the release (its hash
+ *   slot is a sha256 of the download URL), so the cell reports presence + age —
+ *   `cached (url-keyed) · <age>` — and leaves the version to the 'Last
+ *   verified' column rather than claiming one the key cannot prove.
  * - No matching keys: `⚠️ cache miss` when a baseline version exists (the cache
  *   was evicted — the next leg re-downloads), '—' when there is nothing to fall
  *   back to at all. Fork cells decode their own version, so a miss is
@@ -537,14 +607,14 @@ export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {})
   const age = newest > 0 && now > newest ? ` · ${formatAge(now - newest)}` : '';
   if (FORK_BROWSERS.includes(browser)) {
     const sticky = list.map(k => FORK_STICKY_RE.exec(k.key)).find(Boolean);
-    if (sticky) return `cached: ${sticky[2]}${age}`;
+    // Groups: 1 = browser, 2 = os, 3 = the version the key was saved under.
+    if (sticky) return `cached: ${sticky[3]}${age}`;
     return entry?.version ? `cached: ${entry.version}${age}` : 'cached (unknown version)';
   }
-  // Non-fork: URL-hash keys are opaque AND the namespace is shared across
-  // firefox/firefox-dev/nightly/waterfox (cacheKeyPrefixesFor), so no
-  // per-browser version can be proven from the inventory. Say so explicitly
-  // instead of claiming a per-browser hit (review:batch on the first draft).
-  return `cached (namespace shared)${age}`;
+  // Non-fork: the entry is this browser's (ADR 0045 names it), but its version
+  // is not in the key — the hash slot is a sha256 of the download URL. Report
+  // presence and age, never a version.
+  return `cached (url-keyed)${age}`;
 }
 
 /**
@@ -591,7 +661,10 @@ export function buildStatusTable({results, baseline, validated, browsers = BROWS
     // operator how old the fallback is).
     const fallback =
       version === '—' ? '—'
-      : cache ? cacheFallbackCell(browser, cache[browser] || [], entry, {now: now ?? Date.now()})
+      : cache ?
+        cacheFallbackCell(browser, cache[browser] || [], entry, {
+          now: now ?? Date.now(),
+        })
       : failed ? `cached: ${version} · ${lastCheck}`
       : `cached: ${version}`;
     // Download time of the last VERIFIED full download — the transfer-speed

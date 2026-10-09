@@ -1142,7 +1142,7 @@ export async function main() {
     if (token && repo && !prMode) {
       try {
         const caches = await listActionsCaches(token, repo);
-        cacheGroups = groupCacheKeysByBrowser(caches, [...BROWSERS, ...esrNames]);
+        cacheGroups = groupCacheKeysByBrowser(caches, [...BROWSERS, ...esrNames], esrState);
         console.log(`cache inventory: ${caches.length} entries fetched`);
       } catch (err) {
         console.log(

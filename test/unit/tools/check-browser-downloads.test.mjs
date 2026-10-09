@@ -505,10 +505,10 @@ test('buildStatusTable: cache-backed Fallback column (live inventory) — fork d
   // Live inventory: librewolf's sticky key names 156.0.1-1 (the baseline says
   // 156.0-1 — stale). The cell must show the KEY's version, not the baseline's.
   const cache = {
-    librewolf: [
-      {key: 'browser-dl-Windows-librewolf-v156.0.1-1', createdAt: '2026-09-23T08:00:35Z'},
+    librewolf: [{key: 'librewolf-dl-windows-v156.0.1-1-plain', createdAt: '2026-09-23T08:00:35Z'}],
+    firefox: [
+      {key: 'firefox-dl-windows-abc123def456789a-plain', createdAt: '2026-09-21T10:00:00Z'},
     ],
-    firefox: [{key: 'firefox-dl-Windows-abc123def456789a', createdAt: '2026-09-21T10:00:00Z'}],
   };
   const table = buildStatusTable({results, baseline, cache, now});
   assertTableIntegrity(table, 'cache-backed table');
@@ -523,9 +523,10 @@ test('buildStatusTable: cache-backed Fallback column (live inventory) — fork d
     'stale baseline version must not leak into the fallback cell'
   );
   const ff = table.split('\n').find(l => l.startsWith('| firefox '));
-  // Shared Mozilla namespace: no per-browser version is provable — the cell
-  // states presence + age and labels the ambiguity.
-  assert.match(ff, /\| cached \(namespace shared\) · [\dsmhd ]+ \|/);
+  // The entry is firefox's (ADR 0045 names the browser in the key), but its
+  // version is not in the key — the hash slot is a sha256 of the download URL.
+  // So the cell states presence + age and leaves the version to 'Last verified'.
+  assert.match(ff, /\| cached \(url-keyed\) · [\dsmhd ]+ \|/);
 });
 
 test('buildStatusTable: cache-backed Fallback shows ⚠️ cache miss when the entry is gone', () => {
@@ -548,45 +549,44 @@ test('buildStatusTable: cache-backed Fallback shows ⚠️ cache miss when the e
   assert.match(zen2, /\| cached: 1\.22\.2b \|/);
 });
 
-test('groupCacheKeysByBrowser: sticky keys attribute exactly; dir twins and hashes excluded', () => {
+test('groupCacheKeysByBrowser: every key names its browser, and only its browser', () => {
   const entries = [
-    {key: 'browser-dl-Windows-librewolf-v156.0.1-1', createdAt: '2026-09-23T08:00:35Z'},
-    {key: 'browser-dl-Windows-librewolf-portable-v156.0.1-1', createdAt: '2026-09-23T08:00:36Z'},
-    // The extracted-DIR twin must NOT count as an installer entry:
-    {
-      key: 'browser-dl-Windows-librewolf-portable-dir-v156.0.1-1',
-      createdAt: '2026-09-23T08:00:37Z',
-    },
-    // Dead URL-hash regime keys (fork, opaque):
+    {key: 'librewolf-dl-windows-v156.0.1-1-plain', createdAt: '2026-09-23T08:00:35Z'},
+    {key: 'librewolf-portable-windows-v156.0.1-1-dir', createdAt: '2026-09-23T08:00:36Z'},
+    // The ESR name is positional: with the window below, 153 is the `esr` line.
+    {key: 'esr-dl-windows-deadbeefdeadbeef-plain', createdAt: '2026-09-20T10:00:00Z'},
+    {key: 'firefox-dl-windows-abc123def456789a-plain', createdAt: '2026-09-21T10:00:00Z'},
+    {key: 'firefox-dl-snap-9036-plain', createdAt: '2026-09-21T11:00:00Z'},
+    // Keys the current scheme does not mint: legacy browser shapes and the
+    // unrelated toolchain caches. Nothing may be attributed from them — a
+    // legacy entry is restorable by the code that wrote it, not by today's.
     {key: 'browser-dl-Windows-68ef2d7c0700996e', createdAt: '2026-09-22T20:14:01Z'},
-    // Shared Mozilla namespace + unrelated keys:
-    {key: 'firefox-dl-Windows-abc123def456789a', createdAt: '2026-09-21T10:00:00Z'},
-    {key: 'esr-portable-Linux-deadbeefdeadbeef', createdAt: '2026-09-20T10:00:00Z'},
     {key: 'pnpm-bin-Windows-X64-11', createdAt: '2026-09-21T10:00:00Z'},
   ];
-  const browsers = [...FORK_BROWSERS, 'firefox', 'firefox-esr-140'];
-  const g = groupCacheKeysByBrowser(entries, browsers);
-  assert.equal(g.librewolf.length, 2); // installer + portable, NOT the dir twin, NOT the hash
-  assert.ok(g.librewolf.every(e => !e.key.includes('-dir-')));
-  assert.ok(g.librewolf.every(e => !/-[0-9a-f]{16}$/.test(e.key)));
+  const browsers = [...FORK_BROWSERS, 'firefox', 'firefox-esr-153'];
+  const g = groupCacheKeysByBrowser(entries, browsers, {majors: ['140', '153']});
+  assert.equal(g.librewolf.length, 2); // installer + extracted dir, both named
   assert.equal(g.floorp.length, 0);
   assert.equal(g.zen.length, 0);
-  assert.equal(g.firefox.length, 1);
-  assert.equal(g['firefox-esr-140'].length, 1);
+  // firefox owns its two payloads AND the snap revision (same browser, os=snap).
+  assert.equal(g.firefox.length, 2);
+  assert.ok(g.firefox.some(e => e.key === 'firefox-dl-snap-9036-plain'));
+  // firefox-dev reuses nothing: its keys say so.
+  assert.equal(g['firefox-esr-153'].length, 1);
 });
 
 test('cacheFallbackCell: version preference, ages, and the empty cases', () => {
   const now = Date.parse('2026-09-23T12:00:00Z');
-  const sticky = [{key: 'browser-dl-Windows-zen-v1.22.2b', createdAt: '2026-09-23T08:00:00Z'}];
+  const sticky = [{key: 'zen-dl-windows-v1.22.2b-plain', createdAt: '2026-09-23T08:00:00Z'}];
   assert.equal(
     cacheFallbackCell('zen', sticky, {version: '1.22.1'}, {now}),
     'cached: 1.22.2b · 4h 0m' // formatAge's exact band format; key version wins over the stale baseline
   );
-  // Non-fork: shared namespace — presence + age, no per-browser version claim.
-  const ns = [{key: 'firefox-dl-Linux-abc123def456789a', createdAt: '2026-09-22T12:00:00Z'}];
+  // Non-fork: the key names the browser but carries no version — presence + age.
+  const ns = [{key: 'firefox-dl-linux-abc123def456789a-plain', createdAt: '2026-09-22T12:00:00Z'}];
   assert.equal(
     cacheFallbackCell('firefox', ns, {version: '156.0'}, {now}),
-    'cached (namespace shared) · 1d 0h' // formatAge's exact band format
+    'cached (url-keyed) · 1d 0h' // formatAge's exact band format
   );
   // A baseline version with no keys at all is a MISS, not a silent '—'.
   assert.equal(cacheFallbackCell('zen', [], {version: '1.22.2b'}, {now}), '⚠️ cache miss');
@@ -596,7 +596,7 @@ test('cacheFallbackCell: version preference, ages, and the empty cases', () => {
   assert.match(
     cacheFallbackCell(
       'zen',
-      [{key: 'browser-dl-Windows-zen-v9.9', createdAt: 'garbage'}],
+      [{key: 'zen-dl-windows-v9.9-plain', createdAt: 'garbage'}],
       {version: '9.9'},
       {now}
     ),
@@ -604,13 +604,28 @@ test('cacheFallbackCell: version preference, ages, and the empty cases', () => {
   );
 });
 
-test('cacheKeyPrefixesFor: shared Mozilla namespace, ESR separate, forks sticky-only', () => {
+test('cacheKeyPrefixesFor: every browser keeps its own prefixes (ADR 0045)', () => {
   assert.deepEqual(cacheKeyPrefixesFor('firefox'), ['firefox-dl-', 'firefox-portable-']);
-  assert.deepEqual(cacheKeyPrefixesFor('firefox-dev'), ['firefox-dl-']);
-  assert.deepEqual(cacheKeyPrefixesFor('nightly'), ['firefox-dl-']);
-  assert.deepEqual(cacheKeyPrefixesFor('waterfox'), ['firefox-dl-']);
-  assert.deepEqual(cacheKeyPrefixesFor('firefox-esr-140'), ['esr-portable-']);
-  for (const fork of FORK_BROWSERS) assert.deepEqual(cacheKeyPrefixesFor(fork), []);
+  assert.deepEqual(cacheKeyPrefixesFor('firefox-dev'), [
+    'firefox-dev-dl-',
+    'firefox-dev-portable-',
+  ]);
+  assert.deepEqual(cacheKeyPrefixesFor('nightly'), ['nightly-dl-', 'nightly-portable-']);
+  assert.deepEqual(cacheKeyPrefixesFor('waterfox'), ['waterfox-dl-', 'waterfox-portable-']);
+  for (const fork of FORK_BROWSERS) {
+    assert.deepEqual(cacheKeyPrefixesFor(fork), [`${fork}-dl-`, `${fork}-portable-`]);
+  }
+  // ESR is the one name that needs the watched window: serving line `esr`, the
+  // line it replaced `esr-prev`.
+  const window = {majors: ['140', '153']};
+  assert.deepEqual(cacheKeyPrefixesFor('firefox-esr-153', window), ['esr-dl-', 'esr-portable-']);
+  assert.deepEqual(cacheKeyPrefixesFor('firefox-esr-140', window), [
+    'esr-prev-dl-',
+    'esr-prev-portable-',
+  ]);
+  // No window to hand (a local run): the name carries the major, which is
+  // unique but not canonical.
+  assert.deepEqual(cacheKeyPrefixesFor('firefox-esr-140'), ['esr-140-dl-', 'esr-140-portable-']);
 });
 
 test('buildStatusTable: hostile pipe in a vendor-served value cannot split a cell', () => {

@@ -21,9 +21,11 @@ const resolver = await import(resolverUrl);
 const {
   updateEsrState,
   esrLedgerNames,
+  esrCacheName,
   esrBrowserKey,
   esrMajorOf,
   buildEsrMatrix,
+  buildEsrCacheNames,
   planDispatches,
   collectDrift,
   BROWSERS,
@@ -48,7 +50,10 @@ test('updateEsrState: cold start with NEXT absent degrades to the serving major'
 });
 
 test('updateEsrState: serving-key flip (ESR 140→153 on Sep 29) changes nothing', () => {
-  const prev = {majors: ['140', '153'], versions: {140: '140.16.0esr', 153: '153.3.0esr'}};
+  const prev = {
+    majors: ['140', '153'],
+    versions: {140: '140.16.0esr', 153: '153.3.0esr'},
+  };
   // After the flip FIREFOX_ESR carries 153 and NEXT is absent: the window is
   // unchanged (153 was already watched; 140 stays via state).
   const {state, droppedMajors} = updateEsrState(prev, '153.3.0esr', null);
@@ -59,7 +64,10 @@ test('updateEsrState: serving-key flip (ESR 140→153 on Sep 29) changes nothing
 });
 
 test('updateEsrState: a NEW NEXT major slides the window and drops the oldest', () => {
-  const prev = {majors: ['140', '153'], versions: {140: '140.16.0esr', 153: '153.3.0esr'}};
+  const prev = {
+    majors: ['140', '153'],
+    versions: {140: '140.16.0esr', 153: '153.3.0esr'},
+  };
   const {state, droppedMajors} = updateEsrState(prev, '153.3.0esr', '164.0esr');
   assert.deepEqual(state.majors, ['153', '164']);
   assert.deepEqual(droppedMajors, ['140']);
@@ -70,14 +78,20 @@ test('updateEsrState: a NEW NEXT major slides the window and drops the oldest', 
 test('updateEsrState: a live key serving a dropped major does not resurrect it', () => {
   // ESR=140 while NEXT announces 164: 140 must be dropped AND its version
   // must not be re-recorded by the still-live serving key.
-  const prev = {majors: ['140', '153'], versions: {140: '140.16.0esr', 153: '153.3.0esr'}};
+  const prev = {
+    majors: ['140', '153'],
+    versions: {140: '140.16.0esr', 153: '153.3.0esr'},
+  };
   const {state} = updateEsrState(prev, '140.16.0esr', '164.0esr');
   assert.deepEqual(state.majors, ['153', '164']);
   assert.equal(state.versions['140'], undefined);
 });
 
 test('updateEsrState: point-release bumps refresh the version in place', () => {
-  const prev = {majors: ['140', '153'], versions: {140: '140.15.0esr', 153: '153.2.0esr'}};
+  const prev = {
+    majors: ['140', '153'],
+    versions: {140: '140.15.0esr', 153: '153.2.0esr'},
+  };
   const {state, droppedMajors} = updateEsrState(prev, '140.16.0esr', '153.3.0esr');
   assert.deepEqual(state.majors, ['140', '153']);
   assert.equal(state.versions['140'], '140.16.0esr');
@@ -86,7 +100,10 @@ test('updateEsrState: point-release bumps refresh the version in place', () => {
 });
 
 test('updateEsrState: null lookups keep the previous window intact', () => {
-  const prev = {majors: ['140', '153'], versions: {140: '140.16.0esr', 153: '153.3.0esr'}};
+  const prev = {
+    majors: ['140', '153'],
+    versions: {140: '140.16.0esr', 153: '153.3.0esr'},
+  };
   const {state, droppedMajors} = updateEsrState(prev, null, null);
   assert.deepEqual(state.majors, ['140', '153']);
   assert.equal(state.versions['140'], '140.16.0esr');
@@ -118,9 +135,53 @@ test('esrBrowserKey / esrMajorOf round-trip', () => {
 });
 
 test('buildEsrMatrix: concrete majors from state, generic fallback when cold', () => {
+  // Every element is the browser KEY, a string: the dimension is
+  // `matrix.browser`, so an object element makes the leg's browser a mapping
+  // and the job fails to dispatch (2026-10-09). The cache name travels beside
+  // the matrix instead — see buildEsrCacheNames below.
   assert.equal(buildEsrMatrix({majors: ['140', '153']}), '["firefox-esr-140","firefox-esr-153"]');
   assert.equal(buildEsrMatrix(null), '["firefox-esr"]');
   assert.equal(buildEsrMatrix({}), '["firefox-esr"]');
+});
+
+test('buildEsrCacheNames: one name per matrix leg, keyed by that leg', () => {
+  // ADR 0045: the serving line is `esr`, the line it replaced `esr-prev`,
+  // resolved here because this module owns the watched-major order.
+  assert.equal(
+    buildEsrCacheNames({majors: ['140', '153']}),
+    '{"firefox-esr-140":"esr-prev","firefox-esr-153":"esr"}'
+  );
+  assert.equal(buildEsrCacheNames(null), '{"firefox-esr":"esr"}');
+  assert.equal(buildEsrCacheNames({}), '{"firefox-esr":"esr"}');
+  assert.equal(
+    buildEsrCacheNames({majors: ['128', '140', '153']}),
+    '{"firefox-esr-128":"esr-prev-128","firefox-esr-140":"esr-prev","firefox-esr-153":"esr"}'
+  );
+});
+
+test('the ESR matrix and its cache-name map describe the same legs', () => {
+  // The leg is `matrix.browser`, so the map must be keyed by exactly the values
+  // the matrix carries — a mismatch (or an object element) is what left the
+  // esr-portable job unable to dispatch.
+  for (const state of [{majors: ['140', '153']}, {majors: ['128', '140', '153']}, null, {}]) {
+    const legs = JSON.parse(buildEsrMatrix(state));
+    const names = JSON.parse(buildEsrCacheNames(state));
+    for (const leg of legs) assert.equal(typeof leg, 'string');
+    assert.deepEqual(Object.keys(names).sort(), [...legs].sort());
+    for (const leg of legs) assert.ok(names[leg], `${leg} has no cache name`);
+  }
+});
+
+test('esrCacheName: serving line and its predecessor, unique beyond them', () => {
+  const majors = ['140', '153'];
+  assert.equal(esrCacheName(majors, '153'), 'esr');
+  assert.equal(esrCacheName(majors, '140'), 'esr-prev');
+  // A third watched line must not collide with `esr-prev`.
+  assert.equal(esrCacheName(['128', '140', '153'], '128'), 'esr-prev-128');
+  // Outside the window (dropped, or no window to hand) the major names itself —
+  // the same fallback downloads.mjs's cacheName() uses.
+  assert.equal(esrCacheName(majors, '128'), 'esr-128');
+  assert.equal(esrCacheName(null, '153'), 'esr-153');
 });
 
 // ── planDispatches: ESR + nightly rules ──────────────────────────────────────
@@ -208,8 +269,16 @@ test('ESR_BROWSER_PREFIX: dispatch filter prefix matches the ledger keys', () =>
 // ── Resolver: dynamic ESR chain expansion (pure parts) ───────────────────────
 
 test('parseEsrVersion: parses esr versions, rejects the rest', () => {
-  assert.deepEqual(resolver.parseEsrVersion('140.16.0esr'), {major: 140, minor: 16, patch: 0});
-  assert.deepEqual(resolver.parseEsrVersion('153.3.0esr'), {major: 153, minor: 3, patch: 0});
+  assert.deepEqual(resolver.parseEsrVersion('140.16.0esr'), {
+    major: 140,
+    minor: 16,
+    patch: 0,
+  });
+  assert.deepEqual(resolver.parseEsrVersion('153.3.0esr'), {
+    major: 153,
+    minor: 3,
+    patch: 0,
+  });
   assert.equal(resolver.parseEsrVersion('156.0'), null);
   assert.equal(resolver.parseEsrVersion('140.16.0'), null);
   assert.equal(resolver.parseEsrVersion(''), null);
@@ -219,9 +288,13 @@ test('version chains exist for the generic and concrete ESR keys', async () => {
   // resolveBrowserVersion throws a distinctive error for unknown browsers;
   // the ESR keys must NOT be among them (verified without network via the
   // pin short-circuit: a pinned resolution returns before any fetch).
-  const v = await resolver.resolveBrowserVersion('firefox-esr', {pin: '1.2.3esr'});
+  const v = await resolver.resolveBrowserVersion('firefox-esr', {
+    pin: '1.2.3esr',
+  });
   assert.deepEqual(v, {version: '1.2.3esr', source: 'pinned'});
-  const v2 = await resolver.resolveBrowserVersion('firefox-esr-140', {pin: '9.9.9esr'});
+  const v2 = await resolver.resolveBrowserVersion('firefox-esr-140', {
+    pin: '9.9.9esr',
+  });
   assert.deepEqual(v2, {version: '9.9.9esr', source: 'pinned'});
 });
 

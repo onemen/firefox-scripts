@@ -23,6 +23,7 @@ const downloadsUrl = pathToFileURL(
 const {
   DOWNLOADS,
   cacheFirstDecision,
+  cacheIdentity,
   downloadDir,
   downloadTo,
   downloadsEntry,
@@ -205,6 +206,69 @@ test('resolveDownloadUrl: waterfox resolves through the resolver chain (win, ADR
 
 test('resolveDownloadUrl: unknown browser throws', async () => {
   await assert.rejects(resolveDownloadUrl('not-a-browser', 'linux'), /has no automated install/);
+});
+
+// ── cacheIdentity: what the key's hash slot digests (ADR 0045) ─────────────
+
+const NIGHTLY_URL =
+  'https://download.mozilla.org/?product=firefox-nightly-latest&os=win64&lang=en-US';
+
+/*
+ * The three Mozilla channels publish ONE fixed URL per OS for every release
+ * they ever ship, so a URL-derived key was the same key forever — measured
+ * 2026-10-09, `firefox-dl-linux-1adb2936297da1fe-plain` and
+ * `nightly-dl-linux-9b186b6d11b08a6f-plain` were byte-identical across runs
+ * days apart. Their hash slot carries the release identity instead.
+ */
+test('cacheIdentity: a latest-alias channel keys on its release identity', () => {
+  assert.equal(
+    cacheIdentity('nightly', {url: NIGHTLY_URL, buildId: '20261009-1206'}),
+    'nightly-20261009-1206'
+  );
+  assert.equal(
+    cacheIdentity('firefox', {
+      url: 'https://download.mozilla.org/?product=firefox-latest&os=win64&lang=en-US',
+      version: '157.0.1',
+    }),
+    'firefox-157.0.1'
+  );
+  assert.equal(cacheIdentity('firefox-dev', {url: 'x', version: '158.0b5'}), 'firefox-dev-158.0b5');
+});
+
+test('cacheIdentity: a new build changes the identity, a same build does not', () => {
+  // Nightly's version (`160.0a1`) spans many daily builds, so only the build id
+  // can name one — this is the property the whole change exists for.
+  const at = buildId => cacheIdentity('nightly', {url: NIGHTLY_URL, buildId});
+  assert.equal(at('20261009-1206'), at('20261009-1206'));
+  assert.notEqual(at('20261009-1206'), at('20261010-1159'));
+  // A stable release moves once per version, which is exactly as often as its
+  // installer changes.
+  const stable = version => cacheIdentity('firefox', {url: 'x', version});
+  assert.equal(stable('157.0.1'), stable('157.0.1'));
+  assert.notEqual(stable('157.0.1'), stable('157.1.0'));
+});
+
+test('cacheIdentity: a URL that already names its release is left alone', () => {
+  // Not a fallback — there is nothing to add: waterfox's CDN path carries the
+  // version, ESR resolves to a release-tagged ftp.mozilla.org URL, and a fork's
+  // identity is the version it INSTALLED (ADR 0034), never a URL.
+  const waterfox =
+    'https://cdn.waterfox.com/waterfox/releases/6.7.5/WINNT_x86_64/Waterfox%20Setup%206.7.5.exe';
+  assert.equal(cacheIdentity('waterfox', {url: waterfox}), waterfox);
+  assert.equal(cacheIdentity('librewolf', {url: waterfox, version: '157.0.1-1'}), waterfox);
+  const esr =
+    'https://ftp.mozilla.org/pub/firefox/releases/153.4.0esr/win64/en-US/Firefox%20Setup%20153.4.0esr.exe';
+  assert.equal(cacheIdentity('firefox-esr-153', {url: esr}), esr);
+});
+
+test('cacheIdentity: a missing identity degrades to the URL, never to a failure', () => {
+  // The identity costs a HEAD (nightly) or a product-details fetch (release,
+  // Dev Edition). When that fails the leg must still install and still key a
+  // cache — the stale-but-correct one it had before — because these are
+  // required legs and a cache concern may not red them.
+  assert.equal(cacheIdentity('nightly', {url: NIGHTLY_URL}), NIGHTLY_URL);
+  assert.equal(cacheIdentity('firefox', {url: NIGHTLY_URL}), NIGHTLY_URL);
+  assert.equal(cacheIdentity('nightly', {url: NIGHTLY_URL, buildId: ''}), NIGHTLY_URL);
 });
 
 // ── downloadTo cache reuse ────────────────────────────────────────────────

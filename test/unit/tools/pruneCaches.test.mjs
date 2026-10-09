@@ -21,10 +21,93 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const pruneUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'ci', 'prune-caches.mjs')).href;
 
-const {stem, layout, groupOf, keepFor, planDeletes} = await import(pruneUrl);
+const {stem, layout, groupOf, keepFor, parseKey, planDeletes} = await import(pruneUrl);
 
 /** A cache entry as the API returns it. */
 const entry = (key, created_at, ref = 'refs/heads/main') => ({key, created_at, ref});
+
+// ── The current key scheme (ADR 0045) ───────────────────────────────────────
+//
+// `<name>-<type>-<os>-<hash>-<layout>`: one browser per name, so the release is
+// the only varying half of a key and a group is the key minus it.
+
+test('parseKey: the current scheme, and only it', () => {
+  assert.deepEqual(parseKey('firefox-dl-windows-1adb2936297da1fe-plain'), {
+    name: 'firefox',
+    type: 'dl',
+    os: 'windows',
+    hash: '1adb2936297da1fe',
+    layout: 'plain',
+  });
+  // A dashed name parses because the three fields after it come from closed sets.
+  assert.deepEqual(parseKey('esr-prev-portable-windows-8769a05370997233-dir'), {
+    name: 'esr-prev',
+    type: 'portable',
+    os: 'windows',
+    hash: '8769a05370997233',
+    layout: 'dir',
+  });
+  // A sticky fork leg keys on the version, and snap is its own os token.
+  assert.equal(parseKey('zen-dl-windows-v1.23.1b-plain')?.hash, 'v1.23.1b');
+  assert.equal(parseKey('firefox-dl-snap-9036-plain')?.os, 'snap');
+  // Legacy shapes and every other cache in the repo are NOT current-scheme keys:
+  // their grouping must not change just because the parser exists.
+  for (const other of [
+    'firefox-dl-Windows-ca6cc4d5e2db5f9a',
+    'firefox-portable-macOS-7d497ffee63f5925-x',
+    'browser-dl-Windows-zen-v1.23.1b',
+    'esr-portable-Windows-8769a05370997233',
+    'core-smoke-firefox-Linux-abc123def456789a',
+    'snap-firefox-9036',
+    'pnpm-cache-linux-x64',
+    'msys2-pkgs-upd:false-conf:69844c46-files:677ff28000e32b52',
+    'url-watchdog-baseline-2026-10-05',
+  ]) {
+    assert.equal(parseKey(other), null, other);
+  }
+});
+
+test('a current-scheme key groups on everything but its release', () => {
+  const group = k => groupOf(k);
+  // One group per browser payload, however many releases it has held...
+  assert.equal(group('firefox-dl-windows-1adb2936297da1fe-plain'), 'firefox-dl-windows-plain');
+  assert.equal(group('firefox-dl-windows-9b52a0224930ca58-plain'), 'firefox-dl-windows-plain');
+  // ...so a vendor bump retires its predecessor inside that group.
+  assert.equal(keepFor(group('firefox-dl-windows-1adb2936297da1fe-plain'), 3), 1);
+  // The installer and its extracted tree keep separate slots.
+  assert.notEqual(
+    group('firefox-dl-windows-1adb2936297da1fe-plain'),
+    group('firefox-portable-windows-1adb2936297da1fe-dir')
+  );
+  // And no browser shares a slot with another any more — the point of the scheme.
+  for (const other of ['firefox-dev', 'nightly', 'waterfox', 'esr']) {
+    assert.notEqual(
+      group(`${other}-dl-windows-1adb2936297da1fe-plain`),
+      group('firefox-dl-windows-1adb2936297da1fe-plain')
+    );
+  }
+});
+
+test('planDeletes: a superseded release of the current scheme goes, the newest stays', () => {
+  const caches = [
+    entry('firefox-dl-windows-1111111111111111-plain', '2026-10-06T01:00:00Z'),
+    entry('firefox-dl-windows-2222222222222222-plain', '2026-10-08T01:00:00Z'),
+    // Four browsers, four names: none of these competes for another's slot, so
+    // every one of them survives a prune that keeps a single release each.
+    entry('firefox-dev-dl-windows-3333333333333333-plain', '2026-10-06T01:00:00Z'),
+    entry('nightly-dl-windows-4444444444444444-plain', '2026-10-06T01:00:00Z'),
+    entry('waterfox-dl-windows-5555555555555555-plain', '2026-10-06T01:00:00Z'),
+    entry('esr-dl-windows-6666666666666666-plain', '2026-10-06T01:00:00Z'),
+    entry('esr-prev-dl-windows-7777777777777777-plain', '2026-10-06T01:00:00Z'),
+    // Non-payload families keep the operator's count.
+    entry('url-watchdog-baseline-2026-10-05', '2026-10-05T01:00:00Z'),
+  ];
+  assert.deepEqual(
+    planDeletes(caches, 3).map(c => c.key),
+    ['firefox-dl-windows-1111111111111111-plain'],
+    'only the superseded firefox release goes'
+  );
+});
 
 /** The families every observed key must collapse into. */
 const EXPECTED = [

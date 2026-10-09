@@ -4,6 +4,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-30
+- **Amended:** [0045](./0045-cache-key-names-the-browser.md) — the revision-pinned key is now
+  `firefox-dl-snap-<rev>-plain` (`os=snap`); the cross-revision `restore-keys` seed below is
+  unchanged
 - **Amends:** [0025](./0025-waterfox-hard-gate.md) — the E2E matrix's snap leg gets a cross-revision
   cache seed and a single install track (additive; recorded per the #291 investigation, 2026-09-30)
 
@@ -25,12 +28,12 @@ issue again.
    is the only install path; the `downloads.mjs firefox-snap` direct-store install step is removed
    from the leg. One code path = one set of invariants (FIREFOX_BINARY export, cache-hit parity —
    the exact class of bug #313 fixed).
-3. **Cross-revision cache seed.** The revision-pinned cache (`snap-firefox-<rev>`) keeps its
-   exact-revision fast path, but a cold cache may restore the most recent _older_ revision as a seed
-   via a `snap-firefox-` prefix restore key. An older revision still validates the snap GreD mapping
-   (#55's purpose — a structural property, not revision-specific) and the updater/installer flows;
-   version drift vs the store revision is tolerated because the leg is advisory and the harness
-   records the installed version.
+3. **Cross-revision cache seed.** The revision-pinned cache (`firefox-dl-snap-<rev>-plain` since ADR
+   0045 named it; `snap-firefox-<rev>` before) keeps its exact-revision fast path, but a cold cache
+   may restore the most recent _older_ revision as a seed via a `firefox-dl-snap-` prefix restore
+   key. An older revision still validates the snap GreD mapping (#55's purpose — a structural
+   property, not revision-specific) and the updater/installer flows; version drift vs the store
+   revision is tolerated because the leg is advisory and the harness records the installed version.
 4. **Failure = signal, not a skip.** With no store and no seed the leg still fails and the watchdog
    still files #291 (no silent green); the seed makes that combination rare because any prior
    successful download seeds it.

@@ -124,7 +124,6 @@ jobs:
         uses: ./.github/actions/setup-browser
         with:
           browser: ${{ matrix.browser }}
-          cache-key-prefix: core-smoke-${{ matrix.browser }}
 
       - name: Core smoke · ${{ matrix.label }}
         run: xvfb-run -a node test/e2e/core/core-smoke.mjs --label ${{ matrix.label }}

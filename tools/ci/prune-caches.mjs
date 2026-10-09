@@ -143,6 +143,74 @@ export function stem(key) {
   return s.replace(/-+$/, '');
 }
 
+// ── The current key scheme (ADR 0045) ─────────────────────────────────────
+//
+// `<name>-<type>-<os>-<hash>-<layout>`: one browser per name, so the release is
+// the only varying half and a group is the key minus it. One entry per group is
+// the whole useful set, and a vendor bump retires its predecessor — the parser
+// below is what makes that automatic for the new keys, exactly as the legacy
+// peel does for the old shapes.
+
+/** The os tokens a key carries: the lowercased runner OS, plus `snap`. */
+const KEY_OS = new Set(['windows', 'linux', 'macos', 'snap']);
+/** The payload kinds: the downloaded installer, or the tree extracted from it. */
+const KEY_TYPE = new Set(['dl', 'portable']);
+/**
+ * The layout of that payload: an installer (`plain`), or an extracted tree
+ * (`dir`).
+ */
+const KEY_LAYOUT = new Set(['plain', 'dir']);
+/**
+ * The release half: a URL hash (16 hex), a sticky `v<version>`, or a snap
+ * revision.
+ */
+const KEY_HASH_RE = /^(?:[0-9a-f]{16}|v[^-]+|\d+)$/;
+
+/**
+ * Split a cache key of the current scheme (ADR 0045), or null when the key is
+ * not one — a legacy shape, or a cache this repo does not name this way (pnpm,
+ * msys2, the watchdog's own records).
+ *
+ * Parsed right-to-left: `layout`, `os`, `type` come from closed sets, so the
+ * remainder is the name even when it contains dashes (`firefox-dev`,
+ * `esr-prev`).
+ *
+ * @param {string} key a GitHub Actions cache key
+ * @returns {{
+ *   name: string;
+ *   type: string;
+ *   os: string;
+ *   hash: string;
+ *   layout: string;
+ * } | null}
+ */
+export function parseKey(key) {
+  const parts = key.split('-');
+  if (parts.length < 5) return null;
+  const [layout, hash, os, type] = parts.slice(-4).reverse();
+  if (!KEY_LAYOUT.has(layout) || !KEY_OS.has(os) || !KEY_TYPE.has(type)) return null;
+  if (!KEY_HASH_RE.test(hash)) return null;
+  const name = parts.slice(0, -4).join('-');
+  return name ? {name, type, os, hash, layout} : null;
+}
+
+/**
+ * The release-independent half of a group id, or null when the id is not a
+ * group of the current scheme. Split out so keepFor() can price a group it did
+ * not build — including the ids planDeletes() received from a caller.
+ *
+ * @param {string} group a group id from {@link groupOf}
+ * @returns {{name: string; type: string; os: string; layout: string} | null}
+ */
+function parseGroup(group) {
+  const parts = group.split('-');
+  if (parts.length < 4) return null;
+  const [layout, os, type] = parts.slice(-3).reverse();
+  if (!KEY_LAYOUT.has(layout) || !KEY_OS.has(os) || !KEY_TYPE.has(type)) return null;
+  const name = parts.slice(0, -3).join('-');
+  return name ? {name, type, os, layout} : null;
+}
+
 /**
  * Families where superseded entries are worthless, so exactly one survives:
  *
@@ -185,14 +253,19 @@ export function layout(key) {
 }
 
 /**
- * The group a key's keep-slot is counted in: family + layout for the
- * release-keyed browser families (installer and extracted dir each keep their
- * own newest), the bare family for everything else.
+ * The group a key's keep-slot is counted in. For a current-scheme key
+ * (`<name>-<type>-<os>-<hash>-<layout>`) that is the key minus its release —
+ * one group per browser payload, which is what makes a vendor bump retire its
+ * predecessor. For a legacy key it stays the family + layout rule: the hashed
+ * and unhashed predecessors of the same payload must land together, and the
+ * installer must not compete with its own extracted dir.
  *
  * @param {string} key a GitHub Actions cache key
  * @returns {string} the group id
  */
 export function groupOf(key) {
+  const parsed = parseKey(key);
+  if (parsed) return `${parsed.name}-${parsed.type}-${parsed.os}-${parsed.layout}`;
   const family = stem(key);
   return KEEP_ONE.test(family) ? `${family} :: ${layout(key)}` : family;
 }
@@ -211,6 +284,9 @@ export function groupOf(key) {
  * @returns {number} how many entries of this group survive
  */
 export function keepFor(group, keep) {
+  // A current-scheme group is one browser payload: its entries differ only in
+  // the release, and only the newest can ever be restored.
+  if (parseGroup(group)) return 1;
   return KEEP_ONE.test(group.split(' :: ')[0]) ? 1 : keep;
 }
 
@@ -270,11 +346,11 @@ async function main() {
   const inScope =
     PREFIXES.length === 0 ? caches : caches.filter(c => PREFIXES.some(re => re.test(c.key)));
 
-  const byStem = new Map();
+  const byGroup = new Map();
   for (const c of inScope) {
-    const s = stem(c.key);
-    if (!byStem.has(s)) byStem.set(s, []);
-    byStem.get(s).push(c);
+    const g = groupOf(c.key);
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(c);
   }
 
   const toDelete = planDeletes(inScope, KEEP);
@@ -283,18 +359,19 @@ async function main() {
   console.log(
     `repo ${repo}: ${caches.length} caches, ${inScope.length} in scope ` +
       `(${(totalSize / 1e6).toFixed(1)} MB), keeping ${KEEP} per family ` +
-      `(1 per keep-one family/layout: browser releases + pnpm store), ` +
-      `${byStem.size} families`
+      `(1 per browser payload + keep-one family/layout: releases + pnpm store), ` +
+      `${byGroup.size} groups`
   );
-  for (const [s, group] of [...byStem.entries()].sort(
+  for (const [s, group] of [...byGroup.entries()].sort(
     (a, b) =>
       b[1].reduce((n, c) => n + c.size_in_bytes, 0) - a[1].reduce((n, c) => n + c.size_in_bytes, 0)
   )) {
     const size = group.reduce((n, c) => n + c.size_in_bytes, 0);
     console.log(
-      `  family ${s}  ${String(group.length).padStart(3)} entr${group.length === 1 ? 'y' : 'ies'}  ${(
-        size / 1e6
-      ).toFixed(1)} MB`
+      `  group ${s}  keeps ${String(keepFor(s, KEEP)).padStart(2)}  ` +
+        `${String(group.length).padStart(3)} entr${group.length === 1 ? 'y' : 'ies'}  ${(
+          size / 1e6
+        ).toFixed(1)} MB`
     );
   }
   for (const c of toDelete) {
