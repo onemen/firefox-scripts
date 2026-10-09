@@ -63,8 +63,11 @@ browsers share a name.
 
 The rename invalidates every existing key. The first run after it is cold on every leg (one
 re-download per payload per OS), and the old entries are restorable by nothing but the code that
-wrote them — they age out under GitHub's 7-day idle rule, and the prune's legacy peel still retires
-them in the meantime, so the transition needs no manual deletion.
+wrote them. They need no manual deletion, but the prune is not what clears them: an old key does not
+parse as a current-scheme key and does not share a group with its successor, so the peel keeps
+grouping it by family (`firefox-dl-Linux :: plain`, not `firefox-dl-linux-plain`) and holds that
+family to one entry. The superseded old copies go; the last member of each old family is kept by
+keep-one and ages out under GitHub's 7-day idle rule.
 
 Revisit if a browser ever needs two independent caches of one payload kind on one OS: that wants a
 sixth field, never a second namespace.
