@@ -39,7 +39,7 @@ function stubFetch(routes) {
   const original = globalThis.fetch;
   globalThis.fetch = async (url, opts = {}) => {
     const u = String(url);
-    calls.push({url: u, method: opts.method || 'GET'});
+    calls.push({url: u, method: opts.method || 'GET', headers: opts.headers || {}});
     for (const [pattern, handler] of routes) {
       if (typeof pattern === 'string' ? u.includes(pattern) : pattern.test(u)) {
         return handler(u);
@@ -99,6 +99,87 @@ test('fetchJsonWithRetry: throws after the last attempt', async () => {
   } finally {
     restore();
   }
+});
+
+/**
+ * Run fn with GITHUB_TOKEN/GH_TOKEN set as given (`undefined` = unset),
+ * restoring after.
+ */
+async function withTokenEnv(vars, fn) {
+  const saved = {GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GH_TOKEN};
+  try {
+    for (const [k, v] of Object.entries(vars)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+// api.github.com's anonymous budget is 60 requests/hour PER IP, and a
+// GitHub-hosted runner does not own its egress address — so the single-source
+// floorp/zen version lookups came back HTTP 403 on 2026-10-08 and 2026-10-09
+// and failed the nightly closed (no baseline, no E2E dispatch). The token
+// raises that budget to 5,000/hour, and must reach api.github.com only.
+test('fetchJsonWithRetry: sends the workflow token to api.github.com', async () => {
+  await withTokenEnv({GITHUB_TOKEN: 'ghs_test_token', GH_TOKEN: undefined}, async () => {
+    const {restore, calls} = stubFetch([['api.github.com', () => okJson({tag_name: 'v1.2.3'})]]);
+    try {
+      await fetchJsonWithRetry(
+        'https://api.github.com/repos/Floorp-Projects/Floorp/releases/latest'
+      );
+      assert.equal(calls[0].headers.Authorization, 'Bearer ghs_test_token');
+    } finally {
+      restore();
+    }
+  });
+});
+
+test('fetchJsonWithRetry: never sends the token to a vendor host', async () => {
+  await withTokenEnv({GITHUB_TOKEN: 'ghs_test_token', GH_TOKEN: undefined}, async () => {
+    const {restore, calls} = stubFetch([
+      ['product-details.mozilla.org', () => okJson({LATEST_FIREFOX_VERSION: '157.0.1'})],
+    ]);
+    try {
+      await fetchJsonWithRetry('https://product-details.mozilla.org/1.0/firefox_versions.json');
+      assert.equal(calls[0].headers.Authorization, undefined);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test('fetchJsonWithRetry: no Authorization when the environment has no token', async () => {
+  await withTokenEnv({GITHUB_TOKEN: undefined, GH_TOKEN: undefined}, async () => {
+    const {restore, calls} = stubFetch([['api.github.com', () => okJson({tag_name: 'v1.2.3'})]]);
+    try {
+      await fetchJsonWithRetry(
+        'https://api.github.com/repos/Floorp-Projects/Floorp/releases/latest'
+      );
+      assert.equal(calls[0].headers.Authorization, undefined);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test('resolveBrowserVersion: the single-source floorp lookup is authenticated', async () => {
+  await withTokenEnv({GITHUB_TOKEN: 'ghs_test_token', GH_TOKEN: undefined}, async () => {
+    const {restore, calls} = stubFetch([['Floorp-Projects', () => okJson({tag_name: 'v12.20.1'})]]);
+    try {
+      const resolved = await resolveBrowserVersion('floorp');
+      assert.equal(resolved.version, '12.20.1');
+      const apiCall = calls.find(c => c.url.includes('api.github.com'));
+      assert.equal(apiCall?.headers.Authorization, 'Bearer ghs_test_token');
+    } finally {
+      restore();
+    }
+  });
 });
 
 // ── resolveBrowserVersion ────────────────────────────────────────────────────
