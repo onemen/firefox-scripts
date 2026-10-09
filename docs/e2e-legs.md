@@ -56,7 +56,9 @@ The cache keys are the two shapes the shared
 [setup-browser](../.github/actions/setup-browser/action.yml) composite uses (ADR 0034). Hard gates
 are URL-keyed (`<prefix>-<os>-<url16>`), so a vendor bump invalidates them; fork legs are sticky
 (`…-<browser>-v<version>`), one entry per validated release, so a fork release cannot delay a PR; a
-portable leg adds the extracted-dir entry (`-x` / `-dir-v`). An em dash means the leg caches nothing
+portable leg adds the extracted-dir entry (`-x` / `-dir-v`). Entries are written on the default
+branch only (ADR 0044): a PR run saves none and restores main’s copy, because a
+`refs/pull/<n>/merge` entry is restorable by that PR alone. An em dash means the leg caches nothing
 of its own.
 
 ## Non-E2E jobs

@@ -110,7 +110,11 @@ function token() {
  * content hash takes a `-` OR a `:` separator, because the msys2 key spells it
  * `files:<64 hex>`. The trailing dash is dropped last so a hashed key and its
  * legacy unhashed predecessor (`firefox-portable-macOS`, saved before the
- * composite keyed on the URL) land in the same family.
+ * composite keyed on the URL) land in the same family. The pnpm store family is
+ * lowercased: pnpm/setup spelled the platform `Linux-x64`, the composite keys
+ * it on `runner.arch` (`Linux-X64`), and two families that differ only in case
+ * keep an entry each — so the legacy per-run entries would survive their own
+ * successor forever.
  *
  * @param {string} key a GitHub Actions cache key
  * @returns {string} the family stem
@@ -131,6 +135,11 @@ export function stem(key) {
     if (next === s) break;
     s = next;
   }
+  // The pnpm store family is case-folded so the legacy `Linux-x64` shape and the
+  // composite's `Linux-X64` land in ONE family, where keep-one retires the
+  // superseded entry. Nothing else is folded: a cache key's case is otherwise
+  // part of its identity.
+  if (/^pnpm-cache(?:-|$)/i.test(s)) s = s.toLowerCase();
   return s.replace(/-+$/, '');
 }
 
@@ -155,17 +164,23 @@ const MAIN = 'refs/heads/main';
 
 /**
  * The layout half of a release-keyed group. A portable leg saves TWO entries
- * under one family — the installer and its extracted dir (`…-x`, or the fork
- * namespace's `…-dir`) — and a single leg restores BOTH (observed seconds apart
- * in one run), so they must never compete for the same keep slot: keep "1"
- * there would delete the half the leg is about to ask for.
+ * under one family — the installer and its extracted dir — and a single leg
+ * restores BOTH (observed seconds apart in one run), so they must never compete
+ * for the same keep slot: keep "1" there would delete the half the leg is about
+ * to ask for.
+ *
+ * One marker per payload, not one per key spelling: the extracted dir is
+ * written as `…-x` by the URL-keyed legs and as `…-dir` by the sticky fork
+ * namespace, and both are the same payload. Spelling them apart would let a
+ * family that ever carried both keep one entry each — the superseded spelling
+ * would then survive its successor forever, exactly like the legacy pnpm shape
+ * (see stem()).
  *
  * @param {string} key a GitHub Actions cache key
- * @returns {'plain' | 'x' | 'dir'} which copy of the release this key is
+ * @returns {'plain' | 'dir'} which copy of the release this key is
  */
 export function layout(key) {
-  if (key.endsWith('-x')) return 'x';
-  if (/-dir(-|$)/.test(key)) return 'dir';
+  if (key.endsWith('-x') || /-dir(-|$)/.test(key)) return 'dir';
   return 'plain';
 }
 

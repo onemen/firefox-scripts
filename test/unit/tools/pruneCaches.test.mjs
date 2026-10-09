@@ -23,6 +23,9 @@ const pruneUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'ci', 'prune-caches
 
 const {stem, layout, groupOf, keepFor, planDeletes} = await import(pruneUrl);
 
+/** A cache entry as the API returns it. */
+const entry = (key, created_at, ref = 'refs/heads/main') => ({key, created_at, ref});
+
 /** The families every observed key must collapse into. */
 const EXPECTED = [
   // Hard gates: installer + extracted dir, one family per prefix/OS.
@@ -79,14 +82,14 @@ const EXPECTED = [
       '-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903' +
       '-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae' +
       '-37739280981-1-1f11f359-398b-4756-b7a7-183ba9805381',
-    'pnpm-cache-Linux-x64',
+    'pnpm-cache-linux-x64',
   ],
   [
     'pnpm-cache-Windows-x64-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9' +
       '-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903' +
       '-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae' +
       '-37712948603-1-d3e9dfad-9049-4fa1-a5ea-78d7086453e3',
-    'pnpm-cache-Windows-x64',
+    'pnpm-cache-windows-x64',
   ],
   [
     'pnpm-lockfile-verified-Linux-x64-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903',
@@ -113,7 +116,12 @@ test('the family stem is stable across a vendor bump', () => {
 test('a key that is only its family is left alone', () => {
   assert.equal(stem('url-watchdog-baseline'), 'url-watchdog-baseline');
   assert.equal(stem('firefox-dl-Windows'), 'firefox-dl-Windows');
-  assert.equal(stem('pnpm-cache-Linux-x64'), 'pnpm-cache-Linux-x64');
+  // The one folded family: `pnpm-cache` is case-insensitive (see the legacy-tail
+  // test below), everything else keeps its case — `pnpm-lockfile-verified` is a
+  // different family and must NOT be folded with it.
+  assert.equal(stem('pnpm-cache-Linux-x64'), 'pnpm-cache-linux-x64');
+  assert.equal(stem('pnpm-lockfile-verified-Linux-x64'), 'pnpm-lockfile-verified-Linux-x64');
+  assert.equal(stem('pnpm-bin-Windows-X64-11'), 'pnpm-bin-Windows-X64');
 });
 
 test('every run-tail pnpm key collapses into one keep-one group per OS/arch', () => {
@@ -125,7 +133,7 @@ test('every run-tail pnpm key collapses into one keep-one group per OS/arch', ()
   // Every run of one OS lands in the same group...
   const g1 = groupOf(runKey('Linux-x64', 37739280981, '1f11f359-398b-4756-b7a7-183ba9805381'));
   const g2 = groupOf(runKey('Linux-x64', 37712948603, '6f4d447c-27a8-43fa-84fb-b1153fac2b39'));
-  assert.equal(g1, 'pnpm-cache-Linux-x64 :: plain');
+  assert.equal(g1, 'pnpm-cache-linux-x64 :: plain');
   assert.equal(g2, g1);
   // ...but a different OS does not (its store is a different ~65 MB payload).
   assert.notEqual(
@@ -186,11 +194,34 @@ test('pnpm entries across a lockfile bump keep the newest state only', () => {
 
 test('layout separates an installer from its extracted dir', () => {
   assert.equal(layout('firefox-portable-Windows-ca6cc4d5e2db5f9a'), 'plain');
-  assert.equal(layout('firefox-portable-Windows-ca6cc4d5e2db5f9a-x'), 'x');
   assert.equal(layout('firefox-dl-Windows-ca6cc4d5e2db5f9a'), 'plain');
+  assert.equal(layout('browser-dl-Windows-zen-v1.23b'), 'plain');
+  // The extracted dir is one payload however its key spells it: `-x` from the
+  // URL-keyed legs, `-dir` from the sticky fork namespace. One marker, so a
+  // family carrying both never keeps a superseded entry (see the fold test).
+  assert.equal(layout('firefox-portable-Windows-ca6cc4d5e2db5f9a-x'), 'dir');
   assert.equal(layout('browser-dl-Windows-zen-portable-dir-v1.23b'), 'dir');
   assert.equal(layout('browser-dl-Windows-floorp-portable-dir'), 'dir');
-  assert.equal(layout('browser-dl-Windows-zen-v1.23b'), 'plain');
+});
+
+test('the two extracted-dir spellings share one keep slot', () => {
+  // Observed live 2026-10-09: the URL-keyed portable families key their dir
+  // entry `…-x`, the sticky fork families `…-dir-v<version>`. A prefix that ever
+  // migrated between the two regimes would leave the old spelling as its own
+  // layout, where keep-one protects it forever — the legacy pnpm shape's bug in
+  // a second coat. Folding the markers means the dir half is one slot whatever
+  // wrote it.
+  const caches = [
+    entry('firefox-portable-Windows-ca6cc4d5e2db5f9a', '2026-10-06T01:00:00Z'),
+    entry('firefox-portable-Windows-ca6cc4d5e2db5f9a-x', '2026-10-06T01:00:01Z'),
+    entry('firefox-portable-Windows-ca6cc4d5e2db5f9a-dir', '2026-10-08T01:00:01Z'),
+  ];
+  assert.equal(layout(caches[1].key), layout(caches[2].key));
+  assert.deepEqual(
+    planDeletes(caches, 3).map(c => c.key),
+    ['firefox-portable-Windows-ca6cc4d5e2db5f9a-x'],
+    'the superseded spelling goes, the installer and the current dir stay'
+  );
 });
 
 test('release-keyed browser families keep exactly one entry per layout', () => {
@@ -201,6 +232,7 @@ test('release-keyed browser families keep exactly one entry per layout', () => {
     'browser-dl-Windows-librewolf-v157.0',
     'esr-portable-Windows-8769a05370997233',
     'snap-firefox-8996',
+    'firefox-portable-macOS-7d497ffee63f5925-dir',
   ]) {
     assert.equal(keepFor(groupOf(key), 3), 1, key);
   }
@@ -218,9 +250,6 @@ test('toolchain and state families keep the operator-supplied count', () => {
   // pnpm-cache is keep-one now — see the run-tail test above.
   assert.equal(keepFor(groupOf('pnpm-cache-Windows-x64-2fb24468351ea046'), 3), 1);
 });
-
-/** A cache entry as the API returns it. */
-const entry = (key, created_at, ref = 'refs/heads/main') => ({key, created_at, ref});
 
 test('planDeletes: superseded browser versions go, the current pair stays', () => {
   const caches = [
@@ -254,6 +283,32 @@ test('planDeletes: the main copy of a key survives a PR-scoped twin', () => {
     deleted[0].ref,
     'refs/pull/462/head',
     'never the branch every other ref restores from'
+  );
+});
+
+test('planDeletes: the legacy pnpm store family is folded into its successor', () => {
+  // pnpm/setup keyed the store on a lowercase platform (`Linux-x64`); the
+  // composite keys it on `runner.arch` (`Linux-X64`). Two families differing
+  // only in case keep one entry EACH, so the legacy per-run entries would
+  // outlive their successor forever — and nothing can restore them: the
+  // composite's restore-keys prefix is `pnpm-cache-Linux-X64-`. Observed live
+  // 2026-10-09: 3 such entries / 179 MB (issue #462 family).
+  const legacy =
+    'pnpm-cache-Linux-x64-2fb24468351ea046bd9d0a57c23be5fd23e78f50a36bfdb56f46901df1ea7ef9' +
+    '-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903' +
+    '-7f65e6ff5560bd1ba9949fedde9bd25dbd561949309510e80e89ee0bc0415cae' +
+    '-37739280981-1-1f11f359-398b-4756-b7a7-183ba9805381';
+  const current =
+    'pnpm-cache-Linux-X64-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903';
+  assert.equal(stem(legacy), stem(current), 'one family, so keep-one can choose');
+  const deletes = planDeletes(
+    [entry(legacy, '2026-10-09T11:55:41Z'), entry(current, '2026-10-09T13:26:20Z')],
+    3
+  );
+  assert.deepEqual(
+    deletes.map(c => c.key),
+    [legacy],
+    'the newest state survives, the legacy shape goes'
   );
 });
 
