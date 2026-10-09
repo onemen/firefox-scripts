@@ -254,6 +254,16 @@ test('the snap payload is saved on the default branch only, restored anywhere', 
   const save = cacheSaveSteps(e2e).find(s => stepName(s) === 'Save the snap download');
   assert.ok(save, 'the snap payload saves through an explicit, scopeable step');
   assert.match(ifExpression(save), MAIN_ONLY);
+  // ...and it must not run without a resolved revision. The store-down path
+  // exits 0 with a seeded older pair, so a save there would write the constant
+  // `-store-down-` key — which GitHub never overwrites (the first pair stays
+  // forever) and `parseKey` cannot group, so the prefix restore can hand that
+  // frozen pair back as the newest seed during an outage.
+  assert.match(
+    ifExpression(save),
+    /steps\.rev\.outputs\.revision != ''/,
+    'the store-down fallback must not be saved under a constant key'
+  );
   // ...and its restore must stay unguarded: PR legs are meant to live off
   // main's entry through the default-branch fallback.
   const restore = cacheRestoreSteps(e2e).find(
