@@ -20,6 +20,11 @@ bare `if: success()`, so every PR run minted a private pair that died with its P
 Since sitting near the 10 GB cap is what invites the LRU eviction that ate the URL watchdog's state
 caches, that quota was not merely wasted — it was the eviction pressure (#462).
 
+One save site had no `if:` to widen: the snap leg's `actions/cache@` restores **and** saves, the
+save in a post-job step of its own that the step's condition never reaches. It kept minting an entry
+per PR ref while the explicit saves above were being fixed — measured 2026-10-09, 236 MB of
+`snap-firefox-9036` on `refs/pull/489/merge`.
+
 ## Decision
 
 A cache **save** runs on the default branch only; a cache **restore** is never ref-guarded.
@@ -33,6 +38,13 @@ A cache **save** runs on the default branch only; a cache **restore** is never r
   per-run keys, because their jobs already cannot run on a PR ref (both are dispatch-only). The same
   test holds that invariant, so a third payload cache added to either file has to declare where it
   writes.
+- The snap payload (`snap-firefox-*`) is the third site and splits like `setup-browser`: an
+  unguarded restore, then an explicit main-only save placed **after** the download that populates
+  `~/snap-pkg` (a save before it would store an empty directory, and a post-job save cannot see the
+  step's `if:`). The test therefore counts plain `actions/cache@` as a save site, not only
+  `actions/cache/save@`: a job passes on a job-level guard, or on a main-only `if:` on **every**
+  save step it contains — one unguarded sibling is enough to write on a PR ref, so a guarded save
+  beside it must not launder the job.
 - `cache-mode: read` on PR runs would enforce the same boundary structurally, but it reports a
   warning per skipped save. The explicit guard is warning-free and visible at the step.
 
