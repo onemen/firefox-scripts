@@ -147,6 +147,19 @@ test('the snap and ESR legs use the same shape as everything else', () => {
   );
 });
 
+test('the snap payload restores and saves under the same key', () => {
+  const e2e = stripComments(read(WORKFLOWS[0]));
+  // Two steps, one payload (ADR 0044 split them): a rename that reaches only
+  // one of them makes the cache miss forever while the other name keeps
+  // growing on main — and no test failed when exactly that happened on
+  // 2026-10-09, because the base branch's save step was never renamed with the
+  // restore it pairs with.
+  const keys = [...e2e.matchAll(/^\s+key: (firefox-dl-snap-.+)$/gm)].map(m => m[1].trim());
+  assert.equal(keys.length, 2, `expected the snap restore and save key, found ${keys.length}`);
+  assert.equal(new Set(keys).size, 1, `the two snap steps key differently: ${keys.join(' / ')}`);
+  assert.ok(!e2e.includes('snap-firefox-'), 'the pre-0045 snap key survives somewhere');
+});
+
 test('the ESR matrix job publishes the name map its legs look up', () => {
   const e2e = stripComments(read(WORKFLOWS[0]));
   // The name travels BESIDE the matrix, never inside it: the dimension is

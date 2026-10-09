@@ -38,13 +38,13 @@ A cache **save** runs on the default branch only; a cache **restore** is never r
   per-run keys, because their jobs already cannot run on a PR ref (both are dispatch-only). The same
   test holds that invariant, so a third payload cache added to either file has to declare where it
   writes.
-- The snap payload (`snap-firefox-*`) is the third site and splits like `setup-browser`: an
-  unguarded restore, then an explicit main-only save placed **after** the download that populates
-  `~/snap-pkg` (a save before it would store an empty directory, and a post-job save cannot see the
-  step's `if:`). The test therefore counts plain `actions/cache@` as a save site, not only
-  `actions/cache/save@`: a job passes on a job-level guard, or on a main-only `if:` on **every**
-  save step it contains — one unguarded sibling is enough to write on a PR ref, so a guarded save
-  beside it must not launder the job.
+- The snap payload (`snap-firefox-*` here; `firefox-dl-snap-<revision>-plain` once ADR 0045 names
+  it) is the third site and splits like `setup-browser`: an unguarded restore, then an explicit
+  main-only save placed **after** the download that populates `~/snap-pkg` (a save before it would
+  store an empty directory, and a post-job save cannot see the step's `if:`). The test therefore
+  counts plain `actions/cache@` as a save site, not only `actions/cache/save@`: a job passes on a
+  job-level guard, or on a main-only `if:` on **every** save step it contains — one unguarded
+  sibling is enough to write on a PR ref, so a guarded save beside it must not launder the job.
 - `cache-mode: read` on PR runs would enforce the same boundary structurally, but it reports a
   warning per skipped save. The explicit guard is warning-free and visible at the step.
 

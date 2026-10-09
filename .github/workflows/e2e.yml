@@ -837,7 +837,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/snap-pkg
-          key: snap-firefox-${{ steps.rev.outputs.revision || 'store-down' }}
+          key: firefox-dl-snap-${{ steps.rev.outputs.revision || 'store-down' }}-plain
 
       # Offline install from the pinned pair — no store negotiation, no snapd
       # self-refresh race. `snap ack` + `snap install` elevate themselves via

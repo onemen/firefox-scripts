@@ -30,7 +30,9 @@ One key shape everywhere: `<name>-<type>-<os>-<hash>-<layout>`.
 - `type` is the payload (`dl` installer, `portable` extracted tree) and `layout` its spelling
   (`plain` / `dir`), which retires the `-x` / `-dir` key suffixes and the separate portable
   namespaces.
-- `os` is `runner.os` lowercased, plus `snap`.
+- `os` is `runner.os` lowercased, plus `snap` — the snap payload, the one browser-shaped cache that
+  is not a browser installer, becomes `firefox-dl-snap-<revision>-plain` (`snap-firefox-<revision>`,
+  and its `snap-firefox-` prefix, before).
 - `hash` is the download URL's sha256 prefix, so a vendor bump mints a new key; a sticky fork leg
   keys on `v<version>` instead, because its restore must work with no vendor call (0034's
   cache-first rule).
