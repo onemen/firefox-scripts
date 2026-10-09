@@ -1,10 +1,16 @@
 # 0044: Cache writes stay on the default branch
 
-- **Status:** accepted
+- **Status:** superseded by [0046](./0046-watchdog-state-on-a-state-branch.md)
 - **Date:** 2026-10-09
 - **Part of:** #462 (the cap-sitting that let LRU eviction eat the watchdog's state caches)
 - **Related:** [0034](./0034-fork-e2e-legs-pin-to-validated-release.md) (the key scheme this leaves
   intact), [0043](./0043-e2e-wallclock-decisions.md) (cache cleanup under the family policy)
+
+What [0046](./0046-watchdog-state-on-a-state-branch.md) replaced is scoped to one clause: the
+`browser-validated-*` recorder it names no longer saves a cache entry at all, because that file
+moved to the durable `watchdog-state` branch (#462). Everything else below still steers — the
+default-branch-only save scope, the never-guarded restores, and `browser-fork-validated-*` and the
+snap payload as the remaining save sites.
 
 ## Context
 

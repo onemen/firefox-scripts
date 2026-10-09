@@ -61,7 +61,7 @@ test('parseKey: the current scheme, and only it', () => {
     'snap-firefox-9036',
     'pnpm-cache-linux-x64',
     'msys2-pkgs-upd:false-conf:69844c46-files:677ff28000e32b52',
-    'url-watchdog-baseline-2026-10-05',
+    'browser-fork-validated-37359307092',
   ]) {
     assert.equal(parseKey(other), null, other);
   }
@@ -100,7 +100,7 @@ test('planDeletes: a superseded release of the current scheme goes, the newest s
     entry('esr-dl-windows-6666666666666666-plain', '2026-10-06T01:00:00Z'),
     entry('esr-prev-dl-windows-7777777777777777-plain', '2026-10-06T01:00:00Z'),
     // Non-payload families keep the operator's count.
-    entry('url-watchdog-baseline-2026-10-05', '2026-10-05T01:00:00Z'),
+    entry('browser-fork-validated-37359307092', '2026-10-05T01:00:00Z'),
   ];
   assert.deepEqual(
     planDeletes(caches, 3).map(c => c.key),
@@ -139,12 +139,10 @@ const EXPECTED = [
   ['esr-portable-Windows-8769a05370997233', 'esr-portable-Windows'],
   ['esr-portable-Windows-8769a05370997233-x', 'esr-portable-Windows'],
 
-  // Rotating numeric suffixes: snap revision, run id, baseline date.
+  // Rotating numeric suffixes: snap revision, run id.
   ['snap-firefox-8995', 'snap-firefox'],
   ['snap-firefox-9012', 'snap-firefox'],
-  ['browser-validated-37359307092', 'browser-validated'],
   ['browser-fork-validated-37359307092', 'browser-fork-validated'],
-  ['url-watchdog-baseline-2026-10-05', 'url-watchdog-baseline'],
 
   // Toolchain caches: a trailing content hash, not a family of their own.
   [
@@ -197,7 +195,7 @@ test('the family stem is stable across a vendor bump', () => {
 });
 
 test('a key that is only its family is left alone', () => {
-  assert.equal(stem('url-watchdog-baseline'), 'url-watchdog-baseline');
+  assert.equal(stem('browser-fork-validated'), 'browser-fork-validated');
   assert.equal(stem('firefox-dl-Windows'), 'firefox-dl-Windows');
   // The one folded family: `pnpm-cache` is case-insensitive (see the legacy-tail
   // test below), everything else keeps its case — `pnpm-lockfile-verified` is a
@@ -323,9 +321,7 @@ test('release-keyed browser families keep exactly one entry per layout', () => {
 
 test('toolchain and state families keep the operator-supplied count', () => {
   for (const key of [
-    'browser-validated-37359307092',
     'browser-fork-validated-37359307092',
-    'url-watchdog-baseline-2026-10-05',
     'node-cache-macOS-arm64-pnpm-56ec8155b91741b1a6a9d9371adcd546f0eb97c8c62bd35d9468602d8387c9f8',
   ]) {
     assert.equal(keepFor(groupOf(key), 3), 3, key);
@@ -397,7 +393,7 @@ test('planDeletes: the legacy pnpm store family is folded into its successor', (
 
 test('planDeletes: state and toolchain groups keep the requested count', () => {
   const validated = [1, 2, 3, 4].map(n =>
-    entry(`browser-validated-373593070${n}`, `2026-10-0${n}T01:00:00Z`)
+    entry(`browser-fork-validated-373593070${n}`, `2026-10-0${n}T01:00:00Z`)
   );
   assert.equal(planDeletes(validated, 3).length, 1, 'three of four validated records survive');
   assert.equal(planDeletes(validated, 5).length, 0, 'a higher --keep never deletes');

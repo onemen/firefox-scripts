@@ -97,10 +97,16 @@ function token() {
  * firefox-dl-Windows-ca6cc4d5e2db5f9a → firefox-dl-Windows
  * browser-dl-Windows-zen-portable-dir-v1.23b → browser-dl-Windows-zen-portable
  * esr-portable-Windows-8769a05370997233 → esr-portable-Windows
- * snap-firefox-8995 → snap-firefox browser-validated-37359307092 →
- * browser-validated url-watchdog-baseline-2026-10-05 → url-watchdog-baseline
+ * snap-firefox-8995 → snap-firefox browser-fork-validated-37359307092 →
+ * browser-fork-validated
  * pnpm-cache-Linux-x64-<h>-<h>-<h>-37739280981-1-1f11f359-398b-…-5381 →
  * pnpm-cache-Linux-x64
+ *
+ * The watchdog's own two state families (`url-watchdog-baseline-*`,
+ * `browser-validated-*`) are no longer produced: both files moved to the
+ * durable `watchdog-state` branch (ADR 0046, #462). Any stragglers still
+ * sitting in the cache are peeled by the same generic rules below and retired
+ * by --keep.
  *
  * The suffixes are peeled in a loop because they stack (`…-dir-v1.23b`, and the
  * pnpm tail stacks a run id, a `-1` and a uuid under the hash combo): one pass

@@ -135,12 +135,13 @@ Open these before proposing a new primitive, surface, or storage home.
   #444)
 - [0043](./0043-e2e-wallclock-decisions.md) — E2E wall-clock items 4–6 (updater filter split, macOS
   advisory, snapshot cache) measured and deferred with the failure each would reintroduce (#444)
-- [0044](./0044-cache-writes-default-branch-only.md) — Cache saves run on the default branch only;
-  PR refs restore main's entries and write none (a PR-scoped entry is unreachable from every other
-  ref) (#462)
 - [0045](./0045-cache-key-names-the-browser.md) — One cache key shape,
   `<name>-<type>-<os>-<hash>-<layout>`: the name is the browser, so no namespace is shared between
   browsers and keep-one is per browser payload (amends [0034]/[0037], #462)
+- [0046](./0046-watchdog-state-on-a-state-branch.md) — The URL watchdog's load-bearing state (the
+  version/SHA-256 baseline and the validated-versions record the publish pre-flight reads) lives on
+  the orphan `watchdog-state` branch; no cache family for either file (supersedes [0044]'s recorder
+  clause, #462)
 
 ## Historical
 
@@ -156,6 +157,11 @@ silently deleted.
 - [0023](./0023-e2e-browser-version-pinning.md) — E2E browser versions track latest at run time;
   explicit pin escape hatch with strict pin semantics — superseded by
   [0034](./0034-fork-e2e-legs-pin-to-validated-release.md)
+- [0044](./0044-cache-writes-default-branch-only.md) — Cache saves run on the default branch only;
+  PR refs restore main's entries and write none (a PR-scoped entry is unreachable from every other
+  ref) — its `browser-validated-*` recorder clause is superseded by
+  [0046](./0046-watchdog-state-on-a-state-branch.md); the save scope, the unguarded restores and the
+  remaining save sites stand (#462)
 
 ## Not recorded
 

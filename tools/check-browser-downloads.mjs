@@ -18,14 +18,15 @@
  *        shape.
  *   3. SHA-256 — when the version changed since the last run (or on the first run),
  *        downloads the installer once, hashes it and records {version, size,
- *        sha256} in the baseline (.watchdog/baseline.json, stored in the
- *        Actions cache). Same-version runs re-check only the 1 KB range, but
- *        flag a size change (binary replaced without a bump) — except the
- *        rolling binaries (nightly: fresh binaries inside one N.0a1 window,
- *        #276), where the replacement is re-verified with a full download
- *        instead of flagged. Each run logs the baseline's cache-hit status and
- *        age, so a silently evicted cache is visible instead of masquerading as
- *        a first run.
+ *        sha256} in the baseline (.watchdog/baseline.json, published to the
+ *        durable `watchdog-state` branch — ADR 0046; it used to be an Actions
+ *        cache entry, and its eviction rendered every browser "first run",
+ *        #462). Same-version runs re-check only the 1 KB range, but flag a size
+ *        change (binary replaced without a bump) — except the rolling binaries
+ *        (nightly: fresh binaries inside one N.0a1 window, #276), where the
+ *        replacement is re-verified with a full download instead of flagged.
+ *        Each run logs where the state came from and its age, so a state that
+ *        stopped arriving is visible instead of masquerading as a first run.
  *   4. META ISSUE — one `[url-watchdog] status` issue is kept current after every
  *        run: a per-browser status table (last verified version, size +
  *        SHA-256, the run that last checked it, a status tag, the CI-cache
@@ -681,7 +682,8 @@ export async function main() {
   if (driftMode) {
     if (!fs.existsSync(baselineFile)) {
       console.error(
-        'baseline: cache miss — no watchdog baseline found. Run the URL watchdog workflow first.'
+        'baseline: no watchdog baseline — the watchdog-state branch carries none. ' +
+          'Run the URL watchdog workflow first.'
       );
       process.exit(1);
     }
@@ -793,23 +795,27 @@ export async function main() {
   }
 
   // Baseline record: per-browser entries plus the ledger extras (`esr`
-  // state machine, `history`) — all optional on a cache miss / first run.
+  // state machine, `history`) — all optional when the branch has no baseline
+  // yet (first run).
   /** @type {{esr?: any; history?: any; [browser: string]: any}} */
   let baseline = {};
   // Report-only reads the baseline too — it is the table's data source.
   const baselineFound = !prMode && fs.existsSync(baselineFile);
   if (baselineFound) {
     baseline = JSON.parse(fs.readFileSync(baselineFile, 'utf-8'));
-    // Cache-hit telemetry: an evicted/expired Actions cache would otherwise
-    // masquerade as a first run or a version bump. The cache restore preserves
-    // the file mtime, so age = time since the previous run wrote the baseline.
+    // State telemetry: the fetch dates the file from the commit that wrote it
+    // (state-branch.mjs), so age = time since the last watchdog run published
+    // it. A state that stopped arriving is otherwise indistinguishable from a
+    // quiet week.
     const stat = fs.statSync(baselineFile);
     console.log(
-      `baseline: cache hit — written ${new Date(stat.mtimeMs).toISOString()} ` +
-        `(${formatAge(Date.now() - stat.mtimeMs)} ago)`
+      `baseline: state loaded from the watchdog-state branch — written ` +
+        `${new Date(stat.mtimeMs).toISOString()} (${formatAge(Date.now() - stat.mtimeMs)} ago)`
     );
   } else if (!prMode) {
-    console.log('baseline: cache miss — first run, re-baselining all browsers');
+    console.log(
+      'baseline: no state on the watchdog-state branch — first run, re-baselining all browsers'
+    );
   }
 
   const findings = [];

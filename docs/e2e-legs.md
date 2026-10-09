@@ -26,7 +26,7 @@ with the job list.
 | Required | `core-lifecycle`   | `firefox`         | `ubuntu-24.04`   | yes      | `firefox-dl-linux-<id16>-plain / firefox-portable-linux-<id16>-dir`           | 1m 17s     |
 | Required | `core-lifecycle`   | `firefox`         | `macos-latest`   | yes      | `firefox-dl-macos-<id16>-plain / firefox-portable-macos-<id16>-dir`           | 1m 42s     |
 | Required | `core-lifecycle`   | `firefox`         | `windows-latest` | yes      | `firefox-dl-windows-<id16>-plain / firefox-portable-windows-<id16>-dir`       | 1m 40s     |
-| Advisory | `esr-matrix`       | —                 | `ubuntu-24.04`   | no       | `url-watchdog-baseline-`                                                      | 8s         |
+| Advisory | `esr-matrix`       | —                 | `ubuntu-24.04`   | no       | `watchdog-state` branch (baseline.json)                                       | 8s         |
 | Advisory | `esr-portable`     | `firefox-esr-140` | `windows-latest` | yes      | `esr-prev-dl-windows-<url16>-plain / esr-prev-portable-windows-<url16>-dir`   | 47s        |
 | Advisory | `esr-portable`     | `firefox-esr-153` | `windows-latest` | yes      | `esr-dl-windows-<url16>-plain / esr-portable-windows-<url16>-dir`             | 58s        |
 | Advisory | `fork-portable`    | `floorp`          | `windows-latest` | yes      | `floorp-dl-windows-v<version>-plain / floorp-portable-windows-v<version>-dir` | 55s        |

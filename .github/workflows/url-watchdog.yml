@@ -11,8 +11,9 @@
 # deduped error issues that auto-close once a later run checks green again.
 #
 # Three modes (see tools/check-browser-downloads.mjs):
-# - Nightly (schedule/dispatch): version baseline + history in the Actions cache
-#   (.watchdog/baseline.json), status meta issue, deduped error issues.
+# - Nightly (schedule/dispatch): version baseline + history on the durable
+#   `watchdog-state` branch (.watchdog/baseline.json, ADR 0046), status meta
+#   issue, deduped error issues.
 # - Report-only (dispatch with report-only=true): no vendor calls — rebuilds
 #   the status table from the baseline + the LIVE Actions-cache inventory, so
 #   the Fallback column stays truthful after any cache save.
@@ -78,29 +79,26 @@ jobs:
         with:
           node-version: 24
 
-      # Baseline = last-seen version + size (+ one-time sha256 per release).
-      # Nightly access keeps the 7-day cache TTL rolling; a missed run just
-      # re-baselines. Keys ROTATE per run (run_id): the cache service skips a
-      # save whose exact key already exists, so a fixed key would silently
-      # never persist the updated baseline after the first run. Restore falls
-      # back to the newest entry of the previous runs via the prefix.
-      - name: Restore baseline
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .watchdog
-          key: url-watchdog-baseline-${{ github.run_id }}
-          restore-keys: url-watchdog-baseline-
-
-      # Validated-versions record (written by E2E's record-validation job):
-      # lets the status table show which firefox / firefox-dev release a
-      # successful E2E run actually tested (the publish pre-flight already
-      # restores the same cache under VALIDATED_DIR).
-      - name: Restore validated-versions record
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .watchdog-validated
-          key: browser-validated-${{ github.run_id }}
-          restore-keys: browser-validated-
+      # Baseline = last-seen version + size (+ one-time sha256 per release), plus
+      # the validated-versions record E2E's record-validation job writes — that
+      # is what lets the status table show the release a successful E2E run
+      # actually tested. BOTH live on the durable `watchdog-state` orphan branch
+      # (ADR 0046), fetched into the two dirs the tools already read.
+      #
+      # Why not the Actions cache: GitHub evicted both entries on 2026-10-06 (the
+      # repo crossed the 10 GB cap), and an evicted baseline is indistinguishable
+      # from "no state at all" — every browser rendered `⏳ first run`, the
+      # E2E-validated column said `none` while the meta issue's rolling comment
+      # still carried the versions, and the publish pre-flight failed closed
+      # (#462). A branch is durable, and one home means the stale copy cannot
+      # masquerade as the fresh one. A missing branch/file is the first-run path,
+      # not an error; a fetch that genuinely fails is hard (that distinction is
+      # the whole bug).
+      - name: Restore state from the watchdog-state branch
+        env:
+          BASELINE_DIR: .watchdog
+          VALIDATED_DIR: .watchdog-validated
+        run: node tools/ci/state-branch.mjs fetch
 
       - name: Check browser downloads
         run: |
@@ -111,18 +109,19 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           VALIDATED_DIR: .watchdog-validated
 
-      # Explicit save (not save-always): the script rewrites baseline.json
-      # every run even when the restore step hit; the fresh key persists a
-      # version bump for the next run (immutable old entries just expire after
-      # 7 days). if: always() keeps that behavior; the save-always input is
-      # deprecated upstream and slated for removal.
-      - name: Save baseline
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .watchdog
-          key: url-watchdog-baseline-${{ github.run_id }}
-        # Report-only never rewrote the baseline file — saving would mint a
-        # redundant ~KB cache entry per manual refresh.
+      # The ONLY writer of baseline.json (the E2E record job pushes the other
+      # file). Unchanged state is not re-committed — the tool compares trees — so
+      # a quiet night adds no commit to the branch. if: always() keeps the old
+      # cache/save behavior: a check step that failed before rewriting the file
+      # leaves the fetched copy in place, and pushing it is then a no-op (or a
+      # clear "missing state file" error if the fetch itself failed, which is the
+      # honest outcome for a run that has no baseline).
+      - name: Publish the baseline to the watchdog-state branch
+        env:
+          BASELINE_DIR: .watchdog
+        run: node tools/ci/state-branch.mjs push baseline.json
+        # Report-only never rewrote the baseline file — pushing it would add a
+        # redundant state read per manual refresh.
         if: always() && inputs.report-only != true
 
       # ── Nightly revalidation dispatch ───────────────────────────────────
@@ -164,9 +163,11 @@ jobs:
 
     # Job-level scoping (the E2E workflow's precedent): dispatching the browser
     # E2E when a new release is recorded needs actions: write; the issue
-    # surface needs issues: write. The PR job below needs neither.
+    # surface needs issues: write; publishing the baseline to the state branch
+    # (ADR 0046) needs contents: write. The PR job below needs none of them: it is
+    # stateless by design (no baseline, no issues, no downloads).
     permissions:
-      contents: read
+      contents: write
       issues: write
       actions: write
 

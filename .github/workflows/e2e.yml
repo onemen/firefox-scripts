@@ -22,8 +22,9 @@ permissions:
   # No workflow-level issues: write — every E2E job runs build/test code from
   # the PR, so issue-write access must be scoped to the one job that needs it
   # (record-validation, which comments on the `[url-watchdog] status` meta
-  # issue). A job-level permissions block REPLACES this one, so that job lists
-  # its own (contents: read + issues: write) explicitly.
+  # issue, and which publishes the validated-versions record to the state branch).
+  # A job-level permissions block REPLACES this one, so that job lists its own
+  # (contents: write + issues: write) explicitly.
 
 # Browser-installer download budget (test/e2e/shared/downloads.mjs). Its default
 # is 20 min — exactly the `timeout-minutes` every browser leg carries — so a slow
@@ -1290,17 +1291,17 @@ jobs:
       matrix: ${{ steps.mtx.outputs.matrix }}
       cacheNames: ${{ steps.names.outputs.names }}
     steps:
-      # tools/ci/esrMatrix.mjs runs from the repo — checkout first (the
-      # cache/restore below does not materialize it).
+      # tools/ci/esrMatrix.mjs runs from the repo — checkout first (the state
+      # fetch below does not materialize it).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Read-only against the baseline cache — save stays with the watchdog
-      # workflow (this restore is best-effort; cache miss → generic serving-ESR
-      # leg via buildEsrMatrix's fallback).
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .watchdog
-          key: url-watchdog-baseline-not-used
-          restore-keys: url-watchdog-baseline-
+      # Read-only against the durable state branch (ADR 0046) — the watchdog
+      # workflow is the only writer of baseline.json. Best-effort: a branch that
+      # carries no baseline yet leaves buildEsrMatrix's generic serving-ESR
+      # fallback in place.
+      - name: Fetch the watchdog baseline from the state branch
+        env:
+          BASELINE_DIR: .watchdog
+        run: node tools/ci/state-branch.mjs fetch baseline.json
       - name: Build the ESR leg matrix
         id: mtx
         shell: bash
@@ -1571,12 +1572,13 @@ jobs:
   # ── Record validated browser versions (#4) ────────────────────────────────
   # After the updater matrix legs (firefox/firefox-dev/nightly × 3 OSes) ran
   # and passed, record the EXACT versions those legs installed into
-  # .watchdog-validated/ (Actions cache, rotating key — same pattern as the
-  # watchdog baseline; a dedicated dir so the publish pre-flight's baseline
-  # restore can never clobber it). The prod publish pre-flight requires the
-  # current releases to be covered by this record, so a watchdog baseline
-  # refresh alone cannot satisfy the drift gate: the shipped browser versions
-  # must have a passing E2E run.
+  # .watchdog-validated/, then publish it to the durable `watchdog-state` branch
+  # (ADR 0046 — it used to be an Actions cache entry, and its eviction read as
+  # "never validated" and blocked a prod publish, #462). A dedicated dir and a
+  # dedicated FILE keep it apart from the watchdog's baseline: the prod publish
+  # pre-flight compares THIS record against the current releases, so a watchdog
+  # baseline refresh alone cannot satisfy the drift gate — the shipped browser
+  # versions must have a passing E2E run.
   record-validation:
     name: record validated browser versions
     # `updater` is needed directly because this job must prove the legs
@@ -1620,11 +1622,11 @@ jobs:
       !(github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser != 'all')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Only this job touches issues (meta-issue comment). Job-level permissions
-    # REPLACE the workflow-level block, so contents: read (checkout, scripts)
-    # must be listed here as well — not just issues: write.
+    # Only this job touches issues (meta-issue comment) and publishes state.
+    # Job-level permissions REPLACE the workflow-level block, so contents: read
+    # (checkout, scripts) must be listed here as well.
     permissions:
-      contents: read
+      contents: write # push the state branch (ADR 0046)
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1647,14 +1649,15 @@ jobs:
           E2E_VERSIONS_DIR: .e2e-versions
           GITHUB_TOKEN: ${{ github.token }}
         run: node tools/ci/record-validated-versions.mjs
-      - name: Save validated-versions record
-        # Explicit cache/save with if: always() — the record must persist even
-        # when a later leg fails (the save-always input is deprecated upstream
-        # and slated for removal).
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .watchdog-validated
-          key: browser-validated-${{ github.run_id }}
+      # The ONLY writer of validated.json (the watchdog publishes the other
+      # file). The recorder writes the record whole — all VALIDATED_BROWSERS or
+      # a hard error — so this push never merges, and a run with holes never gets
+      # here. if: always() keeps the old cache/save behavior: the record must
+      # persist even when a later step of this job fails.
+      - name: Publish the validated-versions record to the state branch
+        env:
+          VALIDATED_DIR: .watchdog-validated
+        run: node tools/ci/state-branch.mjs push validated.json
         if: always()
 
   # ── Fork validation record (ADR 0034) ─────────────────────────────────────

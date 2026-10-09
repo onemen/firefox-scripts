@@ -5,10 +5,12 @@ description:
   the\n  drift-check.yml probe dispatches it.'
 author: 'onemen/firefox-scripts'
 
-# Preconditions: the calling job has CHECKED OUT THE REPO (the gate scripts are repo files) and
-# holds `issues: write` (ADR 0021: a fork whose version lookup fails after retries + mirrors gets
-# a deduped notification issue instead of blocking). The gate itself never fails the run: it
-# reports a verdict via outputs, and the CONSUMER decides what the verdict means for it —
+# Preconditions: the calling job has CHECKED OUT THE REPO (the gate scripts are repo files, and
+# the state fetch uses the checkout's own git credentials — `contents: read` is enough, the gate
+# only reads state) and holds `issues: write` (ADR 0021: a fork whose version lookup fails after
+# retries + mirrors gets a deduped notification issue instead of blocking). The gate itself never
+# fails the run: it reports a verdict via outputs, and the CONSUMER decides what the verdict means
+# for it —
 #   pages.yml / build-and-upload.yml: drift|e2e-missing → fail the job with the remedy text;
 #   drift-check.yml (the publish wrapper's probe): forward the verdict to its outputs.
 #
@@ -51,23 +53,21 @@ outputs:
 runs:
   using: composite
   steps:
-    # Restore the watchdog baseline (keys rotate per run; the prefix picks the
-    # newest). No save here — the gate never modifies the baseline.
-    - name: Restore watchdog baseline
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: .watchdog
-        key: url-watchdog-baseline-${{ github.run_id }}
-        restore-keys: url-watchdog-baseline-
-    # Validated-versions record (#4): written only by the E2E workflow's
-    # record-validation job after every hard-gate leg passed. Restored to its
-    # own dir so the watchdog baseline restore above can never clobber it.
-    - name: Restore validated-versions record
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: .watchdog-validated
-        key: browser-validated-${{ github.run_id }}
-        restore-keys: browser-validated-
+    # Both state files come from the durable `watchdog-state` branch (ADR 0046)
+    # into their usual two dirs. That is what makes this gate's verdict survive a
+    # storage loss: it used to read an Actions cache, and an evicted record is
+    # indistinguishable from "never validated" — the gate then failed closed for
+    # a reason that never happened (#462). Read-only: the gate never writes state.
+    #
+    # A genuinely broken fetch lands the verdict step on "no baseline" and the
+    # consumer fails the job with the remedy text; an absent branch (nothing has
+    # been validated yet) is the same verdict, which is the correct one.
+    - name: Fetch state from the watchdog-state branch
+      shell: bash
+      env:
+        BASELINE_DIR: ${{ github.workspace }}/.watchdog
+        VALIDATED_DIR: ${{ github.workspace }}/.watchdog-validated
+      run: node tools/ci/state-branch.mjs fetch
     - name: Check browser version drift
       id: drift
       env:
