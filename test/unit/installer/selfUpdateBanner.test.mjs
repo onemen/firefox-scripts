@@ -10,12 +10,13 @@
 // (scripts-<date>) that carries no installer asset, leaving the user to hunt
 // for the binary.
 //
-// Ingest surface (#401): fetchRaw resolves an ArrayBuffer, so passing it
-// straight to the mechanismSince gate made JSON.parse throw on every payload
-// ("[object ArrayBuffer]"), the catch turned that into "not post-cutover", and
-// every post-cutover binary silently fell through to the legacy release-body
-// flow.  The banner kept working, which is exactly why it went unnoticed — so
-// these cases assert WHICH surface was ingested, not just that a banner showed.
+// Ingest surface: fetchRaw resolves an ArrayBuffer, so passing it straight
+// to the mechanismSince gate would make JSON.parse throw on every payload
+// ("[object ArrayBuffer]"), the catch would turn that into "not post-cutover",
+// and every post-cutover binary would silently fall through to the legacy
+// release-body flow. The banner keeps working, which is exactly why it would
+// go unnoticed — so these cases assert WHICH surface was ingested, not just
+// that a banner showed.
 //
 // The tab's JS only runs inside the shipped IIFE, so the cases drive the real
 // fragments through the shared harness (test/shared/webUiSandbox.mjs).  Pure

@@ -42,8 +42,8 @@ test('enginesReported: counts every engine category, zero for empty', () => {
 test('analysisComplete: only a finished analysis with engine results counts', () => {
   assert.equal(analysisComplete('completed', {malicious: 0, harmless: 60}), true);
   assert.equal(analysisComplete('completed', {malicious: 2}), true);
-  // The CI bug: a timed-out poll left status 'queued' with empty stats,
-  // which used to be reported as "clean".
+  // A timed-out poll leaves status 'queued' with empty stats, which must not
+  // count as "clean".
   assert.equal(analysisComplete('queued', {}), false);
   assert.equal(analysisComplete('queued', {malicious: 2}), false);
   assert.equal(analysisComplete('completed', {}), false);

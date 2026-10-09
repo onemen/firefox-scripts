@@ -242,8 +242,8 @@ function main() {
       expect: {status: 1, latest: '2026-09-14', url: 'https://x/toplevel'},
     },
     {
-      // Issue #356 item 2 (the #341 collapse): the published body wraps the
-      // ```json fence in a <details> block. The parser must treat the wrapper
+      // The published body wraps the ```json fence in a <details> block.
+      // The parser must treat the wrapper
       // as opaque — bare-key scan over the whole body, never a fence-position
       // assumption. THIS is the shape a real installer download must parse.
       name: 'details-wrapped managed block (release page collapse) parses',
@@ -257,12 +257,12 @@ function main() {
       expect: {status: 1, latest: '2026-09-14', url: 'https://x/collapsed'},
     },
     {
-      // Issue #341: the POST-cutover ingest surface is the Pages payload —
+      // The post-cutover ingest surface is the Pages payload —
       // self-update.json, a PURE bare object (no release envelope, no body
       // fence, no assets decoys) with the mechanismSince marker on top. The
       // same bare-key parser must handle it: this is what post-cutover
       // installs actually POST to /api/self-update.
-      name: 'bare Pages payload (self-update.json, #341) parses with mechanismSince',
+      name: 'bare Pages payload (self-update.json) parses with mechanismSince',
       json: JSON.stringify({
         mechanismSince: '2026-09-29',
         installerDate: '2026-09-14',

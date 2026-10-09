@@ -350,8 +350,8 @@ int hash_zip_bytes(const unsigned char *data, size_t len, char *out_hash,
 }
 
 /**
- * Fetch the stored package zip and hash it — thin wrapper so the stored-zip
- * callers keep their original shape after the bytes-first split above.
+ * Fetch the stored package zip and hash it — the stored-zip counterpart of
+ * hash_zip_bytes().
  *
  * Returns 0 with *out_hash/*out_list/*out_count set (caller frees with
  * free_file_list()); -1 if the zip is unavailable or unreadable.

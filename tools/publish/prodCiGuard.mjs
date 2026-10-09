@@ -17,7 +17,7 @@
 //   workflow's own contract, which is out of scope). `--local` snapshots
 //   are exempt (offline validation, touches no GitHub target). The
 //   detection is workflow-agnostic: any future publish vehicle passes the
-//   same internal marker (issue #33).
+//   same internal marker.
 //
 // Dev/test publishes are exempt: they are disposable by design (ADR 0026)
 // and a developer legitimately publishes a dev build from one machine.

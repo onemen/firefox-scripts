@@ -180,7 +180,7 @@ async function main() {
   const installer = findInstaller();
   console.log(`\nSecurity smoke test — ${installer}\n`);
 
-  // Process hygiene (issue #130): a leftover installer from a previous run
+  // Process hygiene: a leftover installer from a previous run
   // would still own port 8777 and the smoke test would probe the wrong
   // process. Sweep first (best-effort, never throws).
   await killStrayProcesses();

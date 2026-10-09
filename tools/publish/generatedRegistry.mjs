@@ -78,7 +78,7 @@ export const GENERATED_FILES = [
   {
     rel: 'installer/src/_builddate.h',
     generatedBy: 'buildDateHeader() (generateBuildDates.mjs, from input-scoped git history)',
-    // Build product of the installer Makefile (issue #322 / ADR 0036) — never
+    // Build product of the installer Makefile (ADR 0036) — never
     // hashed and never shipped: its true sources are the git commits the date
     // derives from. Must exist before any C compile/analyze (platform.h
     // includes it), which the Makefile's `dates` prerequisite guarantees.

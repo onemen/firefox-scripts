@@ -1,7 +1,7 @@
 // The repo ships unversioned date-stamped artifacts (ADR 0019); the helper's
 // identity rides on the installer, which embeds it and verifies it by hash.
 // FileVersion carries the build date as 1,0,<YYYY>,<MMDD>.  The date is
-// DERIVED (issue #322): ../_builddate.h is generated from the last commit
+// DERIVED (ADR 0036): ../_builddate.h is generated from the last commit
 // touching the helper's inputs — CFG_BUILD_DATE_HELPER.
 #include <windows.h>
 #include "../_builddate.h"
@@ -47,8 +47,7 @@ END
 // Application manifest (helper.manifest), mirroring installer.rc: asInvoker —
 // the helper self-elevates via ShellExecuteExW("runas") — plus the Win10/11
 // compatibility GUIDs and DPI awareness.  Declared explicitly instead of
-// relying on the mingw crt's auto-linked default-manifest.o, which the older
-// crt package CI installs did not provide: the shipped helper then had a
-// version resource and NO manifest, the unmanifested-exe profile Windows
+// relying on the mingw crt's auto-linked default-manifest.o, which older crt
+// package installs do not provide — the unmanifested-exe profile Windows
 // applies installer-detection/virtualization heuristics to.
 1 RT_MANIFEST "helper.manifest"

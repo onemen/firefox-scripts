@@ -1,15 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * tools/ci/e2eLegsTable.mjs — regenerate docs/e2e-legs.md from one real E2E run
- * (issue #380).
+ * tools/ci/e2eLegsTable.mjs — regenerate docs/e2e-legs.md from one real E2E
+ * run.
  *
- * WHY The E2E workflow's leg inventory used to live only in the workflow
- * itself: to answer "how many legs block a merge", "which browser does this leg
- * cache" or "where did the wall-clock go", the only source was ~1700 lines of
- * YAML plus a scroll through the Actions UI. #380 works on the wall-clock, and
- * every step of it (cache the uncached families, drop the second cron, gate on
- * one job) needs the same two numbers: the leg list and the timing of one
+ * WHY To answer "how many legs block a merge", "which browser does this leg
+ * cache" or "where did the wall-clock go", the workflow YAML plus a scroll
+ * through the Actions UI is the only other source. Wall-clock work needs the
+ * same two numbers every step: the leg list and the timing of one
  * representative run. This tool produces exactly that, so the doc is
  * regenerated rather than hand-maintained.
  *

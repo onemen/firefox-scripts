@@ -3,10 +3,10 @@
 #
 # The publish gate (tools/scan-vt.mjs, called by tools/publish/upload.mjs)
 # judges the exact bytes it uploads, once, at publish time. AV verdicts are not
-# stable: the 2026-09-05 incident was a binary that scanned clean when it
-# shipped and started being flagged afterwards, and Microsoft's `!ml` models
-# re-roll verdicts as their training data moves. Nothing watched the served
-# bytes, so the flip stayed invisible until a user reported it (issue #157).
+# stable: a binary that scanned clean when it shipped can start being flagged
+# afterwards, and Microsoft's `!ml` models re-roll verdicts as their training
+# data moves. Nothing watched the served bytes, so a flip stayed invisible
+# until a user reported it.
 #
 # This workflow hashes each installer/helper on the published surface and asks
 # VirusTotal what it thinks of that hash (a lookup — never an upload; the bytes

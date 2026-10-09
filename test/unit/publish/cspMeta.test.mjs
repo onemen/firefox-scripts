@@ -7,9 +7,8 @@
 //   connect-src ALSO allows the fixed remote hosts /api/package-urls hands
 //   the tab (ADR 0010: the C installer does zero network I/O — the tab
 //   fetches zips/manifest/releases from CORS-enabled hosts and POSTs the
-//   bytes to the local server). PR #228 set connect-src 'self' only, which
-//   silently broke every remote ingest on CI builds (caught 2026-09-21 in
-//   the dev-channel manual test); the contract test below now derives the
+//   bytes to the local server). connect-src 'self' only would silently break
+//   every remote ingest on CI builds; the contract test below derives the
 //   host list from the config so the policy and the URLs can never drift.
 // - updater tab (tools/publish/remote-ui/updater.html): scripts/CSS/images
 //   come only from its own chrome://firefox-scripts package; package
@@ -152,7 +151,7 @@ test('updater.js helper checksum uses the portable nsICryptoHash hex conversion'
 
   // finish(false) returns a binary string; spreading it and calling
   // toString(16) emits non-ASCII bytes verbatim (mojibake hex), so the helper
-  // checksum failed whenever a byte >= 0x80 appeared (PR #271 manual test).
+  // checksum fails whenever a byte >= 0x80 appears.
   // The portable conversion (matching computeZipFilesHash in
   // scriptsUpdater.sys.mjs) is finish(true) -> atob -> charCodeAt per byte.
   assert.ok(

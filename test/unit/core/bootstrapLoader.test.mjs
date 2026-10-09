@@ -1,5 +1,5 @@
 // test/unit/core/bootstrapLoader.test.mjs — Unit tests for the bundled-loader
-// guard in core/chrome/utils/BootstrapLoader.js (issue #38 pre-1.0 scope).
+// guard in core/chrome/utils/BootstrapLoader.js.
 //
 // config.js skips loading BootstrapLoader.js on Waterfox because Waterfox
 // bundles its own legacy-extension loader. But a user-modified config.js that

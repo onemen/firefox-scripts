@@ -57,8 +57,7 @@ int restart_worker_busy(void);
 /**
  * Hand the plan to the detached restart worker (single-flight: returns 0
  * if a worker is already running or the thread could not be created — the
- * caller then runs do_restart_work() synchronously, exactly as before the
- * split).
+ * caller then runs do_restart_work() synchronously).
  */
 int restart_start_async(const restart_plan_t *plan);
 #endif

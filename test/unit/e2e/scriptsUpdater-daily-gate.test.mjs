@@ -641,7 +641,7 @@ test('no bare checkForUpdates() statement-call remains in the module', () => {
   );
 });
 
-test('driver seam: checkForUpdates is exported and re-decides on demand (#309)', async () => {
+test('driver seam: checkForUpdates is exported and re-decides on demand', async () => {
   const store = {};
   const {sandbox} = loadUpdater({store, captureExports: true});
   const layout = makeProfileLayout(sandbox);

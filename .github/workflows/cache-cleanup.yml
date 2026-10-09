@@ -7,9 +7,9 @@ name: Cache cleanup
 # restore them.
 #
 # The SCHEDULED prune lives in the url-watchdog's nightly tick (22:00 UTC —
-# the repo's only cron, #380): a fresh pnpm/browser save lands every night, so
-# a weekly window let the repo sit at the 10 GB cap for days and invited
-# GitHub's LRU eviction to eat the watchdog's own state caches (#462). This
+# the repo's only nightly cron): a fresh pnpm/browser save lands every night, so
+# a weekly window would let the repo sit at the 10 GB cap for days and invite
+# GitHub's LRU eviction to eat the watchdog's own state caches. This
 # workflow remains for manual runs:
 #
 #   gh workflow run cache-cleanup.yml --field keep=3 --field dry_run=true

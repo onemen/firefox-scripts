@@ -1,5 +1,5 @@
 // test/unit/e2e/processHygiene.test.mjs — unit tests for the E2E process
-// hygiene helpers (issue #130). The OS-bound sweep itself is only smoke-checked
+// hygiene helpers. The OS-bound sweep itself is only smoke-checked
 // here (no process-killing assertions in unit tests); the matcher, the
 // compatibility.ini removal, and closeBrowser's exit-wait logic are tested
 // directly.
@@ -319,7 +319,7 @@ test('killStrayProcesses: missing OS tooling is reported, not thrown', async () 
   assert.match(logs[0], /unavailable/);
 });
 
-// ── killProcessesByCmdline (#384) ───────────────────────────────────────────
+// ── killProcessesByCmdline ─────────────────────────────────────────────────
 // Same seam contract as killStrayProcesses: the real sweep kills matching
 // processes, so the runner is injected and both platform branches are tested
 // on any host.
@@ -416,10 +416,10 @@ test('killProcessesByCmdline: empty needle is a no-op (refuses to match everythi
   assert.equal(killed, 0);
 });
 
-// ── waitForProcessesGone (#384 launch retry) ────────────────────────────────
+// ── waitForProcessesGone (launch retry) ─────────────────────────────────────
 // The retry must not start against a profile the killed browser still holds;
 // the wait is the bounded gate that makes "the sweep did not work" visible
-// instead of turning into a second 20 s wedge (macOS nightly, 2026-10-02).
+// instead of turning into a second 20 s wedge.
 
 test('waitForProcessesGone: POSIX reports gone as soon as pgrep stops matching', async () => {
   const seen = [];

@@ -48,7 +48,7 @@ export function localConfigOverrides(chromeUtils, snapshotDir) {
   };
 }
 
-// ── Windows startup hygiene (issue #191) ─────────────────────────────────
+// ── Windows startup hygiene ──────────────────────────────────────────────
 
 /**
  * Prefs that keep a throwaway test browser out of the user's Windows Startup
@@ -85,7 +85,7 @@ export function seedStartupHygienePrefs(profileDir) {
   const existing = fs.existsSync(userJs) ? fs.readFileSync(userJs, 'utf-8') : '';
   if (existing.includes(STARTUP_HYGIENE_MARKER)) return;
   const lines = [
-    `// ${STARTUP_HYGIENE_MARKER} (issue #191) — never register Windows startup entries`,
+    `// ${STARTUP_HYGIENE_MARKER} — never register Windows startup entries`,
     ...Object.entries(STARTUP_HYGIENE_PREFS).map(
       ([name, value]) => `user_pref(${JSON.stringify(name)}, ${JSON.stringify(value)});`
     ),
@@ -191,9 +191,9 @@ export async function pollUntil(fn, timeoutMs, intervalMs = 500, label = '') {
  * establishment), in ms. A 159 headless start under load can wedge inside the
  * handshake — neither puppeteer.launch nor the ProtocolError's own 45 s
  * protocolTimeout reliably fires — and the scenario then stalls instead of
- * reaching its retry (#384). Ported from the firefox-updater's
- * firefoxPuppeteer.js pattern: race the launch against this deadline, tag the
- * launch, kill the tagged tree on failure, retry once.
+ * reaching its retry. Ported from the firefox-updater's firefoxPuppeteer.js
+ * pattern: race the launch against this deadline, tag the launch, kill the
+ * tagged tree on failure, retry once.
  */
 const LAUNCH_DEADLINE_MS = 20_000;
 
@@ -247,10 +247,10 @@ async function raceLaunchDeadline(launchPromise, deadlineMs, tag, log, profileDi
 /**
  * Launch Firefox via puppeteer-core + WebDriver BiDi.
  *
- * Bounded (#384): the handshake is raced against LAUNCH_DEADLINE_MS; a wedged
- * start is killed BY TAG (the whole process tree) and the launch retried once.
- * A wedged start is transient (load-sensitive), so the retry usually connects;
- * if it wedges too, the tagged error surfaces to the scenario's own retry-once.
+ * Bounded: the handshake is raced against LAUNCH_DEADLINE_MS; a wedged start is
+ * killed BY TAG (the whole process tree) and the launch retried once. A wedged
+ * start is transient (load-sensitive), so the retry usually connects; if it
+ * wedges too, the tagged error surfaces to the scenario's own retry-once.
  * protocolTimeout (45 s per protocol command) is intentionally UNCHANGED — this
  * bounds only the launch phase. Same defensive shape as the firefox-updater's
  * firefoxPuppeteer.js (deadline race + per-launch tag + taskkill by tag +
@@ -346,13 +346,13 @@ export async function launchFirefox(
   try {
     return await launchOnce();
   } catch (err) {
-    // One fast retry: a wedged start is load-sensitive and transient; a
-    // relaunch almost always connects (issue #384). Sweep the first attempt's
+    // One fast retry: a wedged start is load-sensitive and transient, so a
+    // relaunch almost always connects. Sweep the first attempt's
     // tree by tag BEFORE relaunching — the deadline kill only ran on the
     // deadline path, but a protocolTimeout on session.new (or any other
     // first-attempt rejection) can leave a browser holding the profileDir, and
     // the retry's --new-instance would then die on the profile lock instead of
-    // the transient wedge (review on #343, 2026-10-01). The retry shares the
+    // the transient wedge. The retry shares the
     // tag — a deadline kill on it sweeps both trees either way. The 45 s
     // protocolTimeout is intentionally UNCHANGED — this bounds the launch
     // phase, not protocol commands.

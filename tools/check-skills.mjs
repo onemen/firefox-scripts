@@ -107,10 +107,9 @@ const LICENSE_FILE_NAMES = [
  * / `description` as trimmed strings or null, and `metadata` as a plain
  * key→value record.
  *
- * The frontmatter used to be read by a line scanner that could not tell a valid
- * block from a broken one — a `: ` inside a multi-line scalar ended the value
- * and the scanner still saw a `description` (#413). One parser now answers both
- * "is this valid?" and "what does it say?".
+ * One parser answers both "is this valid?" and "what does it say?", so a `: `
+ * inside a multi-line scalar cannot end the value early while still reporting a
+ * `description`.
  *
  * @param {string} text SKILL.md content (CRLF tolerated)
  * @param {string} file the file's repo-relative label, for error messages

@@ -530,7 +530,7 @@ async function openTabOnPendingWorld({windows = [], mostRecent} = {}) {
   return {store, sandbox, layout, win, opened};
 }
 
-/* ---------------- the tab-attach block (#384) ---------------- */
+/* ---------------- the tab-attach block ---------------- */
 
 test('fresh tab is selected only after its browser commits the updater URI', async () => {
   const {layout, win, opened} = await openTabOnPendingWorld();
@@ -587,7 +587,7 @@ test('the fresh tab opens in the most-recent window, not the window init saw fir
   // off chrome-document-loaded, so on a restored session gWindow is whichever
   // window the observer saw first — window 1 of the saved session — while
   // SessionStore re-selects the window that was selected at shutdown. The tab
-  // must follow the user, not the init order (#384 follow-up).
+  // must follow the user, not the init order.
   const firstWin = makeFakeWindow();
   const mruWin = makeFakeWindow();
   // MRU-ordered, like the real mediator: mruWin is the window in front.
@@ -687,7 +687,7 @@ test('a restored tab in another window is forgotten and replaced by a fresh tab 
 });
 
 test('a restored tab in the SAME window is forgotten too — exactly one fresh tab', async () => {
-  // Always-fresh (#384 follow-up): even in the current window a restored tab
+  // Always-fresh: even in the current window a restored tab
   // is removed + purged, then ONE fresh tab is opened. A restored chrome page
   // may never run its engine (lazily restored page); the fresh tab is the
   // proven-good path.

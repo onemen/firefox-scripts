@@ -11,14 +11,13 @@
          - onemen.github.io   gh-pages: zips + hashes.json (prod)
          - api.github.com     self-update releases ingest + Waterfox releases
          - cdn.jsdelivr.net   dev channel: zips (dev-build-* via jsDelivr)
-         - raw.githubusercontent.com  dev channel: helper binary (#275)
+         - raw.githubusercontent.com  dev channel: helper binary
          - hg.mozilla.org     Firefox beta/devedition hg tags ingest
-         PR #228 originally set connect-src 'self' only, which silently broke
-         every remote ingest on CI builds (caught 2026-09-21 in the dev-channel
-         manual test). test/unit/publish/cspMeta.test.mjs pins this list
+         connect-src 'self' only would silently break every remote ingest on
+         CI builds. test/unit/publish/cspMeta.test.mjs pins this list
          against the hosts /api/package-urls can actually emit — add the host
          there AND here when a new one appears.
-         frame-ancestors is meta-ignored by spec; a header would need a C-server change (follow-up). -->
+         frame-ancestors is meta-ignored by spec; a header would need a C-server change. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' https://onemen.github.io https://api.github.com https://cdn.jsdelivr.net https://raw.githubusercontent.com https://hg.mozilla.org; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"

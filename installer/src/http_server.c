@@ -64,8 +64,8 @@ static int recv_some(int client_fd, char *buf, int size) {
 }
 
 /** Apply the idle deadline to a freshly accepted socket. Best-effort: a
- * failure to set the option degrades to the old unbounded behaviour for that
- * connection only. (The total deadline is tracked in the serve loop.) */
+ * failure to set the option leaves that connection waiting unbounded. (The
+ * total deadline is tracked in the serve loop.) */
 static void set_connection_timeouts(SOCKET client_fd) {
 #ifdef _WIN32
     DWORD idle = (DWORD)http_recv_timeout_ms;

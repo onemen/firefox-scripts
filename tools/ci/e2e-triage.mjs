@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * tools/ci/e2e-triage.mjs — file (and auto-close) the nightly revalidation's
- * issue (#380).
+ * tools/ci/e2e-triage.mjs — file (and auto-close) the nightly revalidation
+ * issue.
  *
- * The nightly E2E run is the ONLY E2E run `main` gets now: e2e.yml's own `push:
+ * The nightly E2E run is the only E2E run `main` gets: e2e.yml's own `push:
  * [main]` and `schedule:` triggers are gone, and the url-watchdog dispatches
  * one full run a night. That makes a red leg there invisible unless someone
  * happens to be reading the Actions UI — the coverage it replaces at least

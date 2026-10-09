@@ -2,16 +2,14 @@
 
 /**
  * tools/check-md-list-markers.mjs — flag a markdown list marker that lost its
- * line break (#307).
+ * line break.
  *
  * The failure shape: a bullet fuses into the previous line, so a list rule
- * silently becomes part of the preceding item — AGENTS.md shipped `(Context /
- * Decision / Consequences). -One decision per record.` on 2026-09-22 and the
- * "One decision per record" rule was unreadable as a rule. Nothing catches it
- * mechanically: markdownlint accepts a mid-line hyphen, prettier reflows the
- * paragraph happily, and check:decisions only parses the ADR files' status
- * lines — a prose-reading AI reviewer is the wrong instrument for a diff-shape
- * defect (#305).
+ * silently becomes part of the preceding item and is unreadable as a rule.
+ * Nothing catches it mechanically: markdownlint accepts a mid-line hyphen,
+ * prettier reflows the paragraph happily, and check:decisions only parses the
+ * ADR files' status lines — a prose-reading AI reviewer is the wrong instrument
+ * for a diff-shape defect.
  *
  * Scope: markdown files the change touches, ADDED/CHANGED lines only (git diff
  * against the merge base). A repo-wide scan would flag pre-existing prose and

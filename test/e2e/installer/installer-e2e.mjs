@@ -12,11 +12,11 @@
  *    reported via env.json), `--server-only` (no scan, no UI tab) and the
  *    second-instance path (a second installer on the same port refuses to
  *    serve, the first keeps answering). No browser needed.
- * 3. Restart-scope layer (#180, default on; --no-restart-scope to skip): two
- *    copies of the discovered Firefox install (same image name, different
- *    binary dirs) run at once, a config install targets copy B, Restart — copy
- *    A must survive (the old image-name kill killed it). Needs a real
- *    (non-snap) Firefox; skips otherwise.
+ * 3. Restart-scope layer (default on; --no-restart-scope to skip): two copies of
+ *    the discovered Firefox install (same image name, different binary dirs)
+ *    run at once, a config install targets copy B, Restart — copy A must
+ *    survive (an image-name kill would close it too). Needs a real (non-snap)
+ *    Firefox; skips otherwise.
  * 4. UI layer (--ui flag): launches a real Firefox, starts the installer (normal
  *    mode, so it detects the browser), navigates to the web UI, and asserts
  *    cards render with expected statuses.
@@ -95,8 +95,8 @@ function findInstaller(snapshotDir) {
   const dir = snapshotDir;
   const isWin = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
-  // Plain names first (#282 suffix drop); '-dev' variants are legacy
-  // tolerance for pre-#282 snapshots.
+  // Plain names first; '-dev' variants tolerate snapshots from before the
+  // suffix was dropped.
   const candidates =
     isWin ? ['installer_win.exe', 'installer_win-dev.exe']
     : isMac ? ['installer_mac', 'installer_mac-dev']
@@ -426,7 +426,7 @@ async function runHttpLayer(counter, sessionToken) {
   }
 }
 
-// ── Test-surface layer (issue #129 flags) ───────────────────────────────
+// ── Test-surface layer ───────────────────────────────────────────────────
 
 /**
  * Spawn an installer with arbitrary args and resolve when its env.json manifest
@@ -652,9 +652,7 @@ async function waitForServerOn(port, maxWaitMs = 15_000) {
     await new Promise(r => setTimeout(r, 200));
   }
   return false;
-}
-
-// ── Restart-scope layer (#180) ─────────────────────────────────────────
+} // ── Restart-scope layer ────────────────────────────────────────────────
 //
 // Issue #180: after a config install, the restart worker closed EVERY process
 // of the image name (firefox.exe) instead of the target install's processes.
@@ -696,7 +694,7 @@ function samePath(a, b) {
 /** Launch a Firefox binary+profile as a detached OS process. */
 function launchDetachedFirefox(firefoxBin, profileDir, headless) {
   // Fresh profile + official build = the launch-on-login auto-enable's exact
-  // trigger (issue #191). This spawn bypasses puppeteer, so the prefs must
+  // trigger. This spawn bypasses puppeteer, so the prefs must
   // already be in the profile's user.js before Firefox starts.
   seedStartupHygienePrefs(profileDir);
   const args = ['--profile', profileDir, '--no-remote'];
@@ -1058,7 +1056,7 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
         } catch (err) {
           // Surface (throttled) instead of swallowing: a server that stopped
           // answering /api/status must be visible while it happens, not as an
-          // opaque RS-10 timeout 45s later (#233-adjacent RS-10 flake).
+          // opaque RS-10 timeout 45s later.
           console.warn(`  ⚠ /api/status poll failed: ${err instanceof Error ? err.message : err}`);
         }
         return null;
@@ -1076,7 +1074,7 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     if (!done || done.error) throw new Error('config install did not complete');
 
     // RS-10b: a finished install drops its own work dir instead of leaving an
-    // empty shell in the user's temp dir (#390).  The 'done' response is
+    // empty shell in the user's temp dir.  The 'done' response is
     // flushed just before the server does that cleanup, so poll briefly rather
     // than reading a race as a leak.
     const cleared = await pollUntil(
@@ -1100,7 +1098,7 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     //
     // Baselines are sampled AFTER the launch has settled: Firefox may fork a
     // launcher process at startup that hands off and exits, so the exact PID
-    // set churns in the first seconds. The anti-bug invariant (#180) is not
+    // set churns in the first seconds. The anti-bug invariant is not
     // "same PIDs" — an image-name kill closed EVERY instance, so the fixed
     // behavior is: bystander A never drops to zero main processes, and B
     // comes back with a fresh main-PID set.
@@ -1189,7 +1187,7 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     const ping = await fetch(`${base}/api/ping`, {signal: AbortSignal.timeout(3000)});
     check(counter, ping.ok, 'RS-14 installer server still answering after the restart');
 
-    // ── /api/close-browser binary scoping (#180 follow-up) ──────────────
+    // ── /api/close-browser binary scoping ───────────────────────────────
     // Same invariant as the restart path: closing B must not touch A.
     // Close B via the endpoint, wait for its processes to be gone, then
     // assert A is still running with its main PIDs unchanged.
@@ -1279,10 +1277,10 @@ async function runUiLayer(counter, opts, snapshotDir) {
 
   // 1. Create a fresh profile for the test browser
   const testProfile = tempDir('fxs-installer-ui');
-  // Profile hygiene (issue #130): never reuse stale GRE-compatibility state.
+  // Profile hygiene: never reuse stale GRE-compatibility state.
   removeProfileCompatibilityIni(testProfile);
 
-  // Tab-console mirror (2026-09-21): the ingest pipeline logs its failures to
+  // Tab-console mirror: the ingest pipeline logs its failures to
   // the page console ('[ingest] package zip fetch failed: …' from
   // 10-ingest.js failZip) — without a mirror those lines never reach the CI
   // log and a UI-12 failure is unattributable. BiDi surfaces page console
@@ -1534,7 +1532,7 @@ async function runUiLayer(counter, opts, snapshotDir) {
       const shotOk = await screenshotPrivileged(page, shotPath);
       if (shotOk) uiCheck(true, 'UI-11', 'installer screenshot saved');
 
-      // UI-13 (issue #341): the tab's self-update ingest must have consumed
+      // UI-13: the tab's self-update ingest must have consumed
       // SOME managed payload. The ingest order is Pages-first (post-cutover
       // binaries) with the release-body flow as the pre-cutover fallback —
       // the page reports both its console ('[ingest]' lines) and the server
@@ -1607,7 +1605,7 @@ async function run() {
   // leg looks at the OS temp dir.
   pruneStaleTempRoots();
 
-  // Process hygiene (issue #130): a cancelled previous run can leave the
+  // Process hygiene: a cancelled previous run can leave the
   // detached installer holding port 8777 — the HTTP layer below would then
   // probe the DEAD run's server. Sweep first.
   await killStrayProcesses();
@@ -1773,7 +1771,7 @@ async function run() {
     await leg('test-surface', () => runTestSurfaceLayer(counter, bin));
   }
 
-  // Restart-scope layer (#180, default on) — needs a real Firefox + the
+  // Restart-scope layer (default on) — needs a real Firefox + the
   // snapshot's fx-folder zip; skips gracefully when neither is available.
   if (opts.restartScope) {
     await leg('restart-scope', () => runRestartScopeLayer(counter, opts, snapshotDir, bin));

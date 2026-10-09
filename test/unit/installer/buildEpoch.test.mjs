@@ -1,23 +1,21 @@
-// test/unit/installer/buildEpoch.test.mjs — regression guard for the 2026-09-25
-// CI determinism failure (build-and-upload run 36177261598) and for ADR 0036's
-// 2026-09-26 per-binary epoch amendment.
+// test/unit/installer/buildEpoch.test.mjs — regression guard for PE
+// TimeDateStamp determinism (ADR 0036's per-binary epoch).
 //
 // What broke first: `SOURCE_DATE_EPOCH` — the value that pins the PE
-// TimeDateStamp (#162) — was resolved by an inline
+// TimeDateStamp — was resolved by an inline
 // `$(shell git log --format=%ct -- <paths>)` in installer/Makefile. A
 // path-limited `git log` resolves its pathspec against GIT'S working directory
 // and, when nothing matches, prints NOTHING and still exits 0: the trailing
 // `|| echo <fallback>` never fired, SOURCE_DATE_EPOCH became the empty string,
 // binutils read that as "unset", and every PE was stamped with the LINK TIME.
-// Two runs of the same commit therefore differed (installer cfe00a28… vs
-// c6374896…, helper d2eee31d… vs 31c6cc87…), the zips matched because they
-// carry no binaries, and the release hashes stopped identifying a commit —
-// which is the whole basis of the AV/VT/WDSI workflow.
+// Two runs of the same commit therefore differed in their binaries while the
+// zips matched (they carry no binaries), and the release hashes stopped
+// identifying a commit — which is the whole basis of the AV/VT/WDSI workflow.
 //
-// What broke second (2026-09-26, run 36265954107): the Makefile exported ONE
-// UNION epoch for both PEs, so `helper_win.exe` re-rolled across #335 although
-// not a single helper input changed — the helper's WDSI submission was
-// invalidated for nothing. The epoch is now resolved PER BINARY: each PE is
+// What broke second: the Makefile exported ONE UNION epoch for both PEs, so
+// `helper_win.exe` re-rolled although not a single helper input changed —
+// the helper's WDSI submission was invalidated for nothing. The epoch is
+// resolved PER BINARY: each PE is
 // stamped with the last commit touching its OWN input set, the same list its
 // inner build date and publish hash derive from.
 //
@@ -482,14 +480,14 @@ test('Makefile: the epoch block stays free of inline-function footguns', () => {
 });
 
 test('Makefile: the recipe-shell pin probes the MSYS2 tree make lives in first', () => {
-  // 2026-09-26, run 36222271581 (the day after #331): the determinism job
-  // failed again with link-time stamps even though the epoch variable held the
-  // right value inside make. CI's pinned make is the bootstrap tree's msys
-  // make (D:/a/_temp/msys64/usr/bin), but the pin handed it the runner image's
+  // CI's pinned make is the bootstrap tree's msys make
+  // (D:/a/_temp/msys64/usr/bin), but the pin handed it the runner image's
   // preinstalled C:/msys64 sh — and a cross-tree make→sh pair silently drops
   // make's exported environment at the recipe boundary, so SOURCE_DATE_EPOCH
-  // never reached the linker. Every local build is single-tree, which is why
-  // the local double-build passed while CI failed.
+  // never reached the linker and the PEs carried link-time stamps even though
+  // the epoch variable held the right value inside make. Every local build
+  // is single-tree, which is why the local double-build passed while CI
+  // failed.
   const start = makefile.indexOf('ifeq ($(OS),Windows_NT)');
   const end = makefile.indexOf('SHELL := $(PINNED_SH)');
   assert.ok(start !== -1 && end > start, 'PINNED_SH probe block not found');

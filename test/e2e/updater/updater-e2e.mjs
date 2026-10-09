@@ -19,24 +19,24 @@
  * renders (identity, all 8 buttons, checkbox wiring, skip checkbox, no
  * page/console errors, screenshot). The ids 4/5 (up-to-date, skipped) are
  * aliases of this session — they are its last two variants now, and where the
- * driver realm cannot come up the session falls back to the pre-#309 path for
+ * driver realm cannot come up the session falls back to the fallback path for
  * each part: the stale trio re-renders in-tab (assertStaleTrioInTab), while
  * up-to-date/skipped run as their own launches (runNoTabScenario). Scenario 6
  * (install-applies): click btn-install and assert the packages are actually
- * copied to disk (issue #37); under Snap the config package is never offered
- * in-tab — the checkbox is hidden and the manual-install band shown, so the run
- * installs utils only and asserts the config files stay untouched Scenario 7
+ * copied to disk; under Snap the config package is never offered in-tab — the
+ * checkbox is hidden and the manual-install band shown, so the run installs
+ * utils only and asserts the config files stay untouched Scenario 7
  * (manual-install-upgrade): a hand-installed utils.zip brings the updater — no
- * tab with a pre-updater utils, tab after replacing it (issue #53) Scenario 8
+ * tab with a pre-updater utils, tab after replacing it Scenario 8
  * (manual-install-no-ui): a hand-installed utils.zip ships NO ui folder (the
  * tab UI lives in the separate updater-ui.zip); after a fresh check the
  * scheduler self-installs the ui (ensureUpdaterUi) and the tab is visible
- * (issue #102) Scenario 9 (helper-checksum-win, Windows-only): ACL-write-denies
- * GreD so the config install falls through to the elevated-copy helper, and
- * asserts the downloaded helper's checksum verification PASSES before the
- * (headless-doomed) elevation step — the PR #271 mojibake regression net.
- * Requires a user-owned GreD (CI's portable installs; skips on admin-owned dirs
- * like Program Files, which cannot be denied without elevation)
+ * Scenario 9 (helper-checksum-win, Windows-only): ACL-write-denies GreD so the
+ * config install falls through to the elevated-copy helper, and asserts the
+ * downloaded helper's checksum verification PASSES before the (headless-doomed)
+ * elevation step — the mojibake regression net. Requires a user-owned GreD
+ * (CI's portable installs; skips on admin-owned dirs like Program Files, which
+ * cannot be denied without elevation)
  *
  * Each remaining scenario: fresh temp profile → seed utils + fx-folder → modify
  * files to force desired state → launch Firefox → wait for tab (or assert none)
@@ -244,7 +244,7 @@ try {
             watcher.cancel();
             return;
           }
-          // All windows (#384): a restored session can hold the updater tab
+          // All windows: a restored session can hold the updater tab
           // in a NON-focused window, which a most-recent-window scan never
           // sees. WINDOW-COUNT on change is the both-windows-restored proof
           // the session-restore scenario (11) asserts.
@@ -403,7 +403,7 @@ function seedProfile(
   };
   const chromeUtils = path.join(profileDir, 'chrome', 'utils');
 
-  // Profile hygiene (issue #130): never reuse a previous run's GRE
+  // Profile hygiene: never reuse a previous run's GRE
   // compatibility state, even if a profile directory were ever reused.
   removeProfileCompatibilityIni(profileDir);
 
@@ -548,7 +548,7 @@ function restoreGreConfig(snapshot) {
  * Replicate the updater's runtime hash (scriptsUpdater.computeFilesHash):
  * sha256 over rel_path + '\n' + file_bytes for every file in the manifest's
  * file list, sorted with localeCompare. Used to assert that an install actually
- * restored the installed tree to the manifest state (issue #37).
+ * restored the installed tree to the manifest state.
  */
 function computeInstalledHash(files, dir) {
   const hash = createHash('sha256');
@@ -942,11 +942,12 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
     // source is Firefox's business, and counting it reds legs on pure noise:
     // `chrome://browser/.../ext-browser.js:396 Cannot attach ID to a tab in a
     // closed window` (ubuntu updater leg, 2026-09-22) and the resource://gre
-    // Telemetry line before it. Two shipped bugs were caught through this net
-    // (helper checksum mojibake, CSP-blocked inline style) and both were ours.
+    // Telemetry line before it. This net catches what green CI cannot:
+    // updater-tab failures that surface only as console errors (helper
+    // checksum mojibake, CSP-blocked inline style).
     //
-    // logError additionally routes through Services.console.logStringMessage
-    // (#292 fix): those lines carry NO source and NO level marker — plain
+    // logError additionally routes through Services.console.logStringMessage:
+    // those lines carry NO source and NO level marker — plain
     // "<ISO> Firefox Scripts updater: <msg>". Count them as hits too (they are
     // updater-tab errors by definition); the allowlist exemption below then
     // decides per-scenario whether the line is expected.
@@ -967,17 +968,16 @@ function collectConsoleErrors(profileDir, allowPatterns = []) {
 
 /**
  * Assert the console mirror recorded zero errors from the updater scripts. Two
- * line shapes count as ours (2026-09-23):
+ * line shapes count as ours:
  *
  * - script errors sourced from chrome://firefox-scripts/.../updater/* (the engine
  *   module and the tab's updater.js/updater-ui.js), and
- * - the logStringMessage-routed logError lines (#292 fix) — ConsoleAPI
- *   (console.error) never reaches the console service, so the tab's logError
- *   now also emits a plain "Firefox Scripts updater: <msg>" line that carries
- *   no source; the stable prefix is the marker. The 2026-09-20 manual session
- *   caught TWO shipped bugs as console errors (helper checksum mojibake,
- *   CSP-blocked inline style) that green CI never saw — every updater scenario
- *   now closes the net.
+ * - the logStringMessage-routed logError lines — ConsoleAPI (console.error) never
+ *   reaches the console service, so the tab's logError also emits a plain
+ *   "Firefox Scripts updater: <msg>" line that carries no source; the stable
+ *   prefix is the marker. Two shipped bugs surfaced as console errors (helper
+ *   checksum mojibake, CSP-blocked inline style) that green CI never saw —
+ *   every updater scenario now closes the net.
  *
  * Allow patterns match the FULL mirror line: other components legitimately
  * error (e.g. blocked processes under the harness), and scenarios that
@@ -1043,8 +1043,8 @@ function greShownToday(profileDir) {
 }
 
 /**
- * Every variant the driver session drives (#309): the DISK fixture applied
- * before the check, and the tab state the resulting UI must render.
+ * Every variant the driver session drives: the DISK fixture applied before the
+ * check, and the tab state the resulting UI must render.
  *
  * The two differ for `skipped`: the disk is genuinely stale (that is what the
  * skip pref has to suppress), while the UI — which renders the check's
@@ -1115,10 +1115,10 @@ function expectedStaleState(variant) {
 
 /**
  * Prepare the disk fixtures for one stale variant in the RUNNING session's
- * seeded trees (#197): the utils marker lives in the profile's chrome/utils
- * copy and the config marker in the GreD config.js. The tab re-hashes from disk
- * on every engine init ("must render the truth"), so re-running init after this
- * mutation re-renders the new variant — no re-seed or relaunch.
+ * seeded trees: the utils marker lives in the profile's chrome/utils copy and
+ * the config marker in the GreD config.js. The tab re-hashes from disk on every
+ * engine init ("must render the truth"), so re-running init after this mutation
+ * re-renders the new variant — no re-seed or relaunch.
  *
  * config.js is written WHOLE from the captured pristine bytes: the startup
  * probe is itself an append that makes config stale as a side effect, so a
@@ -1514,7 +1514,7 @@ async function runOneVariant(
       `${variant}: the check opens no tab`,
       JSON.stringify(result)
     );
-    // The up-to-date path's only writer (#333): a COMPLETED check that found
+    // The up-to-date path's only writer: a COMPLETED check that found
     // nothing to do records the day. Asserted here, before the card tab below
     // writes it too, so only the scheduler's own write can satisfy it.
     check(
@@ -1567,8 +1567,8 @@ async function runOneVariant(
 }
 
 /**
- * The stale trio as the pre-#309 session asserted it, against the tab the
- * startup check opened: apply the variant's disk fixture → re-render through
+ * The stale trio, asserted against the tab the startup check opens (the
+ * driver-less fallback): apply the variant's disk fixture → re-render through
  * the engine's own re-check entry point → assert the card.
  *
  * Fallback for a host where BiDi CAN evaluate the updater tab but the driver
@@ -1631,9 +1631,8 @@ async function assertStaleTrioInTab(counter, {page, firefoxBin, seeded, pristine
 }
 
 /**
- * The state-only scenarios that used to pay their own browser launch, folded
- * into this session (#309 follow-up): install-applies (#37) and
- * manual-install-no-ui (#102).
+ * The state-only scenarios, folded into this session: install-applies and
+ * manual-install-no-ui.
  *
  * Both differ from the five variants only in fixture state — a disk flip (stale
  * markers, a removed ui dir) plus, for the no-ui case, the release topology
@@ -1647,10 +1646,10 @@ async function assertStaleTrioInTab(counter, {page, firefoxBin, seeded, pristine
  * those trees), and the no-ui phase re-establishes its own fixture (utils
  * re-staled, ui removed) instead of inheriting the install's fresh state.
  *
- * helper-checksum-win (#271) deliberately stays a separate launch, and run()
- * still runs it as one: it only runs on Windows, where the CI legs cannot
- * attach BiDi to the trusted tab — driver mode is unavailable there, so the
- * session falls back and folding it would save nothing in CI while dragging a
+ * helper-checksum-win deliberately stays a separate launch, and run() still
+ * runs it as one: it only runs on Windows, where the CI legs cannot attach BiDi
+ * to the trusted tab — driver mode is unavailable there, so the session falls
+ * back and folding it would save nothing in CI while dragging a
  * scratch-snapshot stand-in helper into every variant's wiring.
  *
  * @param {{passed: number; failed: number}} counter
@@ -1998,15 +1997,15 @@ async function runFoldedInstallApplies(counter, ctx) {
   await driverCall(driver, 'install-applies: close tabs', () => driver.closeUpdaterTabs());
 }
 
-/** Folded #102 — manual-install-no-ui, in the session's browser. */
+/** Folded — manual-install-no-ui, in the session's browser. */
 async function runFoldedNoUi(counter, ctx) {
   const {driver, browser, seeded, snapshotDir} = ctx;
 
-  // ── Folded: manual-install-no-ui (#102) ──────────────────────────────────
+  // ── Folded: manual-install-no-ui ─────────────────────────────────────────
   // The release topology: ZIP_BASE_URL points at a dir with NO updater-ui.zip
   // (the released state this scenario must catch); the ui zip comes from the
-  // manifest's own host (UI_BASE_URL = the snapshot). A pre-fix scheduler
-  // fetched it from ZIP_BASE_URL and 404'd silently — exactly what fails here.
+  // manifest's own host (UI_BASE_URL = the snapshot). Fetching it from
+  // ZIP_BASE_URL would 404 silently — exactly what fails here.
   console.log('\n  ── folded in-session: manual-install-no-ui (#102) ──');
   const uiDir = path.join(seeded.chromeUtils, 'updater', 'ui');
   let releaseDir;
@@ -2079,7 +2078,7 @@ async function runFoldedNoUi(counter, ctx) {
 }
 
 /**
- * The variant session — driver mode (#309, formerly scenarios 1 + 4 + 5).
+ * The variant session — driver mode.
  *
  * ONE browser covers five variants that differ only in seed state: the stale
  * trio (utils-stale / config-stale / both-stale), up-to-date, and skipped. The
@@ -2102,12 +2101,11 @@ async function runFoldedNoUi(counter, ctx) {
  * userChrome.js → observer → initScriptsUpdater → the tab the seed asked for)
  * and the startup-race retry, unchanged. Where driver mode cannot run, the
  * session degrades by capability, never by coverage: BiDi can still evaluate
- * the updater tab → the stale trio runs the pre-#309 in-tab re-render loop
+ * the updater tab → the stale trio runs the in-tab re-render loop
  * (assertStaleTrioInTab); BiDi cannot attach to the trusted tab at all → only
- * the tab-open proof is observable there, which is exactly what the pre-#309
- * session could assert in that environment too. Either way the caller
- * additionally runs up-to-date / skipped as their own launches with the local
- * manifest server (see run()'s scenarioSteps).
+ * the tab-open proof is observable there, the most that environment allows.
+ * Either way the caller additionally runs up-to-date / skipped as their own
+ * launches with the local manifest server (see run()'s scenarioSteps).
  *
  * The folded scenarios degrade the same way when the realm dies MID-session:
  * runSessionExtras re-probes before every phase, and whatever it could not
@@ -2236,9 +2234,9 @@ async function runVariantSession(counter, opts, snapshotDir) {
         // looked, NOT a statement about BiDi's ability to drive a trusted
         // chrome:// tab: the page is matched by evaluated realm (see
         // waitForUpdaterTabOpen), so a handle that exists at all is found. Record
-        // the tab-open proof with that spelled out in the label (the historical CI
-        // contract for these legs, previously silent). Coverage parity with the
-        // pre-#309 session: with no tab handle it could not assert a card either —
+        // the tab-open proof with that spelled out in the label (the CI
+        // contract for these legs). Coverage parity: with no tab handle it
+        // could not assert a card either —
         // here the trio's observable is the tab-open proof above, and the caller
         // still runs the up-to-date / skipped decisions as their own launches.
         check(
@@ -2284,7 +2282,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
       console.log(`  tab URL: ${page.url()}`);
       check(counter, true, `startup check opens the updater tab (${attemptLabel})`);
 
-      // ── Bootstrap driver mode (#309) ──
+      // ── Bootstrap driver mode ──
       // The startup tab is the only privileged realm reachable here (a content
       // tab cannot be navigated to chrome://), so the driver tab is opened FROM
       // it; from there the harness drives the orchestrator directly.
@@ -2294,7 +2292,8 @@ async function runVariantSession(counter, opts, snapshotDir) {
         // The driver realm never came up (the driver tab did not commit, or its
         // script did not run) while BiDi CAN evaluate the updater tab. A retry
         // cannot help — this is a host property. The trio must not lose its
-        // coverage to the #309 collapse, so assert it the pre-#309 way, in the
+        // coverage when driver mode is unavailable, so assert it the fallback
+        // way, in the
         // tab the startup check already opened; only the up-to-date / skipped
         // DECISIONS need their own launches, which run() then performs.
         check(
@@ -2407,7 +2406,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
         // folded phases degrade on): the variants that already ran keep their
         // assertions in the tally; everything else is deferrable. The stale
         // variants among the remainder are re-asserted IN THIS TAB below (the
-        // pre-#309 shape — the engine re-checks on init(), no driver needed);
+        // fallback shape — the engine re-checks on init(), no driver needed);
         // the up-to-date/skipped decisions and the folded phases go to run()'s
         // launch path. A realm death is a speed loss, never a coverage loss
         // and never a false failure.
@@ -2430,7 +2429,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
           );
         }
 
-        // ── Folded state-only scenarios (#309 follow-up) ──
+        // ── Folded state-only scenarios ──
         // install-applies + manual-install-no-ui run in THIS browser, after the
         // variants: they mutate the seeded trees and the GreD config, so they
         // must run last (the variants assert those trees). A failure here is
@@ -2445,7 +2444,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
           pristineConfig,
         });
         if (extras.driverLost) {
-          // Degrade, never fail (#309 follow-up): the folded phases that did not
+          // Degrade, never fail: the folded phases that did not
           // finish are handed back to run()'s launch path, which runs them as
           // their own launches. The variants that DID run keep their assertions
           // in the tally, so this is a speed regression at worst — never
@@ -2509,7 +2508,7 @@ async function runVariantSession(counter, opts, snapshotDir) {
 }
 
 /**
- * Launch ONE stale variant the pre-#309 way: seed the profile, launch, and wait
+ * Launch ONE stale variant the fallback way: seed the profile, launch, and wait
  * for the tab the startup check opens — the same observable the in-session
  * driver path asserts, used when a mid-session realm death defers a stale
  * variant and its startup tab is gone with it.
@@ -2558,7 +2557,7 @@ async function runLaunchedStaleVariantScenario(counter, opts, snapshotDir, varia
       'scheduler never reached addTrustedTab'
     );
     // Card assertions need a BiDi handle; where BiDi cannot attach, the tab-open
-    // proof above is the same observable the pre-#309 session had.
+    // proof above is the same observable the fallback session has.
     if (page) {
       const pageErrors = [];
       const onErr = err => pageErrors.push(err.message);
@@ -2588,8 +2587,8 @@ async function runLaunchedStaleVariantScenario(counter, opts, snapshotDir, varia
  * Launch Firefox with both packages up to date (or skipped), assert the updater
  * tab does NOT open within the timeout.
  *
- * The pre-#309 shape of the up-to-date / skipped variants, kept as the fallback
- * for environments where driver mode cannot run (BiDi cannot evaluate inside a
+ * The fallback shape of the up-to-date / skipped variants, kept for
+ * environments where driver mode cannot run (BiDi cannot evaluate inside a
  * privileged page, so the harness cannot call the orchestrator in-browser) —
  * see run()'s scenarioSteps. In-session, the same decisions are asserted from
  * the driver page instead (runOneVariant).
@@ -3162,7 +3161,7 @@ async function runManualInstallScenario(counter, opts, snapshotDir, label) {
   // never activates. Only seed prefs that must persist across both phases.
   let browser;
   try {
-    // Observed 2026-09-22 (measurement runs): Nightly can crash during BiDi
+    // Nightly can crash during BiDi
     // connect (TargetCloseError at session.new, "Exiting due to channel
     // error") — an environment/process-foreign crash, not a harness failure.
     // Retry up to 3 attempts with a hygiene sweep + short backoff between
@@ -3575,9 +3574,9 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
 
     // ── Seed the stand-in helper + sidecar into the scratch snapshot ──
     // Arbitrary non-executable bytes; >0x80 spread exercises the fixed
-    // per-byte conversion (the mojibake bug only corrupted bytes >= 0x80).
-    // 'MZ' DOS header magic + a >0x80-heavy body; the '-dev' variant is
-    // legacy tolerance for pre-#282 snapshots.
+    // per-byte conversion (mojibake corrupts bytes >= 0x80).
+    // 'MZ' DOS header magic + a >0x80-heavy body; the '-dev' variant tolerates
+    // snapshots from before the suffix was dropped.
     const standIn = Buffer.concat([
       Buffer.from([0x4d, 0x5a, 0x90, 0x00]),
       Buffer.from(Array.from({length: 4096}, (_, i) => (i * 37 + 128) & 0xff)),
@@ -3815,7 +3814,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
           'Elevation was cancelled',
           'Admin copy helper failed',
           ...HELPER_SPAWN_ALLOW,
-          // These also match the logStringMessage-routed duplicates (#292):
+          // These also match the logStringMessage-routed duplicates:
           // the routed line embeds the same tail — "Firefox Scripts updater:
           // install config - <expected tail>" — so no broader routed entry is
           // needed (a bare "install config" prefix would mask every other
@@ -3911,7 +3910,7 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
         'Elevation was cancelled',
         'Admin copy helper failed',
         ...HELPER_SPAWN_ALLOW,
-        // These also match the logStringMessage-routed duplicates (#292):
+        // These also match the logStringMessage-routed duplicates:
         // the routed line embeds the same tail — "Firefox Scripts updater:
         // install config - <expected tail>" — so no broader routed entry is
         // needed (a bare "install config" prefix would mask every other
@@ -3951,25 +3950,24 @@ async function runHelperChecksumScenario(counter, opts, snapshotDir, label) {
 }
 
 /**
- * Scenario 10 — timer regression (#292): the daily in-session re-check must
- * actually fire.
+ * Scenario 10 — timer regression: the daily in-session re-check must actually
+ * fire.
  *
- * History: for the updater's entire lifetime the re-check never ran —
- * initScriptsUpdater called the window-bound setInterval global, which does not
- * exist in a chrome ESM's module scope; the ReferenceError (thrown after the
- * startup check had returned) was swallowed by userChrome.js's silent catch.
- * Every browser start re-ran the startup check, so the only observable was a
- * missing daily re-check — invisible to any test that only asserts tab-open
- * behavior. This scenario pins the fix (session-lifetime nsITimer).
+ * The re-check must not depend on the window-bound setInterval global, which
+ * does not exist in a chrome ESM's module scope: the resulting ReferenceError
+ * (thrown after the startup check has returned) is swallowed by userChrome.js's
+ * silent catch. Every browser start re-runs the startup check, so the only
+ * observable is a missing daily re-check — invisible to any test that only
+ * asserts tab-open behavior. This scenario pins the session-lifetime nsITimer.
  *
  * Mechanism: the scheduler runs its check on a prefs-gated cadence and the
  * shipped interval is 24h — too slow to observe. So the harness patches the
  * EXTRACTED scheduler's CHECK_INTERVAL_MS down to 4s (host-side string replace,
  * before launch), serves a fully up-to-date manifest built from the PATCHED
  * tree (nothing to surface → no tab, gates stay clear), and counts manifest
- * fetches: startup check + N timer fires in the observation window. On the
- * pre-fix code this scenario measured exactly 1 fetch (startup only); with the
- * fix it grows with the window.
+ * fetches: startup check + N timer fires in the observation window. Broken code
+ * measures exactly 1 fetch (startup only); the count grows with the window when
+ * the timer fires.
  *
  * Assertions:
  *
@@ -4025,8 +4023,8 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
     // Serve a manifest built from the PATCHED tree with one byte flipped in a
     // comment marker file: every check finds a pending utils update, so the
     // up-to-date write can never rate-limit the timer away — the fetch counter
-    // isolates the timer itself, which is the thing scenario 10 exists to prove
-    // (#292). The pending-update day is ALSO pref-silent: the tree manifest
+    // isolates the timer itself, which is the thing scenario 10 proves.
+    // The pending-update day is ALSO pref-silent: the tree manifest
     // ships an empty updater-ui entry and this profile has no installed UI, so
     // ensureUpdaterUi returns false on every tick and checkForUpdates exits
     // before the tab-open — no tab, and under the single daily pref (ADR 0012)
@@ -4117,13 +4115,13 @@ async function runTimerRegressionScenario(counter, opts, snapshotDir, label) {
  * the LAST marker on is exactly this launch's output.
  *
  * Without the scope a launch the harness KILLED leaves its lines behind for the
- * next launch in the same profile. The wedged-attempt retry (#384) then reads
- * the dead attempt's state: on the 2026-10-02 firefox-dev Windows leg the
- * killed attempt's ENGINE-DONE satisfied the engine wait — the retry's engine
- * was never actually awaited, its pref never reached prefs.js, and the scenario
- * failed an assertion the killed run had already passed in memory. Every
- * mirror-based poll (WINDOW-COUNT, TAB_SET, ENGINE-DONE, TAB_OPENED, SS-NOTIFY)
- * inherits the scope through this one reader.
+ * next launch in the same profile. The wedged-attempt retry then reads the dead
+ * attempt's state: the killed attempt's ENGINE-DONE would satisfy the engine
+ * wait — the retry's engine was never actually awaited, its pref never reached
+ * prefs.js, and the scenario failed an assertion the killed run had already
+ * passed in memory. Every mirror-based poll (WINDOW-COUNT, TAB_SET,
+ * ENGINE-DONE, TAB_OPENED, SS-NOTIFY) inherits the scope through this one
+ * reader.
  */
 function readMirror(profileDir) {
   let text;
@@ -4194,11 +4192,11 @@ function buildStaleUtilsManifest(snapshotDir, staleTreeDir) {
 }
 
 /**
- * The session-restore scenario (#384 follow-up): relaunch on a profile whose
- * previous session (generated at runtime by sessionFile.mjs) holds the updater
- * tab in a NON-selected window, backgrounded inside that window, with a
- * different window selected — the exact restore shape the attach block's
- * all-windows scan must handle.
+ * The session-restore scenario: relaunch on a profile whose previous session
+ * (generated at runtime by sessionFile.mjs) holds the updater tab in a
+ * NON-selected window, backgrounded inside that window, with a different window
+ * selected — the exact restore shape the attach block's all-windows scan must
+ * handle.
  *
  * Assertions: both windows restore (WINDOW-COUNT), exactly ONE updater tab
  * exists across all windows (the always-fresh attach forgot the restored one
@@ -4212,9 +4210,9 @@ function buildStaleUtilsManifest(snapshotDir, staleTreeDir) {
  * 1. Its privileged entry carries the serialized system principal — what a real
  *    updater entry stores — so the restored chrome:// tab is actually LOADABLE;
  *    without it SessionStore restores the entry from a null principal and the
- *    chrome:// load is blocked (a shape the fixture used to replay by accident,
- *    see sessionFile.SERIALIZED_SYSTEM_PRINCIPAL). FXS_E2E_SESSION_FILE
- *    overrides the generated payload with any Firefox-authored file.
+ *    chrome:// load is blocked (see sessionFile.SERIALIZED_SYSTEM_PRINCIPAL).
+ *    FXS_E2E_SESSION_FILE overrides the generated payload with any
+ *    Firefox-authored file.
  */
 /**
  * The generated session file: buildSession's payload (2 windows, updater tab
@@ -4477,7 +4475,7 @@ async function run() {
   logBakedConfig(snapshotDir);
   assertBakedLocalIdentity(snapshotDir);
 
-  // Process hygiene (issue #130): a cancelled or crashed previous run can
+  // Process hygiene: a cancelled or crashed previous run can
   // leave the detached installer holding port 8777 and BiDi browsers holding
   // temp profiles — kill them before anything waits on that port.
   await killStrayProcesses();
@@ -4538,21 +4536,21 @@ async function run() {
 
   const profiles = [];
 
-  // Save GreD config before we overwrite it (see issue #4)
+  // Save GreD config before we overwrite it
   const savedGre = saveGreConfig(findGreDir(firefoxBin));
 
   try {
     // Scenario steps run in order; after the first failure the remaining
     // scenarios almost always fail for the same root cause, so skip them
-    // (opt out with --no-fail-fast). Scenarios 1–3 are ONE step (#197): the
+    // (opt out with --no-fail-fast). Scenarios 1–3 are ONE step: the
     // three stale variants share a browser session (fresh profile on retry).
     // --scenario 1 still runs the whole merged step — the variants are no
     // longer separable because they share the session.
     const scenarioSteps = [
       {
         id: '1',
-        // The variant session (#309, formerly the separate steps 1/4/5, and the
-        // home of the folded install-applies / manual-install-no-ui): the stale
+        // The variant session (home of the folded install-applies /
+        // manual-install-no-ui): the stale
         // trio, up-to-date and skipped, and the two state-only scenarios, in ONE
         // browser. `--scenario 4` / `5` / `6` / `8` still select it (the variants
         // are no longer separable: they share the session).
@@ -4590,7 +4588,7 @@ async function run() {
             }
             // Stale variants the dead realm deferred (its in-tab re-assertion
             // could not run either): they launch in the trio order, each its
-            // own scenario — the pre-#309 shape for exactly those variants.
+            // own scenario — the fallback shape for exactly those variants.
             const staleToLaunch = remainingVariants.filter(v => STALE_VARIANTS.includes(v));
             for (const variant of staleToLaunch) {
               profiles.push(
@@ -4638,7 +4636,7 @@ async function run() {
           // Driver mode is unavailable in this environment (BiDi cannot evaluate
           // inside a privileged page — a limitation, not a startup race): run the
           // folded scenarios AND the up-to-date/skipped decisions as their own
-          // launches, the pre-#309 way. The collapse is a structure/speed win,
+          // launches, the fallback way. The collapse is a structure/speed win,
           // never a coverage trade.
           console.log(
             '\n  [driver] falling back to the launch-per-scenario path for install-applies,' +
@@ -4716,7 +4714,7 @@ async function run() {
       {
         id: '10',
         run: async () => {
-          // Timer regression (#292): the daily in-session re-check must fire.
+          // Timer regression: the daily in-session re-check must fire.
           // No retry — a missed timer is deterministic (module-level bug), not
           // a startup race; a retry would only mask a real regression.
           await runTimerRegressionScenario(counter, opts, snapshotDir, 'daily-recheck-timer');
@@ -4725,7 +4723,7 @@ async function run() {
       {
         id: '11',
         run: async () => {
-          // Session restore across windows (#384 follow-up): the generated
+          // Session restore across windows: the generated
           // fixture restores the updater tab in a NON-focused window,
           // backgrounded inside that window. The attach block must end with
           // exactly one updater tab, and a fresh tab's engine must re-check.

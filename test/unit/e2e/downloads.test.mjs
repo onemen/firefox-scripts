@@ -278,7 +278,7 @@ test('downloadTo: downloads when no local file exists', async () => {
   }
 });
 
-// ── downloadTo: progress-aware transfer (#143) ────────────────────────────
+// ── downloadTo: progress-aware transfer ──────────────────────────────────
 
 /**
  * Fast download timings for the stall/resume tests (milliseconds instead of the
@@ -342,7 +342,7 @@ test('downloadTo: stalled connection fails fast — healthy progress is never ab
   }
 });
 
-test('downloadTo: slow-but-progressing download completes (#143 home-link case)', async () => {
+test('downloadTo: slow-but-progressing download completes (home-link case)', async () => {
   const restore = withFastDownloadTimings();
   const body = Buffer.alloc(1000, 0x53);
   // Drip 5 × 200 bytes with 60 ms gaps: inter-chunk gaps sit well inside the
@@ -463,17 +463,13 @@ test('parseFirefoxVersion: unbranded dotted-numeric fallback, null on garbage', 
   assert.equal(parseFirefoxVersion('cannot open display'), null);
 });
 
-// ── runInstallerWithRetry (AV file-lock race, floorp leg 2026-09-13) ──────
+// ── runInstallerWithRetry (AV file-lock race) ─────────────────────────────
 
-// The registered/fallback install paths previously ran execSync directly, so
-// the AV race (floorp 2026-09-13, floorp registered leg 2026-09-14, nightly
-// registered leg 2026-09-14) could kill the leg before any test ran. Every
-// silent-install invocation now goes through runSilentInstaller →
-// runInstallerWithRetry. This test pins the REAL error shape the failing
-// runs produced — execSync with stdio:'inherit' surfaces the scanner's text
-// only in err.message (err.stderr is null; run 34814023362 job 103881027235
-// printed the signature to the log then threw a message-only error) — and
-// proves the retry consumes it.
+// Every silent-install invocation goes through runSilentInstaller →
+// runInstallerWithRetry, so an AV scan hold cannot kill the leg before any
+// test runs. This test pins the REAL error shape — execSync with
+// stdio:'inherit' surfaces the scanner's text only in err.message
+// (err.stderr is null) — and proves the retry consumes it.
 test('runInstallerWithRetry: message-only lock error (execSync inherit shape) is retried', () => {
   const inheritShape = new Error(
     'Command failed: "D:' +
@@ -528,7 +524,7 @@ test('runInstallerWithRetry: retries the AV file-lock error then succeeds', () =
   assert.equal(sleeps.length, 2, 'slept between retries');
 });
 
-test('runInstallerWithRetry: exponential backoff doubles each attempt (issue #215)', () => {
+test('runInstallerWithRetry: exponential backoff doubles each attempt', () => {
   const quiet = Object.assign(new Error('installer exited with code 1'), {status: 1});
   const sleeps = [];
   assert.throws(
@@ -583,14 +579,12 @@ test('runInstallerWithRetry: gives up after the last attempt (persistent lock)',
   assert.equal(runs, 3);
 });
 
-// ── quiet exit-1 race (issue #215) ─────────────────────────────────────────
-// The three 2026-09-15 occurrences (firefox/firefox-dev/nightly in run
-// 34978227275, zen in 34994285664, floorp in 34993534560) escaped the #201
-// retry: Defender suspends the freshly-written NSIS exe *after* launch, the
-// process dies with exit code 1 and prints NOTHING — no lock signature in
-// stderr, message, or the step log. The predicate classifies that shape as
-// the same race.
-test('isFileLockError: quiet exit-1 with no output (issue #215 shape) is the AV race', () => {
+// ── quiet exit-1 race ──────────────────────────────────────────────────────
+// Defender suspends the freshly-written NSIS exe *after* launch: the process
+// dies with exit code 1 and prints NOTHING — no lock signature in stderr,
+// message, or the step log. The predicate classifies that shape as the same
+// race.
+test('isFileLockError: quiet exit-1 with no output is the AV race', () => {
   // execSync inherit shape: 'Command failed: <cmd>' message, no captured stderr
   const execSyncShape = new Error('Command failed: "D:\\a\\_temp\\browser-dl\\zen-setup.exe" /S');
   execSyncShape.status = 1;
@@ -633,7 +627,7 @@ test('isFileLockError: exit-1 WITH output or other exit codes are real failures'
   );
 });
 
-test('runInstallerWithRetry: retries the quiet exit-1 race then succeeds (issue #215)', () => {
+test('runInstallerWithRetry: retries the quiet exit-1 race then succeeds', () => {
   const quiet = Object.assign(new Error('installer exited with code 1'), {status: 1});
   const runs = [quiet, quiet, 'ok'];
   const sleeps = [];

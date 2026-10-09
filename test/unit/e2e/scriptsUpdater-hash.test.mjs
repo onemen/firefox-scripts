@@ -2,7 +2,7 @@
 // core/chrome/utils/updater/scriptsUpdater.sys.mjs hash/decision logic.
 //
 // The module is evaluated in a vm sandbox with stubbed Firefox services —
-// the same technique as test/unit/core/scriptsUpdater-channel.test.mjs (#189).
+// the same technique as test/unit/core/scriptsUpdater-channel.test.mjs.
 // Nothing here is a reimplementation of the production algorithm: the
 // assertions compare the REAL computeFilesHash / checkScriptsUpdateNeeded
 // against an independent Node reference (crypto + fs directly).

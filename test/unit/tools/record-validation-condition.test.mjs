@@ -1,5 +1,5 @@
 // test/unit/tools/record-validation-condition.test.mjs — the record-validation
-// job's dispatch condition (#380 / ADR 0039).
+// job's dispatch condition (ADR 0039).
 //
 // The condition is where the validated-versions record's semantics live: what
 // may advance the file the prod publish pre-flight compares against the
@@ -8,11 +8,11 @@
 // releases), or NOT recording a run that did test them (the publish gate
 // blocks on drift for a whole night for no reason).
 //
-// The rule after #380: the updater legs are the evidence, so THEIR result is
-// what keys the record — the gate aggregates every leg, and a red advisory or
-// an unrelated required leg must not block it. A nightly whose `installer` leg
-// flaked used to skip the record entirely and freeze the publish gate until
-// the next night.
+// The updater legs are the evidence, so THEIR result is what keys the
+// record — the gate aggregates every leg, and a red advisory or an unrelated
+// required leg must not block it. A nightly whose `installer` leg flakes must
+// not skip the record entirely and freeze the publish gate until the next
+// night.
 //
 // Parsed from the workflow itself, so a condition edit that breaks the rule
 // fails here rather than only on the first red nightly.

@@ -7,7 +7,7 @@
 // engines flag as suspicious (Defender: Program:Script/Wacapew.A!ml).
 // The repo ships unversioned date-stamped artifacts (ADR 0019): FileVersion
 // carries the build date as 1,0,<YYYY>,<MMDD> and ProductVersion the date.
-// The date itself is DERIVED (issue #322): _builddate.h is generated from the
+// The date itself is DERIVED (ADR 0036): _builddate.h is generated from the
 // last commit touching this binary's inputs — CFG_BUILD_DATE_INSTALLER.
 
 VS_VERSION_INFO VERSIONINFO

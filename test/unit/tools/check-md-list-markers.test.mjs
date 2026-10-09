@@ -1,5 +1,5 @@
-// test/unit/tools/check-md-list-markers.test.mjs — the fused-list-marker gate
-// (issue #307). The four fixtures the issue requires: the real AGENTS.md line
+// test/unit/tools/check-md-list-markers.test.mjs — the fused-list-marker gate.
+// The four fixtures: the real AGENTS.md line
 // (must flag), the quoted example inside code spans (must not), a legitimate
 // mid-line dash (must not), and a fenced-block line (must not) — plus the
 // whole-file fence-state rule (an ADDED line inside an UNCHANGED fenced block

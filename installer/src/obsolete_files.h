@@ -9,9 +9,8 @@
  * from the hash (createZip.mjs CUSTOM_IGNORE_PATTERNS / upload.mjs
  * HASH_EXCLUDE).
  *
- * versionInfo.json: legacy — it shipped in earlier zips and was consumed by an
- * update-checker outside this project.  It no longer ships; the entry below
- * only cleans historically-installed copies.
+ * versionInfo.json: gone from the published zips; the entry below only cleans
+ * the copies an old install left behind.
  */
 #ifndef OBSOLETE_FILES_H
 #define OBSOLETE_FILES_H

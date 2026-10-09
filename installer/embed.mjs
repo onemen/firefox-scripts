@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
  * embed.mjs — Read files from web/ directory and generate src/resources.h with
- * embedded constants for the C installer. Node.js port of embed.py
- * (byte-identical output).
+ * embedded constants for the C installer.
  *
  * Text assets (html/css/js/favicon) are embedded as C strings; the web UI text
  * and brand logos are gzip-compressed at build time and embedded as byte
@@ -10,12 +9,12 @@
  * binary on every platform. The local HTTP server serves them with
  * Content-Encoding: gzip, which browsers decompress transparently.
  *
- * script.js is authored as phase part files under web/script/ (§3.1 modularity
- * split) and concatenated HERE in order: the served /script.js stays one
- * plain-script asset (single RES_SCRIPT_JS_GZ resource, single <script> tag in
- * index.html), while each phase lives in its own reviewed file. Every part
- * shares the one IIFE scope, so the concatenation must remain order-dependent —
- * 00-head opens it, 50-init closes it.
+ * script.js is authored as phase part files under web/script/ and concatenated
+ * HERE in order: the served /script.js stays one plain-script asset (single
+ * RES_SCRIPT_JS_GZ resource, single <script> tag in index.html), while each
+ * phase lives in its own reviewed file. Every part shares the one IIFE scope,
+ * so the concatenation must remain order-dependent — 00-head opens it, 50-init
+ * closes it.
  */
 
 import fs from 'fs';
@@ -31,8 +30,8 @@ const OUTPUT_FILE = path.join(__dirname, 'src', 'resources.h');
 /* The built script.js, persisted as a gitignored artifact next to the embed
  * sources. eslint + prettier gate THIS file (the exact bytes that ship) — the
  * fragments under web/script/ are IIFE pieces and cannot be parsed
- * individually, so they stay outside the gates (issue #225's concat-gate
- * decision; see test/unit/installer/concatGate.test.mjs). Regenerated on
+ * individually, so they stay outside the gates (see
+ * test/unit/installer/concatGate.test.mjs). Regenerated on
  * every embed run — i.e. every build/publish — so the gate always sees the
  * current concatenation. */
 const SCRIPT_ARTIFACT = path.join(__dirname, 'src', 'script.built.js');
@@ -41,10 +40,7 @@ const FILES = {
   RES_FAVICON_SVG: 'favicon.svg',
 };
 
-// Text assets and brand logos are embedded gzip-compressed (see header
-// comment) — raw, they would add ~150 KB of read-only data to the installer
-// binary on every platform.  The local HTTP server serves them with
-// Content-Encoding: gzip, which browsers decompress transparently.
+// Gzip-compressed assets — rationale in the header comment.
 const GZ_FILES = {
   RES_INDEX_HTML_GZ: 'index.html',
   RES_STYLE_CSS_GZ: 'style.css',
@@ -57,9 +53,9 @@ const GZ_FILES = {
 };
 
 /**
- * The script.js phase parts, in concatenation order (§3.1 split). Each part is
- * a top-level section of the installer UI script sharing the single IIFE scope:
- * 00-head opens the IIFE, 50-init closes it.
+ * The script.js phase parts, in concatenation order. Each part is a top-level
+ * section of the installer UI script sharing the single IIFE scope: 00-head
+ * opens the IIFE, 50-init closes it.
  */
 const SCRIPT_PARTS = [
   '00-head.js', // IIFE open, debug banner, logos, state
@@ -73,10 +69,8 @@ const SCRIPT_PARTS = [
 /**
  * Build the served script.js from the phase parts (fail fast on a missing part
  * — a silent skip would ship a UI missing a phase). Each part's trailing blank
- * line is trimmed before the join: prettier's only finding on the built concat
- * was one empty line at every part seam, so trimming here keeps the embedded
- * bytes prettier-clean by construction (the gate on the built artifact lands
- * with #225). Syntax-checks the exact concatenation: the parts are IIFE
+ * line is trimmed before the join so the built bytes stay prettier-clean at
+ * every seam. Syntax-checks the exact concatenation: the parts are IIFE
  * fragments (00-head opens the IIFE, 50-init closes it) and cannot be parsed
  * individually, so this is the only parse gate the sources get —
  * eslint/prettier deliberately skip them.
@@ -169,7 +163,7 @@ function generateOutput() {
   for (const [varName, filename] of Object.entries(GZ_FILES)) {
     const filepath = path.join(WEB_DIR, filename);
     // script.js is built from the phase parts (web/script/*.js), not read
-    // from disk — check the parts, not a monolith that no longer exists.
+    // from disk — check the parts.
     if (filename !== 'script.js' && !fs.existsSync(filepath)) {
       console.error(`Warning: ${filepath} not found, embedding empty array`);
       lines.push(`static const unsigned char ${varName}[] = {0};`);

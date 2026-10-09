@@ -41,7 +41,7 @@ test('readConfig parses installer.conf into a flat key/value map', () => {
 test('applyDevOverrides rewrites URLs to the dev-build jsDelivr base', () => {
   const dev = applyDevOverrides(prodConfig);
   assert.equal(dev.RELEASE_NAME, 'dev-build');
-  // Plain artifact names in dev too (#282 suffix drop) — the ⚠ Test-build
+  // Plain artifact names in dev too — the ⚠ Test-build
   // banner distinguishes dev builds, so the name can stay identical to prod.
   assert.equal(dev.ASSET_SUFFIX, '');
   assert.match(

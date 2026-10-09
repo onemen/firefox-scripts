@@ -14,7 +14,7 @@
  * plain restart — still readable (same profile) S3 cache-cleared — still
  * readable after removing startupCache + cache2 ("clear cache and restart"
  * ritual) S4 delayed registration — still readable when the registration is
- * forced ~30 s past startup (issue #30; see the S4 block below)
+ * forced ~30 s past startup (see the S4 block below)
  *
  * The liveness signal is a probe appended to GreD config.js (autoconfig) that
  * tries to READ the extension's chrome URL at T+0 and every 1 s, logging OK/ERR
@@ -719,7 +719,7 @@ async function main() {
       );
     } // end S1–S3 (skipped under --race-only)
 
-    // ── S4: delayed chrome registration (issue #30) ──
+    // ── S4: delayed chrome registration ──
     //
     // S1–S3 all register the extension's chrome within a couple of seconds of
     // startup. That is the happy path, and it leaves a real assumption

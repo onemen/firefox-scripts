@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * test/e2e/core/core-smoke.mjs — issue #30 Level 2: the real-browser core
- * smoke.
+ * test/e2e/core/core-smoke.mjs — the real-browser core smoke (Level 2).
  *
- * The Level 1 unit suites (#416) prove config.js and BootstrapLoader.js behave
- * against STUBBED Firefox APIs. That catches syntax errors and obvious API
- * drift, but it cannot catch the failure mode that actually matters: Mozilla
- * removing or changing a real API. Every stub in test/unit/core/ was written
- * against today's Gecko, so the stubs keep passing while the browser breaks.
+ * The Level 1 unit suites prove config.js and BootstrapLoader.js behave against
+ * STUBBED Firefox APIs. That catches syntax errors and obvious API drift, but
+ * it cannot catch the failure mode that actually matters: Mozilla removing or
+ * changing a real API. Every stub in test/unit/core/ was written against
+ * today's Gecko, so the stubs keep passing while the browser breaks.
  *
  * This harness boots a REAL Firefox (stable or Nightly — whichever binary is
  * passed) with a dev snapshot's utils + fx-folder installed and asserts the

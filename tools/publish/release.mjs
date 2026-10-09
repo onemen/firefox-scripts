@@ -7,8 +7,8 @@
 // a PROD publish first runs the ~30 s drift-check probe (the same shared gate
 // pages.yml enforces in-run), so a drift morning never burns a publish
 // dispatch on a run the probe could have predicted would fail; on drift the
-// URL watchdog is dispatched FOR the operator with the measured re-run timing
-// (#347). Every step announces its expected duration before it starts — the
+// URL watchdog is dispatched FOR the operator with the measured re-run timing.
+// Every step announces its expected duration before it starts — the
 // terminal never blocks silently — and the re-run after remediation is
 // explicit. The commands are repo-scoped (`--repo`), so no `gh repo
 // set-default` is needed:
@@ -63,13 +63,13 @@ import {INCLUDE_ROLES} from './publishScope.mjs';
 import {gitEnv} from './generateBuildDates.mjs';
 
 const WORKFLOW = 'pages.yml';
-/** The publish pre-flight probe: the shared drift gate, dispatchable (#347). */
+/** The publish pre-flight probe: the shared drift gate, dispatchable. */
 const PROBE_WORKFLOW = 'drift-check.yml';
 /** Dispatched for the operator when the probe reports drift. */
 const WATCHDOG_WORKFLOW = 'url-watchdog.yml';
 /**
  * Every gh call targets the repo explicitly — no `gh repo set-default`
- * dependency (#347).
+ * dependency.
  */
 const REPO = 'onemen/firefox-scripts';
 
@@ -109,8 +109,8 @@ const PROBE_DISCOVERY_RETRIES = 10;
 /**
  * Consecutive gh errors tolerated while polling the probe's status before the
  * wait degrades to 'unobservable' (3 × 5 s ≈ 10 s of sustained failure). One
- * blip must not abandon a healthy probe (#361); a real gh outage should still
- * fail fast into the documented fail-open instead of burning the poll cap.
+ * blip must not abandon a healthy probe; a real gh outage should still fail
+ * fast into the documented fail-open instead of burning the poll cap.
  */
 const PROBE_ERROR_STREAK = 3;
 
@@ -409,10 +409,10 @@ export function buildProbeArgs() {
 
 /**
  * A dispatch of `workflow` is not visible in the Actions list yet — the run
- * record lags the dispatch API's 200 by seconds (observed ~3 s on 2026-09-28: a
- * single discovery query fired too early, the wrapper failed open and
- * dispatched the real publish straight into the in-run gate, #347 follow-up).
- * Callers RETRY on this error; only a gh error (null) is fail-open.
+ * record lags the dispatch API's 200 by seconds: a single discovery query fired
+ * too early would fail open and dispatch the real publish straight into the
+ * in-run gate. Callers RETRY on this error; only a gh error (null) is
+ * fail-open.
  */
 export class DispatchNotFoundError extends Error {}
 
@@ -480,9 +480,9 @@ export function getRunStatus(runId) {
 /**
  * Wait the probe run to completion (re-polls ~5 s apart; the probe is ~30 s
  * end-to-end, so a coarse poll and a hard round cap are enough). A single gh
- * error is a transient to retry (#361); 'unobservable' — the fail-open — is
- * reserved for SUSTAINED failure (PROBE_ERROR_STREAK consecutive errors) or the
- * poll cap, never one strike.
+ * error is a transient to retry; 'unobservable' — the fail-open — is reserved
+ * for SUSTAINED failure (PROBE_ERROR_STREAK consecutive errors) or the poll
+ * cap, never one strike.
  *
  * @param {number} runId
  * @param {(ms: number) => void} [sleepFn] injectable sleep (tests)

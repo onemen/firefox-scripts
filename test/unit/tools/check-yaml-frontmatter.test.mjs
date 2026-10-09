@@ -1,7 +1,6 @@
-// test/unit/tools/check-yaml-frontmatter.test.mjs — the changed-YAML gate
-// (issue #413).
+// test/unit/tools/check-yaml-frontmatter.test.mjs — the changed-YAML gate.
 //
-// The centrepiece is the real incident: `.agents/skills/ai-review/SKILL.md`
+// The centrepiece is a real case: `.agents/skills/ai-review/SKILL.md`
 // shipped a `: ` inside a multi-line plain frontmatter scalar, the host read no
 // `description` and silently never registered the skill. prettier's
 // markdown-frontmatter path exits 0 on it and `@eslint/markdown`'s

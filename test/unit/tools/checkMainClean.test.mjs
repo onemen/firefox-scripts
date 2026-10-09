@@ -13,8 +13,8 @@ import {
 } from '../../../tools/check-main-clean.mjs';
 
 test('CLI_FLAGS: every documented flag parses, --help included', () => {
-  // Regression: --help was reported as "unknown argument" and exited 2, so the
-  // one flag a confused user is most likely to try was the one that failed.
+  // --help must not report as "unknown argument" and exit 2: it is the one
+  // flag a confused user is most likely to try.
   assert.ok(CLI_FLAGS.includes('--help'));
   const unknown = ['--record', '--status', '--help'].filter(a => !CLI_FLAGS.includes(a));
   assert.deepEqual(unknown, []);

@@ -1,5 +1,5 @@
 // test/unit/tools/checkCoreTestChange.test.mjs — unit tests for the pure logic
-// of tools/check-core-test-change.mjs (issue #30, the mechanical gate).
+// of tools/check-core-test-change.mjs (the mechanical gate).
 //
 // A gate whose own logic is untested eventually blocks the wrong PR — and a
 // gate that blocks the wrong PR gets deleted, which loses the coverage the

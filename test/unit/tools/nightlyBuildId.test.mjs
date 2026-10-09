@@ -1,5 +1,5 @@
 // test/unit/tools/nightlyBuildId.test.mjs — the pure half of
-// tools/ci/nightly-buildid.mjs (issue #30).
+// tools/ci/nightly-buildid.mjs.
 //
 // The scheduled core-smoke leg keys its "already validated" cache marker on the
 // build ID this produces. That makes a WRONG id the worst possible failure: a

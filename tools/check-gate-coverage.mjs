@@ -434,10 +434,10 @@ const CONTRACTS = [
     // that pinned release (ADR 0034). It reads a green leg's artifact and
     // writes the fork record — it must never be an input to the gate, or a fork
     // release would gate every merge.
-    // e2e-triage is post-gate too (#380): it reads the run's job list through
+    // e2e-triage is post-gate too: it reads the run's job list through
     // the API and files the nightly failure issue — a reporter, not a gate
     // input, and it needs the gate so a cancelled run skips it.
-    // prune-caches is post-gate cache hygiene (#464): it deletes SUPERSEDED
+    // prune-caches is post-gate cache hygiene: it deletes SUPERSEDED
     // cache entries after the run that saved their replacements (keys are
     // immutable, so this is the working clear-on-save). Main-ref only, never
     // a gate input — a cache delete must not be able to block a merge.

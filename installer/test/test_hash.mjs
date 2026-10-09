@@ -109,8 +109,8 @@ function getInstallerPath(snapshotDir) {
   if (process.platform === 'win32') name = 'installer_win';
   else if (process.platform === 'darwin') name = 'installer_mac';
   else name = process.arch === 'arm64' ? 'installer_linux_aarch64' : 'installer_linux';
-  // Binaries carry plain names on every channel (#282 suffix drop); the
-  // '-dev' fallback is legacy tolerance for pre-#282 snapshots.
+  // Binaries carry plain names on every channel; the '-dev' fallback
+  // tolerates snapshots from before the suffix was dropped.
   const plain = path.join(snapshotDir, `${name}${ext}`);
   if (fs.existsSync(plain)) return plain;
   return path.join(snapshotDir, `${name}-dev${ext}`);

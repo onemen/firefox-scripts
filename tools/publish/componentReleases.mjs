@@ -1,11 +1,11 @@
 // componentReleases.mjs — date-stamped component releases alongside `latest`
-// (issue #72, ADR 0019): every prod publish also syncs tagged releases —
+// (ADR 0019): every prod publish also syncs tagged releases —
 // `core-<date>` (the package zips) and `installer-<date>` (the installer +
 // helper binaries) — so `latest` keeps serving the full asset set by permanent
 // unversioned names while the date tags freeze per-component snapshots humans
 // can browse. The zips tag is `core-` and not `scripts-`: see coreTag().
 //
-// "Latest" badge rule (the #72 mechanism decision): a component release is
+// "Latest" badge rule: a component release is
 // created with prerelease=true. GitHub's "Latest" badge only ever lands on a
 // non-draft, non-prerelease release, so the date tags can never steal the
 // badge from `latest` — no create-order coupling, no post-hoc re-pin, and the
@@ -70,8 +70,8 @@ export function installerTag(date) {
 }
 
 /**
- * The managed self-update payload (issue #341): `installerDate` + per-platform
- * `download` URLs, plus `mechanismSince` — the cutover date (config
+ * The managed self-update payload: `installerDate` + per-platform `download`
+ * URLs, plus `mechanismSince` — the cutover date (config
  * SELF_UPDATE_MECHANISM_SINCE) a binary compares its own build date against to
  * decide which ingest surface to trust (Pages payload vs release body). The
  * Pages copy carries the same fields — one shape, two hosts.
@@ -234,7 +234,7 @@ export function groupBuilt(built) {
 /**
  * Build the installer component release's asset map: exactly the installers
  * this run built (helpers are gh-pages-only — never release assets), each with
- * its checksum sidecar (issue #324 — same scheme as the helper's since #174).
+ * its checksum sidecar (same scheme as the helper's).
  *
  * @param {string[]} installer platform keys (groupBuilt's installer bucket)
  * @param {{builtInstallers: string[]}} built what the run rebuilt
@@ -287,14 +287,13 @@ export const WINDOWS_ONLY_INSTALLER_NOTE =
   'pick which browser to set up.';
 
 /**
- * Human-facing label of the collapsed managed self-update block (issue #356
- * item 2, the #341 collapse): the block stays in the body — the installed
- * installer's self-update parses it (ADR 0019 amendment; the C parser scans the
- * whole body for the bare keys, so the HTML wrapper is transparent) — but
- * renders as a collapsed <details> on the release page instead of a raw JSON
- * line. The blank line between the summary and the fence matters: it ends the
- * CommonMark HTML block, so the fence renders as a code block INSIDE the
- * collapsible instead of being absorbed as raw text.
+ * Human-facing label of the collapsed managed self-update block: the block
+ * stays in the body — the installed installer's self-update parses it (ADR 0019
+ * amendment; the C parser scans the whole body for the bare keys, so the HTML
+ * wrapper is transparent) — but renders as a collapsed <details> on the release
+ * page instead of a raw JSON line. The blank line between the summary and the
+ * fence matters: it ends the CommonMark HTML block, so the fence renders as a
+ * code block INSIDE the collapsible instead of being absorbed as raw text.
  */
 export const SELF_UPDATE_BLOCK_SUMMARY =
   '<summary>⚙ Managed self-update block — machine-read, not for humans (click to expand)</summary>';
@@ -309,8 +308,8 @@ export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlo
   // The managed block keeps its ```json fence (the C side finds the bare keys
   // anywhere in the body; the JS side's same-day merge scans back to the
   // fence) inside a <details> wrapper with a blank line before the fence
-  // (#356 item 2) — see SELF_UPDATE_BLOCK_SUMMARY for the shape rationale.
-  // The block itself is the TRANSITION FALLBACK surface (#341): publishes stop
+  // See SELF_UPDATE_BLOCK_SUMMARY for the shape rationale.
+  // The block itself is the TRANSITION FALLBACK surface: publishes stop
   // appending it once the run date reaches SELF_UPDATE_MECHANISM_SINCE, when
   // every installable binary reads the Pages payload instead.
   const managed =
@@ -332,15 +331,14 @@ export function renderComponentBody(kind, date, names, dates = {}, selfUpdateBlo
 
 /**
  * Package zips that belong on the scripts component tag and the `latest`
- * release (issue #354): BOTH manual downloads, even when only one was rebuilt —
- * a snapshot missing fx-folder.zip (or utils.zip) is the exact gap the #157
- * purge left behind. updater-ui stays Pages-only: the updater downloads it
- * itself, it is never a release asset (ADR 0019).
+ * release: BOTH manual downloads, even when only one was rebuilt — a snapshot
+ * missing fx-folder.zip (or utils.zip) would leave installs with an incomplete
+ * set. updater-ui stays Pages-only: the updater downloads it itself, it is
+ * never a release asset (ADR 0019).
  *
  * @param {string[]} builtZips rebuilt package names
  * @param {string[]} [stagedZips] every package zip staged this run — the
- *   scripts tag carries the complete set even when only one was rebuilt (issue
- *   #354)
+ *   scripts tag carries the complete set even when only one was rebuilt
  * @returns {string[]} package names for the scripts release, first-seen order
  */
 export function scriptsAssetNames(builtZips, stagedZips = []) {
@@ -370,9 +368,9 @@ const LATEST_ASSET_DESCRIPTIONS = {
 
 const describeAsset = name => LATEST_ASSET_DESCRIPTIONS[name] ?? '';
 
-/** Package-zip row order in the latest table's Packages section (#356). */
+/** Package-zip row order in the latest table's Packages section. */
 const LATEST_PACKAGE_ASSETS = ['utils.zip', 'fx-folder.zip'];
-/** Installer row order in the latest table's Installer section (#356). */
+/** Installer row order in the latest table's Installer section. */
 const LATEST_INSTALLER_ASSETS = [
   'installer_win.exe',
   'installer_mac',
@@ -386,22 +384,21 @@ const LATEST_INSTALLER_ASSETS = [
  * covers them), with the date that asset was last uploaded — "the date of the
  * file that was released".
  *
- * Two labeled sub-tables (issue #356, item 1): Packages (the zips users set up
- * through the installer/updater) and Installer (per-platform binaries).
- * Packages first — they are the artifact most users come for; installers are
- * the platform pick. Within each table, canonical order when the caller's list
- * contains them (any other asset still renders, trailing in its table).
+ * Two labeled sub-tables: Packages (the zips users set up through the
+ * installer/updater) and Installer (per-platform binaries). Packages first —
+ * they are the artifact most users come for; installers are the platform pick.
+ * Within each table, canonical order when the caller's list contains them (any
+ * other asset still renders, trailing in its table).
  *
- * Row dates (issue #356 item 3, maintainer decision 2026-09-29): the installer
- * tag date IS the installer's version (the binaries bake it as their
- * VERSIONINFO FileVersion and the self-update compares it — ADR 0019/0036), so
- * Installer rows carry it. The date comes PER ASSET from
- * `context.installerDatesByAsset` — upload.mjs maps only the platforms this run
- * rebuilt, because a partial publish (e.g. the win job of pages.yml's
- * sequential matrix) must never stamp its fresh date onto platforms whose
- * binaries on `latest` are still the previous version (CodeRabbit on #367) —
- * else from the single `context.installerDate`, else the newest
- * installer-<date> tag's date (the binaries on `latest` are that tag's
+ * Row dates (maintainer decision): the installer tag date IS the installer's
+ * version (the binaries bake it as their VERSIONINFO FileVersion and the
+ * self-update compares it — ADR 0019/0036), so Installer rows carry it. The
+ * date comes PER ASSET from `context.installerDatesByAsset` — upload.mjs maps
+ * only the platforms this run rebuilt, because a partial publish (e.g. the win
+ * job of pages.yml's sequential matrix) must never stamp its fresh date onto
+ * platforms whose binaries on `latest` are still the previous version
+ * (CodeRabbit on #367) — else from the single `context.installerDate`, else the
+ * newest installer-<date> tag's date (the binaries on `latest` are that tag's
  * version), else the asset's own upload date. Package rows keep their own
  * upload date ("the date of the file that was released", issue #354).
  *
@@ -629,9 +626,9 @@ export async function syncComponentRelease(octokit, tagName, date, assets, opts 
   for (const [assetName, src] of assets) {
     await deleteExistingAsset(octokit, release.id, assetName);
     if (!src) continue;
-    // No asset label (issue #354): GitHub renders the label INSTEAD of the
-    // file name — "utils.zip" showed up as "Updated 2026-09-26" and the
-    // manual-download table lost its file names. The dates live in the body.
+    // No asset label: GitHub renders the label INSTEAD of the file name,
+    // so the manual-download table would lose its file names. The dates
+    // live in the body.
     if (Buffer.isBuffer(src)) {
       await uploadAssetBuffer(octokit, release.id, src, assetName);
     } else {
@@ -842,7 +839,6 @@ export async function retitleLatestRelease(octokit, date, release = null) {
  * @param {string[]} p.builtZips rebuilt package names
  * @param {string[]} [p.stagedZips] every package zip staged this run — the
  *   scripts tag carries the complete set even when only one zip was rebuilt
- *   (issue #354)
  * @param {string[]} p.builtInstallers rebuilt platform keys
  * @param {string[]} p.builtHelpers rebuilt platform keys (informed the
  *   installer/helper rebuild decisions upstream; helpers never join a release)
@@ -889,7 +885,7 @@ export async function syncComponentReleases(
       builtInstallers,
       builtHelpers,
     });
-    // scriptsTagNames (issue #354): the complete staged package set — the tag
+    // scriptsTagNames: the complete staged package set — the tag
     // is synced whenever ANY zip was rebuilt, so an unchanged zip still lands
     // on the tag when its sibling changed. (The `latest` table refresh is NOT
     // gated on rebuilds — upload.mjs calls it on every prod run.)
@@ -904,7 +900,7 @@ export async function syncComponentReleases(
 
     if (scripts.length > 0) {
       // The tag carries the COMPLETE package set even when only one zip was
-      // rebuilt (issue #354) — stagedZips is the full packages scope. Body
+      // rebuilt — stagedZips is the full packages scope. Body
       // rows carry the TAG date (the snapshot's date, per the approved
       // releases-mock), not each package's source-commit date.
       const assets = new Map(scriptsTagNames.map(n => [`${n}.zip`, zipPath(n)]));
@@ -939,12 +935,12 @@ export async function syncComponentReleases(
       // Sidecar names are excluded: the C self-update resolves its URL by a
       // plain substring search for the asset name, and `installer_win.exe` is
       // a prefix of `installer_win.exe.sha256` — a sidecar entry here would
-      // shadow the binary's URL (issue #324).
+      // shadow the binary's URL.
       for (const assetName of assets.keys()) {
         if (assetName.endsWith('.sha256')) continue;
         selfUpdateUrlByAsset[assetName] = `${downloadBase}/latest/${assetName}`;
       }
-      // Transition fallback only (#341): the body block serves pre-cutover
+      // Transition fallback only: the body block serves pre-cutover
       // binaries; it retires once a post-cutover installer release has
       // already shipped (that transition release carried the block). List the
       // repo's tags (excluding this run's own) and let shouldAppendManagedBlock

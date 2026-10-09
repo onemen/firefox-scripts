@@ -159,9 +159,9 @@ test('planDispatches: ESR drift plus a fork release dispatch both', () => {
   ]);
 });
 
-test('planDispatches: first-run ESR entries dispatch like drift (#462)', () => {
-  // Reversed 2026-10-08 (was "first-run is excluded globally"): a first run
-  // after state loss is treated as a new version of every browser, so the ESR
+test('planDispatches: first-run ESR entries dispatch like drift', () => {
+  // A first run after state loss is treated as a new version of every
+  // browser, so the ESR
   // escape dispatch fires too — the same one-dispatch-per-drift shape.
   const plans = planDispatches([{kind: 'first-run', browser: 'firefox-esr-140'}]);
   assert.deepEqual(plans, [{browser: 'firefox-esr', ref: 'main'}]);

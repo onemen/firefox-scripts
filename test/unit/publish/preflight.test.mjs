@@ -1,5 +1,5 @@
 // test/unit/publish/preflight.test.mjs — the publish wrapper's probe-first
-// pre-flight (#347): repo-scoped argv, probe dispatch/wait/verdict, and the
+// pre-flight: repo-scoped argv, probe dispatch/wait/verdict, and the
 // fail-open + drift-notice branches of runPreflight.
 
 import {test} from 'node:test';
@@ -15,7 +15,7 @@ const {
   DispatchNotFoundError,
 } = await import('../../../tools/publish/release.mjs');
 
-test('every gh argv is repo-scoped — no gh repo set-default dependency (#347)', () => {
+test('every gh argv is repo-scoped — no gh repo set-default dependency', () => {
   assert.deepEqual(repoFlag(), ['-R', 'onemen/firefox-scripts']);
   assert.equal(buildDispatchArgs({include: ['all']})[0], '-R');
   assert.equal(buildDispatchArgs({include: ['all']})[1], 'onemen/firefox-scripts');
@@ -47,7 +47,7 @@ test('waitForProbeRun: maps conclusions; unobservable on sustained gh errors or 
     ),
     'failure'
   );
-  // A single gh error is a transient (#361); PROBE_ERROR_STREAK consecutive
+  // A single gh error is a transient; PROBE_ERROR_STREAK consecutive
   // errors are sustained failure — the fail-open fires, after exactly 3 polls.
   let calls = 0;
   assert.equal(
@@ -72,7 +72,7 @@ test('waitForProbeRun: maps conclusions; unobservable on sustained gh errors or 
   );
 });
 
-test('waitForProbeRun: transient gh errors and in-progress polls never abandon a healthy run (#361)', () => {
+test('waitForProbeRun: transient gh errors and in-progress polls never abandon a healthy run', () => {
   const script = (...results) => {
     let i = 0;
     return () => results[Math.min(i++, results.length - 1)];

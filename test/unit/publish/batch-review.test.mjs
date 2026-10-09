@@ -146,9 +146,9 @@ test('parseArgs: defaults', () => {
 });
 
 test('parseArgs: --help / -h is a request, not an unknown flag', () => {
-  // Regression: `--help` used to fall into the unknown-flag branch and answer
-  // "Unknown flag: --help" (exit 2) while the complete flag list sat unread in
-  // the file's own header comment — a dead end for anyone who asked for usage.
+  // `--help` must not fall into the unknown-flag branch and answer
+  // "Unknown flag: --help" (exit 2) while the complete flag list sits unread
+  // in the file's own header comment — a dead end for anyone asking for usage.
   assert.equal(parseArgs(['--help']).help, true);
   assert.equal(parseArgs(['-h']).help, true);
   assert.equal(parseArgs(['--pr', '7', '--help']).help, true);

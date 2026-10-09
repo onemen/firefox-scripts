@@ -1,4 +1,4 @@
-# Publish pre-flight probe (#347): the prod-publish browser gate, dispatchable.
+# Publish pre-flight probe: the prod-publish browser gate, dispatchable.
 #
 # ONE ~30 s run the `pnpm publish:*` wrapper dispatches BEFORE the real publish,
 # so a drift morning never burns a publish dispatch on a run the probe could

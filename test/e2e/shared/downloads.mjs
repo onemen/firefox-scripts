@@ -4,10 +4,9 @@
  * test/e2e/shared/downloads.mjs — official browser download/install map for the
  * E2E CI matrix.
  *
- * The workflow (e2e.yml) used to hard-code each browser's install commands per
- * OS; this module is the single source of truth: browser → per-OS install
- * recipe, plus a CLI that performs the install for the current OS and exports
- * the resolved binary path.
+ * This module is the single source of truth for browser installs: browser →
+ * per-OS install recipe, plus a CLI that performs the install for the current
+ * OS and exports the resolved binary path.
  *
  * CLI (used by e2e.yml, works locally too): node test/e2e/shared/downloads.mjs
  * <browser> [--os win|mac|linux] — installs and prints the binary path. With
@@ -786,7 +785,7 @@ export function isFileLockError(err, {platform = process.platform} = {}) {
   ) {
     return true;
   }
-  // Quiet exit-1 class (issue #215): Defender can suspend the freshly-written
+  // Quiet exit-1 class: Defender can suspend the freshly-written
   // NSIS exe *after* it launches, so the process dies with exit code 1 and no
   // output — no lock text lands in stderr, message, or the log, and the
   // signature match above never fires. A genuine /S failure reports a
@@ -800,7 +799,7 @@ export function isFileLockError(err, {platform = process.platform} = {}) {
 }
 
 /**
- * Run the installer with exponential backoff (issue #215).
+ * Run the installer with exponential backoff.
  *
  * @param {string} cmd
  * @param {{
@@ -815,7 +814,7 @@ export function runInstallerWithRetry(
   cmd,
   {attempts = 4, delayMs = 4000, platform, run, sleep} = {}
 ) {
-  // Exponential backoff (issue #215): Defender's scan hold can outlast short
+  // Exponential backoff: Defender's scan hold can outlast short
   // fixed waits, so attempt n waits delayMs * 2^(n-1) — 4s/8s/16s/32s by
   // default (60 s total, up from 12 s fixed).
   const runCmd =
@@ -877,7 +876,7 @@ export function runNsisInstallerWithRetry(exe, args, label = 'installer', {spawn
       }
       if (result.status !== 0) {
         // status rides on the error so isFileLockError can classify the quiet
-        // exit-1 AV race (issue #215) — with stdio:'inherit' the spawn result
+        // exit-1 AV race — with stdio:'inherit' the spawn result
         // carries no captured output for the predicate to inspect.
         throw Object.assign(new Error(`${label} exited with code ${result.status}`), {
           status: result.status,
@@ -1304,10 +1303,10 @@ async function installForkPortable(browser, recipe) {
     // it still matches the remote size — the same self-heal rule downloadTo
     // applies to the installer file. A mismatch falls through to a fresh
     // download + install over the stale dir. The HEAD check must read `url`
-    // AFTER the resolver block above: it previously sat before the
-    // declaration, so every lookup died on a TDZ ReferenceError that the
-    // catch swallowed as "HEAD failed" — the freshness check never ran and a
-    // pinned dispatch on a warm cache silently revalidated the stale dir.
+    // AFTER the resolver block above (declaration order): reading it before
+    // the declaration throws a TDZ ReferenceError that the catch swallows
+    // as "HEAD failed" — the freshness check never runs and a pinned
+    // dispatch on a warm cache silently revalidates the stale dir.
     const cachedExe = path.join(downloadDir(), `${browser}-portable-setup.exe`);
     const exeStat = fs.statSync(cachedExe, {throwIfNoEntry: false});
     if (exeStat?.isFile() && exeStat.size > 0) {

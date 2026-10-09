@@ -3,20 +3,19 @@
 # Node's fs can use — on Windows $PWD is MSYS-style, so github.workspace is
 # used there).
 #
-# Extracted from e2e.yml (2026-09): the case-runner.os build block plus the
-# #132 universal-mac lipo assertion were duplicated verbatim in the
-# portable-firefox and snap-firefox jobs. One copy now; a build-recipe change
-# cannot desynchronize the legs.
+# The case-runner.os build block plus the universal-mac lipo assertion were
+# duplicated in the portable-firefox and snap-firefox jobs. One copy now; a
+# build-recipe change cannot desynchronize the legs.
 #
-# Dev-mode artifacts keep their plain names (#282 suffix drop): the ⚠
+# Dev-mode artifacts keep their plain names: the ⚠
 # Test-build banner distinguishes dev builds, and the Makefile ASSET_SUFFIX is
 # empty in every mode.
 #
-# LOCAL=1 (2026-09-21): a plain MODE=dev build bakes jsDelivr URLs for the
+# LOCAL=1: a plain MODE=dev build bakes jsDelivr URLs for the
 # per-run dev-build-<id> branch — which only exists after a real
 # `pnpm publish:dev`, never on a PR. The E2E tab's package-zip fetches would all fail
-# against that nonexistent branch (surfaced by UI-12 after #277: the portable
-# and snap legs had been silently skipping ingest on every previous run).
+# against that nonexistent branch (the portable and snap legs would silently
+# skip ingest on every run).
 # LOCAL=1 bakes localhost URLs + enables own-dir serving, the same binary
 # shape the installer job gets from snapshot:dev, and the snapshot's four
 # published artifacts are copied next to the exe below so serve_local_file
@@ -43,7 +42,7 @@ runs:
           macOS) make -C installer dist_mac MODE=dev LOCAL=1 ;;
           Windows) make -C installer dist_win MODE=dev LOCAL=1 ;;
         esac
-        # Universal-binary check (#132): dist_mac now builds x86_64 + arm64 in
+        # Universal-binary check: dist_mac now builds x86_64 + arm64 in
         # one fat installer_mac — assert both slices are really present and
         # executable, not just that the file exists.
         if [ "${{ runner.os }}" = macOS ]; then

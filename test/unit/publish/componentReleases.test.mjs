@@ -1,5 +1,5 @@
 // test/unit/publish/componentReleases.test.mjs — unit tests for the pure
-// helpers of tools/publish/componentReleases.mjs (issue #72). The GitHub sync
+// helpers of tools/publish/componentReleases.mjs. The GitHub sync
 // routine hits the network — not unit-tested.
 //
 // paths.js/publishMode.mjs are argv-coupled, so --mode=prod is pushed before
@@ -112,8 +112,8 @@ test('renderComponentBody: lists artifacts with per-file dates, points back at l
 });
 
 test('renderComponentBody: installer bodies carry the Windows-only SmartScreen/UAC note LAST', () => {
-  // Maintainer request (2026-09-27): the README's SmartScreen paragraph belongs
-  // on the installer release pages (#184's user-facing standard). Scripts
+  // The README's SmartScreen paragraph belongs on the installer release
+  // pages. Scripts
   // bodies stay installer-note-free (zips, not the installer flow).
   const withBlock = renderComponentBody(
     'installer',
@@ -133,7 +133,7 @@ test('renderComponentBody: installer bodies carry the Windows-only SmartScreen/U
   assert.match(withBlock, /Windows only.*SmartScreen.*More info → Run anyway/s);
   assert.match(withBlock, /checksum-verified elevation/);
 
-  // Collapsed managed block (issue #356 item 2, the #341 collapse): the fence
+  // Collapsed managed block: the fence
   // rides inside a <details> whose tags are single-line (GitHub's CommonMark
   // strips raw HTML blocks of their newlines — multi-line tags would swallow
   // the fence). Scripts bodies carry no wrapper.
@@ -151,7 +151,7 @@ test('renderComponentBody: installer bodies carry the Windows-only SmartScreen/U
   assert.doesNotMatch(scripts, /Windows only/);
 });
 
-test('componentAssets: exactly the installers built, each with its sidecar (issue #324)', () => {
+test('componentAssets: exactly the installers built, each with its sidecar', () => {
   // Sidecar values are derived from the staged binary bytes, so the staged
   // files must exist for the map build to read them.
   const staged = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-compassets-'));
@@ -194,7 +194,7 @@ test('componentAssets: nothing built → empty map', () => {
 
 // ── managed self-update block (ADR 0019 amendment, date-based self-update) ──
 
-test('renderSelfUpdatePayload: mechanismSince + installerDate + download map (#341)', () => {
+test('renderSelfUpdatePayload: mechanismSince + installerDate + download map', () => {
   const block = renderSelfUpdatePayload('2026-09-13', {
     'installer_win.exe': 'https://x/win',
     'installer_linux': 'https://x/linux',
@@ -215,7 +215,7 @@ test('renderSelfUpdatePayload: mechanismSince + installerDate + download map (#3
   assert.equal(reparsed.download['installer_win.exe'], 'https://x/win');
 });
 
-test('shouldAppendManagedBlock: the block retires only after the transition release (#341)', () => {
+test('shouldAppendManagedBlock: the block retires only after the transition release', () => {
   // This module was imported with the REAL config (SELF_UPDATE_MECHANISM_SINCE
   // = 2026-09-29). The block serves PRE-cutover binaries (they parse release
   // bodies only), so it must stay until a post-cutover installer release has
@@ -280,11 +280,11 @@ test('mergeSelfUpdateBlock: no prior → just this run', () => {
   assert.deepEqual(mergeSelfUpdateBlock('2026-09-13', {a: 'u'}), {a: 'u'});
 });
 
-// ── complete package set on the scripts tag (issue #354) ──
+// ── complete package set on the scripts tag ──
 
 test('scriptsAssetNames: the FULL staged set rides along, updater-ui never does', () => {
-  // A run that rebuilt only utils must still publish fx-folder.zip — the
-  // missing-asset shape the #157 purge left on `latest` and core-<date>.
+  // A run that rebuilt only utils must still publish fx-folder.zip — otherwise
+  // `latest` and core-<date> would carry an incomplete set.
   assert.deepEqual(scriptsAssetNames(['utils'], ['utils', 'fx-folder', 'updater-ui']), [
     'utils',
     'fx-folder',
@@ -296,7 +296,7 @@ test('scriptsAssetNames: the FULL staged set rides along, updater-ui never does'
   assert.deepEqual(scriptsAssetNames([], []), []);
 });
 
-// ── the `latest` downloads table (issue #354, maintainer rule 2026-09-28) ──
+// ── the `latest` downloads table ──
 
 test('renderLatestDownloads: one row per downloadable asset, dated by its own upload', () => {
   const section = renderLatestDownloads([
@@ -326,7 +326,7 @@ test('renderLatestDownloads: one row per downloadable asset, dated by its own up
   assert.ok(section.trimEnd().endsWith(LATEST_MANAGED_END));
 });
 
-test('renderLatestDownloads: Packages and Installer sub-tables (#356 item 1)', () => {
+test('renderLatestDownloads: Packages and Installer sub-tables', () => {
   // GitHub returns assets in upload order; the managed table groups them into
   // two labeled sub-tables regardless. Canonical order within each table.
   const section = renderLatestDownloads([
@@ -357,11 +357,10 @@ test('renderLatestDownloads: Packages and Installer sub-tables (#356 item 1)', (
   assert.equal(section.split('| File | What it is | Updated |').length - 1, 2);
 });
 
-test('renderLatestDownloads: installer rows carry the VERSION date, packages their upload date (#356 item 3)', () => {
-  // Maintainer decision 2026-09-29: the installer tag date IS the installer's
-  // version (the binaries bake it as VERSIONINFO FileVersion — screenshot:
-  // 1.0.2026.926 for the 2026-09-26 build) — so the latest table shows it,
-  // not the upload timestamp. Zips keep the upload-date logic (#354).
+test('renderLatestDownloads: installer rows carry the VERSION date, packages their upload date', () => {
+  // The installer tag date IS the installer's version (the binaries bake it
+  // as VERSIONINFO FileVersion) — so the latest table shows it, not the
+  // upload timestamp. Zips keep the upload-date logic.
   const section = renderLatestDownloads(
     [
       {name: 'utils.zip', updatedAt: '2026-09-28T11:36:55Z'},
@@ -462,7 +461,7 @@ test('updateLatestDownloads: appends the managed section when the body has none'
   assert.ok(out2.includes('junk'));
 });
 
-test('parseSelfUpdateBlock: round-trips the DETAILS-WRAPPED fenced block (#356 item 2)', () => {
+test('parseSelfUpdateBlock: round-trips the DETAILS-WRAPPED fenced block', () => {
   // The published shape after the collapse: <details> wrapper around the same
   // ```json fence. The backwards brace walk + fence scan must both stay
   // wrapper-transparent — this body IS the same-day-merge input.

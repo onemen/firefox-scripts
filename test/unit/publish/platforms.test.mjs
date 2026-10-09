@@ -42,7 +42,7 @@ test('expandPlatforms: explicit aarch64 alone builds the twin only', () => {
   assert.deepEqual(expandPlatforms(['aarch64']), ['aarch64']);
 });
 
-test('expandPlatforms: dedupes repeated and implied entries (#166 minor finding)', () => {
+test('expandPlatforms: dedupes repeated and implied entries', () => {
   assert.deepEqual(expandPlatforms(['linux', 'linux']), ['linux', 'aarch64']);
   assert.deepEqual(expandPlatforms(['linux', 'aarch64']), ['linux', 'aarch64']);
   assert.deepEqual(expandPlatforms(['aarch64', 'linux']), ['aarch64', 'linux']);

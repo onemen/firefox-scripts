@@ -7,9 +7,6 @@
 // that happens to agree proves nothing. hashes.json records the source-tree
 // hash the installer was built from; this module recomputes it from the
 // current sources and refuses to continue on drift.
-//
-// test_self_update.mjs carried this guard inline; test_hash.mjs had no such
-// check — this module is the shared helper both now call.
 
 import fs from 'fs';
 import path from 'path';

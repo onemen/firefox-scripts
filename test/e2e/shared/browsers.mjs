@@ -66,7 +66,7 @@ export function findSnapshot({override = '', branchCheck = true} = {}) {
   const expected = branch && sha ? `${branch.replace(/[^\w.-]+/g, '-')}-${sha}` : '';
 
   for (const snap of snapshots) {
-    // '-dev' second = legacy tolerance for pre-#282 snapshots.
+    // '-dev' second = tolerance for snapshots from before the suffix was dropped.
     if (!findZip(snap.dir, ['utils.zip', 'utils-dev.zip'])) continue;
     const mode = snap.name.startsWith('dev-') ? 'dev' : 'prod';
     const rest = snap.name.slice(mode.length + 1); // <branch>-<sha>

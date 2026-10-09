@@ -114,7 +114,7 @@ test('packageInScope: packages covers all three zips, updater-ui only the tab', 
     assert.equal(packageInScope(full, name), true, `packages must cover ${name}`);
   }
 
-  // The tab-only role (issue #383): utils/fx-folder stay frozen, so they must
+  // The tab-only role: utils/fx-folder stay frozen, so they must
   // read as out of scope or a "tab hotfix" would re-upload them too.
   const tabOnly = scopeFor(parseInclude(['--include=updater-ui']));
   assert.equal(packageInScope(tabOnly, 'updater-ui'), true);

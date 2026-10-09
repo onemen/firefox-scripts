@@ -1,5 +1,5 @@
 // test/unit/core/updaterTab-compat.test.mjs — the updater tab's
-// backward-compatibility seam (issue #383).
+// backward-compatibility seam.
 //
 // The deadlock this pins: updater-ui.zip is installed BY
 // scriptsUpdater.sys.mjs, and the module can only be replaced BY the tab. A tab
@@ -378,7 +378,7 @@ test('the legacy fixture stays a subset of the current module (exports are never
 /* ---------------- the Snap rule is one rule ---------------- */
 // The fallback duplicates the module's Snap rule (`XREExeF` under /snap/ →
 // /etc/firefox, else GreD). Nothing above ties the two together: an install
-// stranded on the pre-#142 module would get whichever rule the TAB spells,
+// stranded on an older module would get whichever rule the TAB spells,
 // while every newer install gets whichever rule the MODULE spells — a silent
 // split the static subset test cannot see. These two tests pin them to agree by
 // running BOTH against the same dirsvc values and comparing the answers.
@@ -477,9 +477,9 @@ test('the tab fallback agrees with the module: a snap install maps to /etc/firef
 /* ---------------- a hold is not a permission problem ---------------- */
 // installConfigFiles() copies into the LIVE install dir (GreD), where Defender,
 // the indexer or the browser itself can hold a file for a moment. It falls
-// through to the elevated helper on any failure, so an incidental hold used to
-// cost the user a UAC prompt that fixed nothing. The hold is now retried first;
-// only a copy that still fails escalates. No E2E leg can provoke a sharing
+// through to the elevated helper on any failure — but an incidental hold must
+// not cost the user a UAC prompt that fixes nothing. The hold is retried
+// first; only a copy that still fails escalates. No E2E leg can provoke a sharing
 // violation, so it is pinned here against injected IOUtils failures.
 
 /**

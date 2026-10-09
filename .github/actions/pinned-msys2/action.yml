@@ -86,7 +86,7 @@ runs:
       # would not stick, fails the job instead of quietly shipping different
       # bytes than the pin describes. Runs in bash, not the msys2 shell: that
       # shell's PATH drops the toolcache, so `node` is not found there
-      # (setup-msys2's `path-type: minimal` — learned from two red runs).
+      # (setup-msys2's `path-type: minimal`).
       run: node tools/ci/msys2Toolchain.mjs --install
 
     - name: Prove the build shell resolves the pinned toolchain

@@ -563,11 +563,11 @@ int admin_copy(const char *src, const char *dst, char *error_msg, size_t error_s
 
 #else
 // Fallback for other POSIX-ish platforms (e.g. *BSD): in-process buffered
-// copy. The previous system("cp \"%s\" \"%s\"") violated the argv-array shell
-// rule (docs/security.md item 5 — a path containing " or $() could break the
-// interpolation) and silently truncated paths beyond the command buffer.
-// Like before, there is no elevation proxy on these platforms: an unwritable
-// destination fails with a clear error via admin_copy_files' error_msg.
+// copy.  Launching a command with an argument array is required here
+// (docs/security.md item 5: shell interpolation breaks on a path containing
+// " or $(), and a command buffer truncates long paths).  There is no
+// elevation proxy on these platforms: an unwritable destination fails with a
+// clear error via admin_copy_files' error_msg.
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
