@@ -23,9 +23,9 @@ with the job list.
 | Advisory | `browser-matrix`   | `floorp`          | `windows-latest` | no       | `floorp-dl-windows-v<version>-plain`                                          | 2m 7s      |
 | Advisory | `browser-matrix`   | `librewolf`       | `windows-latest` | no       | `librewolf-dl-windows-v<version>-plain`                                       | 2m 4s      |
 | Advisory | `browser-matrix`   | `zen`             | `windows-latest` | no       | `zen-dl-windows-v<version>-plain`                                             | 2m 23s     |
-| Required | `core-lifecycle`   | `firefox`         | `ubuntu-24.04`   | yes      | `firefox-dl-linux-<url16>-plain / firefox-portable-linux-<url16>-dir`         | 1m 17s     |
-| Required | `core-lifecycle`   | `firefox`         | `macos-latest`   | yes      | `firefox-dl-macos-<url16>-plain / firefox-portable-macos-<url16>-dir`         | 1m 42s     |
-| Required | `core-lifecycle`   | `firefox`         | `windows-latest` | yes      | `firefox-dl-windows-<url16>-plain / firefox-portable-windows-<url16>-dir`     | 1m 40s     |
+| Required | `core-lifecycle`   | `firefox`         | `ubuntu-24.04`   | yes      | `firefox-dl-linux-<id16>-plain / firefox-portable-linux-<id16>-dir`           | 1m 17s     |
+| Required | `core-lifecycle`   | `firefox`         | `macos-latest`   | yes      | `firefox-dl-macos-<id16>-plain / firefox-portable-macos-<id16>-dir`           | 1m 42s     |
+| Required | `core-lifecycle`   | `firefox`         | `windows-latest` | yes      | `firefox-dl-windows-<id16>-plain / firefox-portable-windows-<id16>-dir`       | 1m 40s     |
 | Advisory | `esr-matrix`       | —                 | `ubuntu-24.04`   | no       | `url-watchdog-baseline-`                                                      | 8s         |
 | Advisory | `esr-portable`     | `firefox-esr-140` | `windows-latest` | yes      | `esr-prev-dl-windows-<url16>-plain / esr-prev-portable-windows-<url16>-dir`   | 47s        |
 | Advisory | `esr-portable`     | `firefox-esr-153` | `windows-latest` | yes      | `esr-dl-windows-<url16>-plain / esr-portable-windows-<url16>-dir`             | 58s        |
@@ -33,33 +33,36 @@ with the job list.
 | Advisory | `fork-portable`    | `waterfox`        | `windows-latest` | yes      | `waterfox-dl-windows-<url16>-plain / waterfox-portable-windows-<url16>-dir`   | 51s        |
 | Advisory | `fork-portable`    | `zen`             | `windows-latest` | yes      | `zen-dl-windows-v<version>-plain / zen-portable-windows-v<version>-dir`       | 1m 4s      |
 | Required | `helper`           | —                 | `ubuntu-24.04`   | no       | `—`                                                                           | 15s        |
-| Required | `installer`        | `firefox`         | `macos-latest`   | no       | `firefox-dl-macos-<url16>-plain`                                              | 1m 45s     |
-| Required | `installer`        | `firefox`         | `ubuntu-24.04`   | no       | `firefox-dl-linux-<url16>-plain`                                              | 1m 3s      |
-| Required | `installer`        | `firefox`         | `windows-latest` | no       | `firefox-dl-windows-<url16>-plain`                                            | 2m 12s     |
-| Required | `portable-firefox` | `firefox`         | `macos-latest`   | yes      | `firefox-dl-macos-<url16>-plain / firefox-portable-macos-<url16>-dir`         | 1m 15s     |
-| Required | `portable-firefox` | `firefox`         | `windows-latest` | yes      | `firefox-dl-windows-<url16>-plain / firefox-portable-windows-<url16>-dir`     | 2m 12s     |
-| Required | `portable-firefox` | `firefox`         | `ubuntu-24.04`   | yes      | `firefox-dl-linux-<url16>-plain / firefox-portable-linux-<url16>-dir`         | 53s        |
+| Required | `installer`        | `firefox`         | `macos-latest`   | no       | `firefox-dl-macos-<id16>-plain`                                               | 1m 45s     |
+| Required | `installer`        | `firefox`         | `ubuntu-24.04`   | no       | `firefox-dl-linux-<id16>-plain`                                               | 1m 3s      |
+| Required | `installer`        | `firefox`         | `windows-latest` | no       | `firefox-dl-windows-<id16>-plain`                                             | 2m 12s     |
+| Required | `portable-firefox` | `firefox`         | `macos-latest`   | yes      | `firefox-dl-macos-<id16>-plain / firefox-portable-macos-<id16>-dir`           | 1m 15s     |
+| Required | `portable-firefox` | `firefox`         | `windows-latest` | yes      | `firefox-dl-windows-<id16>-plain / firefox-portable-windows-<id16>-dir`       | 2m 12s     |
+| Required | `portable-firefox` | `firefox`         | `ubuntu-24.04`   | yes      | `firefox-dl-linux-<id16>-plain / firefox-portable-linux-<id16>-dir`           | 53s        |
 | Advisory | `snap-firefox`     | —                 | `ubuntu-24.04`   | no       | `firefox-dl-snap-<…>-plain`                                                   | 2m 29s     |
 | Required | `snapshot`         | —                 | `ubuntu-24.04`   | no       | `—`                                                                           | 40s        |
-| Required | `updater`          | `firefox`         | `macos-latest`   | no       | `firefox-dl-macos-<url16>-plain`                                              | 2m 4s      |
-| Required | `updater`          | `firefox`         | `windows-latest` | no       | `firefox-dl-windows-<url16>-plain`                                            | 1m 43s     |
-| Required | `updater`          | `firefox`         | `ubuntu-24.04`   | no       | `firefox-dl-linux-<url16>-plain`                                              | 1m 6s      |
-| Required | `updater`          | `firefox-dev`     | `macos-latest`   | no       | `firefox-dev-dl-macos-<url16>-plain`                                          | 1m 53s     |
-| Required | `updater`          | `firefox-dev`     | `windows-latest` | no       | `firefox-dev-dl-windows-<url16>-plain`                                        | 1m 51s     |
-| Required | `updater`          | `firefox-dev`     | `ubuntu-24.04`   | no       | `firefox-dev-dl-linux-<url16>-plain`                                          | 1m 7s      |
-| Required | `updater`          | `nightly`         | `ubuntu-24.04`   | no       | `nightly-dl-linux-<url16>-plain`                                              | 56s        |
-| Required | `updater`          | `nightly`         | `windows-latest` | no       | `nightly-dl-windows-<url16>-plain`                                            | 1m 44s     |
-| Required | `updater`          | `nightly`         | `macos-latest`   | no       | `nightly-dl-macos-<url16>-plain`                                              | 1m 43s     |
+| Required | `updater`          | `firefox`         | `macos-latest`   | no       | `firefox-dl-macos-<id16>-plain`                                               | 2m 4s      |
+| Required | `updater`          | `firefox`         | `windows-latest` | no       | `firefox-dl-windows-<id16>-plain`                                             | 1m 43s     |
+| Required | `updater`          | `firefox`         | `ubuntu-24.04`   | no       | `firefox-dl-linux-<id16>-plain`                                               | 1m 6s      |
+| Required | `updater`          | `firefox-dev`     | `macos-latest`   | no       | `firefox-dev-dl-macos-<id16>-plain`                                           | 1m 53s     |
+| Required | `updater`          | `firefox-dev`     | `windows-latest` | no       | `firefox-dev-dl-windows-<id16>-plain`                                         | 1m 51s     |
+| Required | `updater`          | `firefox-dev`     | `ubuntu-24.04`   | no       | `firefox-dev-dl-linux-<id16>-plain`                                           | 1m 7s      |
+| Required | `updater`          | `nightly`         | `ubuntu-24.04`   | no       | `nightly-dl-linux-<id16>-plain`                                               | 56s        |
+| Required | `updater`          | `nightly`         | `windows-latest` | no       | `nightly-dl-windows-<id16>-plain`                                             | 1m 44s     |
+| Required | `updater`          | `nightly`         | `macos-latest`   | no       | `nightly-dl-macos-<id16>-plain`                                               | 1m 43s     |
 | Required | `updater-waterfox` | `waterfox`        | `windows-latest` | no       | `waterfox-dl-windows-<url16>-plain`                                           | 1m 48s     |
 
 Every cache key is `<name>-<type>-<os>-<hash>-<layout>` (ADR 0045): `name` is the browser the entry
 belongs to, `type` the payload (`dl` installer, `portable` extracted tree), `os` the runner OS
 lowercased (`snap` for the snap leg) and `layout` its spelling (`plain` / `dir`). A hard gate’s
-`hash` is the download URL’s sha256 prefix (`<url16>`), so a vendor bump invalidates the key and
-retires its predecessor; a sticky fork leg keys on `v<version>` instead (ADR 0034), so a fork
-release cannot delay a PR. Entries are written on the default branch only (ADR 0044): a PR run saves
-none and restores main’s copy, because a `refs/pull/<n>/merge` entry is restorable by that PR alone.
-The composite that builds these keys is
+`hash` is the download URL’s release identity: the download URL’s sha256 prefix (`<url16>`) when
+that URL carries the release (waterfox’s CDN path, ESR’s release-tagged ftp URL) and the published
+version or nightly build id (`<id16>`) when it does not — Mozilla’s `?product=…-latest` URLs are one
+fixed string per OS, so a URL-derived key could never be superseded. Either way a release change
+mints a new key and retires its predecessor; a sticky fork leg keys on `v<version>` instead (ADR
+0034), so a fork release cannot delay a PR. Entries are written on the default branch only (ADR
+0044): a PR run saves none and restores main’s copy, because a `refs/pull/<n>/merge` entry is
+restorable by that PR alone. The composite that builds these keys is
 [setup-browser](../.github/actions/setup-browser/action.yml); an em dash means the leg caches
 nothing of its own.
 

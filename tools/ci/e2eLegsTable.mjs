@@ -49,6 +49,7 @@ import prettierConfig from '../../config/prettier.config.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WORKFLOW_PATH = path.join(ROOT, '.github', 'workflows', 'e2e.yml');
 const WATCHDOG_PATH = path.join(ROOT, 'tools', 'ci', 'watchdog-report.mjs');
+const DOWNLOADS_PATH = path.join(ROOT, 'test', 'e2e', 'shared', 'downloads.mjs');
 const DEFAULT_OUT = path.join(ROOT, 'docs', 'e2e-legs.md');
 
 // docs/ sits one level below the repo root, so a link out of it climbs once.
@@ -362,14 +363,37 @@ function cacheNameOf(browser, esrMajors) {
 }
 
 /**
+ * Channels whose download URL is a `latest` alias, so the key digests their
+ * release identity instead of the URL (test/e2e/shared/downloads.mjs owns that
+ * resolution; here it only decides which placeholder the table renders). Parsed
+ * from that module's source, like the watchdog roles, so the two cannot drift
+ * apart.
+ */
+const IDENTITY_CHANNELS_RE = /const LATEST_URL_CHANNELS = new Set\(\[([^\]]*)\]\)/;
+
+/** @type {null | Set<string>} */
+let identityKeyed = null;
+
+/** @returns {Set<string>} */
+function identityKeyedBrowsers() {
+  if (identityKeyed) return identityKeyed;
+  const src = readFileSync(DOWNLOADS_PATH, 'utf8');
+  const m = IDENTITY_CHANNELS_RE.exec(src);
+  if (!m) throw new Error('test/e2e/shared/downloads.mjs: LATEST_URL_CHANNELS not found');
+  identityKeyed = new Set([...m[1].matchAll(/'([^']+)'/g)].map(entry => entry[1]));
+  return identityKeyed;
+}
+
+/**
  * The cache key a leg restores, rendered from the composite's key shape (ADR
  * 0045): `<name>-<type>-<os>-<hash>-<layout>`, where a hard gate's hash is
- * `<url16>` (the download URL's sha256 prefix) and a sticky fork leg's is
- * `v<version>`; a portable leg adds the extracted tree
- * (`<name>-portable-<os>-…-dir`) beside its installer. A leg with no
- * setup-browser step shows its own actions/cache namespace — the restore prefix
- * when the step only restores, the save key when it also saves — or an em dash
- * when it caches nothing.
+ * `<url16>` (the download URL's sha256 prefix) when that URL carries the
+ * release and `<id16>` (the version or nightly build id) when it is a `latest`
+ * alias; a sticky fork leg's is `v<version>`. A portable leg adds the extracted
+ * tree (`<name>-portable-<os>-…-dir`) beside its installer. A leg with no
+ * setup-browser step shows its own actions/cache namespace — the save key when
+ * it also saves (the row then names the entry shape it writes), the restore
+ * prefix when the step only restores — or an em dash when it caches nothing.
  *
  * @param {any} job
  * @param {{browser: null | string; os: string}} leg
@@ -380,7 +404,13 @@ function cacheNameOf(browser, esrMajors) {
 function cacheCell(job, leg, roles, esrMajors = []) {
   const step = setupBrowserStep(job);
   if (!step) {
-    const own = (job?.steps ?? []).find(s => String(s?.uses ?? '').includes('actions/cache'));
+    // A leg that restores AND saves (snap-firefox) shows the save key: the
+    // restore is prefix-based, so the prefix alone would render a key shape no
+    // other row has. Only a restore-only leg (esr-matrix) shows the prefix.
+    const cacheSteps = (job?.steps ?? []).filter(s =>
+      String(s?.uses ?? '').includes('actions/cache')
+    );
+    const own = cacheSteps.find(s => String(s.uses).includes('/save@')) ?? cacheSteps[0];
     if (!own?.with) return '—';
     const restoresOnly = String(own.uses).includes('/restore@');
     const key = restoresOnly ? (own.with['restore-keys'] ?? own.with.key) : own.with.key;
@@ -392,7 +422,10 @@ function cacheCell(job, leg, roles, esrMajors = []) {
   const portable = String(inputs.portable ?? 'false') === 'true';
   const osTag = OS_TAG[String(leg.os).split('-')[0]] ?? leg.os;
   const name = cacheNameOf(browser, esrMajors);
-  const hash = roles.forkBrowsers.has(browser) ? 'v<version>' : '<url16>';
+  const hash =
+    roles.forkBrowsers.has(browser) ? 'v<version>'
+    : identityKeyedBrowsers().has(browser) ? '<id16>'
+    : '<url16>';
   const installer = `${name}-dl-${osTag}-${hash}-plain`;
   return portable ? `${installer} / ${name}-portable-${osTag}-${hash}-dir` : installer;
 }
@@ -661,8 +694,11 @@ function buildDoc(runId, data) {
     'Every cache key is `<name>-<type>-<os>-<hash>-<layout>` (ADR 0045): `name` is the browser the',
     'entry belongs to, `type` the payload (`dl` installer, `portable` extracted tree), `os` the',
     'runner OS lowercased (`snap` for the snap leg) and `layout` its spelling (`plain` / `dir`).',
-    'A hard gate\u2019s `hash` is the download URL\u2019s sha256 prefix (`<url16>`), so a vendor bump',
-    'invalidates the key and retires its predecessor; a sticky fork leg keys on `v<version>` instead',
+    'A hard gate\u2019s `hash` is the download URL\u2019s release identity: the download URL\u2019s sha256 prefix (`<url16>`) when that URL carries the',
+    'release (waterfox\u2019s CDN path, ESR\u2019s release-tagged ftp URL) and the published version or',
+    'nightly build id (`<id16>`) when it does not \u2014 Mozilla\u2019s `?product=\u2026-latest` URLs are one',
+    'fixed string per OS, so a URL-derived key could never be superseded. Either way a release change',
+    'mints a new key and retires its predecessor; a sticky fork leg keys on `v<version>` instead',
     '(ADR 0034), so a fork release cannot delay a PR. Entries are written on the default branch only',
     '(ADR 0044): a PR run saves none and restores main\u2019s copy, because a `refs/pull/<n>/merge`',
     'entry is restorable by that PR alone. The composite that builds these keys is',
