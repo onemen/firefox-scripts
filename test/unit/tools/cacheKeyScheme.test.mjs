@@ -20,7 +20,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
+import {createHash} from 'node:crypto';
+
 import {cacheKey, cacheName} from '../../../test/e2e/shared/downloads.mjs';
+import {groupOf, parseKey} from '../../../tools/ci/prune-caches.mjs';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const ACTION = '.github/actions/setup-browser/action.yml';
@@ -145,6 +148,41 @@ test('the snap and ESR legs use the same shape as everything else', () => {
     ),
     'the ESR leg looks its positional name up by the browser it installs'
   );
+});
+
+test('the key digests the release identity, not the download URL', () => {
+  const action = stripComments(read(ACTION));
+  // A URL that never changes with the release makes a key that never changes
+  // either: the entry can never be superseded, so every leg re-restores a stale
+  // payload and re-downloads the current release anyway (measured 2026-10-09 —
+  // three of the four hard gates, byte-identical keys days apart).
+  assert.ok(
+    action.includes('downloads.mjs "$BROWSER" --cache-identity'),
+    'the composite resolves the release identity for the key'
+  );
+  assert.ok(action.includes('"$IDENTITY"'), 'the sha256 input must be the identity');
+  assert.ok(!action.includes('"$URL"'), 'no step may still digest the raw URL');
+});
+
+test('a per-build key still lands in one keep-one group', () => {
+  // The other half of "one entry per browser": the key changes every build, and
+  // the pruner retires the predecessor because both keys group as the same
+  // payload. A changing key must never grow the quota.
+  const sha16 = text => createHash('sha256').update(text).digest('hex').slice(0, 16);
+  const key = buildId =>
+    cacheKey({
+      browser: 'nightly',
+      type: 'dl',
+      os: 'linux',
+      hash: sha16(`nightly-${buildId}`),
+      layout: 'plain',
+    });
+  const today = key('20261009-1206');
+  const tomorrow = key('20261010-1159');
+  assert.notEqual(today, tomorrow, 'a new build must mint a new key');
+  assert.match(today, /^nightly-dl-linux-[0-9a-f]{16}-plain$/);
+  assert.equal(parseKey(today).name, 'nightly');
+  assert.equal(groupOf(today), groupOf(tomorrow), 'one keep-one group per payload');
 });
 
 test('the snap payload restores and saves under the same key', () => {

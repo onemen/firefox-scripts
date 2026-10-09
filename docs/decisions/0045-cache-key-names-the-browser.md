@@ -33,9 +33,17 @@ One key shape everywhere: `<name>-<type>-<os>-<hash>-<layout>`.
 - `os` is `runner.os` lowercased, plus `snap` — the snap payload, the one browser-shaped cache that
   is not a browser installer, becomes `firefox-dl-snap-<revision>-plain` (`snap-firefox-<revision>`,
   and its `snap-firefox-` prefix, before).
-- `hash` is the download URL's sha256 prefix, so a vendor bump mints a new key; a sticky fork leg
-  keys on `v<version>` instead, because its restore must work with no vendor call (0034's
-  cache-first rule).
+- `hash` is the **release identity** the key has to change with: the download URL's sha256 prefix
+  when that URL names its release (waterfox's CDN path, ESR's release-tagged URL), the published
+  version or the nightly build id when it does not — Mozilla's `?product=…-latest` URLs are one
+  fixed string per OS, so a URL-derived key was the same key forever (measured 2026-10-09: three of
+  the four hard gates, byte-identical across runs days apart). A sticky fork leg keys on
+  `v<version>` instead, because its restore must work with no vendor call (0034's cache-first rule).
+- A **static key is not the alternative**: GitHub's cache never overwrites a key, so one fixed key
+  can only ever hold the first payload saved under it — the entry goes stale and cannot be refreshed
+  (`actions/cache/save` no-ops), which is what the three channels above did. "One entry per browser
+  payload" stays the pruner's job (keep-one per `name-type-os-layout`): a changing key mints a new
+  entry and the pruner retires its predecessor.
 - ESR is the one positional name: the serving watched line is `esr`, the line it replaced `esr-prev`
   — resolved in `watchdog-report.mjs`, which owns the watched window, and handed to the leg by the
   ESR matrix. With no window to hand (a local run) the major names itself as `esr-<major>`: unique

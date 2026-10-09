@@ -70,7 +70,7 @@ inputs:
 outputs:
   cache-key:
     description: The cache key the installer was saved under (URL-hash or sticky version key)
-    value: ${{ steps.fork-save.outputs.installer-key || steps.url.outputs.installer-key }}
+    value: ${{ steps.fork-save.outputs.installer-key || steps.identity.outputs.installer-key }}
   portable-dir:
     description: PORTABLE_BROWSER_DIR when inputs.portable == 'true', else empty
     value: ${{ steps.portable-dir-unix.outputs.dir || steps.portable-dir-windows.outputs.dir }}
@@ -169,14 +169,18 @@ runs:
         echo "sticky=$sticky" >> "$GITHUB_OUTPUT"
         echo "BROWSER_DL_DIR=$RUNNER_TEMP/browser-dl" >> "$GITHUB_ENV"
 
-    # The ~100 MB official browser download is the bulk of the install step.
-    # For the hard gates this resolves the download URL (which embeds the
-    # release version) purely to key the cache. Fork legs skip this step
-    # entirely: their key namespace is sticky, so a cache-first leg makes no
-    # network call here — a vendor API stall can no longer delay a PR's fork
-    # legs, and a new fork release cannot invalidate the key.
-    - name: Resolve download URL
-      id: url
+    # The ~100 MB official browser download is the bulk of the install step, so
+    # the hard gates resolve their CACHE IDENTITY here (ADR 0045): the download
+    # URL when it names its release, the release identity when it does not —
+    # Mozilla's `?product=firefox-latest`, `firefox-devedition-latest` and
+    # `firefox-nightly-latest` are three fixed strings, so a URL-derived key was
+    # the same key for every release ever published, an entry nothing could
+    # supersede (measured 2026-10-09). Fork legs skip this step entirely: their
+    # key is sticky, so a cache-first leg makes no network call here — a vendor
+    # API stall can no longer delay a PR's fork legs, and a new fork release
+    # cannot invalidate the key.
+    - name: Resolve the cache identity
+      id: identity
       if: steps.mode.outputs.sticky == ''
       shell: bash
       env:
@@ -187,10 +191,15 @@ runs:
         # fork leg whose record is cold.
         BROWSER_PIN_VERSION: ${{ steps.fork-pin.outputs.version || inputs.pin-version }}
       run: |
-        URL=$(node test/e2e/shared/downloads.mjs "$BROWSER" --url)
-        HASH=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+        # `--cache-identity` prints the URL, or — for a channel whose URL is a
+        # `latest` alias — the release identity (version or nightly build id).
+        # It warns and falls back to the URL rather than failing: a cache
+        # concern must not red a required leg. The identity is hashed exactly
+        # like a URL was, so the key shape and the pruner are unchanged.
+        IDENTITY=$(node test/e2e/shared/downloads.mjs "$BROWSER" --cache-identity)
+        HASH=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$IDENTITY")
         # One release, two payloads: the installer and the tree extracted from
-        # it share the URL hash and differ only in type/layout.
+        # it share the identity hash and differ only in type/layout.
         echo "installer-key=$NAME-dl-$OS-$HASH-plain" >> "$GITHUB_OUTPUT"
         echo "dir-key=$NAME-portable-$OS-$HASH-dir" >> "$GITHUB_OUTPUT"
 
@@ -205,7 +214,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.BROWSER_DL_DIR }}
-        key: ${{ steps.url.outputs.installer-key }}
+        key: ${{ steps.identity.outputs.installer-key }}
 
     - name: Restore browser installer cache (fork sticky)
       if: steps.mode.outputs.sticky != ''
@@ -244,7 +253,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.PORTABLE_BROWSER_DIR }}
-        key: ${{ steps.url.outputs.dir-key }}
+        key: ${{ steps.identity.outputs.dir-key }}
 
     - name: Restore extracted portable browser cache (fork sticky)
       if: inputs.portable == 'true' && steps.mode.outputs.sticky != ''
@@ -300,11 +309,11 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.BROWSER_DL_DIR }}
-        key: ${{ steps.fork-save.outputs.installer-key || steps.url.outputs.installer-key }}
+        key: ${{ steps.fork-save.outputs.installer-key || steps.identity.outputs.installer-key }}
 
     - name: Save extracted portable browser cache
       if: inputs.portable == 'true' && success() && github.ref == 'refs/heads/main'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.PORTABLE_BROWSER_DIR }}
-        key: ${{ steps.fork-save.outputs.dir-key || steps.url.outputs.dir-key }}
+        key: ${{ steps.fork-save.outputs.dir-key || steps.identity.outputs.dir-key }}

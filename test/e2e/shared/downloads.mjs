@@ -26,8 +26,12 @@ import {execSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {resolveInstallerUrl, verifySha256} from './browserResolver.mjs';
+import {resolveBrowserVersion, resolveInstallerUrl, verifySha256} from './browserResolver.mjs';
 import {discoverFirefoxBinary} from './browsers.mjs';
+// The one implementation of "which Nightly build is current" (the Linux64
+// tarball's Last-Modified): the core-smoke marker and this cache identity must
+// agree, or two parts of CI would disagree about what a build is.
+import {fetchBuildId} from '../../../tools/ci/nightly-buildid.mjs';
 
 /**
  * Per-browser install recipes keyed by platform (win|mac|linux).
@@ -339,6 +343,100 @@ export function cacheName(browser, override = process.env.BROWSER_CACHE_NAME) {
  */
 export function cacheKey({browser, type, os, hash, layout, name = cacheName(browser)}) {
   return [name, type, String(os).toLowerCase(), hash, layout].join('-');
+}
+
+/**
+ * Channels whose download URL is a `latest` alias rather than a release: the
+ * URL is one fixed string for every release the channel ever publishes, so a
+ * hash of it is the SAME key forever. Measured 2026-10-09: `firefox-dl-linux-
+ * 1adb2936297da1fe-plain` and `nightly-dl-linux-9b186b6d11b08a6f-plain` were
+ * byte-identical across runs days apart, while the installers behind them had
+ * moved on — and those hashes ARE sha256 of the fixed URLs: recomputing
+ * sha256('...product=firefox-latest&os=linux64...')[:16] gives 1adb2936297da1fe
+ * and the nightly URL gives 9b186b6d11b08a6f, so the key is a constant function
+ * of a constant string. That entry cannot be superseded: every leg re-restores
+ * it in full and re-downloads the current release anyway (the size check sees
+ * the change), and the save can never refresh it — `actions/cache/save` no-ops
+ * on a key that exists. So these three key on the RELEASE IDENTITY instead.
+ *
+ * It was not only nightly, though nightly is where the two defects compounded:
+ * the shared `firefox-dl-<os>` family's prune group ignored the hash, so ONE
+ * entry survived it, and the newest entry — the one rewritten every night — was
+ * nightly's. Live 2026-10-09, `refs/heads/main` held
+ * `firefox-dl-Windows-082d581c6011ad63` (91 MB) and that hash is
+ * sha256('...product=firefox-nightly-latest&os=win64...')[:16], while stable's
+ * installer hash (`ca6cc4d5e2db5f9a`) survived only in the separate
+ * `firefox-portable-Windows-` family: nightly's static key was also the one the
+ * prune kept. Naming the browser in the key separates the three channels into
+ * three groups, so no channel can evict its sibling.
+ */
+const LATEST_URL_CHANNELS = new Set(['firefox', 'firefox-dev', 'nightly']);
+
+/**
+ * What a key's `hash` slot digests (ADR 0045): the download URL when that URL
+ * names its release, the release identity when it is a `latest` alias.
+ *
+ * - `nightly` → the build id from tools/ci/nightly-buildid.mjs, the same id
+ *   core-smoke-nightly keys its skip marker on. A Nightly version (`160.0a1`)
+ *   spans many builds, so only the build timestamp can name one. That id is
+ *   deliberately ONE global id (the Linux64 tarball's Last-Modified) and not a
+ *   per-OS one: the smoke marker and this key must agree about what a build IS,
+ *   and splitting them would let two parts of CI disagree. The cost of the
+ *   approximation is bounded — a Nightly build that lags across OSes can key a
+ *   leg on the neighbouring build, which only means a stale entry the leg
+ *   re-downloads, never a wrong browser.
+ * - `firefox` / `firefox-dev` → the version Mozilla publishes for the channel.
+ * - everything else → the URL, and that is not a fallback: waterfox's CDN path
+ *   carries its version, and a fork leg's identity is the version it INSTALLED
+ *   (ADR 0034's cache-first rule), never a URL.
+ *
+ * Both are hashed by the caller exactly like a URL was, so the key shape, the
+ * pruner's parser and the `[0-9a-f]{16}` hash slot are untouched.
+ *
+ * @param {string} browser a downloads.mjs browser key
+ * @param {{url: string; version?: string; buildId?: string}} parts
+ * @returns {string} the string whose sha256 prefix keys the cache
+ */
+export function cacheIdentity(browser, {url, version = '', buildId = ''}) {
+  if (browser === 'nightly') return buildId ? `${browser}-${buildId}` : url;
+  if (browser === 'firefox' || browser === 'firefox-dev') {
+    return version ? `${browser}-${version}` : url;
+  }
+  return url;
+}
+
+/**
+ * Resolve a browser's cache identity, degrading to its download URL with a
+ * warning when the release identity cannot be fetched.
+ *
+ * Degradation, never failure: these are required legs, and a cache concern must
+ * not red them. A URL-keyed cache is exactly what the channel had before this
+ * existed — it re-restores a stale entry and re-downloads, which is wasteful
+ * but correct. (Contrast core-smoke-nightly's marker, where an empty id FAILS
+ * the step: there a constant key silently retires the gate.)
+ *
+ * @param {string} browser
+ * @param {string} platform a node platform or its `win`/`mac` alias
+ * @returns {Promise<string>}
+ */
+async function resolveCacheIdentity(browser, platform) {
+  const url = await resolveDownloadUrl(browser, platform);
+  if (!LATEST_URL_CHANNELS.has(browser)) return url;
+  /** The fallback, shouted about, because it costs bandwidth on every leg. */
+  const degraded = message => {
+    console.error(
+      `::warning::${message} — keying the cache on its static URL, which cannot supersede itself`
+    );
+    return url;
+  };
+  try {
+    if (browser === 'nightly') {
+      return cacheIdentity(browser, {url, buildId: await fetchBuildId()});
+    }
+    return cacheIdentity(browser, {url, version: (await resolveBrowserVersion(browser)).version});
+  } catch (err) {
+    return degraded(`${browser} release identity unavailable (${err.message})`);
+  }
 }
 
 /**
@@ -1676,14 +1774,16 @@ async function main() {
   const args = process.argv.slice(2);
   const browser = args[0];
   if (!browser || args.includes('--help')) {
-    console.log(`Usage: node test/e2e/shared/downloads.mjs <browser> [--os win|mac|linux] [--url|--installed-version|--cache-name]
+    console.log(`Usage: node test/e2e/shared/downloads.mjs <browser> [--os win|mac|linux] [--url|--installed-version|--cache-name|--cache-identity]
 
 Installs <browser> for the current OS (or --os) using its official download
 recipe, then prints the resolved binary path and, in GitHub Actions, sets
 FIREFOX_BINARY via $GITHUB_ENV. Set PORTABLE_BROWSER_DIR to install Firefox
 Release into a custom directory instead of a system location. With --url,
-prints the download URL instead (used to key the CI download cache). With
---cache-name it prints the name half of this browser's cache keys (ADR 0045).
+prints the download URL. With --cache-name it prints the name half of this
+browser's cache keys (ADR 0045), and with --cache-identity the string its key's
+hash slot digests — the URL, or the release identity for a channel whose URL is
+a "latest" alias that never moves (firefox, firefox-dev, nightly).
 With --installed-version, it prints the version of the already-installed binary
 (FIREFOX_BINARY or the install dirs) — ground truth for what an E2E leg
 validated, since the "latest" redirect URLs embed no version.`);
@@ -1707,6 +1807,14 @@ validated, since the "latest" redirect URLs embed no version.`);
     // Print the name half of this browser's cache keys so the composite names
     // what it caches instead of choosing a namespace (ADR 0045).
     console.log(cacheName(browser));
+    return;
+  }
+
+  if (args.includes('--cache-identity')) {
+    // Print what the key's hash slot must digest (ADR 0045): the download URL,
+    // or the release identity for the three channels whose URL is a `latest`
+    // alias that never changes with the release.
+    console.log(await resolveCacheIdentity(browser, normalized));
     return;
   }
 
