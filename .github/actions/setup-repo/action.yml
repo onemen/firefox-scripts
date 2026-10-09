@@ -6,8 +6,9 @@
 # pinned to full commit SHAs (see .github/dependabot.yml).
 #
 # pnpm/setup installs pnpm's self-contained release binary and the requested
-# Node runtime in a single step, replacing actions/setup-node, and caches the
-# pnpm store between runs. The pnpm version is read from the packageManager
+# Node runtime in a single step, replacing actions/setup-node, and this action
+# caches the pnpm store itself — just below the install, on a key with no
+# run-varying half. The pnpm version is read from the packageManager
 # field in package.json — a ^12 range shared by CI and local dev, resolved by
 # pnpm against the supply-chain policy (minimumReleaseAge), so no lockfile
 # packageManager pin exists to age-gate. The action
@@ -39,14 +40,73 @@ runs:
     # Single action for pnpm + Node (docs: https://pnpm.io/continuous-integration).
     # install: false — the strict frozen install runs below so every job gets
     # exactly one install path.
+    #
+    # cache: false — the action's built-in store cache MUST stay off. It keys
+    # the store on the lockfile hash PLUS a per-run half
+    # (`<prefix>-<hashes>-<run_id>-<attempt>-<uuid>`), so no save is ever
+    # restorable and GitHub's "10 versions per key" cap never fires: every job
+    # on every OS minted a fresh ~65-76 MB entry of byte-identical content.
+    # Measured 2026-10-09: 65 such entries / 4.18 GB, the bulk of the 10.79 GB
+    # that put the repo back over the 10 GB cap — and cap-sitting is what
+    # invites the LRU eviction that ate the URL watchdog's state caches (#462).
+    # The store is cached by the two steps below instead, on a stable key.
     - name: Install pnpm and Node.js
       uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
       with:
         runtime: node@${{ inputs.node-version }}
-        cache: true
+        cache: false
         install: false
+
+    # The store dir is read out of pnpm, after pnpm exists and before anything
+    # installs: the path differs per OS (XDG data dir / LOCALAPPDATA / ~/Library)
+    # and carries a store-format version segment that moves with pnpm's major,
+    # so spelling it per platform would rot. `node` does the mkdir because the
+    # Windows form comes back backslashed (`C:\Users\…`), which Git Bash's
+    # `mkdir -p` would escape into a literal file name.
+    - name: Resolve the pnpm store dir
+      id: pnpm-store
+      shell: bash
+      run: |
+        DIR=$(pnpm store path --silent)
+        [ -n "$DIR" ] || { echo "::error::pnpm store path returned nothing"; exit 1; }
+        node -e "require('fs').mkdirSync(process.argv[1], {recursive: true})" "$DIR"
+        echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+    # Restore/save split (not plain actions/cache), the same reason
+    # setup-browser splits them: the save must follow a real install, so a
+    # killed job cannot mint an entry that every later leg then restores.
+    #
+    # The key is the lockfile content hash + platform and nothing else, which is
+    # the whole fix: a stable key lets GitHub's own per-key version cap apply
+    # and makes a save whose key already exists a no-op — one entry per platform
+    # per lockfile state, instead of one per job per run. The prefix
+    # restore-keys also warm-fill a lockfile change: a new state restores the
+    # previous store and downloads only the delta.
+    #
+    # Save on the default branch only: caches are ref-scoped, so a PR-ref copy is
+    # readable by nothing but that PR — while PR refs still restore the default
+    # branch's entry through the prefix below. The copy would be pure quota waste
+    # until the nightly prune deleted it, which is the growth this change exists
+    # to stop.
+    - name: Restore pnpm store
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.dir }}
+        key: pnpm-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-cache-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Install dependencies
       if: inputs.install == 'true'
       shell: bash
       run: pnpm install --frozen-lockfile
+
+    # Same key as the restore, so a repeat save no-ops. `install` is in the guard
+    # (not just success()) because a caller that installs in its own later step
+    # would otherwise save a not-yet-populated store under the key every job
+    # restores.
+    - name: Save pnpm store
+      if: inputs.install == 'true' && success() && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.dir }}
+        key: pnpm-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
