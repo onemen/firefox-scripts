@@ -52,9 +52,14 @@ runs:
             echo "apt install succeeded on attempt $attempt: $pkgs"
             exit 0
           fi
-          echo "apt attempt $attempt failed — retrying in ${delay}s"
-          sleep "$delay"
           attempt=$((attempt + 1))
+          # Sleep only when another attempt remains: a settle pause after the
+          # LAST failure buys nothing and inflates the worst case (the test
+          # asserts the real bound).
+          if [ "$attempt" -le 3 ]; then
+            echo "apt attempt $((attempt - 1)) failed — retrying in ${delay}s"
+            sleep "$delay"
+          fi
           delay=$((delay * 2))
         done
         echo "::error::apt install failed after 3 attempts: $pkgs"

@@ -42,13 +42,22 @@ test('the update bound is at most the 120 s the issue names', () => {
   assert.ok(bound <= 120, `update bound must be <= 120 s, got ${bound}`);
 });
 
-test('retries are finite with backoff', () => {
+test('retries are finite with backoff, and the last attempt does not sleep', () => {
   const attempts = raw.match(/attempt=1/);
   const limit = raw.match(/\[\s*"\$attempt"\s+-le\s+(\d+)\s*\]/);
   assert.ok(attempts, 'wrapper must initialise an attempt counter');
   assert.ok(limit, 'wrapper must bound the retry loop');
   assert.ok(Number(limit[1]) <= 3, `attempts must stay small and finite, got ${limit[1]}`);
   assert.match(raw, /delay=\$\(\(delay \* 2\)\)/, 'backoff must grow between attempts');
+  // The sleep must be guarded by the attempt check, or the run pays a settle
+  // pause after its final failure too — that is what made the running bound
+  // exceed the asserted one (CodeRabbit, run 2026-10-09).
+  const beforeSleep = raw.slice(0, raw.indexOf('sleep "$delay"'));
+  assert.match(
+    beforeSleep,
+    /if\s+\[\s*"\$attempt"\s+-le\s+3\s*\];\s*then/,
+    'the backoff sleep must be conditional on another attempt remaining'
+  );
 });
 
 test('worst-case stall time fits inside every apt-consuming job budget', () => {
@@ -67,8 +76,17 @@ test('worst-case stall time fits inside every apt-consuming job budget', () => {
   const updateBound = Number(raw.match(/timeout\s+(\d+)\s+sudo\s+apt-get\s+update/)[1]);
   const installBound = Number(raw.match(/timeout\s+(\d+)\s+sudo\s+apt-get\s+install/)[1]);
   const attempts = Number(raw.match(/\[\s*"\$attempt"\s+-le\s+(\d+)\s*\]/)[1]);
-  // Backoff sleeps: 10 s, then 20 s (doubling from a 10 s base), i.e. attempts-1 sleeps.
-  const sleeps = 10 * (2 ** (attempts - 1) - 1);
+  // Derive the sleeps from the script's own backoff: base `delay=N`, doubled
+  // each attempt, and emitted only while another attempt remains (so
+  // attempts-1 sleeps). Summing the series beats a hand-written formula that
+  // can silently disagree with the loop.
+  const base = Number(raw.match(/delay=(\d+)/)[1]);
+  let sleeps = 0;
+  let delay = base;
+  for (let i = 1; i < attempts; i++) {
+    sleeps += delay;
+    delay *= 2;
+  }
   const worstCase = (updateBound + installBound) * attempts + sleeps;
   assert.ok(
     worstCase < tightest * 60,

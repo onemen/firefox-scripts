@@ -49,7 +49,7 @@ const EXEMPT_DIR = path.join(REPO_ROOT, '.github', 'actions', 'bound-apt');
 // The apt verb with optional `-flag` tokens on either side of it:
 //   apt-get -y install x   (flags before the verb)
 //   apt-get install -y x   (flags after the verb)
-const CMD = String.raw`apt(?:-get)?(?:\s+\s-[A-Za-z0-9][^\s]*)*\s+(?:update|install)(?:\s+\s-[A-Za-z0-9][^\s]*)*\b`;
+const CMD = String.raw`apt(?:-get)?(?:\s+-[A-Za-z0-9][^\s]*)*\s+(?:update|install)(?:\s+-[A-Za-z0-9][^\s]*)*\b`;
 // Optional `timeout N` and an optional wrapped privilege before the verb.
 const WRAPPERS = String.raw`(?:timeout\s+\S+\s+)?(?:sudo\s+(?:-[A-Za-z0-9][^\s]*\s+)*)?`;
 

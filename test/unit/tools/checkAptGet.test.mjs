@@ -53,6 +53,25 @@ test('the natural one-line step form fires (regression: CodeRabbit #483)', () =>
   assert.equal(findings[0].line, 2);
 });
 
+test('flags BEFORE the verb fire (regression: the `\\s+\\s-` typo)', () => {
+  // The gate once required TWO whitespace characters before a pre-verb flag
+  // (`\s+\s-`), so the ordinary `apt-get -y install xvfb` — one space — walked
+  // straight through the #461 gate. Caught by the CodeRabbit batch pass.
+  const {paths} = writeTmp({
+    'job.yml':
+      [
+        '        apt-get -y install xvfb',
+        '        sudo apt-get -qq update',
+        '        apt-get -y -qq install git',
+      ].join('\n') + '\n',
+  });
+  const findings = findRawAptGetCalls(paths, path.parse(paths[0]).dir);
+  assert.deepEqual(
+    findings.map(f => f.line),
+    [1, 2, 3]
+  );
+});
+
 test('wrapper, short-spelling, root and chained forms all fire', () => {
   const {paths} = writeTmp({
     'e2e.yml':
