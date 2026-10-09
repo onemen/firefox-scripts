@@ -12,7 +12,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-gate-coverage.mjs')).href;
-const {checkWorkflow, parseJobs} = await import(scriptUrl);
+const {checkWorkflow, checkWorkflowGates, parseJobs} = await import(scriptUrl);
 
 // Fixture mirrors the independent-filter e2e workflow: separate
 // installer/updater/core outputs, per-job `if:`s, and an `applicability:`
@@ -392,6 +392,131 @@ test('checkTestScriptCoverage: a reachable wrapper covers its callee; prefix nam
   } finally {
     fs.rmSync(tmp, {recursive: true, force: true});
   }
+});
+
+// ── multi-gate workflow (required gate + warn-only advisory reporter): each
+// gate's own wiring is checked without the needs-completeness rule, then one
+// workflow-level pass requires every non-gate job to be in at least one
+// gate's needs.
+const MULTI = `name: X
+on:
+  pull_request:
+jobs:
+  changes:
+    name: detect changed paths
+    steps:
+      - uses: actions/checkout
+  snapshot:
+    needs: changes
+    if: needs.changes.outputs.updater == 'true'
+    runs-on: ubuntu-latest
+  matrix:
+    needs: changes
+    if: needs.changes.outputs.updater == 'true'
+    runs-on: ubuntu-latest
+  e2e-gate:
+    name: E2E gate
+    if: always()
+    needs: [changes, snapshot]
+    steps:
+      - uses: actions/checkout
+      - uses: ./.github/actions/verify-gate
+        with:
+          changes-result: \${{ needs.changes.result }}
+          branch: \${{ needs.changes.outputs.updater == 'true' }}
+          branch-label: E2E-relevant changes
+          applicability: |-
+            snapshot:\${{ needs.changes.outputs.updater == 'true' }}
+          results: |-
+            snapshot:\${{ needs.snapshot.result }}
+          required: snapshot
+          skip-guard: snapshot
+  e2e-advisory:
+    name: E2E advisory
+    if: always()
+    needs: [changes, e2e-gate, matrix]
+    steps:
+      - uses: actions/checkout
+      - uses: ./.github/actions/verify-gate
+        with:
+          changes-result: \${{ needs.changes.result }}
+          branch: \${{ needs.changes.outputs.updater == 'true' }}
+          branch-label: E2E-relevant changes
+          applicability: |-
+            matrix:\${{ needs.changes.outputs.updater == 'true' }}
+          results: |-
+            matrix:\${{ needs.matrix.result }}
+          advisory: matrix
+          skip-guard: matrix
+`;
+
+const MULTI_GATE_1 = {
+  file: 'e2e.yml',
+  gate: 'e2e-gate',
+  gatedIfs: {snapshot: "needs.changes.outputs.updater == 'true'"},
+  applicability: ['snapshot'],
+  postGate: ['e2e-advisory'],
+};
+const MULTI_GATE_2 = {
+  file: 'e2e.yml',
+  gate: 'e2e-advisory',
+  gatedIfs: {matrix: "needs.changes.outputs.updater == 'true'"},
+  applicability: ['matrix'],
+  postGate: [],
+};
+
+test('checkWorkflowGates: a compliant two-gate workflow passes', () => {
+  // The advisory gate needs the required gate (ordering edge) without
+  // verifying it — the sibling-gate exemption keeps the results rule quiet.
+  assert.deepEqual(checkWorkflowGates(MULTI, [MULTI_GATE_1, MULTI_GATE_2]), []);
+});
+
+test('checkWorkflowGates: a job in no gate needs is flagged once, naming both gates', () => {
+  const broken = MULTI.replace(
+    '  e2e-gate:',
+    '  orphan:\n    needs: changes\n    runs-on: ubuntu-latest\n  e2e-gate:'
+  );
+  const errors = checkWorkflowGates(broken, [MULTI_GATE_1, MULTI_GATE_2]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /job 'orphan' is verified by no gate \(e2e-gate, e2e-advisory\)/);
+});
+
+test('checkWorkflowGates: a devolved leg that lost its filter if is still flagged', () => {
+  const broken = MULTI.replace(
+    "  matrix:\n    needs: changes\n    if: needs.changes.outputs.updater == 'true'",
+    '  matrix:\n    needs: changes'
+  );
+  const errors = checkWorkflowGates(broken, [MULTI_GATE_1, MULTI_GATE_2]);
+  assert.ok(
+    errors.some(e =>
+      e.includes(
+        "'matrix' must carry the path-filter 'if: needs.changes.outputs.updater == 'true''"
+      )
+    )
+  );
+});
+
+test('checkWorkflowGates: a required: input on the warn-only reporter is flagged', () => {
+  // verify.sh FAILS a non-success required job — a `required:` entry would
+  // silently harden an advisory leg into a merge blocker.
+  const contracts = [MULTI_GATE_1, {...MULTI_GATE_2, forbidWith: ['required']}];
+  assert.deepEqual(checkWorkflowGates(MULTI, contracts), []);
+  const broken = MULTI.replace(
+    '          advisory: matrix\n          skip-guard: matrix',
+    '          required: matrix\n          advisory: matrix\n          skip-guard: matrix'
+  );
+  const errors = checkWorkflowGates(broken, contracts);
+  assert.ok(errors.some(e => e.includes("must not set verify-gate 'required:'")));
+});
+
+test('checkWorkflow: without the sibling-gate exemption the ordering edge is flagged', () => {
+  // Pins WHY checkWorkflowGates passes gateNames: the single-gate check has
+  // no sibling concept, so the advisory's `needs: e2e-gate` ordering edge
+  // reads as an unverified input.
+  const errors = checkWorkflow(MULTI, MULTI_GATE_2);
+  assert.ok(
+    errors.some(e => e.includes("needs 'e2e-gate'") && e.includes('results do not include it'))
+  );
 });
 
 test('checkTestScriptCoverage: a commented-out workflow mention does not count', () => {

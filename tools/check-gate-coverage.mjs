@@ -249,11 +249,27 @@ export function parseJobs(text) {
  *   noJobIf?: string[];
  *   applicability?: string[];
  *   postGate?: string[];
+ *   forbidWith?: string[];
  * }} contract
+ * @param {{complete?: boolean; gateNames?: Set<string>}} [opts] complete
+ *   (default true): enforce the needs-completeness rule — every non-postGate
+ *   job must be in this gate's needs. Multi-gate workflows (checkWorkflowGates)
+ *   disable it per gate and enforce it once across all of the file's gates
+ *   instead. gateNames: sibling gate names, exempt from the verify-gate results
+ *   rule (an ordering edge, not a verified input).
  * @returns {string[]}
  */
-export function checkWorkflow(text, contract) {
-  const {file, gate, gatedIfs = {}, noJobIf = [], applicability = [], postGate = []} = contract;
+export function checkWorkflow(text, contract, opts = {}) {
+  const {complete = true, gateNames = new Set()} = opts;
+  const {
+    file,
+    gate,
+    gatedIfs = {},
+    noJobIf = [],
+    applicability = [],
+    postGate = [],
+    forbidWith = [],
+  } = contract;
   const errors = [];
   const jobs = parseJobs(text);
   const gateJob = jobs.get(gate);
@@ -262,15 +278,17 @@ export function checkWorkflow(text, contract) {
     return errors;
   }
 
-  for (const name of jobs.keys()) {
-    if (name === gate) continue;
-    // post-gate jobs run AFTER the gate (they need it) and are checked by
-    // their own rules below — exempting them here is the point of postGate.
-    if (postGate.includes(name)) continue;
-    if (!gateJob.needs.includes(name)) {
-      errors.push(
-        `${file}: job '${name}' is not in ${gate}'s needs — it would bypass the gate silently`
-      );
+  if (complete) {
+    for (const name of jobs.keys()) {
+      if (name === gate) continue;
+      // post-gate jobs run AFTER the gate (they need it) and are checked by
+      // their own rules below — exempting them here is the point of postGate.
+      if (postGate.includes(name)) continue;
+      if (!gateJob.needs.includes(name)) {
+        errors.push(
+          `${file}: job '${name}' is not in ${gate}'s needs — it would bypass the gate silently`
+        );
+      }
     }
   }
   for (const name of postGate) {
@@ -348,6 +366,8 @@ export function checkWorkflow(text, contract) {
   ];
   for (const name of gateJob.needs) {
     if (name === 'changes') continue;
+    // Sibling gates are ordering edges (postGate), not verified inputs.
+    if (gateNames.has(name)) continue;
     if (!results.includes(name)) {
       errors.push(`${file}: ${gate} needs '${name}' but its verify-gate results do not include it`);
     }
@@ -355,6 +375,18 @@ export function checkWorkflow(text, contract) {
   for (const name of postGate) {
     if (results.includes(name)) {
       errors.push(`${file}: ${gate} results must not include post-gate job '${name}'`);
+    }
+  }
+  // Forbidden verify-gate inputs: a warn-only reporter classifies legs
+  // advisory, never required — a `required:` entry would make verify.sh fail
+  // (exit 1) instead of warn, silently hardening an advisory leg.
+  for (const name of forbidWith) {
+    const v = w[name];
+    const present = Array.isArray(v) ? v.length > 0 : String(v ?? '').trim() !== '';
+    if (present) {
+      errors.push(
+        `${file}: ${gate} must not set verify-gate '${name}:' — a warn-only reporter classifies legs advisory, never required`
+      );
     }
   }
   for (const name of results) {
@@ -381,7 +413,7 @@ export function checkWorkflow(text, contract) {
   return errors;
 }
 
-const CONTRACTS = [
+export const CONTRACTS = [
   {
     file: '.github/workflows/e2e.yml',
     gate: 'e2e-gate',
@@ -392,10 +424,11 @@ const CONTRACTS = [
     // (an arbitrary, unrelated diff), so PATH-BASED legs must never key off a
     // raw filter output on dispatches — the changes job dispatch-guards its
     // outputs instead (full dispatch = full revalidation set; partial escape =
-    // nothing path-based). browser-matrix AND snapshot additionally run for a
-    // single-browser manual-escape dispatch (ADR 0021; snapshot must run
-    // because browser-matrix needs it and a needs-chain skip is transitive,
-    // #143) — the combined `if:` is their contract.
+    // nothing path-based). snapshot additionally runs for a single-browser
+    // manual-escape dispatch (ADR 0021; it must run because browser-matrix
+    // needs it and a needs-chain skip is transitive, #143) — the combined
+    // `if:` is its contract. (browser-matrix's own combined `if:` lives on
+    // the e2e-advisory contract below, which owns that leg now.)
     gatedIfs: {
       'snapshot':
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser != 'all'",
@@ -405,12 +438,6 @@ const CONTRACTS = [
       'updater-waterfox':
         "needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox'",
       'core-lifecycle': "needs.changes.outputs.core == 'true'",
-      'browser-matrix':
-        "(github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr'",
-      'fork-portable':
-        "(github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr'",
-      'esr-matrix':
-        "github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr'",
     },
     applicability: [
       'snapshot',
@@ -419,9 +446,6 @@ const CONTRACTS = [
       'updater',
       'updater-waterfox',
       'core-lifecycle',
-      'browser-matrix',
-      'fork-portable',
-      'esr-matrix',
     ],
     // Runs after e2e-gate: records the validated browser versions (#4) only
     // when every browser leg passed, and cleans up the temporary
@@ -448,7 +472,42 @@ const CONTRACTS = [
       'snap-store-watch',
       'e2e-triage',
       'prune-caches',
+      // The warn-only advisory reporter (below): it needs the required gate
+      // so it runs after it, and the gate never verifies it (always exits 0).
+      'e2e-advisory',
     ],
+  },
+  {
+    // Warn-only reporter for the advisory legs. It runs after the required
+    // gate plus the advisory legs complete, emits ::warning:: per non-green
+    // advisory result, and always exits 0 — it is NOT in branch protection
+    // and must never be added there (its own contract pins job-level
+    // `if: always()` plus the same E2E-relevant branch as the required gate).
+    // The three legs with independent changed-paths filters keep their exact
+    // `if:` contracts here; esr-portable (chained on esr-matrix) and
+    // snap-firefox (unfiltered + runtime snapd probe) are pinned present via
+    // applicability with no `if:` of their own.
+    file: '.github/workflows/e2e.yml',
+    gate: 'e2e-advisory',
+    gatedIfs: {
+      'browser-matrix':
+        "(github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr'",
+      'fork-portable':
+        "(github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr'",
+      'esr-matrix':
+        "github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr'",
+    },
+    applicability: [
+      'browser-matrix',
+      'fork-portable',
+      'esr-matrix',
+      'esr-portable',
+      'snap-firefox',
+    ],
+    postGate: [],
+    // Never `required:` — verify.sh FAILS a non-success required job, which
+    // would turn this warn-only reporter into a second hard gate.
+    forbidWith: ['required'],
   },
   {
     file: '.github/workflows/ci.yml',
@@ -581,11 +640,51 @@ export function checkTestScriptCoverage(opts = {}) {
   return errors;
 }
 
+/**
+ * Assert the gate contracts of one workflow that has several gates (e2e.yml:
+ * the required e2e-gate plus the warn-only e2e-advisory). Each gate's own
+ * wiring is checked without the needs-completeness rule; then a single
+ * workflow-level pass requires every non-gate, non-postGate job to be in at
+ * least one gate's needs. A job in no gate's needs — the exact silent-bypass
+ * failure mode — is reported once, naming all gates.
+ *
+ * @param {string} text workflow YAML
+ * @param {Array} contracts entries for the same file
+ * @returns {string[]}
+ */
+export function checkWorkflowGates(text, contracts) {
+  const errors = [];
+  const file = contracts[0]?.file ?? '<unknown>';
+  const gateNames = new Set(contracts.map(c => c.gate));
+  const postGateNames = new Set(contracts.flatMap(c => c.postGate ?? []));
+  const jobs = parseJobs(text);
+  const covered = new Set();
+  for (const contract of contracts) {
+    const gateJob = jobs.get(contract.gate);
+    errors.push(...checkWorkflow(text, contract, {complete: false, gateNames}));
+    if (gateJob) for (const name of gateJob.needs) covered.add(name);
+  }
+  for (const name of jobs.keys()) {
+    if (gateNames.has(name) || postGateNames.has(name)) continue;
+    if (!covered.has(name)) {
+      errors.push(
+        `${file}: job '${name}' is verified by no gate (${[...gateNames].join(', ')}) — it would bypass the gates silently`
+      );
+    }
+  }
+  return errors;
+}
+
 export function main() {
   const errors = [];
+  const byFile = new Map();
   for (const contract of CONTRACTS) {
-    const text = fs.readFileSync(path.join(REPO_ROOT, contract.file), 'utf-8');
-    errors.push(...checkWorkflow(text, contract));
+    if (!byFile.has(contract.file)) byFile.set(contract.file, []);
+    byFile.get(contract.file).push(contract);
+  }
+  for (const [file, contracts] of byFile) {
+    const text = fs.readFileSync(path.join(REPO_ROOT, file), 'utf-8');
+    errors.push(...checkWorkflowGates(text, contracts));
   }
   errors.push(...checkTestScriptCoverage());
   if (errors.length > 0) {
@@ -593,10 +692,12 @@ export function main() {
     console.error(`\nGate contracts violated (${errors.length}).`);
     process.exit(1);
   }
-  const jobCount = CONTRACTS.map(c => {
-    const jobs = parseJobs(fs.readFileSync(path.join(REPO_ROOT, c.file), 'utf-8'));
-    return `${c.file}: ${jobs.size} jobs, gate covers all`;
-  }).join('\n  ');
+  const jobCount = [...byFile.keys()]
+    .map(file => {
+      const jobs = parseJobs(fs.readFileSync(path.join(REPO_ROOT, file), 'utf-8'));
+      return `${file}: ${jobs.size} jobs, gate covers all`;
+    })
+    .join('\n  ');
   console.log(`✓ Gate contracts hold\n  ${jobCount}`);
 }
 

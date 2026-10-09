@@ -1427,10 +1427,11 @@ jobs:
           if-no-files-found: ignore
 
   # ── E2E gate ─────────────────────────────────────────────────────────────
-  # Single branch-protection check. Every upstream job is a hard gate, so a
-  # green aggregate check cannot hide a failed, cancelled, or skipped matrix
-  # leg. The verify logic (required / advisory / skip-guard) lives in the
-  # shared .github/actions/verify-gate engine, kept consistent with ci-gate.
+  # Required branch-protection check: needs the required legs ONLY, so it
+  # reports as soon as they end instead of waiting on the slowest advisory
+  # leg. Advisory legs report through e2e-advisory below (warn-only, never
+  # blocking). The verify logic (required / skip-guard) lives in the shared
+  # .github/actions/verify-gate engine, kept consistent with ci-gate.
   # `pnpm check:gates` enforces this needs list.
   e2e-gate:
     name: E2E gate
@@ -1446,12 +1447,7 @@ jobs:
         updater,
         updater-waterfox,
         portable-firefox,
-        snap-firefox,
         core-lifecycle,
-        browser-matrix,
-        fork-portable,
-        esr-matrix,
-        esr-portable,
       ]
     steps:
       # Local action — a fresh runner needs the repo checked out first.
@@ -1465,9 +1461,6 @@ jobs:
           # parses 12-space `name:` pairs only (no comment lines inside).
           branch: true
           branch-label: E2E-relevant changes
-          # snap-firefox is additionally availability-gated at runtime (snapd
-          # probe): the gate treats it as advisory, so a runner without snapd
-          # cannot block a merge.
           applicability: |-
             snapshot:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'all') }}
             installer:${{ needs.changes.outputs.installer == 'true' }}
@@ -1475,12 +1468,7 @@ jobs:
             updater:${{ needs.changes.outputs.updater == 'true' }}
             updater-waterfox:${{ needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' || github.event_name == 'workflow_dispatch' && inputs.browser == 'waterfox' }}
             portable-firefox:${{ needs.changes.outputs.updater == 'true' }}
-            snap-firefox:${{ needs.changes.outputs.updater == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
             core-lifecycle:${{ needs.changes.outputs.core == 'true' }}
-            browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr') }}
-            fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr') }}
-            esr-matrix:${{ (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr') }}
-            esr-portable:${{ needs.esr-matrix.result == 'success' }}
           # Literal block: prettier leaves `|` content alone, so each pair
           # stays on its own line and no ${{ }} expression is ever split.
           # verify.sh splits the value on whitespace, newlines included.
@@ -1491,18 +1479,52 @@ jobs:
             updater:${{ needs.updater.result }}
             updater-waterfox:${{ needs.updater-waterfox.result }}
             portable-firefox:${{ needs.portable-firefox.result }}
-            snap-firefox:${{ needs.snap-firefox.result }}
             core-lifecycle:${{ needs.core-lifecycle.result }}
+          required:
+            snapshot installer helper updater updater-waterfox portable-firefox core-lifecycle
+          skip-guard:
+            snapshot installer helper updater updater-waterfox portable-firefox core-lifecycle
+
+  # ── E2E advisory ────────────────────────────────────────────────────────
+  # Warn-only reporter for the advisory legs (browser-matrix, fork-portable,
+  # esr-matrix, esr-portable, snap-firefox). It runs after the required gate
+  # plus the advisory legs complete, emits ::warning:: per non-green advisory
+  # result, and always exits 0 — it is NOT in branch protection and must never
+  # be added there. `pnpm check:gates` enforces this needs list.
+  e2e-advisory:
+    name: E2E advisory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: always()
+    needs:
+      [changes, e2e-gate, browser-matrix, fork-portable, esr-matrix, esr-portable, snap-firefox]
+    steps:
+      # Local action — a fresh runner needs the repo checked out first.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/verify-gate
+        with:
+          changes-result: ${{ needs.changes.result }}
+          # Same E2E-relevant branch as the required gate: the advisory legs
+          # only matter when E2E paths changed; otherwise they must be skipped.
+          # snap-firefox is additionally availability-gated at runtime (snapd
+          # probe): a runner without snapd skips it, which verify.sh accepts
+          # without warning — a deliberate skip, not a degradation.
+          branch: true
+          branch-label: E2E-relevant changes
+          applicability: |-
+            browser-matrix:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'firefox-esr') }}
+            fork-portable:${{ (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true') || (github.event_name == 'workflow_dispatch' && inputs.browser != 'librewolf' && inputs.browser != 'firefox-esr') }}
+            esr-matrix:${{ (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true')) || (github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr') }}
+            esr-portable:${{ needs.esr-matrix.result == 'success' }}
+            snap-firefox:${{ needs.changes.outputs.updater == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+          results: |-
             browser-matrix:${{ needs.browser-matrix.result }}
             fork-portable:${{ needs.fork-portable.result }}
             esr-matrix:${{ needs.esr-matrix.result }}
             esr-portable:${{ needs.esr-portable.result }}
-          required:
-            snapshot installer helper updater updater-waterfox portable-firefox core-lifecycle
-          advisory: snap-firefox browser-matrix fork-portable esr-matrix esr-portable
-          skip-guard:
-            snapshot installer helper updater updater-waterfox portable-firefox snap-firefox
-            core-lifecycle browser-matrix fork-portable esr-matrix esr-portable
+            snap-firefox:${{ needs.snap-firefox.result }}
+          advisory: browser-matrix fork-portable esr-matrix esr-portable snap-firefox
+          skip-guard: browser-matrix fork-portable esr-matrix esr-portable snap-firefox
 
   # ── Record validated browser versions (#4) ────────────────────────────────
   # After the updater matrix legs (firefox/firefox-dev/nightly × 3 OSes) ran

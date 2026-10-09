@@ -5,17 +5,18 @@
 Source run: [37555489120](https://github.com/onemen/firefox-scripts/actions/runs/37555489120) ·
 `workflow_dispatch` on `main` · 2026-10-07 01:07 UTC · `4a3a4b2` · success.
 
-Every job the E2E gate evaluates — its `required:` and `advisory:` lists — as one row, with the
-browser it installs and the cache it restores; two of them (`snapshot`, `esr-matrix`) render a
-single job rather than a matrix. The job list, the gate classes and the cache keys are read out of
-[e2e.yml](../.github/workflows/e2e.yml); the durations are that one run — a measurement, not a
-contract.
+Every job the E2E gates evaluate — the required gate’s `required:` plus the advisory reporter’s
+`advisory:` — as one row, with the browser it installs and the cache it restores; two of them
+(`snapshot`, `esr-matrix`) render a single job rather than a matrix. The job list, the gate classes
+and the cache keys are read out of [e2e.yml](../.github/workflows/e2e.yml); the durations are that
+one run — a measurement, not a contract.
 
 ## E2E legs
 
-`Required` legs must pass for the `E2E gate` check to go green; `Advisory` legs only warn. The
-gate’s `required:` / `advisory:` lists in [e2e.yml](../.github/workflows/e2e.yml) are the contract,
-and `pnpm check:gates` keeps them in step with the job list.
+`Required` legs must pass for the `E2E gate` check to go green; `Advisory` legs only warn via the
+`E2E advisory` reporter. The gates’ `required:` / `advisory:` lists in
+[e2e.yml](../.github/workflows/e2e.yml) are the contract, and `pnpm check:gates` keeps them in step
+with the job list.
 
 | Gate     | Job                | Browser       | OS               | Portable | Cache key                                       | Wall-clock |
 | -------- | ------------------ | ------------- | ---------------- | -------- | ----------------------------------------------- | ---------- |
