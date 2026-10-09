@@ -48,10 +48,11 @@ One key shape everywhere: `<name>-<type>-<os>-<hash>-<layout>`.
   — resolved in `watchdog-report.mjs`, which owns the watched window, and handed to the leg by the
   ESR matrix. With no window to hand (a local run) the major names itself as `esr-<major>`: unique
   and stable, just not canonical.
-- The pruner parses a key right-to-left — the three fields after `name` come from closed sets, so a
-  dashed name (`firefox-dev`, `esr-prev`) is unambiguous — and keeps one entry per
-  `name-type-os-layout`. Legacy keys keep the family peel they had, so a transition cannot ungroup
-  them.
+- The pruner parses a key right-to-left: the last four fields are `type`, `os`, `hash`, `layout`, so
+  `type`/`os`/`layout` come from closed sets (the hash sits between `os` and `layout`) and `name` is
+  everything before them — a dashed name (`firefox-dev`, `esr-prev`) is unambiguous — and it keeps
+  one entry per `name-type-os-layout`. Legacy keys keep the family peel they had, so a transition
+  cannot ungroup them.
 
 ## Consequences
 
