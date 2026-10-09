@@ -1,5 +1,5 @@
-// test/e2e/shared/sessionFile.mjs — mock sessionstore.jsonlz4 builder (#384
-// follow-up). Lets the updater E2E restore a multi-window previous session
+// test/e2e/shared/sessionFile.mjs — mock sessionstore.jsonlz4 builder.
+// Lets the updater E2E restore a multi-window previous session
 // whose updater tab lives in a NON-active window — the shape the attach block's
 // all-windows scan must handle.
 //
@@ -49,9 +49,9 @@ const MAGIC = Buffer.from('mozLz40\0', 'latin1');
  * This is the principal a REAL updater entry carries: the module opens its tab
  * with `addTrustedTab`/`openTrustedTab`, i.e. with the system principal as the
  * triggering principal, and that is what SessionStore serializes back into the
- * entry. Verified against the pre-#384 dump a Firefox 159 profile wrote (`git
- * show 1bd1ca3^:test/e2e/fixtures/session-2win.jsonlz4`), whose chrome://
- * updater entry stores exactly this value.
+ * entry. Verified against a dump a Firefox 159 profile wrote (`git show
+ * 1bd1ca3^:test/e2e/fixtures/session-2win.jsonlz4`), whose chrome:// updater
+ * entry stores exactly this value.
  */
 export const SERIALIZED_SYSTEM_PRINCIPAL = '{"3":{}}';
 

@@ -68,9 +68,8 @@ function readConfig() {
  * NOT a Pages site (GitHub serves one branch per repo), so every consumer goes
  * through jsDelivr's CORS-enabled proxy (`https://cdn.jsdelivr.net/gh/
  * <owner>/<repo>@<ref>`, ACAO: *). Files are published with the ASSET_SUFFIX ''
- * (#282 suffix drop — plain artifact names on every channel); hashes.json keeps
- * its plain name — it is consumed exclusively through the URL below, never by
- * hand.
+ * (plain artifact names on every channel); hashes.json keeps its plain name —
+ * it is consumed exclusively through the URL below, never by hand.
  */
 export function applyDevOverrides(config) {
   const owner = config.REPO_OWNER;
@@ -90,7 +89,7 @@ export function applyDevOverrides(config) {
     HASHES_URL: `${delivrBase}/hashes.json`,
     ZIP_PAGES_URL: delivrBase,
     HELPER_BASE_URL: rawBase,
-    // Plain names in dev too (#282 suffix drop): the ⚠ Test-build banner
+    // Plain names in dev too: the ⚠ Test-build banner
     // distinguishes dev builds, so the suffix's only remaining job — name
     // collision with prod assets — cannot occur (dev artifacts live on the
     // dev-build-<id> branch, prod on the latest release).
@@ -108,7 +107,7 @@ export function applyDevOverrides(config) {
  * zero GitHub traffic. The installer tab is HTTP-served, so it must keep
  * http:// URLs.
  *
- * ASSET_SUFFIX is '' in every mode (#282 suffix drop).
+ * ASSET_SUFFIX is '' in every mode.
  */
 export function applyInstallerLocalOverrides(config) {
   const base = `http://localhost:${config.DEFAULT_PORT || '8777'}`;
@@ -158,7 +157,7 @@ export function effectiveConfig(config, {installer = false} = {}) {
   // the scheduler must fetch it from the manifest's own host — ZIP_PAGES_URL
   // (gh-pages in prod; the dev-build-<id> branch / snapshot dir in dev-local
   // mode, where every override sets it equal to ZIP_BASE_URL) — not from
-  // ZIP_BASE_URL, the release URL (issue #102).  An explicit UI_BASE_URL wins
+  // ZIP_BASE_URL, the release URL.  An explicit UI_BASE_URL wins
   // when a config provides one.  Harmless for the C-installer variant: the
   // config header emits only keys that exist in installer.conf.
   return {...eff, UI_BASE_URL: eff.UI_BASE_URL || eff.ZIP_PAGES_URL || eff.ZIP_BASE_URL};

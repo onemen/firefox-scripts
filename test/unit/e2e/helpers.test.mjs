@@ -3,9 +3,8 @@
 // pollUntil's contract is what the E2E scenarios lean on: it returns the first
 // truthy value, and null (never a throw) when its budget runs out, so a caller
 // can assert on the outcome rather than hang. The daily-recheck-timer scenario
-// waits on exactly that for the timer's third manifest fetch — a regression
-// there used to surface as the scenario's own failure (see updater-e2e.mjs), so
-// the primitive's timeout behaviour is worth pinning.
+// waits on exactly that for the timer's third manifest fetch, so the
+// primitive's timeout behaviour is pinned here.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

@@ -77,12 +77,11 @@ test('embed.mjs: the gzip emitted by this runtime is well-formed build input', (
   // resources.h embeds Node-gzipped assets, so a runtime whose zlib emits
   // different deflate bytes changes the installer binary and its published
   // hashes while every tracked source stays identical — and those hashes are
-  // what the per-hash AV verdicts (issue #157) and the update manifest key on.
+  // what the per-hash AV verdicts and the update manifest key on.
   //
-  // A fixed sha256 here CANNOT pin that: CI already failed this exact test
-  // (node 24.20.0 / zlib 1.3.2.1-motley-42c2f19 hashes the sample differently
-  // than the runtime the constant was computed on — the zlib output is not
-  // stable across builds). What is guaranteed at every runtime are the
+  // A fixed sha256 here CANNOT pin that: the zlib output is not stable
+  // across builds (different runtimes hash the sample differently).
+  // What is guaranteed at every runtime are the
   // invariants below. Cross-runtime byte equality is monitored the other way:
   // `tools/ci/msys2Toolchain.mjs --provenance` logs the exact node/zlib pair
   // of every build run next to its artifacts, so a local rebuild compares

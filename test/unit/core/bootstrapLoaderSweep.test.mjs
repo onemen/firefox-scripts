@@ -1,6 +1,6 @@
 // test/unit/core/bootstrapLoaderSweep.test.mjs — Unit test for the
 // chrome.manifest startup sweep in core/chrome/utils/BootstrapLoader.js
-// (issue #30; the sweep was added in #245 and is covered only by the E2E leg).
+// (covered only by the E2E leg).
 //
 // A killed session can leave stale temporary manifests behind in
 // ProfD/browser-extension-data/<id>/: a 0-byte `chrome.manifest` (crash between

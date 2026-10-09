@@ -185,7 +185,7 @@ jobs:
         with:
           install: 'false'
       # The pinned toolchain (config/msys2-toolchain.json) — the staged bytes
-      # ARE the ship-bound bytes, so they must be reproducible (issue #157).
+      # ARE the ship-bound bytes, so they must be reproducible.
       - name: Pinned MSYS2 toolchain (make + gcc)
         if: matrix.msys2
         uses: ./.github/actions/pinned-msys2
@@ -273,7 +273,7 @@ jobs:
       - name: Pinned MSYS2 toolchain (make + gcc)
         uses: ./.github/actions/pinned-msys2
       - run: pnpm install --frozen-lockfile
-      # SOURCE_DATE_EPOCH pins the PE TimeDateStamp (#162), so two runs of the
+      # SOURCE_DATE_EPOCH pins the PE TimeDateStamp, so two runs of the
       # same commit must produce byte-identical Windows binaries. The zips'
       # entries carry per-file timestamps derived from the sources, so the
       # full snapshot must match too.
@@ -298,11 +298,11 @@ jobs:
       # The compare above only proves the runner repeats itself — two runs of a
       # *constant* wrong stamp match too. This asserts the pin itself reached
       # the linker: each PE's TimeDateStamp == its OWN binary's commit epoch
-      # (per-binary since ADR 0036's 2026-09-26 amendment — the no-arg union
-      # call would fail the helper on every installer-scoped commit). An empty
-      # SOURCE_DATE_EPOCH (a path-limited `git log` that matched nothing,
-      # silently) stamps the LINK TIME instead — which is exactly how the
-      # 2026-09-25 run produced two different PEs from one commit (#162/#322).
+      # (per-binary since ADR 0036 — the no-arg union call would fail the
+      # helper on every installer-scoped commit). An empty SOURCE_DATE_EPOCH
+      # (a path-limited `git log` that matched nothing, silently) stamps the
+      # LINK TIME instead — which is how one commit produced two different
+      # PEs.
       - name: Assert the commit epoch reached the linker
         shell: bash
         run: |

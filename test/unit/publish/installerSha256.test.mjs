@@ -42,7 +42,7 @@ test('installerSha256Sidecar: same format as the helper sidecar, digest round-tr
   const bytes = Buffer.from('pretend this is an installer binary');
   const text = installerSha256Sidecar(bytes, 'installer_win.exe').toString('utf-8');
   // Two-space separator (sha256sum -c format), name column, trailing newline —
-  // byte-identical scheme to the helper's sidecar (issue #324 vs #33).
+  // byte-identical scheme to the helper's sidecar.
   assert.match(text, /^[0-9a-f]{64} {2}installer_win\.exe\n$/);
   const helperText = helperSha256Sidecar(bytes, 'installer_win.exe').toString('utf-8');
   assert.equal(text, helperText, 'renderer must be shared with the helper sidecar');

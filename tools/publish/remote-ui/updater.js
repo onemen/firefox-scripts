@@ -31,7 +31,7 @@
  *   re-record the day via recordUserDecision.
  * - The module installs this tab, so this tab must also run against whatever
  *   module it finds installed: exports that postdate the oldest self-installing
- *   module are feature-detected at the seam below (issue #383).
+ *   module are feature-detected at the seam below.
  * - Every tab re-runs the real hash check on init (the module performs no
  *   tab-data handoff), so a tab restored from a session (manual browser restart
  *   with the tab left open) or a direct chrome:// visit renders the truth
@@ -61,7 +61,7 @@ const {CONFIG} = ChromeUtils.importESModule(
   'chrome://firefox-scripts/content/updater-config.sys.mjs'
 );
 
-// Backward-compatibility seam (issue #383).
+// Backward-compatibility seam.
 //
 // This tab (updater-ui.zip) is installed BY scriptsUpdater.sys.mjs, and the
 // module can only be replaced BY the tab — so a tab that hard-requires an
@@ -207,8 +207,8 @@ function logError(msg, err) {
   // Two channels on purpose: console.error styles the entry in the user's
   // Browser Console (2026-09-21 convention: errors keep console.error), but
   // ConsoleAPI output never reaches nsIConsoleService observers — the E2E
-  // console mirror only sees script errors and logStringMessage plain lines
-  // (#292 root-cause). Routing the same text through logStringMessage makes
+  // console mirror only sees script errors and logStringMessage plain lines.
+  // Routing the same text through logStringMessage makes
   // updater-tab failures observable to the harness net
   // (assertNoUpdaterConsoleErrors matches the stable "Firefox Scripts
   // updater:" prefix).
@@ -559,11 +559,11 @@ async function fileSha256Hex(path) {
  *
  * The helper is the one artifact that runs OUTSIDE the browser sandbox (it
  * self-elevates), so before it is executed its bytes are verified against the
- * published `<helper>.sha256` sidecar (issue #33). A mismatch aborts the
- * elevated copy — a tampered or corrupted binary never runs. A MISSING sidecar
- * is tolerated exactly once for bootstrapping off publishes older than the
- * sidecar scheme (the transport is still HTTPS to the same origin as
- * hashes.json); it is logged, not silent.
+ * published `<helper>.sha256` sidecar. A mismatch aborts the elevated copy — a
+ * tampered or corrupted binary never runs. A MISSING sidecar is tolerated
+ * exactly once for bootstrapping off publishes older than the sidecar scheme
+ * (the transport is still HTTPS to the same origin as hashes.json); it is
+ * logged, not silent.
  */
 async function ensureHelper(tmpDir) {
   const targetPath = PathUtils.join(tmpDir, helperFilename());

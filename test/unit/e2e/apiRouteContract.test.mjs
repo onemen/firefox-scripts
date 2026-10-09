@@ -7,7 +7,7 @@
 // lists were hand-maintained. A route added to installer/src/main.c without a
 // matching entry would silently escape the security smoke test entirely. This
 // test parses the C sources instead, so plain `pnpm test` fails the moment C
-// reality and the classified sets diverge (issue #30-adjacent).
+// reality and the classified sets diverge.
 //
 // The parse is deliberately shallow but exact for the two things that matter:
 // the `http_server_register()` table (the only place routes are declared) and

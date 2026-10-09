@@ -401,15 +401,14 @@ const PUBLISH_STAGE_JOBS = ['publish', 'publishing'];
 const PUBLISH_CHAIN_JOBS = [...PUBLISH_STAGE_JOBS, 'pre-publish', 'baseline'];
 
 /**
- * The gh-pages/release single-writer property, enforced structurally (#353):
- * exactly ONE pages.yml job runs upload.mjs pass 2 (--skip-build) — the lone
+ * The gh-pages/release single-writer property, enforced structurally: exactly
+ * ONE pages.yml job runs upload.mjs pass 2 (--skip-build) — the lone
  * `publishing` job at the end of the needs-chain — and the parallel `publish`
- * matrix legs run pass 1 (--build-only) only. The old serialization contract
- * pinned a literal win→linux→mac chain; the chain is now win/linux/mac in
+ * matrix legs run pass 1 (--build-only) only. The chain runs win/linux/mac in
  * PARALLEL and the exclusivity is bought by the two-pass upload.mjs
- * architecture instead. A second --skip-build invocation, a --build-only job
- * outside the matrix, a missing writer, or a reordered edge is a
- * concurrent-writer bug or a publish outage.
+ * architecture. A second --skip-build invocation, a --build-only job outside
+ * the matrix, a missing writer, or a reordered edge is a concurrent-writer bug
+ * or a publish outage.
  *
  * @param {{name: string; body: string}[]} jobs
  * @param {string} file file name for messages

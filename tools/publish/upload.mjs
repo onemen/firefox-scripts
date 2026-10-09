@@ -35,7 +35,7 @@
 //                      A PARTIAL set: roles left out are neither built nor
 //                      scanned nor uploaded, and their hashes.json entries stay
 //                      frozen at the last published values. The AV-holdback
-//                      path (issue #157): the zips keep flowing to gh-pages
+//                      path: the zips keep flowing to gh-pages
 //                      while a flagged binary is withheld — see
 //                      docs/DEVELOPING.md → "Partial publishes".
 //   --ref=<branch|commit>  build a specific branch/commit in a temporary
@@ -402,13 +402,12 @@ function snapshotDir() {
  */
 /**
  * Package names staged for release/Pages upload. The `packages` scope always
- * builds every zip (issue #354), so that is the full set; the `updater-ui`
- * scope stages the tab alone, which is what makes a tab-only hotfix possible
- * (issue #383) — the other two are not rebuilt, re-staged or re-uploaded, and
- * their manifest entries stay frozen. A run with no package role in scope
- * stages no zips at all — falling back to `builtZips` (always empty there)
- * keeps an installer/helper-only run from readFileSync-ing files that were
- * never staged (CodeRabbit on #355).
+ * builds every zip, so that is the full set; the `updater-ui` scope stages the
+ * tab alone, which is what makes a tab-only hotfix possible — the other two are
+ * not rebuilt, re-staged or re-uploaded, and their manifest entries stay
+ * frozen. A run with no package role in scope stages no zips at all — falling
+ * back to `builtZips` (always empty there) keeps an installer/helper-only run
+ * from readFileSync-ing files that were never staged.
  */
 function stagedZipNames(builtZips) {
   const scoped = PACKAGES.filter(p => packageInScope(SCOPE, p.name)).map(p => p.name);
@@ -426,8 +425,8 @@ async function buildPackages(createZip, storedHashes, zipPatterns, hashPatterns,
       info(`  ${bold(name.padEnd(10))} ${dim('held back (not in --include)')}`);
       continue;
     }
-    // NOTE: the zip is created for EVERY package in scope, changed or not
-    // (issue #354): the release surfaces must always carry the complete set
+    // NOTE: the zip is created for EVERY package in scope, changed or not:
+    // the release surfaces must always carry the complete set
     // (ADR 0019), so a run that rebuilds only one zip still stages the other
     // for its re-upload. `built` stays change-driven — it decides the
     // manifest, the Pages commit (content-addressed: unchanged bytes are
@@ -821,10 +820,10 @@ async function publishToGitHub({
     // serving — the self-update banner's download link needs a host the
     // installer tab can fetch; release-asset CDNs send no CORS headers);
     // helpers are Pages-only.
-    // The packages scope always stages the FULL zip set (issue #354), so the
+    // The packages scope always stages the FULL zip set, so the
     // release surfaces re-upload every package — a run that rebuilds only one
-    // zip still leaves both on `latest` (the complete ADR 0019 set, no #157
-    // purge leftovers) and on the core-<date> tag.
+    // zip still leaves both on `latest` (the complete ADR 0019 set) and on
+    // the core-<date> tag.
     for (const name of stagedZipNames(builtZips)) {
       pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));
       // updater-ui is internal: the updater downloads and updates it from the
@@ -839,7 +838,7 @@ async function publishToGitHub({
       if (release) {
         await deleteExistingAsset(octokit, release.id, installerAssetName(p));
         await uploadAsset(octokit, release.id, installerPath(p), installerAssetName(p));
-        // Sidecar rides the installer everywhere it goes (issue #324).
+        // Sidecar rides the installer everywhere it goes.
         await deleteExistingAsset(octokit, release.id, installerShaAssetName(p));
         await uploadAssetBuffer(
           octokit,
@@ -859,7 +858,7 @@ async function publishToGitHub({
   for (const p of builtHelpers) {
     const helperBytes = fs.readFileSync(helperPath(p));
     pagesFiles[helperAssetName(p, ASSET_SUFFIX)] = helperBytes;
-    // Checksum sidecar (issue #33): the updater tab verifies the freshly
+    // Checksum sidecar: the updater tab verifies the freshly
     // downloaded helper against it before executing — the helper is the one
     // artifact that runs outside the browser sandbox.
     pagesFiles[helperShaAssetName(p, ASSET_SUFFIX)] = helperSha256Sidecar(
@@ -872,7 +871,7 @@ async function publishToGitHub({
     pagesFiles[HASHES_FILE] = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf-8');
   }
 
-  // Managed installer self-update payload (issue #341): written whenever any
+  // Managed installer self-update payload: written whenever any
   // installer was built this run, so the payload's installerDate can never lag
   // the newest installer-<date> tag. Dev mode publishes to the dev-build
   // branch jsDelivr serves; local mode's overrides leave SELF_UPDATE_URL
@@ -972,7 +971,7 @@ async function publishToGitHub({
     for (const p of builtInstallers) {
       await deleteExistingAsset(octokit, devRelease.id, installerAssetName(p));
       await uploadAsset(octokit, devRelease.id, installerPath(p), installerAssetName(p));
-      // Sidecar rides the installer (issue #324).
+      // Sidecar rides the installer.
       await deleteExistingAsset(octokit, devRelease.id, installerShaAssetName(p));
       await uploadAssetBuffer(
         octokit,
@@ -1079,7 +1078,7 @@ async function publishToGitHub({
     );
   }
 
-  // Date-stamped component releases alongside `latest` (issue #72, ADR 0019):
+  // Date-stamped component releases alongside `latest` (ADR 0019):
   // core-<date> for the rebuilt package zips, installer-<date> for rebuilt
   // installers (helpers are gh-pages-only — never release assets). Full
   // releases; the Latest badge is re-pinned onto `latest` via make_latest (the
@@ -1173,7 +1172,7 @@ function writeSnapshot({merged, platforms, dir, label, scope, builtInstallers = 
     const instSrc = installerPath(p);
     if (scope.installer && fs.existsSync(instSrc)) {
       // Sidecar is derived, never reused: regenerated from the staged bytes
-      // so it cannot drift from the binary it vouches for (issue #324).
+      // so it cannot drift from the binary it vouches for.
       const bytes = fs.readFileSync(instSrc);
       fs.copyFileSync(instSrc, path.join(dir, installerAssetName(p)));
       fs.writeFileSync(
@@ -1189,7 +1188,7 @@ function writeSnapshot({merged, platforms, dir, label, scope, builtInstallers = 
   fs.writeFileSync(path.join(dir, HASHES_FILE), manifest);
   info(`    ${green('+')} ${HASHES_FILE}`);
 
-  // Managed self-update payload (issue #341) — mirrors the Pages layout too, so
+  // Managed self-update payload — mirrors the Pages layout too, so
   // a local snapshot's installer tab fetches it from the installer's own
   // server (INSTALLER_ZIP_URL is localhost in local mode) exactly like prod
   // fetches it from the branch. Stale-copy guard mirrors the stale sweep above:
@@ -1309,7 +1308,7 @@ function runRefBuild(ref) {
 
 async function main() {
   // Fail fast on a missing --mode: paths.js is deliberately tolerant at import
-  // (#358 — mode-less tooling imports it for constants), so the publish CLI is
+  // (mode-less tooling imports it for constants), so the publish CLI is
   // the one place the requirement is enforced. --mode=prod|dev is REQUIRED for
   // every publish/snapshot run; there is no silent default, so an accidental
   // prod publish is impossible without consciously typing --mode=prod.

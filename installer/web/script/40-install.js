@@ -2,7 +2,7 @@
      Installation (group-level: install to all profiles in group)
      ======================================================================== */
   function startGroupInstall(group) {
-    // Strict checkbox gating (#180 follow-up): a component is installed only
+    // Strict checkbox gating: a component is installed only
     // when the user explicitly checks its checkbox.  The Install button is
     // disabled until at least one checkbox on the card is checked, so the
     // checked set is always the exact install set — nothing rides along.

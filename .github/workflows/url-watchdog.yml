@@ -15,7 +15,7 @@
 #   (.watchdog/baseline.json), status meta issue, deduped error issues.
 # - Report-only (dispatch with report-only=true): no vendor calls — rebuilds
 #   the status table from the baseline + the LIVE Actions-cache inventory, so
-#   the Fallback column stays truthful after any cache save (issue #136).
+#   the Fallback column stays truthful after any cache save.
 # - PR (pull_request touching the download map): stateless and always green —
 #   findings surface as ::warning:: / ::notice:: annotations, so the check can
 #   be required without ever blocking.
@@ -37,7 +37,7 @@ on:
   # merge queue too (a required check must report on merge_group).
   merge_group:
   schedule:
-    # 22:00 UTC daily (#380) — this is the repo's only cron now. It drives the
+    # 22:00 UTC daily — this is the repo's only cron now. It drives the
     # nightly revalidation: the `Dispatch nightly revalidation` step below
     # dispatches a full e2e.yml run plus core-smoke-nightly.yml after the
     # baseline save. GitHub's cron fires late (measured +2h56…+7h02 over six
@@ -66,7 +66,7 @@ jobs:
     name: check browser download URLs
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
-    # The full-download path is progress-aware (issue #143): a slow vendor
+    # The full-download path is progress-aware: a slow vendor
     # download runs to its 20 min transfer budget (plus retries) instead of
     # being killed early. The job timeout must fit that budget, not the other
     # way around.
@@ -125,11 +125,11 @@ jobs:
         # redundant ~KB cache entry per manual refresh.
         if: always() && inputs.report-only != true
 
-      # ── Nightly revalidation dispatch (#380) ────────────────────────────
+      # ── Nightly revalidation dispatch ───────────────────────────────────
       # AFTER the baseline save, deliberately: the dispatched E2E run reads
       # this baseline (esr-matrix consumes it, and the record-validation
-      # pre-flight compares against it), so dispatching before the save
-      # validated the PREVIOUS baseline — a race that cost the run its purpose.
+      # pre-flight compares against it), so dispatching before the save would
+      # validate the previous baseline — a race that costs the run its purpose.
       #
       # This step only replays the plan the check step wrote to
       # .watchdog/dispatch-plan.json. The guards live there: a report-only or
@@ -149,9 +149,9 @@ jobs:
       # Nightly cache prune (replaces the former weekly cache-cleanup cron,
       # #463/#464): the nightly tick is the repo's only cron, the check job
       # already carries actions: write, and a daily cadence matters because a
-      # fresh pnpm/browser save-mint lands every night — the old weekly window
-      # let the repo sit at the 10 GB cap for days, which is what invited
-      # GitHub's LRU eviction to eat the watchdog's own state caches (#462).
+      # fresh pnpm/browser save-mint lands every night — a weekly window would
+      # let the repo sit at the 10 GB cap for days, which invites
+      # GitHub's LRU eviction to eat the watchdog's own state caches.
       # The prune script keeps keep-one groups (browser releases, pnpm store)
       # plus the operator count for everything else; keep-1 there is the same
       # policy tools/ci/prune-caches.mjs documents. The token must be passed

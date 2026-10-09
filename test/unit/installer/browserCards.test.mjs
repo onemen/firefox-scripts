@@ -263,7 +263,7 @@ test('a group badge is the worst of its own rows', async () => {
 });
 
 test('the Install button unlocks only once a package is checked', async () => {
-  // Strict gating (#180 follow-up): the checked set is the install set, so a
+  // Strict gating: the checked set is the install set, so a
   // button that enables itself would install something the user never picked.
   const ui = await bootTab([browser({configInstalled: 0, utilsUpToDate: 0})]);
   const card = cardOf(ui);

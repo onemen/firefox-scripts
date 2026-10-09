@@ -3,12 +3,11 @@
 # `apt-get update`.
 #
 # Why: these repos are maintained out-of-band and their indexes can churn
-# under us — on 2026-09-09 the preinstalled dl.google.com Chrome repo
-# republished its index and its CDN served Packages.gz bytes that no longer
-# matched its own Release file, so `apt-get update` failed with a hash-sum
-# mismatch and every ubuntu leg on every open PR went red at once (none of
-# our jobs install anything from that repo). Removing the unused source
-# makes `apt-get update` depend only on Ubuntu's own archive.
+# under us — a republished index whose CDN bytes don't match its own Release
+# file fails `apt-get update` with a hash-sum mismatch and reds every ubuntu
+# leg at once (none of our jobs install anything from those repos). Removing
+# the unused sources makes `apt-get update` depend only on Ubuntu's own
+# archive.
 #
 # No-op outside Linux runners (and when the sources are already gone), so
 # jobs can call it unconditionally.

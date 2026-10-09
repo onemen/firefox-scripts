@@ -4,7 +4,7 @@
 // config/msys2-toolchain.json.
 //
 // Why this exists: the published Windows binaries are unsigned PEs whose AV
-// verdict is per-hash (issue #157), so the bytes CI ships must be the bytes a
+// verdict is per-hash, so the bytes CI ships must be the bytes a
 // developer can rebuild. `msys2/setup-msys2` with `update: false` only skips
 // `pacman -Syu` — it still installs whatever versions the runner's package DB
 // offers, so binutils/crt/headers floated under a pinned gcc and local builds
@@ -148,8 +148,6 @@ export function validateManifest(manifest) {
     // would silently become `…-undefined.pkg.tar.zst`), and either direction of
     // a name/repo mismatch — MSYS packages live under /msys and mingw-w64-*
     // packages in a mingw repo, so a copy-paste between them is a real slip.
-    // (A `packageFileName(pkg).endsWith(...)` check used to sit here; it could
-    // never fire, because packageFileName builds that exact suffix.)
     if (!repos?.[pkg.repo]) {
       const declared = Object.keys(repos ?? {}).join(', ') || 'none';
       problems.push(`${label}: unknown repo '${pkg.repo}' (declared: ${declared})`);
@@ -306,11 +304,11 @@ export function parsePacmanQuery(output, name) {
 // Provenance: which toolchain does this shell actually build with?
 //
 // Pinning installs the right files; provenance proves they are the ones that
-// run. The published Windows binaries are unsigned PEs judged per-hash
-// (issue #157), so "the pinned gcc built this" has to be a fact in the CI log,
-// not an assumption about PATH. run 34935654811 is the cautionary tale: its
-// installed package set and its artifacts disagreed, and nothing in the log
-// could say which compiler produced the uploaded bytes.
+// run. The published Windows binaries are unsigned PEs judged per-hash,
+// so "the pinned gcc built this" has to be a fact in the CI log, not an
+// assumption about PATH: when the installed package set and the artifacts
+// disagree, nothing else in the log can say which compiler produced the
+// uploaded bytes.
 // ---------------------------------------------------------------------------
 
 /** The tools a Windows installer build resolves through PATH. */
@@ -665,8 +663,9 @@ export function tarArgs({file, prefix}) {
  * Read an option that is meaningful BOTH bare and with a value: `--prefix`
  * extracts to the default prefix, `--prefix <dir>` to a chosen one. Returns the
  * value, '' when the flag was given bare, or null when it is absent. A
- * following `--flag` is never swallowed as the value — `--prefix` bare used to
- * become the string 'true' and extracted into a directory called `true`.
+ * following `--flag` is never swallowed as the value — otherwise `--prefix`
+ * bare would become the string 'true' and extract into a directory called
+ * `true`.
  */
 export function optionValue(argv, name) {
   const i = argv.indexOf(name);

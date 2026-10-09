@@ -1,6 +1,6 @@
 // publishScope.mjs — which artifact roles a publish run covers (`--include=…`).
 //
-// Why this exists (issue #157): the Windows binaries are unsigned, stripped
+// Why this exists: the Windows binaries are unsigned, stripped
 // MinGW PEs whose AV verdict is effectively per-hash — a rebuild can land in
 // Microsoft's ML detection pocket while the package zips (plain JS/text) never
 // do. Without a way to ship a single role, one flagged binary freezes
@@ -107,10 +107,10 @@ export function scopeFor(include = new Set()) {
 
 /**
  * Is this package zip in scope? `packages` covers all three; the `updater-ui`
- * role covers the tab alone, which is what makes a tab-only hotfix possible
- * (issue #383) — utils.zip / fx-folder.zip stay frozen and are not rebuilt,
- * re-uploaded or re-staged. Keyed by the manifest/package name, not the role
- * name, so the two never drift.
+ * role covers the tab alone, which is what makes a tab-only hotfix possible —
+ * utils.zip / fx-folder.zip stay frozen and are not rebuilt, re-uploaded or
+ * re-staged. Keyed by the manifest/package name, not the role name, so the two
+ * never drift.
  *
  * @param {{packages: boolean; updaterUi: boolean}} scope
  * @param {string} name package name ('utils' | 'fx-folder' | 'updater-ui')
@@ -128,10 +128,10 @@ export function noBinaryScope(scope) {
 
 /**
  * Human label of the run's scope for the Pages commit message: a full publish
- * is "artifacts" (the historical wording), a partial one names exactly the
- * roles it ships ("packages", "installer+helper"), so the branch history shows
- * what each commit published (issue #261). Role order is normalized to the
- * INCLUDE_ROLES order so the same set always yields the same label.
+ * is "artifacts", a partial one names exactly the roles it ships ("packages",
+ * "installer+helper"), so the branch history shows what each commit published.
+ * Role order is normalized to the INCLUDE_ROLES order so the same set always
+ * yields the same label.
  *
  * @param {Set<string>} include roles to publish
  * @returns {string} 'artifacts' or the role names joined with '+'

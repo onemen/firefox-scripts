@@ -2,12 +2,12 @@
 // contract (test/shared/webUiSandbox.mjs and the modules beside it).
 //
 // The installer-tab suites are only as trustworthy as the DOM they run against.
-// The harness used to auto-create a blank element for any selector the tab
-// asked for, which meant a selector that matches nothing in production still
-// "worked" in a test — the fragment wrote its state to one stub and read it
-// back from another.  These cases pin the replacement: the DOM is built from
-// the shipped installer/web/index.html, and a selector either resolves to the
-// real node or to null.
+// Auto-creating a blank element for any selector the tab asks for would mean
+// a selector that matches nothing in production still "works" in a test —
+// the fragment writes its state to one stub and reads it back from another.
+// These cases pin the replacement: the DOM is built from the shipped
+// installer/web/index.html, and a selector either resolves to the real node
+// or to null.
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

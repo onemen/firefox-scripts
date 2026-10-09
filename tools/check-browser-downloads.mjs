@@ -38,10 +38,10 @@
  *        issues carrying the `url-watchdog` label; rolling binaries like
  *        nightly are excluded, #276); the watchdog auto-closes any open failure
  *        issue for a browser once a later run checks it green again.
- *   6. E2E DISPATCH — a new release triggers the browser E2E (issue #143): fork
- *        browsers get a single-browser dispatch (the ADR 0021 manual escape),
- *        the hard-gate browsers share one full dispatch whose record-validation
- *        refreshes the validated-versions record. Non-fatal on failure.
+ *   6. E2E DISPATCH — a new release triggers the browser E2E: fork browsers get a
+ *        single-browser dispatch (the ADR 0021 manual escape), the hard-gate
+ *        browsers share one full dispatch whose record-validation refreshes the
+ *        validated-versions record. Non-fatal on failure.
  * - PR (pull_request touching the download map): stateless and always green —
  *   findings surface as ::warning:: / ::notice:: annotations, so the check can
  *   be marked required without ever blocking. No baseline, no issues, no full
@@ -159,13 +159,13 @@ const OK_STATUSES = new Set(['ok', 'new-version', 'first-run']);
 /** E2E workflow the nightly revalidation dispatches (repo file name). */
 const E2E_WORKFLOW = 'e2e.yml';
 
-/** The scheduled core smoke, dispatched nightly by the same plan (#380). */
+/** The scheduled core smoke, dispatched nightly. */
 const CORE_SMOKE_WORKFLOW = 'core-smoke-nightly.yml';
 
 /**
  * The plan file a check run leaves in the baseline dir for the workflow's
  * post-save step to replay — the dispatch decision is made where the findings
- * are, the dispatch itself runs after the baseline is saved (#380).
+ * are, the dispatch itself runs after the baseline is saved.
  */
 const DISPATCH_PLAN_FILE = 'dispatch-plan.json';
 
@@ -213,7 +213,7 @@ async function dispatchWorkflow(token, repo, {workflow, inputs}) {
  * fork release (its own `browser` escape), one for ESR drift, one full run when
  * a hard gate moved.
  *
- * Nightly part (#380): when the run is the scheduled nightly, a FULL e2e run is
+ * Nightly part: when the run is the scheduled nightly, a FULL e2e run is
  * dispatched whatever the findings — the workflow no longer has a `schedule:`
  * or `push: [main]` trigger, so a quiet week must not be a coverage hole — and
  * core-smoke-nightly.yml is dispatched once (its own build-ID cache marker
@@ -253,7 +253,7 @@ export function buildDispatchPlan(findings) {
 }
 
 /**
- * Replay the plan the check run wrote (#380). Called by the workflow AFTER the
+ * Replay the plan the check run wrote. Called by the workflow AFTER the
  * baseline save — the dispatched runs read that baseline, so dispatching before
  * the save validated the previous one. A check run that wrote no plan
  * (report-only, --dry-run, or a failed check) has nothing to replay.
@@ -432,10 +432,10 @@ async function verifyFullDownload(url, browser) {
 
 /**
  * List the repo's Actions-cache entries (key + creation time), all pages. Used
- * to derive the truthful Fallback (CI cache) column (issue #136): the sticky
- * fork keys decode to their version; the shared Mozilla namespace proves
- * presence/age. Needs the `actions: read` scope (the watchdog's check job
- * already carries `actions: write` for the E2E dispatch).
+ * to derive the truthful Fallback (CI cache) column: the sticky fork keys
+ * decode to their version; the shared Mozilla namespace proves presence/age.
+ * Needs the `actions: read` scope (the watchdog's check job already carries
+ * `actions: write` for the E2E dispatch).
  */
 export async function listActionsCaches(token, repo) {
   const out = [];
@@ -609,13 +609,13 @@ async function notifyLookupFailure(browser, reason, context) {
 }
 
 /**
- * Notify a failed E2E auto-dispatch (issue #143): the baseline already recorded
- * the new version, so later watchdog runs will NOT re-dispatch it — without
- * this issue the release would sit untested silently. The title deliberately
- * does NOT match isFailureIssueTitle: the watchdog cannot verify an E2E run
- * happened, so the issue stays open until the operator closes it after a
- * successful (manual) dispatch — a green watchdog check must not auto-close it.
- * Deduped per browser via the exact-title match.
+ * Notify a failed E2E auto-dispatch: the baseline already recorded the new
+ * version, so later watchdog runs will NOT re-dispatch it — without this issue
+ * the release would sit untested silently. The title deliberately does NOT
+ * match isFailureIssueTitle: the watchdog cannot verify an E2E run happened, so
+ * the issue stays open until the operator closes it after a successful (manual)
+ * dispatch — a green watchdog check must not auto-close it. Deduped per browser
+ * via the exact-title match.
  */
 async function notifyDispatchFailure(browser, reason) {
   try {
@@ -651,7 +651,7 @@ export async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const prMode = process.argv.includes('--pr');
   const driftMode = process.argv.includes('--drift');
-  // Replay the dispatch plan the check run wrote (#380). Its own mode: the
+  // Replay the dispatch plan the check run wrote. Its own mode: the
   // workflow calls it as a separate step AFTER the baseline save, so it must
   // not re-run the vendor probes.
   if (process.argv.includes('--dispatch')) {
@@ -963,7 +963,7 @@ export async function main() {
       // A first run is treated exactly like a new release: status, ledger
       // row, and an E2E dispatch. After a state loss (cache eviction, wipe)
       // the validated-versions record is empty and the publish drift gate
-      // fails closed on it (#462) — the dispatch is what rebuilds it.
+      // fails closed on it — the dispatch is what rebuilds it.
       results[browser] = {status: 'new-version'};
       findings.push({
         kind: 'new-version',
@@ -986,7 +986,7 @@ export async function main() {
 
     // Nightly rolls fresh binaries inside one N.0a1 version window — N only
     // moves every ~2 weeks, so a same-version size change is by design, not a
-    // tamper signal (#276). Re-verify the replacement exactly like a version
+    // tamper signal. Re-verify the replacement exactly like a version
     // bump and record the fresh hash: the ledger stays honest, no issue opens,
     // and the next run sees a matching size and goes 'ok'.
     if (sizeChanged && isRollingBinary(browser)) {
@@ -1193,11 +1193,11 @@ export async function main() {
     fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + '\n');
   }
 
-  // Plan the dispatch instead of performing it (#380). The decision lives here
+  // Plan the dispatch instead of performing it. The decision lives here
   // — where the findings are — and the dispatch moved to the workflow's step
   // AFTER the baseline save: the dispatched runs read that baseline (esr-matrix
-  // consumes it, record-validation's pre-flight compares against it), so the
-  // old in-process dispatch validated the PREVIOUS baseline. Runs only after
+  // consumes it, record-validation's pre-flight compares against it), so
+  // dispatching before the save would validate the previous baseline. Runs only after
   // the baseline persisted (the fail-closed exit above already returned
   // otherwise), so a browser is planned at most once per recorded version —
   // which also means a FAILED dispatch is never retried by later runs (the

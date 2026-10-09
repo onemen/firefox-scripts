@@ -121,7 +121,7 @@ test('driver mode never trades the stale trio away for the one-browser collapse'
   );
 
   // Where the driver realm cannot come up, the trio must still be asserted —
-  // in the tab the startup check opened (the pre-#309 loop). Dropping it there
+  // in the tab the startup check opened (the fallback loop). Dropping it there
   // would pass the leg with three variants silently unchecked.
   const probeAt = source.indexOf('if (!driver) {');
   const driverReadyAt = source.indexOf('driverAvailable = true;');
@@ -161,7 +161,7 @@ test('state-only scenarios fold into the session, and keep their launches as fal
   );
 
   // Coverage never drops: the driver-unavailable path runs the folded
-  // scenarios as their own launches (the pre-#309 shape).
+  // scenarios as their own launches (the fallback shape).
   const probeAt = source.indexOf('if (session.driverAvailable) {');
   assert.ok(probeAt !== -1, 'step 1 must branch on driver availability');
   // Slice to the UNAVAILABLE branch only: the degraded branch above it resumes

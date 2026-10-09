@@ -8,7 +8,7 @@
 # config.js autoconfig ran, the userChromeJS loader top level executed, and no
 # startup errors came from our modules.
 #
-# Unit tests (#416) cannot cover this: every stub in test/unit/core/ was written
+# Unit tests cannot cover this: every stub in test/unit/core/ was written
 # against today's Gecko, so it keeps passing while the browser breaks. Only a real
 # browser catches a removed or renamed API.
 #

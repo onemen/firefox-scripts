@@ -39,13 +39,13 @@ export const INFORMATIONAL_BROWSERS = ['nightly'];
 /**
  * Browsers whose vendor replaces the binary WITHIN one version string: nightly
  * stays N.0a1 for ~2 weeks while Mozilla ships fresh dailies into it, so a
- * same-version size change there is by design, not a tamper signal (#276). The
+ * same-version size change there is by design, not a tamper signal. The
  * watchdog re-verifies such a replacement with a full download + SHA-256 (same
  * as a version bump) instead of opening a size-change issue.
  */
 export const ROLLING_BINARIES = new Set(['nightly']);
 
-/** True when a same-version size change is expected for `browser` (#276). */
+/** True when a same-version size change is expected for `browser`. */
 export function isRollingBinary(browser) {
   return ROLLING_BINARIES.has(browser);
 }
@@ -201,8 +201,8 @@ export const HISTORY_PER_BROWSER = 3;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
- * Pure planner for the post-baseline E2E auto-dispatch (issue #143): map
- * new-version findings to E2E workflow dispatches.
+ * Pure planner for the post-baseline E2E auto-dispatch: map new-version
+ * findings to E2E workflow dispatches.
  *
  * - Fork browsers each get a single-browser dispatch — the `browser` input
  *   collapses the matrix to that leg (the ADR 0021 manual escape, whose runs
@@ -213,12 +213,11 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  *   gate reads. One dispatch, never two — a second full dispatch would land in
  *   the same cancel-in-progress concurrency group and kill the first.
  *
- * First-run findings dispatch like new-version ones (reversed 2026-10-08, was
- * "cache eviction ≠ release"): after a state loss the validated-versions record
- * is EMPTY and the prod publish pre-flight fails closed on it (#462) — the
- * dispatch is the only path that rebuilds it, so a re-baseline must fire one.
- * Fork dispatches are capped at the fork browser set, so a malformed findings
- * list cannot spam the API.
+ * First-run findings dispatch like new-version ones: after a state loss the
+ * validated-versions record is EMPTY and the prod publish pre-flight fails
+ * closed on it — the dispatch is the only path that rebuilds it, so a
+ * re-baseline must fire one. Fork dispatches are capped at the fork browser
+ * set, so a malformed findings list cannot spam the API.
  *
  * @param {{kind: string; browser: string}[]} findings
  * @returns {{browser?: string; ref: string}[]} dispatch payloads in issue order
@@ -514,8 +513,7 @@ export function groupCacheKeysByBrowser(entries, browsers) {
  * - Fork browsers: the version is decoded from the sticky key itself (the key IS
  *   the ground truth — it is named after the installed version that saved it),
  *   so the cell cannot drift from the cache the way a baseline-derived cell
- *   could (issue #136: the table showed a version the cache no longer held
- *   after a key-regime change).
+ *   could.
  * - Non-fork browsers: the URL-hash keys are opaque (the hash is of the URL, not
  *   of the browser) and the Mozilla namespace is SHARED across
  *   firefox/firefox-dev/nightly/waterfox — a key in it cannot be attributed to
@@ -597,12 +595,12 @@ export function buildStatusTable({results, baseline, validated, browsers = BROWS
       : failed ? `cached: ${version} · ${lastCheck}`
       : `cached: ${version}`;
     // Download time of the last VERIFIED full download — the transfer-speed
-    // history for the vendor hosts (issue #136). Unknown until a browser's
+    // history for the vendor hosts. Unknown until a browser's
     // version has been fully downloaded at least once.
     const downloadTime = formatDownloadMs(entry.downloadMs);
     const e2e = validatedCell(browser, entry, validated);
     // Every variable value goes through escapeTableCell: the row's cell
-    // count must never depend on what a vendor feed returned (issue #136).
+    // count must never depend on what a vendor feed returned.
     return `| ${browser} | ${escapeTableCell(version)} | ${escapeTableCell(sizeSha)} | ${escapeTableCell(lastCheck)} | ${escapeTableCell(statusTag(res.status))} | ${escapeTableCell(fallback)} | ${escapeTableCell(downloadTime)} | ${escapeTableCell(e2e)} |`;
   });
   return [

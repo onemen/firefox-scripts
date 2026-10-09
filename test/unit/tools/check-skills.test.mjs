@@ -177,10 +177,10 @@ test('missing frontmatter block is flagged', () => {
   }
 });
 
-// The `ai-review` defect (#413): a `: ` inside a multi-line plain scalar ends
-// the scalar and starts a new mapping key, so the host stops seeing a
-// `description` and never registers the skill. The line scanner this replaced
-// could not see it — the block still had a name and *some* description text.
+// A `: ` inside a multi-line plain scalar ends the scalar and starts a new
+// mapping key, so the host stops seeing a `description` and never registers
+// the skill. A line scanner cannot see it — the block still has a name and
+// *some* description text.
 // Reading the block with js-yaml is what turns it into an error.
 test('frontmatter that does not parse is flagged with the reason and position', () => {
   const dir = makeSkillsDir({

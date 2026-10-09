@@ -45,7 +45,7 @@ const {
   VALIDATED_BROWSERS,
 } = await import(scriptUrl);
 
-// ── Dispatch plan (#380) ──────────────────────────────────────────────────────
+// ── Dispatch plan ────────────────────────────────────────────────────────────
 // The check run decides; the workflow's post-save step dispatches. These pin
 // the two halves of that contract: what the plan contains, and that a nightly
 // run always carries exactly ONE full e2e run (two share a concurrency group
@@ -128,7 +128,7 @@ test('compareBaseline: first run, new version, unchanged', () => {
   assert.equal(compareBaseline({version: '154.0.1'}, {version: '154.0.1'}), 'ok');
 });
 
-test('isRollingBinary: nightly replaces binaries within one N.0a1 window (#276)', () => {
+test('isRollingBinary: nightly replaces binaries within one N.0a1 window', () => {
   assert.equal(isRollingBinary('nightly'), true);
   assert.equal(isRollingBinary('firefox'), false);
   assert.equal(isRollingBinary('firefox-dev'), false);
@@ -427,7 +427,7 @@ test('buildStatusTable: seven rows (incl. the informational nightly), fallback o
 test('buildStatusTable: fallback shows cached version on green runs, download time when known', () => {
   // Green run + a recorded downloadMs: the cache column still shows what CI
   // would fall back to (the version IS in the cache), and the transfer time
-  // of the verified download appears (issue #136).
+  // of the verified download appears.
   const withData = buildStatusTable({
     results: {librewolf: {status: 'ok'}},
     baseline: {
@@ -503,8 +503,7 @@ test('buildStatusTable: cache-backed Fallback column (live inventory) — fork d
     firefox: {version: '156.0', checkedAt: '2026-09-21T10:00:00Z'},
   };
   // Live inventory: librewolf's sticky key names 156.0.1-1 (the baseline says
-  // 156.0-1 — stale). The cell must show the KEY's version, not the baseline's
-  // (issue #136: the table showed a version the cache no longer held).
+  // 156.0-1 — stale). The cell must show the KEY's version, not the baseline's.
   const cache = {
     librewolf: [
       {key: 'browser-dl-Windows-librewolf-v156.0.1-1', createdAt: '2026-09-23T08:00:35Z'},
@@ -516,7 +515,7 @@ test('buildStatusTable: cache-backed Fallback column (live inventory) — fork d
   const lw = table.split('\n').find(l => l.startsWith('| librewolf '));
   assert.match(lw, /\| cached: 156\.0\.1-1 · [\dsmhd ]+ \|/);
   // The stale baseline version shows in 'Last verified' but NOT in the
-  // Fallback cell — the fallback cell is split out and checked alone:
+  // Fallback cell:
   const fallbackCell = lw.split('|').map(c => c.trim())[6]; // split[0] is the empty lead; Fallback is cell 6
   assert.ok(fallbackCell.startsWith('cached: 156.0.1-1'), `fallback cell: ${fallbackCell}`);
   assert.ok(
@@ -800,7 +799,7 @@ test('renderHistory: baseline seed vs real update entries', () => {
   );
 });
 
-test('renderHistory: a first-run update renders "new <version>", never "undefined →" (#462)', () => {
+test('renderHistory: a first-run update renders "new <version>", never "undefined →"', () => {
   // A first run after state loss emits a new-version finding WITHOUT a
   // prevVersion — the history row must not render the absent value.
   const firstRun = renderHistory([

@@ -53,9 +53,9 @@ const CHROME_GITIGNORE = path.join(CHROME_DIR, '.gitignore');
 const UTILS_GITIGNORE = path.join(UTILS_SOURCE, '.gitignore');
 const FX_FOLDER_GITIGNORE = path.join(FX_FOLDER_SOURCE, '.gitignore');
 
-// Obsolete file: versionInfo.json previously shipped (consumed by an
-// update-checker outside this project) and no longer does.  The pattern also
-// guards against reintroduction; historically-installed copies are cleaned by
+// versionInfo.json is excluded from the zips (nothing in this project
+// consumes it).  The pattern also guards against reintroduction;
+// historically-installed copies are cleaned by
 // installer/src/obsolete_files.h after install.
 const CUSTOM_IGNORE_PATTERNS = ['versionInfo.json'];
 

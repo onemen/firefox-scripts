@@ -5,10 +5,10 @@
 //
 // Why: the publish gate (tools/scan-vt.mjs in tools/publish/upload.mjs) judges
 // the exact bytes it uploads, once, at publish time.  AV verdicts are not
-// stable — the 2026-09-05 incident was a *cleared* binary that started being
-// flagged afterwards, and Microsoft's `!ml` models re-roll verdicts as their
-// training data moves.  Nothing watched the served bytes, so a flip was
-// invisible until a user reported it (issue #157).
+// stable — a *cleared* binary can start being flagged afterwards, and
+// Microsoft's `!ml` models re-roll verdicts as their training data moves.
+// Nothing watched the served bytes, so a flip was invisible until a user
+// reported it.
 //
 // What it does: read every surface a user can download from — the published
 // Pages ref (gh-pages by default) plus the `latest` and `installer-<date>`

@@ -85,10 +85,9 @@ export function helperShaAssetName(p, suffix = '') {
 /**
  * Name of the checksum sidecar published next to each installer binary
  * (`installer_win.exe.sha256`, hex SHA-256 of the binary, same `<hex> <name>`
- * format as the helper sidecars). The helper got its sidecar first (#174: it is
- * the artifact executed outside the sandbox); the installer's elevates and
- * rewrites GreD, so its downloads get the same verification data (issue #324) —
- * the consumer-side check is a tracked follow-up.
+ * format as the helper sidecars). The helper got its sidecar first (it is the
+ * artifact executed outside the sandbox); the installer's elevates and rewrites
+ * GreD, so its downloads get the same verification data.
  */
 export function installerShaAssetName(p, suffix = '') {
   // Same derivation rule as the helper's: full binary name + .sha256.
@@ -96,14 +95,14 @@ export function installerShaAssetName(p, suffix = '') {
 }
 
 /**
- * Artifact integrity check for freshly built/reused binaries (issue #233):
- * Defender real-time protection on a local Windows host intermittently holds a
- * write lock on the output while ld is finishing, which leaves a truncated or
- * empty artifact behind a _failed_ link — but the failure mode that matters
- * here is subtler: a build step that "succeeded" earlier in a session that hit
- * the race can leave a partial file that a later pass then hashes and ships.
- * Every PE must start with the bytes 'MZ'; ELF with 0x7f 'E' 'L' 'F'; Mach-O
- * with one of the mach_header magics or the fat-wrapper magic (Apple cctools
+ * Artifact integrity check for freshly built/reused binaries: Defender
+ * real-time protection on a local Windows host intermittently holds a write
+ * lock on the output while ld is finishing, which leaves a truncated or empty
+ * artifact behind a _failed_ link — but the failure mode that matters here is
+ * subtler: a build step that "succeeded" earlier in a session that hit the race
+ * can leave a partial file that a later pass then hashes and ships. Every PE
+ * must start with the bytes 'MZ'; ELF with 0x7f 'E' 'L' 'F'; Mach-O with one of
+ * the mach_header magics or the fat-wrapper magic (Apple cctools
  * mach-o/loader.h + fat.h; the cigam variants are byte-identical to their magic
  * twins — they differ only in the reader's byte-order interpretation). Anything
  * else is a truncated artifact — throw.

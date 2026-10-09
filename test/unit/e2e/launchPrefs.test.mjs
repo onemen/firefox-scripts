@@ -1,5 +1,5 @@
 // test/unit/e2e/launchPrefs.test.mjs — pin the Windows-startup-hygiene prefs
-// that keep every test browser out of the user's Startup apps (issue #191).
+// that keep every test browser out of the user's Startup apps.
 //
 // The E2E suites are path-filtered CI legs, so nothing routinely executes
 // launchFirefox/launchDetachedFirefox on PRs. These tests keep the guarantee
@@ -59,7 +59,7 @@ test('launchFirefox grants remote-agent system access via the environment', () =
   );
 });
 
-test('launchFirefox bounds the handshake and retries once (#384)', () => {
+test('launchFirefox bounds the handshake and retries once', () => {
   // The launch handshake is raced against a hard deadline; a wedged start is
   // killed BY TAG (whole process tree — launcher-only kills orphan the
   // browser's children) and retried once. protocolTimeout (per protocol
@@ -94,7 +94,7 @@ test('launchFirefox bounds the handshake and retries once (#384)', () => {
   assert.match(source, /Math\.max\(launchDeadlineMs, LAUNCH_DEADLINE_MS\)/);
 });
 
-test('scenario 11 launches with the extended bounds its restore start needs (#384)', () => {
+test('scenario 11 launches with the extended bounds its restore start needs', () => {
   // Restoring a 2-window session with eager background tabs is the heaviest
   // startup any scenario launches: on busy Windows runners the handshake
   // outlived the stock 20 s deadline (esr-140 2026-10-01 — attempt AND retry

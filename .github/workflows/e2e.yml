@@ -27,11 +27,10 @@ permissions:
 
 # Browser-installer download budget (test/e2e/shared/downloads.mjs). Its default
 # is 20 min — exactly the `timeout-minutes` every browser leg carries — so a slow
-# transfer used to consume the whole leg and surface as a bare job cancellation:
+# transfer would consume the whole leg and surface as a bare job cancellation:
 # no message naming the browser, no budget error, and no chance for the
-# cached-installer fallback (findCachedInstaller) to engage. Observed 2026-09-22
-# on PR #294's librewolf leg: 160 MB at 51-61 KB/s, cancelled at the cap having
-# fetched ~60 MB. 12 min leaves ~8 min inside the 20-minute legs for the install
+# cached-installer fallback (findCachedInstaller) to engage. 12 min leaves
+# ~8 min inside the 20-minute legs for the install
 # + scenarios + that fallback, while a healthy-but-slow transfer (0.3 MB/s, the
 # slowest measured) still completes well inside it.
 # The invariant — budget + slack < every downloading leg's timeout — is enforced
@@ -44,10 +43,10 @@ on:
   # Required checks must also run on the merge-queue's temporary branch when
   # a PR lands via the queue (Settings → merge queue) — see docs/DEVELOPING.md.
   merge_group:
-  # NO `push: [main]` and NO `schedule:` (#380). A main push re-ran the whole
-  # matrix for a change the PR gate just validated, and the Monday cron only
-  # fired when the path filter agreed, so a quiet week was a coverage hole that
-  # nothing reported. The nightly revalidation is the url-watchdog's job now
+  # NO `push: [main]` and NO `schedule:`. A main push would re-run the whole
+  # matrix for a change the PR gate just validated, and a cron that only fires
+  # when the path filter agrees leaves a quiet week as a coverage hole that
+  # nothing reports. The nightly revalidation is the url-watchdog's job
   # (22:00 UTC daily): it dispatches a FULL e2e.yml run — `browser=all`, which
   # the changes job treats as the complete revalidation set — plus
   # core-smoke-nightly.yml, AFTER its baseline save. record-validation records
@@ -169,7 +168,7 @@ jobs:
               - 'installer/src/helper/**'
               # updater-ui.zip sources — remote-ui/updater.js IS the updater's
               # runtime engine (shipped inside the ui package), so engine
-              # changes must run the updater legs (#174).
+              # changes must run the updater legs.
               - 'tools/publish/remote-ui/**'
               # Snapshot-shaping tooling: the legs build their snapshot with
               # upload.mjs, whose generator flag passthrough decides the baked
@@ -209,8 +208,7 @@ jobs:
     needs: changes
     # A single-browser dispatch (the watchdog's new-release leg, or ci:download)
     # must build the snapshot too: browser-matrix needs it, and a needs-chain
-    # skip is transitive — without this, the escape dispatch ran nothing
-    # (#143 proof run 34033626251).
+    # skip is transitive — without this, the escape dispatch would run nothing.
     if:
       needs.changes.outputs.updater == 'true' || needs.changes.outputs.core == 'true' ||
       github.event_name == 'workflow_dispatch' && inputs.browser != 'all'
@@ -282,7 +280,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         uses: ./.github/actions/linux-test-prereqs
 
-      # The UI layer and the restart-scope leg (#180) launch a real Firefox.
+      # The UI layer and the restart-scope leg launch a real Firefox.
       # Hosted runners cannot be relied on to ship one, so install Firefox
       # Release PORTABLY (runner temp — user-writable, unregistered) like the
       # portable-firefox and updater jobs do; downloads.mjs exports
@@ -824,7 +822,7 @@ jobs:
       # other place a snap Firefox is installed), so it must publish
       # FIREFOX_BINARY itself — the steps below (Verify snap GreD, both E2E
       # runs) read it, and without the export the cache-hit path died with
-      # `FIREFOX_BINARY: unbound variable` (every run after #311 until fixed).
+      # `FIREFOX_BINARY: unbound variable`.
       # Runs after ANY successful download outcome — exact cache hit, seeded
       # older revision, or a fresh store download (from-cache true or false).
       # The single install track means ONE step must cover every outcome:
@@ -865,8 +863,8 @@ jobs:
           # Fail with the fix, not `FIREFOX_BINARY: unbound variable`: the only
           # publisher is an install step above, and BOTH snap install paths —
           # the store download and the offline-from-cache pair — have to export
-          # it. The cache-hit path skipped the export and took this leg down on
-          # every run after #311 (#313).
+          # it. The cache-hit path must not skip the export, or this leg goes
+          # down.
           if [ -z "${FIREFOX_BINARY:-}" ]; then
             echo "::error title=FIREFOX_BINARY unset::no snap install step published FIREFOX_BINARY — check the store AND the offline-from-cache install paths"
             exit 1
@@ -1521,9 +1519,9 @@ jobs:
     # OSes) ran and passed. Nightly's artifacts are intentionally ignored by
     # the recorder (VALIDATED_BROWSERS — Nightly changes daily and must never
     # gate the publish pre-flight). A
-    # core-only main push (updater legs path-skipped → result 'skipped') no
-    # longer records — without a test run, re-resolving live versions would
-    # claim untested releases as E2E-validated (#134 review finding 5).
+    # core-only main push (updater legs path-skipped → result 'skipped') must
+    # not record — without a test run, re-resolving live versions would claim
+    # untested releases as E2E-validated.
     needs: [e2e-gate, updater]
     # `always() &&` intentionally overrides the needs-graph skip rules. The
     # gate itself runs via if: always() and can succeed while a path-filtered
@@ -1688,7 +1686,7 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: node tools/ci/cleanupCiDownloads.mjs
 
-  # ── Post-gate cache hygiene (#463/#464) ───────────────────────────────
+  # ── Post-gate cache hygiene ───────────────────────────────────────────
   # "Clear the old cache when a new one is saved": GitHub cache keys are
   # immutable — a save cannot overwrite an entry — so the working equivalent
   # is deleting the SUPERSEDED entries right after the run that saved their
@@ -1716,7 +1714,7 @@ jobs:
           GITHUB_TOKEN_VAR: ${{ secrets.GITHUB_TOKEN }}
         run: node tools/ci/prune-caches.mjs --keep=3
 
-  # ── Nightly triage (#380) ──────────────────────────────────────────────
+  # ── Nightly triage ─────────────────────────────────────────────────────
   # The nightly revalidation is the only E2E run main gets: the workflow's own
   # push and schedule triggers are gone, so a red leg there is invisible unless
   # someone is reading the Actions UI. This job converts the run's failures

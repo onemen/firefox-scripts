@@ -2,8 +2,7 @@
 # CI / E2E / publish job: checkout, install pnpm + Node, and install
 # dependencies.
 #
-# Everything here used to be duplicated in every job of ci.yml / e2e.yml /
-# pages.yml; fixes to the setup steps now land in one place. All actions are
+# Fixes to the setup steps land in one place. All actions are
 # pinned to full commit SHAs (see .github/dependabot.yml).
 #
 # pnpm/setup installs pnpm's self-contained release binary and the requested

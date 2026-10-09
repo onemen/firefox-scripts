@@ -105,7 +105,7 @@ test('mozLz4: emits pure UTF-8, so non-ASCII titles survive the container', () =
 test('buildSession: the updater tab sits in a NON-selected window, unselected there', () => {
   // The whole point of the fixture: the attach block must find the restored
   // updater tab in a window that is not the active one, and not the selected
-  // tab of that window — the user's reported restore shape (#384).
+  // tab of that window — the reported restore shape.
   const session = buildSession({
     windows: 2,
     updaterInWindow: 1,
@@ -166,7 +166,7 @@ test('buildSession: the updater entry carries the SYSTEM principal; fillers carr
   // replayed a restore shape it could never actually load: the privileged tab
   // was always dead. {"3":{}} is what Firefox serializes for the system
   // principal the module's own addTrustedTab entry was saved with — verified
-  // against the pre-#384 Firefox-159 dump.
+  // against a Firefox-159 dump.
   const session = buildSession({
     windows: 2,
     updaterInWindow: 1,

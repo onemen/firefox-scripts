@@ -62,7 +62,7 @@ export const REMOTE_UI_DIR = path.resolve(__dirname, 'remote-ui');
 // dev → 'dev-build'.  Env-overridable in both modes.
 export const RELEASE_NAME = cfgMode('RELEASE_NAME', 'latest', 'dev-build');
 
-// Managed installer self-update payload (issue #341): the Pages file name, its
+// Managed installer self-update payload: the Pages file name, its
 // URL (the CORS-enabled artifact branch, same host as hashes.json) and the
 // mechanism cutover date — installer binaries baked ON/after it read the
 // Pages payload; older ones keep the release-body flow, and publishes stop

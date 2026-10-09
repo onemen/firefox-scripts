@@ -1,4 +1,4 @@
-// test/e2e/shared/updaterDriver.mjs — the updater E2E's in-browser driver (#309).
+// test/e2e/shared/updaterDriver.mjs — the updater E2E's in-browser driver.
 //
 // Driver mode = "unit tests in puppeteer": ONE live browser per scenario family,
 // with the harness driving the production orchestrator (checkForUpdates, the
@@ -59,7 +59,7 @@ export const DRIVER_SCRIPT = 'e2e-driver.js';
  */
 const DRIVER_SCRIPT_SOURCE = `'use strict';
 
-// Firefox Scripts updater E2E driver (#309). Written into the seeded profile by
+// Firefox Scripts updater E2E driver. Written into the seeded profile by
 // test/e2e/shared/updaterDriver.mjs; never part of any published package.
 
 const SCHEDULER_URL = 'chrome://firefox-scripts/content/scriptsUpdater.sys.mjs';

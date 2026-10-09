@@ -180,7 +180,7 @@ test('missing message argument falls back to the generic publish-files subject',
   assert.match(commit[1], /^chore: publish files \(\d{4}-\d{2}-\d{2}\)$/);
 });
 
-test('readPagesFile: decodes the branch file; missing branch/file → null (issue #341 merge reader)', async () => {
+test('readPagesFile: decodes the branch file; missing branch/file → null', async () => {
   // Existing branch + file: base64 content comes back decoded.
   const content = Buffer.from('{"installerDate":"2026-09-29"}\n', 'utf-8');
   const {api} = fakeOctokit({

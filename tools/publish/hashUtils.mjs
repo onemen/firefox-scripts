@@ -57,7 +57,7 @@ export function compareCaseInsensitive(a, b) {
 /**
  * Render a helper checksum sidecar: `<hex sha256> <filename>\n` — sha256sum -c
  * compatible (two spaces), and exactly the format the updater tab parses back
- * before executing a freshly downloaded helper (issue #33).
+ * before executing a freshly downloaded helper.
  *
  * @param {Buffer | Uint8Array} bytes the helper binary bytes
  * @param {string} filename the helper's published asset name

@@ -1,5 +1,4 @@
-// test/unit/core/configJs.test.mjs — Unit tests for core/fx-folder/config.js
-// (issue #30 Level 1).
+// test/unit/core/configJs.test.mjs — Unit tests for core/fx-folder/config.js.
 //
 // config.js is the autoconfig entry point: it runs BEFORE any of our modules,
 // inside Firefox's autoconfig sandbox, and every failure in it is swallowed by
@@ -138,7 +137,7 @@ test('Firefox: BootstrapLoader.js loads before userChrome.js', () => {
 
 test('Waterfox: BootstrapLoader.js is skipped, userChrome.js still loads', () => {
   // Waterfox bundles its own legacy loader; loading ours would double-register
-  // it (#168). userChrome.js must still load — Waterfox users install these
+  // it. userChrome.js must still load — Waterfox users install these
   // files for the user-scripts and the auto-updater.
   const ctx = evaluate('Waterfox');
   assert.deepEqual(ctx.loadedURIs, [USER_CHROME_URI]);

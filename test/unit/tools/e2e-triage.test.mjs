@@ -1,5 +1,5 @@
 // test/unit/tools/e2e-triage.test.mjs — the nightly revalidation's triage
-// logic (#380): which jobs count as failed legs, and how a failure set is
+// logic: which jobs count as failed legs, and how a failure set is
 // turned into one deduped, self-closing issue.
 //
 // The I/O (run-job listing, issue create/comment/close) hits the GitHub API

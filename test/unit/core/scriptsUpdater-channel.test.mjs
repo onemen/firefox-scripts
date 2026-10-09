@@ -366,16 +366,16 @@ test('stable build with a stored stable channel pref stays stable (no build pref
   assertChannel(u, 'stable', false);
 });
 
-test('getUiBaseUrl keeps the pre-#102 zip-base fallback for dev configs', () => {
+test('getUiBaseUrl keeps the zip-base fallback for dev configs', () => {
   const u = loadUpdater({config: devConfig({UI_BASE_URL: ''})});
   assert.equal(u.getUiBaseUrl(), DEV_ZIP);
 });
 
-test('getUiBaseUrl legacy fallback: empty UI keys fall back to the zip base (pre-#102 configs)', () => {
-  // Issue #102's fix routes the UI base to the manifest host; the zip-base
+test('getUiBaseUrl legacy fallback: empty UI keys fall back to the zip base', () => {
+  // The UI base routes to the manifest host; the zip-base
   // fallback is kept deliberately for a generated config that predates
-  // UI_BASE_URL ("keeps the pre-#102 behavior instead of building an invalid
-  // URL"). A same-publish-run config always has the UI key, so prod never
+  // UI_BASE_URL (fall back instead of building an invalid URL). A
+  // same-publish-run config always has the UI key, so prod never
   // hits this — the test pins the documented fallback for both channels.
   const stable = loadUpdater({
     config: stableConfig({UI_BASE_URL: '', STABLE_UI_BASE_URL: ''}),

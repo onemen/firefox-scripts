@@ -1,19 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * tools/check-yaml-frontmatter.mjs — parse the YAML a change actually touches
- * (#413).
+ * tools/check-yaml-frontmatter.mjs — parse the YAML a change actually touches.
  *
  * The failure shape: a `: ` inside a multi-line YAML plain scalar ends the
- * scalar and starts a new mapping key. `.agents/skills/ai-review/SKILL.md`
- * shipped `description: Reviewing a PR (fallback: \`gh pr review`)`— the host
- * read no`description` at all and the skill was never registered, silently.
- * Nothing else in the toolchain catches it: prettier's markdown-frontmatter
- * path is lenient (`prettier --check`on the buggy file exits 0)
- * and`@eslint/markdown`'s `frontmatter: 'yaml'`option does not validate.`.yml`
- * _files_ are already covered (prettier parses them and exits 2 on a syntax
- * error) — what is ungated is YAML hiding inside markdown frontmatter, and this
- * repo keeps the metadata that makes its own skills loadable there.
+ * scalar and starts a new mapping key — the host reads no `description` at all
+ * and the skill is never registered, silently. Nothing else in the toolchain
+ * catches it: prettier's markdown-frontmatter path is lenient (`prettier
+ * --check`on the buggy file exits 0) and`@eslint/markdown`'s `frontmatter:
+ * 'yaml'`option does not validate.`.yml` _files_ are already covered (prettier
+ * parses them and exits 2 on a syntax error) — what is ungated is YAML hiding
+ * inside markdown frontmatter, and this repo keeps the metadata that makes its
+ * own skills loadable there.
  *
  * Scope: only files the change touches, and within a markdown file only the
  * lines of its frontmatter block. A repo-wide scan would flag vendored text and

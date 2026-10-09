@@ -32,7 +32,7 @@ const EMBED = path.join(REPO_ROOT, 'installer', 'embed.mjs');
 // The gates spawn them through process.execPath directly — no `npx`, no
 // `shell`, no PATH lookup: a POSIX-style PATH environment variable (exported
 // in a Git Bash session, where MSYS_NO_PATHCONV=1 leaves it unconverted for
-// the spawned Windows process) used to break the npx lookup and fail the
+// the spawned Windows process) would break the npx lookup and fail the
 // gate through no fault of the artifact. An absolute executable path and
 // absolute bin script have no PATH dependence at all.
 const require = createRequire(import.meta.url);

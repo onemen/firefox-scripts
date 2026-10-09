@@ -2,7 +2,7 @@ name: 'drift-gate'
 description:
   'The prod-publish browser gate: watchdog-baseline drift + validated-versions coverage
   +\n  E2E-for-commit. ONE implementation — pages.yml and build-and-upload.yml call it in-run, and
-  the\n  drift-check.yml probe dispatches it (#347).'
+  the\n  drift-check.yml probe dispatches it.'
 author: 'onemen/firefox-scripts'
 
 # Preconditions: the calling job has CHECKED OUT THE REPO (the gate scripts are repo files) and

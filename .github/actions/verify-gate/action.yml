@@ -2,8 +2,7 @@ name: Verify gate
 description: >-
   Shared engine for the aggregate CI/E2E branch-protection checks. Verifies the changes
   (paths-filter) job, then the branch-conditional gated jobs (required / advisory), then the
-  no-change guards (skipped-jobs and always-report). This is the shell logic that used to live
-  inline in ci-gate and e2e-gate.
+  no-change guards (skipped-jobs and always-report).
 inputs:
   changes-result:
     description: result of the changes (paths-filter) job — must be success
