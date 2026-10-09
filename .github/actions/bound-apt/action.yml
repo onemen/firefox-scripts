@@ -1,0 +1,57 @@
+# .github/actions/bound-apt/action.yml — Install apt packages with bounded
+# fetch and retries, so a stalled archive mirror fails fast instead of eating
+# the whole job timeout (issue #461).
+#
+# Why: every `apt-get` call here was unbounded — no `timeout`, no
+# `Acquire::Retries`, no `Acquire::*::Timeout`. On 2026-10-07 four jobs hung
+# in `apt-get update`/`install xvfb` until `timeout-minutes` cancelled them,
+# burning the entire job budget in setup before a single test ran. This action
+# bounds the update to 120 s, retries up to 3 attempts with backoff, sets
+# acquire + dpkg-lock timeouts, and skips the install when the probe command
+# is already present.
+#
+# Inputs: `packages` (space-separated apt names, required), `already-if`
+# (optional command name — `command -v` short-circuits the install).
+
+name: Bounded apt install
+description: >-
+  Install apt packages with a bounded fetch (timeout 120 s), retries with backoff, and
+  acquire/dpkg-lock timeouts; skips when the probe command exists
+inputs:
+  packages:
+    description: space-separated apt package names to install
+    required: true
+  already-if:
+    description: command name whose presence skips the install entirely
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install apt packages (bounded fetch + retries)
+      shell: bash
+      run: |
+        pkgs="${{ inputs.packages }}"
+        probe="${{ inputs.already-if }}"
+        if [ -n "$probe" ] && command -v "$probe" >/dev/null 2>&1; then
+          echo "$probe is already installed — skipping apt."
+          exit 0
+        fi
+        opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=60)
+        attempt=1
+        delay=10
+        # shellcheck disable=SC2086
+        while [ "$attempt" -le 3 ]; do
+          if timeout 120 sudo apt-get update -qq "${opts[@]}" \
+            && timeout 300 sudo apt-get install -y -qq "${opts[@]}" $pkgs; then
+            echo "apt install succeeded on attempt $attempt: $pkgs"
+            exit 0
+          fi
+          echo "apt attempt $attempt failed — retrying in ${delay}s"
+          sleep "$delay"
+          attempt=$((attempt + 1))
+          delay=$((delay * 2))
+        done
+        echo "::error::apt install failed after 3 attempts: $pkgs"
+        exit 1
