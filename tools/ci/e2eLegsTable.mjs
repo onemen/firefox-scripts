@@ -14,9 +14,10 @@
  * WHAT IS DERIVED (never hand-written in the output)
  *
  * - The leg list, each leg's gate class, browser, OS, portable flag and cache key
- *   come from .github/workflows/e2e.yml: the gate's own `required:` /
- *   `advisory:` contract, every job's `name:` template plus its matrix
- *   constraints, and the `with:` block of its setup-browser step.
+ *   come from .github/workflows/e2e.yml: the gates' `required:` / `advisory:`
+ *   contract (the required gate plus the warn-only advisory reporter), every
+ *   job's `name:` template plus its matrix constraints, and the `with:` block
+ *   of its setup-browser step.
  * - Durations and the wall-clock come from ONE run, read through the `gh` CLI.
  *
  * The only hand-written parts are JOB_PURPOSE (what each non-E2E job is FOR)
@@ -72,6 +73,9 @@ const JOB_PURPOSE = {
   'e2e-gate':
     'The E2E gate required check: verifies applicability + results and sets ' +
     'the branch-protection status.',
+  'e2e-advisory':
+    'Warn-only reporter for the advisory legs: emits ::warning:: per non-green ' +
+    'advisory result and always exits 0 — never in branch protection.',
   'record-validation':
     'Records the exact browser versions the required legs installed. The publish ' +
     'pre-flight drift gate reads this, so a watchdog baseline refresh alone ' +
@@ -145,16 +149,23 @@ function loadJobs() {
 }
 
 /**
- * The gate contract: which job ids block a merge and which only warn.
+ * The gate contract: which job ids block a merge and which only warn. The
+ * required gate owns `required:`; the advisory legs moved to the warn-only
+ * `e2e-advisory` reporter, whose `advisory:` list is unioned in (it must define
+ * no `required:` — pinned by `pnpm check:gates`).
  *
  * @param {Record<string, any>} jobs
  * @returns {{required: Set<string>; advisory: Set<string>}}
  */
 function gateContract(jobs) {
-  const step = (jobs['e2e-gate']?.steps ?? []).find(s =>
-    String(s?.uses ?? '').endsWith('verify-gate')
-  );
-  if (!step?.with) throw new Error('e2e-gate has no verify-gate step — gate contract unreadable');
+  const withOf = gateId => {
+    const step = (jobs[gateId]?.steps ?? []).find(s =>
+      String(s?.uses ?? '').endsWith('verify-gate')
+    );
+    if (!step?.with)
+      throw new Error(`${gateId} has no verify-gate step — gate contract unreadable`);
+    return step.with;
+  };
   const split = value =>
     new Set(
       String(value ?? '')
@@ -162,7 +173,12 @@ function gateContract(jobs) {
         .split(/\s+/)
         .filter(Boolean)
     );
-  return {required: split(step.with.required), advisory: split(step.with.advisory)};
+  const requiredGate = withOf('e2e-gate');
+  const advisoryGate = withOf('e2e-advisory');
+  return {
+    required: split(requiredGate.required),
+    advisory: new Set([...split(requiredGate.advisory), ...split(advisoryGate.advisory)]),
+  };
 }
 
 /**
@@ -246,14 +262,15 @@ function matchTemplate(template, name) {
 }
 
 /**
- * The jobs the E2E gate evaluates — the gate's own `required:` + `advisory:`
- * lists — in workflow declaration order. That set, not "has a matrix", is what
- * makes a job a leg: `snap-firefox` and `updater-waterfox` render one job each
- * and are still legs, while `snapshot` and `esr-matrix` are gate entries that
- * run once. Order matters: the first candidate whose template AND matrix
- * constraints accept a run job name owns it. `updater` and `browser-matrix`
- * render the same name shape (`updater E2E · <browser> · windows-latest`), so
- * it is the matrix, not the name, that separates them.
+ * The jobs the E2E gates evaluate — the required gate's `required:` plus the
+ * advisory reporter's `advisory:` — in workflow declaration order. That set,
+ * not "has a matrix", is what makes a job a leg: `snap-firefox` and
+ * `updater-waterfox` render one job each and are still legs, while `snapshot`
+ * and `esr-matrix` are gate entries that run once. Order matters: the first
+ * candidate whose template AND matrix constraints accept a run job name owns
+ * it. `updater` and `browser-matrix` render the same name shape (`updater E2E ·
+ * <browser> · windows-latest`), so it is the matrix, not the name, that
+ * separates them.
  *
  * @param {Record<string, any>} jobs
  * @param {{required: Set<string>; advisory: Set<string>}} gate
@@ -594,7 +611,8 @@ function buildDoc(runId, data) {
       run.conclusion +
       '.',
     '',
-    'Every job the E2E gate evaluates — its `required:` and `advisory:` lists — as one row, with',
+    'Every job the E2E gates evaluate — the required gate\u2019s `required:` plus the advisory',
+    'reporter\u2019s `advisory:` — as one row, with',
     'the browser it installs and the cache it restores; two of them (`snapshot`, `esr-matrix`)',
     'render a single job rather than a matrix. The job list, the gate classes and the cache keys',
     'are read out of [e2e.yml](' + WORKFLOW_LINK + '); the durations are that one run — a',
@@ -602,8 +620,9 @@ function buildDoc(runId, data) {
     '',
     '## E2E legs',
     '',
-    '`Required` legs must pass for the `E2E gate` check to go green; `Advisory` legs only warn.',
-    'The gate’s `required:` / `advisory:` lists in [e2e.yml](' + WORKFLOW_LINK + ') are the',
+    '`Required` legs must pass for the `E2E gate` check to go green; `Advisory` legs only warn',
+    'via the `E2E advisory` reporter. The gates\u2019 `required:` / `advisory:` lists in',
+    '[e2e.yml](' + WORKFLOW_LINK + ') are the',
     'contract, and `pnpm check:gates` keeps them in step with the job list.',
     '',
     table(['Gate', 'Job', 'Browser', 'OS', 'Portable', 'Cache key', 'Wall-clock'], legRows),

@@ -93,15 +93,16 @@ them (`core/**`, `config/installer.conf`, `installer/**`, `tools/publish/**`, `t
 Docs-only / tooling-only PRs skip all of them; `changes`, `checks`, `ci-gate` and `e2e-gate` always
 run, so the required checks keep reporting. The aggregate gates share one engine —
 `.github/actions/verify-gate` (required / advisory / skip-guard / always-report checks) — and
-`pnpm check:gates` statically enforces the contract: every workflow job is listed in its gate's
-`needs:`, path-filter `if:`s stay in place, and always-report jobs carry no job-level `if:`. The
-`browser-matrix` fork legs (LibreWolf, Floorp, Zen — downloaded from third-party hosts:
-librewolf.dev's package registry and GitHub release assets) are advisory when they run: failures
-warn in the gate instead of failing the PR. Firefox Developer Edition is first-party Mozilla, so it
-runs as a required leg of the `updater` job (#35), not in the advisory matrix. Waterfox graduated
-from the advisory matrix to its own required `updater-waterfox` leg (Windows-only, ADR 0025) after
-its soak; its current version must also be covered by the validated-versions record before a prod
-publish, and the pin-first break-glass runbook for vendor-flake days lives in that ADR.
+`pnpm check:gates` statically enforces the contract: every workflow job is listed in one of its
+gates' `needs:` (the required E2E gate plus the warn-only E2E advisory reporter), path-filter `if:`s
+stay in place, and always-report jobs carry no job-level `if:`. The `browser-matrix` fork legs
+(LibreWolf, Floorp, Zen — downloaded from third-party hosts: librewolf.dev's package registry and
+GitHub release assets) are advisory when they run: failures warn through the E2E advisory reporter
+instead of failing the PR. Firefox Developer Edition is first-party Mozilla, so it runs as a
+required leg of the `updater` job (#35), not in the advisory matrix. Waterfox graduated from the
+advisory matrix to its own required `updater-waterfox` leg (Windows-only, ADR 0025) after its soak;
+its current version must also be covered by the validated-versions record before a prod publish, and
+the pin-first break-glass runbook for vendor-flake days lives in that ADR.
 
 **The validated-versions record keys on the updater legs alone (ADR 0039)** — `record-validation`
 runs when `needs.updater.result == 'success'`, not when the whole gate is green: the gate summarizes
