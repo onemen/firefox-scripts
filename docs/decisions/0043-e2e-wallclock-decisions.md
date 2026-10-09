@@ -31,8 +31,9 @@ agent does not re-litigate them without new data.
    macOS legs are not made advisory: their assertions are the same code path as Linux/Windows, but
    making a leg advisory to save runner-minutes trades away the only macOS signal on PRs that touch
    installer or core. The measured cost is a queued leg on full runs, which is a latency symptom,
-   not a correctness one — and item 1 already removed the tail that dominated merge latency.
-   Revisit-if: macOS queueing starts failing runs rather than delaying them.
+   not a correctness one — and item 1 already removed the _unbounded_ advisory tail (measured 0–43 s
+   of routine saving, bounded worst case; see ADR 0042's Effect note). Revisit-if: macOS queueing
+   starts failing runs rather than delaying them.
 3. **The snapshot is not cached on its input hash (item 6).** `pnpm snapshot:dev` runs
    `upload.mjs --local`, which bakes the **building machine's absolute `file://` path** into the
    generated updater config (`applyUpdaterLocalOverrides`) — the E2E harness compensates per-run
