@@ -130,6 +130,8 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0041](./0041-av-vt-publish-gate.md) — AV + VirusTotal publish gate: any host-AV detection
   refuses, VT fails at ≥3 engines or the Microsoft veto, verdicts ledgered per sha256 (cross-refs
   [0032]/[0030], #446)
+- [0042](./0042-e2e-required-gate-advisory-reporter.md) — The E2E required check reports the required
+  legs only; the advisory tail moves to a warn-only `e2e-advisory` reporter (amends [0025], #444)
 
 ## Historical
 

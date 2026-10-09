@@ -5,6 +5,8 @@
 - **Extends:** [0021](./0021-tiered-publish-gating-shared-resolver.md)
 - **Amended:** [0037](./0037-snap-e2e-cross-revision-cache-seed.md) — the snap leg installs via the
   cross-revision cache seed only (no direct-store install)
+- **Amended:** [0042](./0042-e2e-required-gate-advisory-reporter.md) — the advisory tail no longer
+  decides when the required E2E check reports; the required leg set is unchanged
 
 ## Context
 
