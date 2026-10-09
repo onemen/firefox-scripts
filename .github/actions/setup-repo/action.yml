@@ -67,7 +67,12 @@ runs:
       id: pnpm-store
       shell: bash
       run: |
-        DIR=$(pnpm store path --silent)
+        # The exit status is checked explicitly: `shell: bash` runs with
+        # `-eo pipefail`, so a failing command already aborts the step, but this
+        # is the step's only error path and it should not lean on a shell
+        # default — and the guard below cannot tell "pnpm failed" from "pnpm
+        # printed nothing".
+        DIR=$(pnpm store path --silent) || { echo "::error::pnpm store path failed"; exit 1; }
         [ -n "$DIR" ] || { echo "::error::pnpm store path returned nothing"; exit 1; }
         node -e "require('fs').mkdirSync(process.argv[1], {recursive: true})" "$DIR"
         echo "dir=$DIR" >> "$GITHUB_OUTPUT"

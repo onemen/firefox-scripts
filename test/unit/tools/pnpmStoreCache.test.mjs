@@ -164,12 +164,19 @@ test('the store is cached with the restore/save split, save guarded', () => {
     }
   }
 });
-
 test('the cached path is resolved from pnpm, not spelled per platform', () => {
   assert.match(
     stripComments(raw),
     /pnpm store path/,
     'the store dir must come from `pnpm store path`'
+  );
+  // `shell: bash` aborts on a non-zero exit anyway, but the step should not
+  // lean on that default for its only error path, and the non-empty guard
+  // cannot tell "pnpm failed" from "pnpm printed nothing".
+  assert.match(
+    stripComments(raw),
+    /DIR=\$\(pnpm store path --silent\)[^\n]*\|\|/,
+    "the store path step must check pnpm's exit status explicitly"
   );
   for (const block of steps) {
     if (!/pnpm-cache-/.test(block)) continue;
