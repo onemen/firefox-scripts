@@ -108,10 +108,10 @@ jobs:
       # cross-compiler first (same as e2e.yml; without it snapshot:dev dies
       # with 'aarch64-linux-gnu-gcc: not found').
       - name: Install aarch64 cross toolchain
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
-          aarch64-linux-gnu-gcc --version | head -1
+        uses: ./.github/actions/bound-apt
+        with:
+          packages: gcc-aarch64-linux-gnu
+          already-if: aarch64-linux-gnu-gcc
 
       - name: Build dev snapshot
         run: pnpm snapshot:dev

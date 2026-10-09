@@ -194,10 +194,10 @@ jobs:
         uses: ./.github/actions/harden-apt
       - name: Install aarch64 cross toolchain (linux builds the twin)
         if: matrix.cross
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
-          aarch64-linux-gnu-gcc --version | head -1
+        uses: ./.github/actions/bound-apt
+        with:
+          packages: gcc-aarch64-linux-gnu
+          already-if: aarch64-linux-gnu-gcc
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: baseline-hashes
