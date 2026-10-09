@@ -64,11 +64,23 @@ test('cacheKey: five fields, lowercase os, one browser per name', () => {
   );
   // A sticky fork leg keys on the version; snap is its own os token.
   assert.equal(
-    cacheKey({browser: 'zen', type: 'dl', os: 'windows', hash: 'v1.23.1b', layout: 'plain'}),
+    cacheKey({
+      browser: 'zen',
+      type: 'dl',
+      os: 'windows',
+      hash: 'v1.23.1b',
+      layout: 'plain',
+    }),
     'zen-dl-windows-v1.23.1b-plain'
   );
   assert.equal(
-    cacheKey({browser: 'firefox-snap', type: 'dl', os: 'snap', hash: '9036', layout: 'plain'}),
+    cacheKey({
+      browser: 'firefox-snap',
+      type: 'dl',
+      os: 'snap',
+      hash: '9036',
+      layout: 'plain',
+    }),
     'firefox-dl-snap-9036-plain'
   );
   // The four browsers that used to share `firefox-dl-<os>` now have four names,
@@ -128,7 +140,30 @@ test('the snap and ESR legs use the same shape as everything else', () => {
   );
   assert.ok(e2e.includes('restore-keys: firefox-dl-snap-'));
   assert.ok(
-    e2e.includes('BROWSER_CACHE_NAME: ${{ matrix.cacheName }}'),
-    'the ESR leg takes its positional name from the matrix'
+    e2e.includes(
+      'BROWSER_CACHE_NAME: ${{ fromJSON(needs.esr-matrix.outputs.cacheNames)[matrix.browser] }}'
+    ),
+    'the ESR leg looks its positional name up by the browser it installs'
+  );
+});
+
+test('the ESR matrix job publishes the name map its legs look up', () => {
+  const e2e = stripComments(read(WORKFLOWS[0]));
+  // The name travels BESIDE the matrix, never inside it: the dimension is
+  // `matrix.browser`, so an object element there makes the leg's browser a
+  // mapping and the job fails to dispatch before any step runs (2026-10-09 —
+  // CI caught it, no unit test did). The lookup above is only wired if the map
+  // exists under exactly the output name the leg reads.
+  assert.ok(
+    e2e.includes('cacheNames: ${{ steps.names.outputs.names }}'),
+    'esr-matrix must publish the cache-name map'
+  );
+  assert.ok(
+    e2e.includes('tools/ci/esrMatrix.mjs .watchdog/baseline.json --names'),
+    'the map comes from the same builder as the matrix'
+  );
+  assert.ok(
+    !e2e.includes('matrix.cacheName'),
+    'no leg may read a field the matrix dimension does not carry'
   );
 });

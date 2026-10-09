@@ -1288,6 +1288,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.mtx.outputs.matrix }}
+      cacheNames: ${{ steps.names.outputs.names }}
     steps:
       # tools/ci/esrMatrix.mjs runs from the repo — checkout first (the
       # cache/restore below does not materialize it).
@@ -1311,6 +1312,20 @@ jobs:
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "ESR legs: $MATRIX"
 
+      # The cache name each of those legs keys on (ADR 0045). It travels
+      # BESIDE the matrix, not inside it: the dimension is `matrix.browser`, so
+      # an object element would make the leg's browser a mapping and the job
+      # would fail to dispatch. The map is keyed by the same browser keys, and
+      # the leg reads its own entry.
+      - name: Build the ESR cache-name map
+        id: names
+        if: steps.mtx.outputs.matrix != ''
+        shell: bash
+        run: |
+          NAMES=$(node tools/ci/esrMatrix.mjs .watchdog/baseline.json --names)
+          echo "names=$NAMES" >> "$GITHUB_OUTPUT"
+          echo "ESR cache names: $NAMES"
+
   esr-portable:
     name: 'updater E2E · ${{ matrix.browser }} · windows-latest (advisory)'
     needs: [changes, snapshot, esr-matrix]
@@ -1333,11 +1348,11 @@ jobs:
       # registered stable Firefox the other legs may have installed.
       - name: Install ${{ matrix.browser }} portably
         uses: ./.github/actions/setup-browser
-        # The ESR cache name comes from the matrix, the one place the watched
-        # major order lives: serving line `esr`, the line it replaced
-        # `esr-prev` (ADR 0045).
+        # The ESR cache name comes from the matrix job — the one place the
+        # watched major order lives: serving line `esr`, the line it replaced
+        # `esr-prev` (ADR 0045) — looked up by the browser this leg installs.
         env:
-          BROWSER_CACHE_NAME: ${{ matrix.cacheName }}
+          BROWSER_CACHE_NAME: ${{ fromJSON(needs.esr-matrix.outputs.cacheNames)[matrix.browser] }}
         with:
           browser: ${{ matrix.browser }}
           portable: 'true'

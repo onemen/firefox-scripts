@@ -177,28 +177,49 @@ export function esrCacheName(majors, major) {
 
 /**
  * The dynamic matrix JSON for the `esr-portable` E2E job: one leg per watched
- * ESR major, each carrying the cache name its key uses (ADR 0045). The name is
- * resolved HERE, in the one place the major order is known, and handed to the
- * leg as `BROWSER_CACHE_NAME` — so the leg's keys are `esr-…` / `esr-prev-…`
- * without the composite needing a network call or a second source of truth.
+ * ESR major.
+ *
+ * Every element must be the browser KEY, a string: the dimension is
+ * `matrix.browser`, so an object element makes `matrix.browser` a mapping and
+ * the leg cannot even dispatch ("A mapping was not expected", 2026-10-09). The
+ * cache name its keys use (ADR 0045) therefore travels BESIDE the matrix, in
+ * {@link buildEsrCacheNames}, keyed by these same browser keys.
+ *
  * Empty state (cold cache) → the generic serving-ESR key (`firefox-esr`), which
- * resolves its version at run time from Mozilla's keys — degradation, never a
- * hardcoded version — and is the `esr` line by definition.
+ * resolves its version at run time from Mozilla's keys: degradation, never a
+ * hardcoded version.
+ *
+ * @param {{majors: string[]} | null | undefined} esrState
+ * @returns {string} e.g. '["firefox-esr-140","firefox-esr-153"]'
+ */
+export function buildEsrMatrix(esrState) {
+  const names = esrLedgerNames(esrState);
+  return JSON.stringify(names.length > 0 ? names : ['firefox-esr']);
+}
+
+/**
+ * The cache name (ADR 0045) of every leg {@link buildEsrMatrix} emits, keyed by
+ * the browser key the matrix carries — the leg reads its own entry
+ * (`fromJSON(needs.esr-matrix.outputs.cacheNames)[matrix.browser]`).
+ *
+ * Resolved HERE, in the one place the watched-major order is known, so the leg
+ * needs neither a network call nor a second source of truth. The generic
+ * cold-state leg (`firefox-esr`) is the `esr` line by definition.
  *
  * @param {{majors: string[]} | null | undefined} esrState
  * @returns {string} e.g.
- *   '[{"browser":"firefox-esr-140","cacheName":"esr-prev"},{"browser":"firefox-esr-153","cacheName":"esr"}]'
+ *   '{"firefox-esr-140":"esr-prev","firefox-esr-153":"esr"}'
  */
-export function buildEsrMatrix(esrState) {
+export function buildEsrCacheNames(esrState) {
   const majors = Array.isArray(esrState?.majors) ? esrState.majors : [];
-  const legs =
-    majors.length > 0 ?
-      majors.map(major => ({
-        browser: esrBrowserKey(major),
-        cacheName: esrCacheName(majors, major),
-      }))
-    : [{browser: 'firefox-esr', cacheName: 'esr'}];
-  return JSON.stringify(legs);
+  const legs = esrLedgerNames(esrState);
+  const named = (legs.length > 0 ? legs : ['firefox-esr']).map(browser => [
+    browser,
+    browser === 'firefox-esr' ? 'esr' : (
+      esrCacheName(majors, browser.slice(ESR_BROWSER_PREFIX.length))
+    ),
+  ]);
+  return JSON.stringify(Object.fromEntries(named));
 }
 
 /**
@@ -640,7 +661,10 @@ export function buildStatusTable({results, baseline, validated, browsers = BROWS
     // operator how old the fallback is).
     const fallback =
       version === '—' ? '—'
-      : cache ? cacheFallbackCell(browser, cache[browser] || [], entry, {now: now ?? Date.now()})
+      : cache ?
+        cacheFallbackCell(browser, cache[browser] || [], entry, {
+          now: now ?? Date.now(),
+        })
       : failed ? `cached: ${version} · ${lastCheck}`
       : `cached: ${version}`;
     // Download time of the last VERIFIED full download — the transfer-speed
