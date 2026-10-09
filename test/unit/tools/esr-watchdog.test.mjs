@@ -199,9 +199,13 @@ test('planDispatches: both ESR majors drifting still yield ONE dispatch', () => 
   assert.deepEqual(plans, [{browser: 'firefox-esr', ref: 'main'}]);
 });
 
-test('planDispatches: nightly never dispatches (informational row)', () => {
+test('planDispatches: a Nightly movement dispatches the full matrix', () => {
+  // Informational keeps Nightly out of the PUBLISH GATE; it does not exempt it
+  // from E2E. Nightly churns daily and has no single-browser escape input in
+  // e2e.yml, so its coverage is the full matrix — the same plan a hard-gate
+  // release produces. (This reverses the previous "nightly never dispatches".)
   const plans = planDispatches([{kind: 'new-version', browser: 'nightly'}]);
-  assert.deepEqual(plans, []);
+  assert.deepEqual(plans, [{ref: 'main'}]);
 });
 
 test('planDispatches: nightly stays informational in the constants', () => {
