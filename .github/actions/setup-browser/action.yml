@@ -22,14 +22,18 @@
 # the payload kind (`dl` installer, `portable` extracted tree), `os` the
 # lowercase runner OS (`snap` for the snap leg), `layout` the spelling of that
 # payload (`plain` for an installer, `dir` for the extracted tree), and `hash`
-# either the download URL's sha256 prefix (the URL embeds the release version,
-# so the key invalidates on a vendor bump) or `v<version>` for a sticky leg.
+# the release identity: the download URL's sha256 prefix when that URL names
+# its release (waterfox's CDN path, ESR's release-tagged URL), the published
+# version or nightly build id when it does not, or `v<version>` for a sticky
+# leg. A release change mints a new key either way.
 #
 # Two cache regimes (ADR 0034, cache-first amendment 2026-09-23):
 #
-# - Hard gates (firefox, firefox-dev, nightly, waterfox, esr): URL-keyed, as
-#   before. The URL embeds the release version, so the key invalidates on a
-#   vendor bump and the leg tracks latest at run time.
+# - Hard gates (firefox, firefox-dev, nightly, waterfox, esr): release-keyed.
+#   The identity changes with the release, so the key invalidates on a vendor
+#   bump and the leg tracks latest at run time. The three `?product=…-latest`
+#   channels must resolve a version or build id for this: their URL is one
+#   fixed string per OS, so a URL-derived key could never be superseded.
 #
 # - Fork legs (librewolf, floorp, zen): a STICKY per-browser key
 #   (`<name>-<type>-<os>-v<version>-<layout>`), decoupled from the URL, and a
@@ -69,7 +73,8 @@ inputs:
 
 outputs:
   cache-key:
-    description: The cache key the installer was saved under (URL-hash or sticky version key)
+    description:
+      The cache key the installer was saved under (release-identity hash or sticky version key)
     value: ${{ steps.fork-save.outputs.installer-key || steps.identity.outputs.installer-key }}
   portable-dir:
     description: PORTABLE_BROWSER_DIR when inputs.portable == 'true', else empty
@@ -205,8 +210,8 @@ runs:
 
     # Restore/save split (not plain actions/cache) so the save happens only
     # after a successful install: a killed job's partial download must never
-    # poison the entry every later leg restores. Hard gates: the exact URL-hash
-    # key. Fork legs: the exact `<name>-<type>-<os>-v` key never exists (saves
+    # poison the entry every later leg restores. Hard gates: the exact
+    # identity-hash key. Fork legs: the exact `<name>-<type>-<os>-v` key never exists (saves
     # carry a version), so restore always falls through to the newest entry
     # under the browser-scoped `<name>-<type>-<os>-` prefix.
     - name: Restore browser installer cache (URL-keyed)
