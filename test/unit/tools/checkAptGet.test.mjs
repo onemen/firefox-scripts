@@ -42,6 +42,52 @@ test('flags a raw sudo apt-get update/install command line', () => {
   );
 });
 
+test('the natural one-line step form fires (regression: CodeRabbit #483)', () => {
+  // The original gate required `sudo apt-get` at the line start, so the most
+  // common real shape — an inline `run:` step — sailed through unchecked.
+  const {paths} = writeTmp({
+    'job.yml': '      - name: x\n        run: sudo apt-get install -y -qq xvfb\n',
+  });
+  const findings = findRawAptGetCalls(paths, path.parse(paths[0]).dir);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].line, 2);
+});
+
+test('wrapper, short-spelling, root and chained forms all fire', () => {
+  const {paths} = writeTmp({
+    'e2e.yml':
+      [
+        '        timeout 60 sudo apt-get install -y xvfb',
+        '        apt install -y xvfb',
+        '        apt-get update -qq',
+        '        sudo -E apt-get install -y git',
+        '        make setup && sudo apt-get install -y jq',
+        '        echo hi | sudo apt-get update',
+        '        foo; sudo apt-get install -y curl',
+      ].join('\n') + '\n',
+  });
+  const findings = findRawAptGetCalls(paths, path.parse(paths[0]).dir);
+  assert.deepEqual(
+    findings.map(f => f.line),
+    [1, 2, 3, 4, 5, 6, 7]
+  );
+});
+
+test('a trailing comment never fires, but a real command before it does', () => {
+  const {paths} = writeTmp({
+    'ci.yml':
+      [
+        '      # && sudo apt-get install -y foo (prose only)',
+        '        echo x && sudo apt-get update -qq # real command',
+      ].join('\n') + '\n',
+  });
+  const findings = findRawAptGetCalls(paths, path.parse(paths[0]).dir);
+  assert.deepEqual(
+    findings.map(f => f.line),
+    [2]
+  );
+});
+
 test('prose mentions (comments, backticks) never fire', () => {
   const {paths} = writeTmp({
     'ci.yml':
@@ -56,6 +102,17 @@ test('non-YAML paths are ignored even with command-positioned text', () => {
     'script.mjs': '// sudo apt-get update -qq\n',
   });
   assert.deepEqual(findRawAptGetCalls(paths, dir), []);
+});
+
+test('prose inside a description block never fires (the `so apt-get update` trap)', () => {
+  // Regression: `apt sources … so apt-get update cannot fail` matched when
+  // flags were `\S+` tokens — `so` read as a flag. It is real text in
+  // .github/actions/harden-apt/action.yml:17.
+  const {paths} = writeTmp({
+    'action.yml':
+      'description: >-\n  Remove unused third-party apt sources (Google Chrome et al.) so apt-get update cannot fail on\n  their out-of-band index churn\n',
+  });
+  assert.deepEqual(findRawAptGetCalls(paths, path.parse(paths[0]).dir), []);
 });
 
 test('live repo: no raw call sites outside bound-apt', async () => {

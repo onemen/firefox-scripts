@@ -42,9 +42,13 @@ runs:
         attempt=1
         delay=10
         # shellcheck disable=SC2086
+        # Bounds: update ≤120 s (the issue's number), install ≤150 s. Worst case
+        # is 3 × (120 + 150) + 30 s of backoff = 840 s, inside even the tightest
+        # 15-minute budget that installs apt packages (asserted by
+        # test/unit/tools/boundApt.test.mjs).
         while [ "$attempt" -le 3 ]; do
           if timeout 120 sudo apt-get update -qq "${opts[@]}" \
-            && timeout 300 sudo apt-get install -y -qq "${opts[@]}" $pkgs; then
+            && timeout 150 sudo apt-get install -y -qq "${opts[@]}" $pkgs; then
             echo "apt install succeeded on attempt $attempt: $pkgs"
             exit 0
           fi
