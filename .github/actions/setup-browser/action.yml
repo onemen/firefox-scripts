@@ -12,28 +12,38 @@
 # the filter lists `.github/actions/**` already.
 #
 # `browser` is the downloads.mjs key (firefox, firefox-dev, nightly,
-# librewolf, floorp, zen, waterfox); `cache-key-prefix` distinguishes cache
-# scopes that share a browser (firefox-portable vs firefox-dl).
+# librewolf, floorp, zen, waterfox, firefox-esr-<major>). There is no
+# `cache-key-prefix` input since ADR 0045: a key names the browser it caches
+# (`<name>-<type>-<os>-<hash>-<layout>`), so a leg cannot put the same payload
+# in a namespace of its own — which is how one waterfox installer came to be
+# cached twice (firefox-dl + browser-dl).
+#
+# The key fields: `name` from downloads.mjs's registry (the browser), `type`
+# the payload kind (`dl` installer, `portable` extracted tree), `os` the
+# lowercase runner OS (`snap` for the snap leg), `layout` the spelling of that
+# payload (`plain` for an installer, `dir` for the extracted tree), and `hash`
+# either the download URL's sha256 prefix (the URL embeds the release version,
+# so the key invalidates on a vendor bump) or `v<version>` for a sticky leg.
 #
 # Two cache regimes (ADR 0034, cache-first amendment 2026-09-23):
 #
-# - Hard gates (firefox, firefox-dev, nightly, waterfox): URL-keyed, as
+# - Hard gates (firefox, firefox-dev, nightly, waterfox, esr): URL-keyed, as
 #   before. The URL embeds the release version, so the key invalidates on a
 #   vendor bump and the leg tracks latest at run time.
 #
-# - Fork legs (librewolf, floorp, zen): a STICKY per-browser key namespace
-#   (`<prefix>-<os>-<browser>[-portable]`), decoupled from the URL, and a
+# - Fork legs (librewolf, floorp, zen): a STICKY per-browser key
+#   (`<name>-<type>-<os>-v<version>-<layout>`), decoupled from the URL, and a
 #   CACHE-FIRST install: when a cached installer exists, an unpinned leg
 #   installs it with no download and no vendor resolution at all — the
 #   URL-resolve step is skipped entirely, so a vendor API stall or a new
 #   release can never delay a PR's fork legs. Only a PINNED dispatch (the
 #   watchdog validating a release) downloads, and its green run saves the
-#   installer under `<sticky>-v<installed-version>` — the save key comes from
-#   the version that actually ran, so there is exactly one cache entry per
-#   validated release, never one per run. Unpinned legs restore the newest
-#   entry via the `<sticky>-v` prefix. A cold cache bootstraps (record pin,
-#   else latest) and saves. Saves happen only after a successful install, so
-#   a killed download can never poison the entry.
+#   installer under the version that actually ran, so there is exactly one
+#   cache entry per validated release, never one per run. Unpinned legs
+#   restore the newest entry through the `<name>-<type>-<os>-` prefix, which
+#   is browser-scoped and so cannot cross-restore. A cold cache bootstraps
+#   (record pin, else latest) and saves. Saves happen only after a successful
+#   install, so a killed download can never poison the entry.
 
 name: Set up browser (portable install)
 description: >-
@@ -44,12 +54,6 @@ inputs:
   browser:
     description: downloads.mjs browser key (firefox, firefox-dev, nightly, a fork, …)
     required: true
-  cache-key-prefix:
-    description: >-
-      Cache key prefix (defaults to firefox-dl). Jobs that share a runner with a different install
-      layout use their own prefix (e.g. firefox-portable) so the cached scopes cannot collide.
-    required: false
-    default: firefox-dl
   portable:
     description: >-
       'true' also sets PORTABLE_BROWSER_DIR and caches the extracted dir (used by the legs whose E2E
@@ -66,7 +70,7 @@ inputs:
 outputs:
   cache-key:
     description: The cache key the installer was saved under (URL-hash or sticky version key)
-    value: ${{ steps.fork-save.outputs.save-key || steps.url.outputs.save-key }}
+    value: ${{ steps.fork-save.outputs.installer-key || steps.url.outputs.installer-key }}
   portable-dir:
     description: PORTABLE_BROWSER_DIR when inputs.portable == 'true', else empty
     value: ${{ steps.portable-dir-unix.outputs.dir || steps.portable-dir-windows.outputs.dir }}
@@ -140,26 +144,29 @@ runs:
       shell: bash
       env:
         BROWSER: ${{ inputs.browser }}
-        PREFIX: ${{ inputs.cache-key-prefix }}
-        OS: ${{ runner.os }}
         PORTABLE: ${{ inputs.portable }}
         DISPATCH_PIN: ${{ inputs.pin-version }}
       run: |
+        # The name/os halves of every key this leg uses (ADR 0045). The name
+        # comes from the browser's registry entry, so no leg chooses it; the os
+        # token is the lowercase runner OS (`macOS` → `macos`).
+        NAME=$(node test/e2e/shared/downloads.mjs "$BROWSER" --cache-name)
+        OS=$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
+        echo "name=$NAME" >> "$GITHUB_OUTPUT"
+        echo "os=$OS" >> "$GITHUB_OUTPUT"
+        # A fork leg keys on the installed version instead of the URL: its
+        # restore must work with no vendor call (ADR 0034 cache-first).
         sticky=''
         case ",librewolf,floorp,zen," in
           *",$BROWSER,"*)
-            sticky="$PREFIX-$OS-$BROWSER"
-            if [ "$PORTABLE" = 'true' ]; then sticky="$sticky-portable"; fi
-            # Restore matches any saved version (`<sticky>-v` prefix); the
-            # exact save key is derived AFTER the install from the version
-            # that actually ran (fork-save step) — one entry per release.
-            echo "sticky=$sticky" >> "$GITHUB_OUTPUT"
+            sticky='true'
             if [ -z "$DISPATCH_PIN" ]; then
               echo "BROWSER_PREFER_CACHE=1" >> "$GITHUB_ENV"
             fi
-            echo "fork leg — sticky cache namespace: $sticky-v* (prefer-cache: $([ -z "$DISPATCH_PIN" ] && echo yes || echo no — pinned dispatch downloads))"
+            echo "fork leg — sticky keys $NAME-dl-$OS-v<version> / $NAME-portable-$OS-v<version> (prefer-cache: $([ -z "$DISPATCH_PIN" ] && echo yes || echo no — pinned dispatch downloads))"
             ;;
         esac
+        echo "sticky=$sticky" >> "$GITHUB_OUTPUT"
         echo "BROWSER_DL_DIR=$RUNNER_TEMP/browser-dl" >> "$GITHUB_ENV"
 
     # The ~100 MB official browser download is the bulk of the install step.
@@ -174,37 +181,39 @@ runs:
       shell: bash
       env:
         BROWSER: ${{ inputs.browser }}
-        PREFIX: ${{ inputs.cache-key-prefix }}
-        OS: ${{ runner.os }}
+        NAME: ${{ steps.mode.outputs.name }}
+        OS: ${{ steps.mode.outputs.os }}
         # Empty for every non-fork browser (the pin step is skipped) and for a
         # fork leg whose record is cold.
         BROWSER_PIN_VERSION: ${{ steps.fork-pin.outputs.version || inputs.pin-version }}
       run: |
         URL=$(node test/e2e/shared/downloads.mjs "$BROWSER" --url)
-        KEY=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
-        echo "save-key=$PREFIX-$OS-$KEY" >> "$GITHUB_OUTPUT"
-        echo "restore-key=$PREFIX-$OS-$KEY" >> "$GITHUB_OUTPUT"
+        HASH=$(node --input-type=module -e "import {createHash} from 'node:crypto'; console.log(createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 16))" "$URL")
+        # One release, two payloads: the installer and the tree extracted from
+        # it share the URL hash and differ only in type/layout.
+        echo "installer-key=$NAME-dl-$OS-$HASH-plain" >> "$GITHUB_OUTPUT"
+        echo "dir-key=$NAME-portable-$OS-$HASH-dir" >> "$GITHUB_OUTPUT"
 
     # Restore/save split (not plain actions/cache) so the save happens only
     # after a successful install: a killed job's partial download must never
-    # poison the entry every later leg restores. Hard gates: exact URL-hash
-    # key. Fork legs: exact key `<sticky>-v` never exists (saves carry a
-    # version), so restore always falls through to the newest
-    # `<sticky>-v<version>` entry.
+    # poison the entry every later leg restores. Hard gates: the exact URL-hash
+    # key. Fork legs: the exact `<name>-<type>-<os>-v` key never exists (saves
+    # carry a version), so restore always falls through to the newest entry
+    # under the browser-scoped `<name>-<type>-<os>-` prefix.
     - name: Restore browser installer cache (URL-keyed)
       if: steps.mode.outputs.sticky == ''
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.BROWSER_DL_DIR }}
-        key: ${{ steps.url.outputs.restore-key }}
+        key: ${{ steps.url.outputs.installer-key }}
 
     - name: Restore browser installer cache (fork sticky)
       if: steps.mode.outputs.sticky != ''
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.BROWSER_DL_DIR }}
-        key: ${{ steps.mode.outputs.sticky }}-v
-        restore-keys: ${{ steps.mode.outputs.sticky }}-v
+        key: ${{ steps.mode.outputs.name }}-dl-${{ steps.mode.outputs.os }}-v
+        restore-keys: ${{ steps.mode.outputs.name }}-dl-${{ steps.mode.outputs.os }}-
 
     - name: Set portable browser directory (Linux/macOS)
       id: portable-dir-unix
@@ -227,23 +236,23 @@ runs:
         "PORTABLE_BROWSER_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "dir=$dir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-    # The extracted portable dir gets its own `-dir` namespace so the installer
-    # and dir entries can never restore into each other's paths via prefix
-    # matching (the fork restore keys are prefixes by design).
+    # The extracted dir is its own `type` (`portable`), so the installer and dir
+    # entries can never restore into each other's paths via prefix matching (the
+    # fork restore keys are prefixes by design).
     - name: Restore extracted portable browser cache (URL-keyed)
       if: inputs.portable == 'true' && steps.mode.outputs.sticky == ''
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.PORTABLE_BROWSER_DIR }}
-        key: ${{ steps.url.outputs.restore-key }}-x
+        key: ${{ steps.url.outputs.dir-key }}
 
     - name: Restore extracted portable browser cache (fork sticky)
       if: inputs.portable == 'true' && steps.mode.outputs.sticky != ''
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.PORTABLE_BROWSER_DIR }}
-        key: ${{ steps.mode.outputs.sticky }}-dir-v
-        restore-keys: ${{ steps.mode.outputs.sticky }}-dir-v
+        key: ${{ steps.mode.outputs.name }}-portable-${{ steps.mode.outputs.os }}-v
+        restore-keys: ${{ steps.mode.outputs.name }}-portable-${{ steps.mode.outputs.os }}-
 
     # The browser itself always comes from downloads.mjs's official recipe
     # (apt's Snap wrapper breaks BiDi); it downloads via the official channel
@@ -270,12 +279,13 @@ runs:
       shell: bash
       env:
         BROWSER: ${{ inputs.browser }}
-        STICKY: ${{ steps.mode.outputs.sticky }}
+        NAME: ${{ steps.mode.outputs.name }}
+        OS: ${{ steps.mode.outputs.os }}
       run: |
         VER=$(node test/e2e/shared/downloads.mjs "$BROWSER" --installed-version)
         echo "installed version: $VER"
-        echo "save-key=$STICKY-v$VER" >> "$GITHUB_OUTPUT"
-        echo "dir-save-key=$STICKY-dir-v$VER" >> "$GITHUB_OUTPUT"
+        echo "installer-key=$NAME-dl-$OS-v$VER-plain" >> "$GITHUB_OUTPUT"
+        echo "dir-key=$NAME-portable-$OS-v$VER-dir" >> "$GITHUB_OUTPUT"
 
     # Save on the default branch only. Caches are ref-scoped: a `pull_request`
     # run writes into `refs/pull/<n>/merge`, which nothing but a re-run of that
@@ -290,12 +300,11 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.BROWSER_DL_DIR }}
-        key: ${{ steps.fork-save.outputs.save-key || steps.url.outputs.save-key }}
+        key: ${{ steps.fork-save.outputs.installer-key || steps.url.outputs.installer-key }}
 
     - name: Save extracted portable browser cache
       if: inputs.portable == 'true' && success() && github.ref == 'refs/heads/main'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.PORTABLE_BROWSER_DIR }}
-        key:
-          ${{ steps.fork-save.outputs.dir-save-key || format('{0}-x', steps.url.outputs.save-key) }}
+        key: ${{ steps.fork-save.outputs.dir-key || steps.url.outputs.dir-key }}

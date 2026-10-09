@@ -471,7 +471,6 @@ jobs:
         uses: ./.github/actions/setup-browser
         with:
           browser: firefox
-          cache-key-prefix: firefox-portable
           portable: 'true'
 
       - name: Assert portable layout (Linux/macOS)
@@ -608,7 +607,6 @@ jobs:
         uses: ./.github/actions/setup-browser
         with:
           browser: firefox
-          cache-key-prefix: firefox-portable
           portable: 'true'
 
       - name: Download dev snapshot
@@ -694,11 +692,13 @@ jobs:
       # Probe the store's current stable revision + cache the .snap/assert
       # pair by revision (plain HTTPS via `snap download` — retryable and
       # cacheable, unlike `snap install`, whose revision negotiation is not).
-      # Same key-invalidation pattern as setup-browser's URL-hash keys: a new
-      # store revision changes the key, so the cache can never pin a stale
-      # Firefox. On any store failure the cached pair is the fallback; when
-      # even that is missing the step fails AND exports
-      # SNAP_STORE_UNAVAILABLE=1 for the watchdog-issue step at the end.
+      # Same key-invalidation pattern as setup-browser's keys — a new store
+      # revision changes the hash slot, so the cache can never pin a stale
+      # Firefox — and the same key shape (ADR 0045): the snap payload is
+      # `firefox-dl-snap-<revision>-plain`, its own os token. On any store
+      # failure the cached pair is the fallback; when even that is missing the
+      # step fails AND exports SNAP_STORE_UNAVAILABLE=1 for the watchdog-issue
+      # step at the end.
       - name: Resolve store revision
         id: rev
         if: steps.snapd.outputs.available == 'true'
@@ -741,8 +741,8 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/snap-pkg
-          key: snap-firefox-${{ steps.rev.outputs.revision || 'store-down' }}
-          restore-keys: snap-firefox-
+          key: firefox-dl-snap-${{ steps.rev.outputs.revision || 'store-down' }}-plain
+          restore-keys: firefox-dl-snap-
 
       - name: Download snap (revision-pinned, retryable)
         id: dl
@@ -1115,7 +1115,6 @@ jobs:
         uses: ./.github/actions/setup-browser
         with:
           browser: ${{ matrix.browser }}
-          cache-key-prefix: browser-dl
           # The manual escape (ADR 0021) beats the validated-record pin.
           pin-version: ${{ inputs.version }}
 
@@ -1221,7 +1220,6 @@ jobs:
         uses: ./.github/actions/setup-browser
         with:
           browser: ${{ matrix.browser }}
-          cache-key-prefix: browser-dl
           portable: 'true'
           # Same pin as browser-matrix: the portable leg must install the release
           # its registered twin validated, never a newer one (ADR 0034).
@@ -1335,9 +1333,13 @@ jobs:
       # registered stable Firefox the other legs may have installed.
       - name: Install ${{ matrix.browser }} portably
         uses: ./.github/actions/setup-browser
+        # The ESR cache name comes from the matrix, the one place the watched
+        # major order lives: serving line `esr`, the line it replaced
+        # `esr-prev` (ADR 0045).
+        env:
+          BROWSER_CACHE_NAME: ${{ matrix.cacheName }}
         with:
           browser: ${{ matrix.browser }}
-          cache-key-prefix: esr-portable
           portable: 'true'
 
       - name: Assert portable layout

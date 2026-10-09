@@ -268,6 +268,79 @@ export function downloadsEntry(browser) {
   return DOWNLOADS[browser] ?? esrDownloadsEntry(browser);
 }
 
+// ── Cache identity ──────────────────────────────────────────────────────────
+//
+// Every CI cache key is `<name>-<type>-<os>-<hash>-<layout>` (ADR 0045): the
+// name is the browser the entry caches, so no key hides four browsers in a
+// shared `firefox-dl-<os>` namespace and no leg can choose a namespace of its
+// own. That is why the name lives here, beside the recipes: it is a property of
+// the browser, not of the job that happens to install it. The deleted
+// `cache-key-prefix` input was the opposite — a leg-level namespace — which is
+// how one waterfox installer ended up cached twice (firefox-dl + browser-dl).
+
+/**
+ * Cache names for the registry keys. `firefox-snap` shares `firefox` — the
+ * `snap` os token already separates the two payloads.
+ */
+export const CACHE_NAMES = {
+  'firefox': 'firefox',
+  'firefox-snap': 'firefox',
+  'firefox-dev': 'firefox-dev',
+  'nightly': 'nightly',
+  'waterfox': 'waterfox',
+  'librewolf': 'librewolf',
+  'floorp': 'floorp',
+  'zen': 'zen',
+};
+
+/**
+ * The cache name for a browser key.
+ *
+ * ESR needs the position of its major in the watched window — the serving line
+ * is `esr`, the line it replaced is `esr-prev` — and that order lives in the
+ * watchdog baseline, not in any static list here. So the ESR matrix supplies
+ * the name through `BROWSER_CACHE_NAME`; with no override the generic serving
+ * key (`firefox-esr`, the cold-baseline fallback) is `esr` by definition, and a
+ * concrete major falls back to `esr-<major>` — unique and stable, just not the
+ * canonical name.
+ *
+ * @param {string} browser a downloads.mjs browser key
+ * @param {string} [override] the matrix-supplied name (empty = derive)
+ * @returns {string}
+ */
+export function cacheName(browser, override = process.env.BROWSER_CACHE_NAME) {
+  if (override) return override;
+  if (browser === 'firefox-esr') return 'esr';
+  const esr = /^firefox-esr-(\d+)$/.exec(browser);
+  if (esr) return `esr-${esr[1]}`;
+  const name = CACHE_NAMES[browser];
+  if (!name) throw new Error(`no cache name for browser '${browser}'`);
+  return name;
+}
+
+/**
+ * The one cache-key shape: `<name>-<type>-<os>-<hash>-<layout>`.
+ *
+ * `type` is the payload kind (`dl` installer, `portable` extracted tree) and
+ * `layout` its spelling (`plain` for an installer, `dir` for the extracted
+ * tree); `hash` is the URL's sha256 prefix for a version-embedded release or
+ * `v<version>` for a sticky fork leg, whose key must be derivable without a
+ * network call (ADR 0034's cache-first amendment).
+ *
+ * @param {{
+ *   browser: string;
+ *   type: 'dl' | 'portable' | string;
+ *   os: string;
+ *   hash: string;
+ *   layout: 'plain' | 'dir' | string;
+ *   name?: string;
+ * }} parts
+ * @returns {string}
+ */
+export function cacheKey({browser, type, os, hash, layout, name = cacheName(browser)}) {
+  return [name, type, String(os).toLowerCase(), hash, layout].join('-');
+}
+
 /**
  * Resolve a browser's binary after an installer run, mirroring the
  * candidate-dir search of discoverFirefoxBinary (real install dirs, never PATH
@@ -1603,14 +1676,15 @@ async function main() {
   const args = process.argv.slice(2);
   const browser = args[0];
   if (!browser || args.includes('--help')) {
-    console.log(`Usage: node test/e2e/shared/downloads.mjs <browser> [--os win|mac|linux] [--url|--installed-version]
+    console.log(`Usage: node test/e2e/shared/downloads.mjs <browser> [--os win|mac|linux] [--url|--installed-version|--cache-name]
 
 Installs <browser> for the current OS (or --os) using its official download
 recipe, then prints the resolved binary path and, in GitHub Actions, sets
 FIREFOX_BINARY via $GITHUB_ENV. Set PORTABLE_BROWSER_DIR to install Firefox
 Release into a custom directory instead of a system location. With --url,
 prints the download URL instead (used to key the CI download cache). With
---installed-version, prints the version of the already-installed binary
+--cache-name it prints the name half of this browser's cache keys (ADR 0045).
+With --installed-version, it prints the version of the already-installed binary
 (FIREFOX_BINARY or the install dirs) — ground truth for what an E2E leg
 validated, since the "latest" redirect URLs embed no version.`);
     process.exit(browser ? 0 : 1);
@@ -1626,6 +1700,13 @@ validated, since the "latest" redirect URLs embed no version.`);
     // Print the exact download URL for this platform so the workflow can key
     // the CI download cache on it (the URL embeds the release version).
     console.log(await resolveDownloadUrl(browser, normalized));
+    return;
+  }
+
+  if (args.includes('--cache-name')) {
+    // Print the name half of this browser's cache keys so the composite names
+    // what it caches instead of choosing a namespace (ADR 0045).
+    console.log(cacheName(browser));
     return;
   }
 

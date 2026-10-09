@@ -21,6 +21,7 @@ const resolver = await import(resolverUrl);
 const {
   updateEsrState,
   esrLedgerNames,
+  esrCacheName,
   esrBrowserKey,
   esrMajorOf,
   buildEsrMatrix,
@@ -118,9 +119,27 @@ test('esrBrowserKey / esrMajorOf round-trip', () => {
 });
 
 test('buildEsrMatrix: concrete majors from state, generic fallback when cold', () => {
-  assert.equal(buildEsrMatrix({majors: ['140', '153']}), '["firefox-esr-140","firefox-esr-153"]');
-  assert.equal(buildEsrMatrix(null), '["firefox-esr"]');
-  assert.equal(buildEsrMatrix({}), '["firefox-esr"]');
+  // Each leg carries the cache name its keys use (ADR 0045): the serving line is
+  // `esr`, the line it replaced `esr-prev`, resolved here because this module
+  // owns the watched-major order.
+  assert.equal(
+    buildEsrMatrix({majors: ['140', '153']}),
+    '[{"browser":"firefox-esr-140","cacheName":"esr-prev"},{"browser":"firefox-esr-153","cacheName":"esr"}]'
+  );
+  assert.equal(buildEsrMatrix(null), '[{"browser":"firefox-esr","cacheName":"esr"}]');
+  assert.equal(buildEsrMatrix({}), '[{"browser":"firefox-esr","cacheName":"esr"}]');
+});
+
+test('esrCacheName: serving line and its predecessor, unique beyond them', () => {
+  const majors = ['140', '153'];
+  assert.equal(esrCacheName(majors, '153'), 'esr');
+  assert.equal(esrCacheName(majors, '140'), 'esr-prev');
+  // A third watched line must not collide with `esr-prev`.
+  assert.equal(esrCacheName(['128', '140', '153'], '128'), 'esr-prev-128');
+  // Outside the window (dropped, or no window to hand) the major names itself —
+  // the same fallback downloads.mjs's cacheName() uses.
+  assert.equal(esrCacheName(majors, '128'), 'esr-128');
+  assert.equal(esrCacheName(null, '153'), 'esr-153');
 });
 
 // ── planDispatches: ESR + nightly rules ──────────────────────────────────────

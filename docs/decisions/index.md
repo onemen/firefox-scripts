@@ -138,6 +138,9 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0044](./0044-cache-writes-default-branch-only.md) — Cache saves run on the default branch only;
   PR refs restore main's entries and write none (a PR-scoped entry is unreachable from every other
   ref) (#462)
+- [0045](./0045-cache-key-names-the-browser.md) — One cache key shape,
+  `<name>-<type>-<os>-<hash>-<layout>`: the name is the browser, so no namespace is shared between
+  browsers and keep-one is per browser payload (amends [0034]/[0037], #462)
 
 ## Historical
 

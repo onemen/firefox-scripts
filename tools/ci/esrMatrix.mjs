@@ -3,8 +3,10 @@
 // e2e.yml `esr-matrix` job.
 //
 // Reads the watchdog baseline (restored from the url-watchdog cache) and
-// prints buildEsrMatrix(esr) — one leg per watched ESR major
-// (`["firefox-esr-140","firefox-esr-153"]`). A missing/unreadable baseline
+// prints buildEsrMatrix(esr) — one leg per watched ESR major, each carrying the
+// cache name its keys use (ADR 0045):
+// `[{"browser":"firefox-esr-140","cacheName":"esr-prev"},{"browser":"firefox-esr-153","cacheName":"esr"}]`.
+// A missing/unreadable baseline
 // falls back to the generic serving-ESR key (`["firefox-esr"]`), which
 // resolves its version at run time from Mozilla's product-details keys:
 // degradation, never a hardcoded version. The JSON is the ONLY stdout output

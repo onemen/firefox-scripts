@@ -4,6 +4,9 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-30
+- **Amended:** [0045](./0045-cache-key-names-the-browser.md) — the revision-pinned key is now
+  `firefox-dl-snap-<rev>-plain` (`os=snap`); the cross-revision `restore-keys` seed below is
+  unchanged
 - **Amends:** [0025](./0025-waterfox-hard-gate.md) — the E2E matrix's snap leg gets a cross-revision
   cache seed and a single install track (additive; recorded per the #291 investigation, 2026-09-30)
 

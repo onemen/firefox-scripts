@@ -2,6 +2,9 @@
 
 - **Status:** accepted
 - **Amended:** 2026-09-23 — cache-first sticky installer cache for the fork legs
+- **Amended:** [0045](./0045-cache-key-names-the-browser.md) — the sticky key is now
+  `<name>-<type>-<os>-v<version>-<layout>` (`zen-dl-windows-v1.23.1b-plain`, its dir twin
+  `zen-portable-windows-v1.23.1b-dir`); the cache-first pin semantics below are unchanged
 - **Supersedes:** [0023](./0023-e2e-browser-version-pinning.md) (latest-at-run-time default for
   every browser; its pin semantics, non-pinnable Firefox rule and per-run ground truth are carried
   forward below)
