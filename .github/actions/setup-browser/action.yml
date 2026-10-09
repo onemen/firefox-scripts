@@ -277,15 +277,23 @@ runs:
         echo "save-key=$STICKY-v$VER" >> "$GITHUB_OUTPUT"
         echo "dir-save-key=$STICKY-dir-v$VER" >> "$GITHUB_OUTPUT"
 
+    # Save on the default branch only. Caches are ref-scoped: a `pull_request`
+    # run writes into `refs/pull/<n>/merge`, which nothing but a re-run of that
+    # PR can restore — not main, not a sibling PR (ADR 0044). Measured
+    # 2026-10-09: these two steps were 34 entries / 4.27 GB of the repo's 58
+    # entries / 6.57 GB, every byte unreachable from every other ref and
+    # multiplied again by each open PR. PR legs still RESTORE main's entries
+    # (the ref search falls through to the default branch), so the only new
+    # cost is a cold leg when a PR runs a release main has never cached.
     - name: Save browser installer cache
-      if: success()
+      if: success() && github.ref == 'refs/heads/main'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.BROWSER_DL_DIR }}
         key: ${{ steps.fork-save.outputs.save-key || steps.url.outputs.save-key }}
 
     - name: Save extracted portable browser cache
-      if: inputs.portable == 'true' && success()
+      if: inputs.portable == 'true' && success() && github.ref == 'refs/heads/main'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.PORTABLE_BROWSER_DIR }}

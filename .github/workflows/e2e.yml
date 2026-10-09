@@ -728,9 +728,17 @@ jobs:
       # revision when the store is down and the exact key is cold (ADR 0037) —
       # an older Firefox still validates the snap GreD mapping (#55's purpose)
       # and the updater/installer flows on this advisory leg.
-      - name: Cache snap download
+      #
+      # Restore/save split (ADR 0044), like the browser payloads: the combined
+      # `actions/cache@` this used to be also writes an implicit post-job save,
+      # and an implicit save knows nothing about refs — on a `pull_request` run
+      # it mints a ~236 MB entry on `refs/pull/<n>/merge` that only a re-run of
+      # that PR can ever restore (measured 2026-10-09: PR #489's own merge ref).
+      # The restore stays unguarded, because the PR-time warm path IS the
+      # default-branch fallback; the save below is main-only.
+      - name: Restore the cached snap download
         if: steps.snapd.outputs.available == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/snap-pkg
           key: snap-firefox-${{ steps.rev.outputs.revision || 'store-down' }}
@@ -813,6 +821,23 @@ jobs:
           fi
           echo "SNAP_STORE_UNAVAILABLE=1" >> "$GITHUB_ENV"
           exit 1
+
+      # The save belongs AFTER the download: the payload is `~/snap-pkg` (the
+      # revision-pinned .snap + assertion pair), so a save placed before the
+      # download would store an empty directory, and the download step is what
+      # guarantees the pair IS the resolved revision. `success()` alone does NOT
+      # mean the pair is that revision: the store-down path ends `exit 0` with a
+      # seeded older pair, and `steps.rev.outputs.revision` is empty there, so the
+      # key would be the CONSTANT `-store-down-` one — an entry GitHub can never
+      # supersede, holding the first older pair forever, which the prefix restore
+      # can hand back as the newest seed during a long outage. Guard on the
+      # revision, not just on `success()`; default branch only (ADR 0044).
+      - name: Save the snap download
+        if: success() && github.ref == 'refs/heads/main' && steps.rev.outputs.revision != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/snap-pkg
+          key: snap-firefox-${{ steps.rev.outputs.revision || 'store-down' }}
 
       # Offline install from the pinned pair — no store negotiation, no snapd
       # self-refresh race. `snap ack` + `snap install` elevate themselves via

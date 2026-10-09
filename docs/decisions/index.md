@@ -135,6 +135,9 @@ Open these before proposing a new primitive, surface, or storage home.
   #444)
 - [0043](./0043-e2e-wallclock-decisions.md) — E2E wall-clock items 4–6 (updater filter split, macOS
   advisory, snapshot cache) measured and deferred with the failure each would reintroduce (#444)
+- [0044](./0044-cache-writes-default-branch-only.md) — Cache saves run on the default branch only;
+  PR refs restore main's entries and write none (a PR-scoped entry is unreachable from every other
+  ref) (#462)
 
 ## Historical
 
