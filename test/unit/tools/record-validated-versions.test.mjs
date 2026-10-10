@@ -29,9 +29,9 @@ const watchdogUrl = pathToFileURL(
 const {VALIDATED_BROWSERS} = await import(watchdogUrl);
 
 /** Write one leg artifact (the e2e-version-<browser>-<os>.json shape). */
-function writeLeg(dir, browser, os, version) {
+function writeLeg(dir, browser, os, version, coldDownloadMs = null) {
   const file = path.join(dir, `e2e-version-${browser}-${os}.json`);
-  fs.writeFileSync(file, JSON.stringify({browser, os, version}));
+  fs.writeFileSync(file, JSON.stringify({browser, os, version, coldDownloadMs}));
 }
 
 /** A temp dir containing a full agreeing leg set for every validated browser. */
@@ -253,6 +253,65 @@ test('collectLegVersions: agreeing legs across all OSes yield the record', () =>
       'firefox-dev': {version: '156.0b3'},
       'waterfox': {version: '6.7.2'},
     });
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectLegVersions: cold legs keep the max observation, cache-reuse legs contribute none', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'legs-cold-'));
+  try {
+    // Some legs downloaded cold, some hit the cache: the slowest cold
+    // transfer is the number recorded (it bounds the others).
+    writeLeg(tmp, 'firefox', 'ubuntu-24.04', '155.0.1', 84_500);
+    writeLeg(tmp, 'firefox', 'macos-latest', '155.0.1', null);
+    writeLeg(tmp, 'firefox', 'windows-latest', '155.0.1', 92_000);
+    writeLeg(tmp, 'firefox-dev', 'ubuntu-24.04', '156.0b3', null);
+    writeLeg(tmp, 'firefox-dev', 'macos-latest', '156.0b3', null);
+    writeLeg(tmp, 'firefox-dev', 'windows-latest', '156.0b3', null);
+    writeLeg(tmp, 'waterfox', 'windows-latest', '6.7.2');
+    const out = collectLegVersions(tmp);
+    assert.equal(out.firefox.coldDownloadMs, 92_000); // max of the cold legs
+    assert.equal(out['firefox-dev'].coldDownloadMs, undefined); // no observation at all
+    assert.equal(out.waterfox.coldDownloadMs, undefined);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectLegVersions: a cache-hit day carries the previous record cold number forward', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'legs-carry-'));
+  try {
+    // Every leg reused the cache (all null): writing a fresh record from
+    // this run alone would erase the recorded cold time and the status
+    // table would fall back to the stale watchdog baseline. The previous
+    // record number must survive until a fresher cold observation lands.
+    fullLegSet(tmp);
+    for (const f of fs.readdirSync(tmp)) {
+      const leg = JSON.parse(fs.readFileSync(path.join(tmp, f), 'utf-8'));
+      fs.writeFileSync(path.join(tmp, f), JSON.stringify({...leg, coldDownloadMs: null}));
+    }
+    const previous = {browsers: {firefox: {coldDownloadMs: 91_000}}};
+    const out = collectLegVersions(tmp, previous);
+    assert.equal(out.firefox.coldDownloadMs, 91_000); // carried forward
+    // firefox-dev/waterfox had no cold number in the previous record either —
+    // carry-forward invents nothing.
+    assert.equal(out['firefox-dev'].coldDownloadMs, undefined);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectLegVersions: a fresh cold observation replaces the carried number', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'legs-fresh-'));
+  try {
+    fullLegSet(tmp);
+    writeLeg(tmp, 'firefox', 'ubuntu-24.04', '155.0.1', 77_000);
+    writeLeg(tmp, 'firefox', 'macos-latest', '155.0.1', null);
+    writeLeg(tmp, 'firefox', 'windows-latest', '155.0.1', null);
+    const previous = {browsers: {firefox: {coldDownloadMs: 91_000}}};
+    const out = collectLegVersions(tmp, previous);
+    assert.equal(out.firefox.coldDownloadMs, 77_000); // this run observation wins
   } finally {
     fs.rmSync(tmp, {recursive: true, force: true});
   }

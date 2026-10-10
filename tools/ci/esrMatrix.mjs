@@ -11,27 +11,54 @@
 // looks itself up in. The two are separate outputs because the matrix dimension
 // is the browser string: an object element there fails to dispatch.
 //
-// A missing/unreadable baseline falls back to the generic serving-ESR key
-// (`["firefox-esr"]`), which resolves its version at run time from Mozilla's
-// product-details keys: degradation, never a hardcoded version. The JSON is the
-// ONLY stdout output (warnings go to stderr) so the workflow can assign it
-// straight to the matrix / output expression.
+// The watched window resolves from THREE homes, best → fallback:
+// 1. the baseline file (the nightly's own home, restored by the workflow);
+// 2. the `[url-watchdog] status` meta issue's `watchdog:data` marker (#136) —
+//    the same nightly that rewrites the baseline also renders the block into
+//    the issue body. The issue lives in GitHub's DB, not in the evictable
+//    cache, so a wiped cache no longer degrades the window to the generic
+//    serving-ESR leg. Requires the ESR_WATCHDOG_MARKERS env (comma separated,
+//    optionally `owner/repo`-scoped) listing the marker values;
+// 3. the generic serving-ESR key (`["firefox-esr"]`), which resolves its
+//    version at run time from Mozilla's product-details keys: degradation,
+//    never a hardcoded version.
+//
+// The JSON is the ONLY stdout output (warnings to stderr) so the workflow can
+// assign it straight to the matrix / output expression.
 
 import fs from 'node:fs';
-import {buildEsrCacheNames, buildEsrMatrix} from './watchdog-report.mjs';
+import {buildEsrCacheNames, buildEsrMatrix, parseEsrMarker} from './watchdog-report.mjs';
 
 const args = process.argv.slice(2);
 const namesOnly = args.includes('--names');
 const baselineFile = args.find(arg => !arg.startsWith('--')) || '.watchdog/baseline.json';
+
+// Consume ESR_WATCHDOG_MARKERS — the WHOLE [url-watchdog] status issue body,
+// one env value (the workflow fetches the single meta issue verbatim). Not a
+// comma-separated list: splitting a body on commas shreds the marker JSON
+// (comma-keyed) and nothing parses.
+const markerBody = process.env.ESR_WATCHDOG_MARKERS || '';
 
 let esrState = null;
 try {
   const baseline = JSON.parse(fs.readFileSync(baselineFile, 'utf8'));
   esrState = baseline.esr ?? null;
 } catch {
-  console.error(
-    `no readable watchdog baseline at ${baselineFile} — using the serving-ESR fallback`
-  );
+  console.error(`no readable watchdog baseline at ${baselineFile} — trying the meta-issue marker`);
+}
+
+if (!esrState && markerBody) {
+  const parsed = parseEsrMarker(markerBody);
+  if (parsed) {
+    esrState = parsed;
+    console.error(
+      `watchdog baseline absent — ESR window restored from the [url-watchdog] status issue marker`
+    );
+  } else {
+    console.error('no parseable watchdog:data marker in the issue body — generic fallback');
+  }
+} else if (!esrState) {
+  console.error('ESR_WATCHDOG_MARKERS not set — generic serving-ESR fallback');
 }
 
 process.stdout.write(namesOnly ? buildEsrCacheNames(esrState) : buildEsrMatrix(esrState));

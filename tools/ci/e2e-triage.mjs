@@ -27,6 +27,17 @@
  */
 
 import {createHash} from 'node:crypto';
+import path from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+
+// The per-browser discovery contract (#136 rework): the watchdog's table links
+// `[e2e-triage] failed updater legs · <browser>` — import the title-maker from
+// the reporting layer so both sides cannot drift (script runs from its own
+// repo root; resolve the sibling module explicitly).
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const {triageIssueTitle, VALIDATED_BROWSERS} = await import(
+  pathToFileURL(path.join(HERE, 'watchdog-report.mjs')).href
+);
 
 /** The job that runs this script — never a failed "leg" of its own report. */
 export const TRIAGE_JOB_NAME = 'triage nightly revalidation';
@@ -121,6 +132,18 @@ export function isTriageIssueTitle(title) {
 }
 
 /**
+ * The per-browser issues' title shape (`[e2e-triage] failed updater legs ·
+ * <browser>` — triageIssueTitle in watchdog-report.mjs): same label, same
+ * close-on-green sweep, distinct prefix so the two shapes stay apart.
+ *
+ * @param {string} title
+ * @returns {boolean}
+ */
+export function isPerBrowserTriageTitle(title) {
+  return typeof title === 'string' && title.startsWith(triageIssueTitle(''));
+}
+
+/**
  * One GitHub REST call.
  *
  * @param {string} token
@@ -170,7 +193,12 @@ async function listRunJobs(token, repo, runId) {
 }
 
 /**
- * The open triage issues, oldest first.
+ * The open triage issues, oldest first: BOTH title shapes — the aggregate `[e2e
+ * nightly] …` issues and the per-browser `[e2e-triage] failed updater legs ·
+ * <browser>` ones the watchdog's status table links to. The dedup check and the
+ * green-night close loop both iterate this list, and a per-browser title that
+ * never matched caused a duplicate issue per failing night that no green night
+ * ever closed.
  *
  * @param {string} token
  * @param {string} repo
@@ -181,7 +209,9 @@ async function openTriageIssues(token, repo) {
     token,
     `/repos/${repo}/issues?state=open&labels=${TRIAGE_LABEL}&per_page=100`
   );
-  return open.filter(issue => isTriageIssueTitle(issue.title)).sort((a, b) => a.number - b.number);
+  return open
+    .filter(issue => isTriageIssueTitle(issue.title) || isPerBrowserTriageTitle(issue.title))
+    .sort((a, b) => a.number - b.number);
 }
 
 /**
@@ -257,22 +287,136 @@ async function main() {
     const last = comments[0];
     if (last && Date.now() - Date.parse(last.created_at) < 24 * 60 * 60 * 1000) {
       console.log(`  open issue already updated <24h ago: ${title}`);
-      return;
+    } else {
+      console.log(`  comment on #${existing.number}: ${title}`);
+      if (!dryRun) {
+        await ghApi(token, `/repos/${repo}/issues/${existing.number}/comments`, {
+          method: 'POST',
+          body: {body: triageBody(legs, runUrl)},
+        });
+      }
     }
-    console.log(`  comment on #${existing.number}: ${title}`);
-    if (dryRun) return;
-    await ghApi(token, `/repos/${repo}/issues/${existing.number}/comments`, {
-      method: 'POST',
-      body: {body: triageBody(legs, runUrl)},
-    });
-    return;
+  } else {
+    console.log(`  open issue: ${title}`);
+    if (!dryRun) {
+      await ghApi(token, `/repos/${repo}/issues`, {
+        method: 'POST',
+        body: {title, body: triageBody(legs, runUrl), labels: [TRIAGE_LABEL]},
+      });
+    }
   }
-  console.log(`  open issue: ${title}`);
-  if (dryRun) return;
-  await ghApi(token, `/repos/${repo}/issues`, {
-    method: 'POST',
-    body: {title, body: triageBody(legs, runUrl), labels: [TRIAGE_LABEL]},
-  });
+
+  // Per-browser issues (#136 rework): one issue per failed GATE browser with
+  // the exact title the URL watchdog discovers while rendering #136's status
+  // table (triageIssueTitle in watchdog-report.mjs) — the failed E2E-validated
+  // cell links here. Advisory-only legs (a fork failure without any gate
+  // browser failing) open none: nothing in the table would link them.
+  const browsers = [
+    ...new Set(
+      legs
+        .filter(leg => /updater|installer|portable-firefox|core-lifecycle/.test(leg.name))
+        .map(browserOfLeg)
+        .filter(Boolean)
+    ),
+  ];
+  for (const browser of browsers) {
+    const perTitle = triageIssueTitle(browser);
+    if (open.some(issue => issue.title === perTitle)) continue;
+    console.log(`  open per-browser issue: ${perTitle}`);
+    if (dryRun) continue;
+    await ghApi(token, `/repos/${repo}/issues`, {
+      method: 'POST',
+      body: {
+        title: perTitle,
+        body:
+          `Failed nightly-revalidation updater legs for ${browser}:\n\n` +
+          legs
+            .filter(leg => browserOfLeg(leg) === browser)
+            .map(leg => `- ${leg.name} (${leg.conclusion}) — ${leg.html_url || 'no link'}`)
+            .join('\n') +
+          `\n\nRun: ${runUrl}\n\n` +
+          'The [url-watchdog] status table links here while this validation is owed; ' +
+          'a green revalidation rewrites the validated-versions record and the table ' +
+          'shows the ✅ run link again.',
+        labels: [TRIAGE_LABEL],
+      },
+    });
+  }
+
+  // Recovery closes (#136 rework): on a night whose failures have ANOTHER
+  // browser, the green close loop (legs.length === 0 above) never runs — a
+  // per-browser issue for a browser that PASSED would stay open forever,
+  // keep its stale ❌ triage link in the status table, and suppress
+  // re-opening when it fails again. Close the ones this run did not fail
+  // — and only when SOME gate leg actually validated this run: a run whose
+  // every leg was cancelled/never-ran (FAILED_CONCLUSIONS is failure-shaped
+  // only) validated nothing, and closing "recovered" on it would certify a
+  // passing run behind the ❌ link that does not exist).
+  const anySuccess = jobs.some(job => job.conclusion === 'success');
+  const recovered = anySuccess ? recoveredPerBrowserIssues(open, browsers) : [];
+  for (const issue of recovered) {
+    console.log(`  close recovered per-browser issue: ${issue.title}`);
+    if (dryRun) continue;
+    await ghApi(token, `/repos/${repo}/issues/${issue.number}/comments`, {
+      method: 'POST',
+      body: {
+        body:
+          `This browser is not among this run's failed gate browsers and the run ` +
+          `validated (a gate leg concluded success) — the recovery was partial ` +
+          `(other legs still failed; see the aggregate issue). ` +
+          `Nightly revalidation run: ${runUrl} — closing.`,
+      },
+    });
+    await ghApi(token, `/repos/${repo}/issues/${issue.number}`, {
+      method: 'PATCH',
+      body: {state: 'closed', state_reason: 'completed'},
+    });
+  }
+}
+
+/**
+ * The ledger browser a failed gate leg belongs to: `updater E2E · firefox ·
+ * macos-latest` → `firefox`. Null for non-browser legs (snapshot, helper).
+ */
+/**
+ * The open PER-BROWSER triage issues whose browser recovered: not among this
+ * run's failed browsers AND the run validates something. A night with OTHER
+ * failures never runs the green close loop (it needs legs.length === 0), so
+ * this is the only recovery signal such a night gets — the stale issue would
+ * keep the status table rendering its ❌ triage link for a browser whose record
+ * now covers a passing run, and would suppress re-opening on a repeat failure.
+ * A run that validated nothing (all legs cancelled or never ran — see
+ * FAILED_CONCLUSIONS) passes no failedBrowsers but closes nothing: close
+ * filtered by that condition in the caller (main()), not here.
+ *
+ * @param {{number: number; title: string}[]} open open triage issues
+ * @param {string[]} failedBrowsers this run's failed gate browsers
+ * @returns {{number: number; title: string; browser: string}[]}
+ */
+export function recoveredPerBrowserIssues(open, failedBrowsers) {
+  const recovered = [];
+  for (const issue of open) {
+    if (!isPerBrowserTriageTitle(issue.title)) continue;
+    const browser = issue.title.slice(triageIssueTitle('').length);
+    if (failedBrowsers.includes(browser)) continue;
+    recovered.push({...issue, browser});
+  }
+  return recovered;
+}
+
+export function browserOfLeg(leg) {
+  // Leg names read 'updater E2E · firefox-dev · macos-latest' — the browser is
+  // the exact '·'-separated SEGMENT, not a substring: a substring probe (and
+  // VALIDATED_BROWSERS' firefox-first order) attributed firefox-dev failures
+  // to firefox. Plain string splitting, no RegExp (the name is GitHub-served
+  // data, and the reports gate flags non-literal RegExp constructors).
+  const parts = String(leg?.name ?? '')
+    .split('·')
+    .map(segment => segment.trim());
+  for (const browser of VALIDATED_BROWSERS) {
+    if (parts.includes(browser)) return browser;
+  }
+  return null;
 }
 
 if (process.argv[1] && process.argv[1].endsWith('e2e-triage.mjs')) {

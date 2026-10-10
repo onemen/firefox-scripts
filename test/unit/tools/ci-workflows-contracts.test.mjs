@@ -1102,6 +1102,131 @@ test('tokenVarViolations: a publish workflow without GITHUB_TOKEN_VAR is a viola
   assert.match(violations[0], /GITHUB_TOKEN_VAR/);
 });
 
+// ── the no-baseline verdict chain (#462 / #136 rework) ─────────────────────
+// The chain is four files deep, and each hand could snap its own link:
+// the drift-gate action must SURFACE the tool's `no-baseline:` marker as its
+// own verdict, drift-check.yml must DISPATCH the watchdog for both verdicts
+// that share the same remedy, and the two in-run consumers must treat a
+// non-green verdict as failing the gate — never fall through to green.
+
+/** The drift-gate composite action file, comments stripped. */
+function readDriftGate() {
+  return stripComments(
+    fs
+      .readFileSync(path.join(REPO_ROOT, '.github/actions/drift-gate/action.yml'), 'utf8')
+      .replace(/\r\n/g, '\n')
+  );
+}
+
+/**
+ * The verdict chain across drift-gate + drift-check.yml + the in-run consumers.
+ * `gate`/`probe` are injectable for the canary test — mutating a fixture copy
+ * beats writing the real action.yml from a parallel test runner (node --test
+ * runs files in processes, so a write-restore window is a race another file can
+ * read, and a hard kill leaves the tree corrupted).
+ *
+ * @param {string} file file containing the coupling, for messages
+ * @param {{gate?: string; probe?: string}} [texts] defaults read the real files
+ * @returns {string[]}
+ */
+export function noBaselineChainViolations(
+  file,
+  {gate = readDriftGate(), probe = readWorkflow('drift-check.yml')} = {}
+) {
+  const violations = [];
+
+  // 1. The gate surfaces the tool's marker as a distinct output + verdict:
+  //    the marker is echoed into a no-baseline output, and the verdict step
+  //    reads it FIRST (a drift/unknown read would lose the wipe condition).
+  if (!/no-baseline=/m.test(gate) || !/verdict=no-baseline/.test(gate)) {
+    violations.push(
+      `${file}: drift-gate does not map the no-baseline marker to verdict=no-baseline`
+    );
+  }
+  if (!/NO_BASELINE: \$\{\{ steps.drift.outputs.no-baseline \}\}/.test(gate)) {
+    violations.push(`${file}: the verdict step does not read steps.drift.outputs.no-baseline`);
+  }
+  // The wipe verdict must win over the drift branch: inside the verdict
+  // SCRIPT, the `$NO_BASELINE = 'true'` branch test must sit before the
+  // `$DRIFT_STATUS != '0'` one. (An earlier version indexed the bare tokens
+  // NO_BASELINE/DRIFT_STATUS — that compared the env: block keys, and the
+  // folded guard made the inner push unreachable.)
+  const nbIdx = gate.indexOf(`[ "$NO_BASELINE" = 'true' ]`);
+  const driftBranchIdx = gate.indexOf(`[ "$DRIFT_STATUS" != '0' ]`);
+  if (nbIdx === -1 || driftBranchIdx === -1 || nbIdx > driftBranchIdx) {
+    violations.push(
+      `${file}: verdict=no-baseline is checked after the drift branch — a wipe could read as drift and lose its auto-dispatch remedy`
+    );
+  }
+
+  // 2. drift-check.yml dispatches the watchdog for BOTH baseline-side verdicts.
+  const probeJobs = workflowJobs(probe);
+  const dispatch = probeJobs
+    .flatMap(job => jobSteps(job.body))
+    .find(stepText => /workflow run url-watchdog/.test(stripComments(stepText)));
+  if (!dispatch) {
+    violations.push(`${file}: drift-check.yml has no url-watchdog dispatch step`);
+  } else {
+    // The condition can be line-folded YAML — match across the raw step text
+    // instead of the single stepKeyValue value.
+    const cond = stripComments(dispatch).replace(/\s+/g, ' ');
+    if (!cond.includes("'drift'") || !cond.includes("'no-baseline'")) {
+      violations.push(
+        `${file}: the drift-check dispatch step's if is not pinned to BOTH drift and no-baseline (got: ${cond})`
+      );
+    }
+    // A `--ref main` dispatch is required so the watchdog re-baselines the
+    // default branch's cache entry the publish gate will read.
+    if ((stepRun(dispatch) || '').includes('url-watchdog')) {
+      const run = stepRun(dispatch);
+      if (!run.includes('--ref main') && !run.includes("--ref 'main'")) {
+        violations.push(
+          `${file}: the watchdog dispatch must target --ref main (publish-gate caches live on the default branch)`
+        );
+      }
+      if (!run.includes('gh workflow run')) {
+        violations.push(
+          `${file}: the dispatch step must call gh workflow run (say the tool's --dispatch shape)`
+        );
+      }
+    }
+  }
+
+  // 3. The in-run consumers (pages.yml, build-and-upload.yml) keep failing
+  //    closed: their verdict handlers may hand NO branch a green path except
+  //    the literal 'green' — a no-baseline verdict falling into an else that
+  //    exits 0 is the regression (the old fail-open hole).
+  for (const consumer of ['pages.yml', 'build-and-upload.yml']) {
+    const jobs = workflowJobs(readWorkflow(consumer));
+    const actor = jobs
+      .flatMap(job => jobSteps(job.body))
+      .find(stepText => (stepName(stepText) || '').includes('Act on the gate verdict'));
+    if (!actor) {
+      violations.push(
+        `${consumer}: no 'Act on the gate verdict' step — the drift gate's verdict goes unread`
+      );
+      continue;
+    }
+    const run = stepRun(actor);
+    // Pin the shape: the ONLY exit-0 path in that script is the literal
+    // 'green' comparison (or a dev-mode warn). A no-baseline line that falls
+    // into a green exit is the regression the Publish pre-flight hole proved.
+    const greenOnly = /if \[ "\$VERDICT" = 'green' \]/.test(run);
+    if (!greenOnly) {
+      violations.push(
+        `${consumer}: the gate-actor's only green path must be the literal 'green' comparison`
+      );
+    }
+    if (!run.trimEnd().endsWith('exit 1')) {
+      violations.push(
+        `${consumer}: the gate-actor script must end on exit 1 (fail-closed on every non-green verdict)`
+      );
+    }
+  }
+
+  return violations;
+}
+
 test('staged-set-parity: a platform staged but not published is a violation', () => {
   const jobs = platforms => [
     {
@@ -1123,10 +1248,34 @@ test('staged-set-parity: a platform staged but not published is a violation', ()
     },
   ];
   assert.deepEqual(stagedSetViolations(jobs(['win', 'linux', 'mac']), 'build-and-upload.yml'), []);
-
   const extra = jobs(['win', 'linux', 'mac']);
   extra[1].body = extra[1].body.replace('--platform=linux ', '');
   const violations = stagedSetViolations(extra, 'build-and-upload.yml');
   assert.equal(violations.length, 1);
   assert.match(violations[0], /≠/);
+});
+
+// ── tests: the no-baseline verdict chain (#136 rework / #462) ──────────────
+
+test('the real drift-gate + drift-check + publish consumers satisfy the no-baseline chain contract', () => {
+  const failures = [...noBaselineChainViolations('drift-check.yml')];
+  assert.deepEqual(failures, [], failures.join('\n'));
+});
+
+test('no-baseline chain: each link catches its own regression', () => {
+  // Link 1: the gate must map the marker to its own verdict. Deleting the
+  // verdict step's no-baseline branch breaks the chain — a MUTATED COPY passed
+  // through the {gate} seam, never a write to the real action.yml (node --test
+  // runs files in parallel processes; a write-then-restore window is a race
+  // another file can read, and a hard kill would leave the tree corrupted).
+  const brokenGate = stripComments(
+    readDriftGate()
+      .replace(/verdict=no-baseline' /g, '')
+      .replace(/'verdict=no-baseline'/g, "'verdict=drift'")
+  );
+  const violations = noBaselineChainViolations('drift-check.yml', {gate: brokenGate});
+  assert.ok(
+    violations.some(v => /does not map the no-baseline marker/.test(v)),
+    `expected the gate link to fail; got ${JSON.stringify(violations)}`
+  );
 });

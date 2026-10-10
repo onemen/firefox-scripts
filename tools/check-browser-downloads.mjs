@@ -95,10 +95,8 @@ import {
   issueBody,
   issueTitle,
   planDispatches,
-  renderHistory,
-  seedHistoryFromBaseline,
+  triageIssueTitle,
   updateEsrState,
-  updateHistory,
 } from './ci/watchdog-report.mjs';
 
 // Compat surface: the reporting layer's names, re-exported so existing
@@ -108,7 +106,6 @@ export {
   BROWSERS,
   ESR_BROWSER_PREFIX,
   FORK_BROWSERS,
-  HISTORY_PER_BROWSER,
   META_ISSUE_TITLE,
   VALIDATED_BROWSERS,
   WATCHDOG_LABEL,
@@ -134,12 +131,11 @@ export {
   issueBody,
   issueTitle,
   planDispatches,
-  renderHistory,
-  seedHistoryFromBaseline,
+  triageIssueTitle,
+  parseEsrMarker,
   shortSha,
   statusTag,
   updateEsrState,
-  updateHistory,
   validatedCell,
 } from './ci/watchdog-report.mjs';
 
@@ -532,6 +528,34 @@ async function openIssueIfNew(token, repo, title, body) {
 }
 
 /**
+ * Open e2e-triage issues, per browser (#136 rework): one listing of the repo's
+ * open issues, filtered by the per-browser triage titles (triageIssueTitle in
+ * watchdog-report.mjs). The E2E workflow's triage job titles its issues this
+ * way, so the watchdog can link a failed validation from the table without a
+ * workflow-to-workflow write — the issue titles ARE the coupling. Returns
+ * {browser: issueUrl}.
+ */
+async function findOpenTriageIssues(token, repo) {
+  const open = [];
+  // Paged like listActionsCaches — page one of 100 alone can hide a triage
+  // issue behind a fuller open-issue list (the same first-page trap the
+  // label-indexed scans dodge via their label filter).
+  for (let page = 1; ; page++) {
+    const body = await ghApi(token, `/repos/${repo}/issues?state=open&per_page=100&page=${page}`);
+    if (!Array.isArray(body) || body.length === 0) break;
+    open.push(...body);
+    if (body.length < 100) break;
+  }
+  const map = {};
+  for (const browser of VALIDATED_BROWSERS) {
+    const wanted = triageIssueTitle(browser);
+    const hit = open.filter(i => i.title === wanted).sort((a, b) => a.number - b.number)[0];
+    if (hit) map[browser] = `https://github.com/${repo}/issues/${hit.number}`;
+  }
+  return map;
+}
+
+/**
  * Keep the single status meta issue current: create it on first sight, PATCH
  * the body only when it actually changed (no churn on no-op runs).
  */
@@ -680,8 +704,17 @@ export async function main() {
   // the baseline (and triggers the browser-specific E2E).
   if (driftMode) {
     if (!fs.existsSync(baselineFile)) {
+      // Machine-parsable marker (the drift-gate action / publish wrapper grep
+      // the exit-1 output): a wipe of the watchdog baseline cache is not the
+      // same condition as drift — the remedy is the same watchdog run, but
+      // the probe can AUTO-dispatch it here (#136 rework), since every
+      // browser will re-baseline and the E2E matrix runs right after.
       console.error(
-        'baseline: cache miss — no watchdog baseline found. Run the URL watchdog workflow first.'
+        'no-baseline: cache miss — no watchdog baseline found (cache wipe or first run).'
+      );
+      console.error(
+        'Run the URL watchdog workflow first — it re-baselines every browser and\n' +
+          'dispatches the E2E matrix that rebuilds the validated-versions record.'
       );
       process.exit(1);
     }
@@ -862,17 +895,11 @@ export async function main() {
       const {esr, next: esrNext} = await fetchEsrVersions();
       const rotated = updateEsrState(esrState, esr, esrNext);
       esrState = rotated.state;
-      // Slide cleanup: a dropped major leaves the ledger — its baseline entry and
-      // history rows go with it (the rebuilt meta issue sheds the row too).
+      // Slide cleanup: a dropped major leaves the ledger — its baseline entry
+      // goes with it (the rebuilt meta issue sheds the row too).
       for (const major of rotated.droppedMajors) {
         const dropped = `firefox-esr-${major}`;
         delete next[dropped];
-        if (Array.isArray(next.history)) {
-          next.history = next.history.map(h => {
-            const c = {...h, changes: (h.changes || []).filter(ch => ch.browser !== dropped)};
-            return c;
-          });
-        }
         console.log(`  esr: major ${major} dropped from the watched window (${dropped})`);
       }
       next.esr = esrState;
@@ -959,6 +986,12 @@ export async function main() {
         downloadMs: verified.downloadMs,
         checkedAt: new Date().toISOString(),
         checkedUrl: runUrl,
+        // The Updated cell shows WHEN THE ROW CHANGED (buildStatusTable):
+        // this run verified the new version/hash — stamp it. A green no-op
+        // run below carries the previous stamp instead, so the cell (and
+        // the meta-issue body) stays byte-identical on unchanged nights.
+        updatedAt: new Date().toISOString(),
+        updatedRunUrl: runUrl,
       };
       // A first run is treated exactly like a new release: status, ledger
       // row, and an E2E dispatch. After a state loss (cache eviction, wipe)
@@ -1008,6 +1041,12 @@ export async function main() {
         downloadMs: verified.downloadMs,
         checkedAt: new Date().toISOString(),
         checkedUrl: runUrl,
+        // The Updated cell shows WHEN THE ROW CHANGED (buildStatusTable):
+        // this run verified the new version/hash — stamp it. A green no-op
+        // run below carries the previous stamp instead, so the cell (and
+        // the meta-issue body) stays byte-identical on unchanged nights.
+        updatedAt: new Date().toISOString(),
+        updatedRunUrl: runUrl,
       };
       results[browser] = {status: 'ok'};
       return;
@@ -1026,6 +1065,13 @@ export async function main() {
       downloadMs: prev.downloadMs ?? null,
       checkedAt: new Date().toISOString(),
       checkedUrl: runUrl,
+      // Unchanged row: the Updated cell keeps the LAST CHANGE stamp, not
+      // this run's re-check — carries the no-churn contract
+      // (buildStatusTable comments it; the meta-issue PATCH must not fire
+      // on a green no-op night). Falls back to the checked stamp when
+      // only pre-rework baselines exist.
+      updatedAt: prev.updatedAt ?? prev.checkedAt ?? null,
+      updatedRunUrl: prev.updatedRunUrl ?? prev.checkedUrl ?? null,
     };
     if (sizeChanged) {
       console.log(`  ⚠ same version, binary size changed: ${prev.size} → ${total}`);
@@ -1065,10 +1111,6 @@ export async function main() {
   // issue — all BEFORE the fail-closed exit so a failed run still updates
   // GitHub. Report-only skips 1) and 2): the baseline was not re-checked, so
   // opening rot issues or auto-closing resolved ones would act on stale
-  // evidence — the refreshed table is the entire deliverable. New-version findings no longer open their own issues: the meta
-  // issue's status table + version history carry the release ledger.
-
-  const versionFindings = findings.filter(f => f.kind === 'new-version');
 
   // 1) Open/comment error issues (rot, size-change) — exact-title dedup.
   for (const f of findings) {
@@ -1112,28 +1154,9 @@ export async function main() {
     }
   }
 
-  // 3) Version history: one entry per run with real version updates, persisted
-  //    with the baseline (fail-closed runs skip the write, so the history stays
-  //    consistent with what the drift gate sees).
-  if (versionFindings.length > 0 && !prMode && !dryRun) {
-    next.history = updateHistory(baseline.history || [], {
-      date: new Date().toISOString(),
-      runUrl,
-      changes: versionFindings.map(f => ({
-        browser: f.browser,
-        prevVersion: f.prevVersion,
-        newVersion: f.newVersion,
-        size: f.size,
-        sha256: f.sha256,
-        downloadMs: f.downloadMs,
-      })),
-    });
-  }
-
-  // 4) Meta issue: status table + version history, PATCHed only when the body
-  //    actually changed. While no update history exists yet (e.g. right after a
-  //    cache eviction) the body falls back to a date-free 'baseline' seed
-  //    derived from the baseline itself, so it stays stable across no-op runs.
+  // 3) Meta issue: status table + ESR data marker, PATCHed only when the body
+  //    actually changed. (#136 rework — the version-history section is gone;
+  //    the table's Updated column carries the run link per row.)
   if (!prMode) {
     // Live cache inventory for the Fallback column (skipped in PR mode — the
     // PR job has no actions scope and needs no table). Fail-open: without a
@@ -1151,15 +1174,31 @@ export async function main() {
         );
       }
     }
+    // Open e2e-triage issues, per browser (#136 rework): titles the E2E triage
+    // job now writes so a failed validation can link from the table. One API
+    // call over the SAME open-issue list the failure dedup below uses — no
+    // extra scope, no E2E→table write coupling. Fail-soft: an empty map just
+    // renders the ⏳/— states without the ❌ link.
+    let triageIssues;
+    if (token && repo && !dryRun) {
+      try {
+        triageIssues = await findOpenTriageIssues(token, repo);
+      } catch (err) {
+        console.log(
+          `::warning file=tools/check-browser-downloads.mjs::triage-issue lookup failed ` +
+            `(${err.message}) — E2E column renders without the ❌ triage links`
+        );
+      }
+    }
     const table = buildStatusTable({
       results,
       baseline: next,
       validated,
       browsers: [...BROWSERS, ...esrNames],
       cache: cacheGroups,
+      triageIssues,
     });
-    const history = (next.history || []).length > 0 ? next.history : seedHistoryFromBaseline(next);
-    const metaBody = buildMetaIssueBody({table, history: renderHistory(history)});
+    const metaBody = buildMetaIssueBody({table, esrState});
     if (dryRun || !token) {
       console.log(
         `\n${dryRun ? '[dry-run] ' : '[no GITHUB_TOKEN] '}meta issue would be kept current with:\n${metaBody}`

@@ -106,7 +106,13 @@ export const FORK_RECORD_FILE = 'forks.json';
  *
  * @param {string} dir E2E_VERSIONS_DIR (where download-artifact flattened the
  *   e2e-version-*.json artifacts)
- * @returns {Record<string, {os: string; version: string}[]>} legs per browser
+ * @returns {Record<
+ *   string,
+ *   {os: string; version: string; coldDownloadMs: number | null}[]
+ * >}
+ *   legs per browser (coldDownloadMs = the leg's COLD installer download
+ *   wall-clock, exported by setup-browser via downloads.mjs; a cache-reuse leg
+ *   omits it)
  */
 export function readLegArtifacts(dir) {
   if (!dir || !fs.existsSync(dir)) {
@@ -137,7 +143,11 @@ export function readLegArtifacts(dir) {
     // (PR #304), and '?' makes the unknown-OS error say so instead of looking
     // like a legitimately empty OS name.
     const os = typeof leg.os === 'string' && leg.os !== '' ? leg.os : '?';
-    (perBrowser[leg.browser] ??= []).push({os, version: leg.version});
+    // coldDownloadMs (#136 rework): absent on a cache-reuse leg (the JSON
+    // carries null) — treated as "no observation", never as 0.
+    const coldDownloadMs =
+      typeof leg.coldDownloadMs === 'number' && leg.coldDownloadMs > 0 ? leg.coldDownloadMs : null;
+    (perBrowser[leg.browser] ??= []).push({os, version: leg.version, coldDownloadMs});
   }
   return perBrowser;
 }
@@ -145,8 +155,13 @@ export function readLegArtifacts(dir) {
 /**
  * The hard-gate record: every VALIDATED_BROWSER must have one artifact per
  * expected OS, and all legs must report the SAME version.
+ *
+ * @param {string} dir E2E_VERSIONS_DIR
+ * @param {{browsers?: Record<string, {coldDownloadMs?: number}>} | null} previous
+ *   the previous validated.json (read by main()); when this run has no cold
+ *   observation for a browser (cache-hit day), its number is carried forward
  */
-export function collectLegVersions(dir) {
+export function collectLegVersions(dir, previous = null) {
   const perBrowser = readLegArtifacts(dir);
   const out = {};
   for (const browser of VALIDATED_BROWSERS) {
@@ -167,7 +182,20 @@ export function collectLegVersions(dir) {
           legs.map(l => `${l.os}=${l.version}`).join(', ')
       );
     }
+    // Cold-download carry-forward: a cache-hit day (every leg reuses the
+    // cache) contributes NO observation — erasing the recorded number would
+    // silently downgrade the status table to the stale watchdog baseline.
+    // The previous record's number is carried forward in that case, so the
+    // freshest cold observation the recorder has EVER seen survives until a
+    // fresher one replaces it — matching the comment in e2e.yml.
+    // (This run HAS an observation → max of the cold legs: the slowest OS's
+    // cold transfer bounds the others; a min would flatter the fastest.)
+    const colds = legs.map(l => l.coldDownloadMs).filter(c => typeof c === 'number');
     out[browser] = {version: distinct[0]};
+    if (colds.length > 0) out[browser].coldDownloadMs = Math.max(...colds);
+    else if (typeof previous?.browsers?.[browser]?.coldDownloadMs === 'number') {
+      out[browser].coldDownloadMs = previous.browsers[browser].coldDownloadMs;
+    }
   }
   return out;
 }
@@ -331,7 +359,10 @@ async function main() {
   // The tested versions come from the legs' artifacts, never from a live
   // re-resolve (resolving "latest" again could record a release no leg saw).
   const versionsDir = process.env.E2E_VERSIONS_DIR;
-  const browsers = collectLegVersions(versionsDir);
+  // The restored previous record feeds the cold-download carry-forward: a
+  // cache-hit day has no observation of its own and must not erase the
+  // freshest cold number ever recorded.
+  const browsers = collectLegVersions(versionsDir, readJsonIfPresent(outFile));
   for (const browser of VALIDATED_BROWSERS) {
     const osCount = (BROWSER_LEG_OSES[browser] ?? UPDATER_LEG_OSES).length;
     console.log(
