@@ -15,6 +15,8 @@ const scriptUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'check-browser-dow
 const {
   buildMetaIssueBody,
   buildStatusTable,
+  parseEsrMarker,
+  triageIssueTitle,
   cacheFallbackCell,
   cacheKeyPrefixesFor,
   escapeTableCell,
@@ -34,12 +36,9 @@ const {
   parseContentRange,
   buildDispatchPlan,
   planDispatches,
-  renderHistory,
-  seedHistoryFromBaseline,
   sha256File,
   shortSha,
   statusTag,
-  updateHistory,
   validatedCell,
   FORK_BROWSERS,
   VALIDATED_BROWSERS,
@@ -417,7 +416,7 @@ test('buildStatusTable: seven rows (incl. the informational nightly), fallback o
   assert.equal(lines.length, 9); // header + separator + 7 browsers (incl. informational nightly)
   assert.match(
     table,
-    /^\| Browser \| Last verified \| Size · SHA-256 \| Last check \| Status \| Fallback \(CI cache\) \| Download time \| E2E validated \|/
+    /^\| Browser \| Last verified \| Size · SHA-256 \| Updated \| Status \| Fallback \(CI cache\) \| Download \| E2E validated \|/
   );
   const firefox = lines.find(l => l.startsWith('| firefox '));
   assert.match(
@@ -740,14 +739,38 @@ test('formatDownloadMs: human durations, unknown stays an em dash', () => {
   assert.equal(formatDownloadMs(null), '—');
 });
 
-test('validatedCell / E2E validated column: match, stale, none, fork', () => {
+test('validatedCell / E2E validated column: match, stale, none, fork, triage link', () => {
+  const runUrl = 'https://github.com/o/r/actions/runs/9';
   const validated = {
-    browsers: {'firefox': {version: '155.0.1'}, 'firefox-dev': {version: '156.0b2'}},
+    browsers: {
+      'firefox': {version: '155.0.1', runUrl},
+      'firefox-dev': {version: '156.0b2'},
+    },
   };
-  assert.equal(validatedCell('firefox', {version: '155.0.1'}, validated), '✅ 155.0.1');
-  assert.equal(validatedCell('firefox', {version: '155.0.2'}, validated), '⏳ 155.0.1');
+  assert.equal(
+    validatedCell('firefox', {version: '155.0.1'}, validated),
+    `✅ [155.0.1](${runUrl})`
+  );
+  assert.equal(
+    validatedCell('firefox', {version: '155.0.2'}, validated),
+    `⏳ [155.0.1](${runUrl})`
+  );
   assert.equal(validatedCell('firefox', {version: '155.0.1'}, null), '⏳ none');
   assert.equal(validatedCell('librewolf', {version: '155.0-1'}, validated), '—');
+  // A FAILED validation on the current version links the open triage issue —
+  // the title-based discovery, no workflow-to-workflow write (#136 rework).
+  const triageIssues = {firefox: 'https://github.com/o/r/issues/9'};
+  assert.equal(
+    validatedCell('firefox', {version: '155.0.2'}, validated, {triageIssues}),
+    `❌ E2E [triage](${triageIssues.firefox})`
+  );
+  // Stale-but-linked still renders ⏳ when the triage issue resolved and closed.
+  assert.equal(
+    validatedCell('firefox', {version: '155.0.2'}, validated),
+    `⏳ [155.0.1](${runUrl})`
+  );
+  // A closed triage issue (absent map entry) makes the no-record row plain ⏳.
+  assert.equal(validatedCell('firefox', {version: '155.0.1'}, null, {triageIssues}), '⏳ none');
   const table = buildStatusTable({
     results: {firefox: {status: 'ok'}},
     baseline: {firefox: {version: '155.0.1'}},
@@ -755,137 +778,39 @@ test('validatedCell / E2E validated column: match, stale, none, fork', () => {
   });
   assertTableIntegrity(table, 'validated table');
   const row = table.split('\n').find(l => l.startsWith('| firefox '));
-  assert.match(row, /\| ✅ 155\.0\.1 \|$/);
+  assert.match(row, /\| ✅ \[155\.0\.1\]\([^)]+\) \|$/);
 });
 
-test('updateHistory: appends and caps per browser', () => {
-  const entry = {date: 'new', changes: [{browser: 'firefox', prevVersion: '1', newVersion: '2'}]};
-  assert.deepEqual(updateHistory([], entry), [entry]);
-  // Per-browser cap: firefox's oldest entries trim, other browsers' survive.
-  const base = [
-    {date: 'run-0', changes: [{browser: 'firefox', prevVersion: 'a', newVersion: 'b'}]},
-    {date: 'run-1', changes: [{browser: 'zen', prevVersion: '1.0', newVersion: '1.1'}]},
-    {date: 'run-2', changes: [{browser: 'firefox', prevVersion: 'b', newVersion: 'c'}]},
-    {date: 'run-3', changes: [{browser: 'firefox', prevVersion: 'c', newVersion: 'd'}]},
-  ];
-  const capped = updateHistory(base, entry, {perBrowser: 3});
-  assert.equal(capped.length, 4); // run-0 dropped entirely (its only change overflowed)
-  assert.equal(capped[0].date, 'run-1');
-  assert.equal(capped.at(-1), entry);
-  // Partial overflow: the surviving entry keeps only the under-cap changes.
-  const mixed = updateHistory(
-    [
-      {
-        date: 'old',
-        changes: [
-          {browser: 'firefox', prevVersion: 'a', newVersion: 'b'},
-          {browser: 'zen', prevVersion: '1.0', newVersion: '1.1'},
-        ],
-      },
-      {date: 'mid', changes: [{browser: 'firefox', prevVersion: 'b', newVersion: 'c'}]},
-    ],
-    {date: 'new', changes: [{browser: 'firefox', prevVersion: 'c', newVersion: 'd'}]},
-    {perBrowser: 2}
-  );
-  assert.equal(mixed.length, 3); // 'mid' firefox survives the cap; only 'old' firefox overflowed
-  assert.deepEqual(
-    mixed[0].changes.map(c => c.browser),
-    ['zen'] // firefox's 'old' occurrence overflowed; zen's stayed
-  );
-  assert.equal(mixed[0].date, 'old'); // same entry, same date/run link
+test('triageIssueTitle: the per-browser title both sides share', () => {
+  assert.equal(triageIssueTitle('firefox'), '[e2e-triage] failed updater legs · firefox');
+  assert.equal(triageIssueTitle('waterfox'), '[e2e-triage] failed updater legs · waterfox');
 });
 
-test('seedHistoryFromBaseline: baseline-only seed until real updates exist', () => {
-  const baseline = {
-    firefox: {version: '155.0.1', size: 91715344, sha256: '27a24f', downloadMs: 900},
-  };
-  const seed = seedHistoryFromBaseline(baseline);
-  assert.equal(seed.length, 1);
-  assert.equal(seed[0].kind, 'baseline');
-  assert.deepEqual(seed[0].changes[0], {
-    browser: 'firefox',
-    version: '155.0.1',
-    size: 91715344,
-    sha256: '27a24f',
-    downloadMs: 900,
-  });
-  assert.deepEqual(seedHistoryFromBaseline({}), []);
-});
-
-test('renderHistory: baseline seed vs real update entries', () => {
-  const baseline = renderHistory([
-    {
-      kind: 'baseline',
-      changes: [
-        {
-          browser: 'firefox',
-          version: '155.0.1',
-          size: 91715344,
-          sha256: '27a24fcdde805cb6a34c5c102e98ebfe5f0302078202376d2828f8797ed80298',
-          downloadMs: 12900,
-        },
-      ],
-    },
-  ]);
-  assert.match(baseline, /^- baseline: firefox 155\.0\.1 · 87\.5 MB · `27a24f…` · 13s$/);
-  const update = renderHistory([
-    {
-      date: '2026-09-05T07:36:11Z',
-      runUrl: 'https://github.com/o/r/actions/runs/1',
-      changes: [
-        {
-          browser: 'firefox-dev',
-          prevVersion: '156.0b2',
-          newVersion: '156.0b3',
-          size: 93298280,
-          sha256: '3e53b343e7d8bd109b217a0fd279ee5cadd7d9a8434d7c185dc65e88e80ffe9e',
-          downloadMs: 252_000,
-        },
-      ],
-    },
-  ]);
-  assert.match(
-    update,
-    /^- \[Sep 5\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/1\) — update: firefox-dev 156\.0b2 → 156\.0b3 · 89\.0 MB · `3e53b3…` · 4m 12s$/
-  );
-});
-
-test('renderHistory: a first-run update renders "new <version>", never "undefined →"', () => {
-  // A first run after state loss emits a new-version finding WITHOUT a
-  // prevVersion — the history row must not render the absent value.
-  const firstRun = renderHistory([
-    {
-      date: '2026-10-08T13:05:14Z',
-      runUrl: 'https://github.com/o/r/actions/runs/2',
-      changes: [
-        {
-          browser: 'firefox',
-          newVersion: '157.0.1',
-          size: 93428100,
-          sha256: '71dc62c9f1d2c39ea11f4d9d30ff5ee39f0b0f43be2ee35e5bbf5b0f2d9e13a1',
-          downloadMs: 1000,
-        },
-      ],
-    },
-  ]);
-  assert.match(firstRun, /update: firefox new 157\.0\.1 · 89\.1 MB · `71dc62…` · 1s$/);
-  assert.doesNotMatch(firstRun, /undefined/);
-});
-
-test('buildMetaIssueBody: status table + history, no date in the header', () => {
+test('buildMetaIssueBody: status table + ESR marker, no date in the header', () => {
   const table = '| Browser | Last verified | ...';
-  const body = buildMetaIssueBody({
-    table,
-    history: '- [Sep 5](u) — update: firefox 155.0 → 155.0.1 · 87.5 MB · `27a24f…`',
-  });
-  assert.match(body, /^## Watchdog status\n\n/);
-  // static intro: describes the watchdog, sits between the heading and the table
-  assert.match(body, /^## Watchdog status\n\nThis is the status page for the \*\*URL watchdog\*\*/);
+  const esr = {majors: ['140', '153'], versions: {140: '140.7.0esr', 153: '153.5.0esr'}};
+  const body = buildMetaIssueBody({table, esrState: esr});
+  assert.match(body, /## Watchdog status\n\n/);
+  // static intro: describes the watchdog, sits before the table
+  assert.match(body, /This is the status page for the \*\*URL watchdog\*\*/);
   assert.match(body, /bot-maintained/);
-  assert.match(body, /## Version history \(runs with real updates\)/);
+  // The ESR data marker (#136): a machine-readable block after the table.
+  assert.match(body, /<!-- watchdog:data/);
+  assert.match(body, /"majors":\["140","153"\]/);
+  // The version-history section is gone (#136 rework) — the Updated column
+  // carries the run link per row.
+  assert.doesNotMatch(body, /Version history \(runs with real updates\)/);
   assert.doesNotMatch(body, /\d{4}-\d{2}-\d{2}/); // header carries no run date — body changes only with content
-  const bare = buildMetaIssueBody({table, history: ''});
-  assert.doesNotMatch(bare, /Version history/);
+  const bare = buildMetaIssueBody({table, esrState: null});
+  assert.doesNotMatch(bare, /watchdog:data/);
+  // Round trip: the parsed marker feeds back the exact state.
+  assert.deepEqual(parseEsrMarker(body), esr);
+});
+
+test('parseEsrMarker: absent or malformed blocks degrade to null, never throw', () => {
+  assert.equal(parseEsrMarker('plain body, nothing here'), null);
+  assert.equal(parseEsrMarker('<!-- watchdog:data\n{broken json\n-->'), null);
+  assert.equal(parseEsrMarker('<!-- watchdog:data\n{"esr":{"majors":[]}}\n-->'), null);
 });
 
 test('isFailureIssueTitle: the auto-close set per browser', () => {

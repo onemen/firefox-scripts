@@ -27,6 +27,17 @@
  */
 
 import {createHash} from 'node:crypto';
+import path from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+
+// The per-browser discovery contract (#136 rework): the watchdog's table links
+// `[e2e-triage] failed updater legs · <browser>` — import the title-maker from
+// the reporting layer so both sides cannot drift (script runs from its own
+// repo root; resolve the sibling module explicitly).
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const {triageIssueTitle, VALIDATED_BROWSERS} = await import(
+  pathToFileURL(path.join(HERE, 'watchdog-report.mjs')).href
+);
 
 /** The job that runs this script — never a failed "leg" of its own report. */
 export const TRIAGE_JOB_NAME = 'triage nightly revalidation';
@@ -257,22 +268,76 @@ async function main() {
     const last = comments[0];
     if (last && Date.now() - Date.parse(last.created_at) < 24 * 60 * 60 * 1000) {
       console.log(`  open issue already updated <24h ago: ${title}`);
-      return;
+    } else {
+      console.log(`  comment on #${existing.number}: ${title}`);
+      if (!dryRun) {
+        await ghApi(token, `/repos/${repo}/issues/${existing.number}/comments`, {
+          method: 'POST',
+          body: {body: triageBody(legs, runUrl)},
+        });
+      }
     }
-    console.log(`  comment on #${existing.number}: ${title}`);
-    if (dryRun) return;
-    await ghApi(token, `/repos/${repo}/issues/${existing.number}/comments`, {
-      method: 'POST',
-      body: {body: triageBody(legs, runUrl)},
-    });
-    return;
+  } else {
+    console.log(`  open issue: ${title}`);
+    if (!dryRun) {
+      await ghApi(token, `/repos/${repo}/issues`, {
+        method: 'POST',
+        body: {title, body: triageBody(legs, runUrl), labels: [TRIAGE_LABEL]},
+      });
+    }
   }
-  console.log(`  open issue: ${title}`);
-  if (dryRun) return;
-  await ghApi(token, `/repos/${repo}/issues`, {
-    method: 'POST',
-    body: {title, body: triageBody(legs, runUrl), labels: [TRIAGE_LABEL]},
-  });
+
+  // Per-browser issues (#136 rework): one issue per failed GATE browser with
+  // the exact title the URL watchdog discovers while rendering #136's status
+  // table (triageIssueTitle in watchdog-report.mjs) — the failed E2E-validated
+  // cell links here. Advisory-only legs (a fork failure without any gate
+  // browser failing) open none: nothing in the table would link them.
+  const browsers = [
+    ...new Set(
+      legs
+        .map(leg => leg.name)
+        .filter(n => /updater|installer|portable-firefox|core-lifecycle/.test(n))
+        .map(browserOfLeg)
+        .filter(Boolean)
+    ),
+  ];
+  for (const browser of browsers) {
+    const perTitle = triageIssueTitle(browser);
+    if (open.some(issue => issue.title === perTitle)) continue;
+    console.log(`  open per-browser issue: ${perTitle}`);
+    if (dryRun) continue;
+    await ghApi(token, `/repos/${repo}/issues`, {
+      method: 'POST',
+      body: {
+        title: perTitle,
+        body:
+          `Failed nightly-revalidation updater legs for ${browser}:\n\n` +
+          legs
+            .filter(leg => browserOfLeg(leg) === browser)
+            .map(leg => `- ${leg.name} (${leg.conclusion}) — ${leg.html_url || 'no link'}`)
+            .join('\n') +
+          `\n\nRun: ${runUrl}\n\n` +
+          'The [url-watchdog] status table links here while this validation is owed; ' +
+          'a green revalidation rewrites the validated-versions record and the table ' +
+          'shows the ✅ run link again.',
+        labels: [TRIAGE_LABEL],
+      },
+    });
+  }
+}
+
+/**
+ * The ledger browser a failed gate leg belongs to: `updater E2E · firefox ·
+ * macos-latest` → `firefox`. Null for non-browser legs (snapshot, helper).
+ */
+export function browserOfLeg(leg) {
+  // Leg names read 'updater E2E · firefox-dev · macos-latest' — plain string
+  // probes, no RegExp (the name is GitHub-served data, and the reports gate
+  // flags non-literal RegExp constructors).
+  for (const browser of VALIDATED_BROWSERS) {
+    if (leg.name.includes(browser)) return browser;
+  }
+  return null;
 }
 
 if (process.argv[1] && process.argv[1].endsWith('e2e-triage.mjs')) {

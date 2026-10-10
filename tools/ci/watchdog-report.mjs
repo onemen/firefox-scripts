@@ -251,13 +251,38 @@ export const WATCHDOG_LABEL = 'url-watchdog';
 export const META_ISSUE_TITLE = '[url-watchdog] status';
 
 /**
- * Version-history cap per browser: each browser keeps its last N transition
- * entries in the meta issue. Per-browser (not per-run) so a chatty browser
- * cannot evict a quiet one's only history, and bounded overall at
+ * ESR-window marker (#136): a stable HTML-comment block the nightly renders
+ * into the meta issue after the status table, parsed back by
+ * tools/ci/esrMatrix.mjs (--issue fallback) when the baseline cache is absent.
+ * The issue body is then a durable second home for the watched majors —
+ * human-visible, and written by the same run that rewrites the baseline.
  *
- * |BROWSERS| × N lines.
+ * Written by BUILDERS of the body only (report-only and PR mode render whatever
+ * the last scheduled run wrote, never a guessed state), so the block never
+ * appears before the first real check.
  */
-export const HISTORY_PER_BROWSER = 3;
+export function esrMarkerBlock(esrState) {
+  if (!esrState || !Array.isArray(esrState.majors) || esrState.majors.length === 0) return '';
+  const data = JSON.stringify({esr: esrState});
+  return `\n\n<!-- watchdog:data\n${data}\n-->`;
+}
+
+/**
+ * Parse the {@link esrMarkerBlock} back out of an issue body — null when the
+ * block is absent or malformed (a hand-edited body degrades to the caller's
+ * fallback, never to a throw).
+ */
+export function parseEsrMarker(body) {
+  const m = /<!--[\s\S]*?watchdog:data\s*\n([\s\S]*?)\n-->/.exec(String(body ?? ''));
+  if (!m) return null;
+  try {
+    const esr = JSON.parse(m[1])?.esr;
+    if (esr && Array.isArray(esr.majors) && esr.majors.length > 0) return esr;
+  } catch {
+    // malformed block = no marker
+  }
+  return null;
+}
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -474,17 +499,52 @@ export function statusTag(status) {
 }
 
 /**
- * E2E-validated cell for the status table: `✅ <version>` when a successful E2E
- * run validated exactly the baseline version, `⏳ <older>` when the record shows
- * an earlier release (current one not yet E2E-tested), `⏳ none` when there is
- * no record, and '—' for the advisory fork browsers that the validated-versions
- * record does not cover.
+ * E2E-validated cell for the status table (#136 rework): the version links the
+ * E2E run that validated it — `✅ [143.0.4](run-url)` when a successful run
+ * validated exactly the baseline version, `⏳ [143.0b3](run-url)` when the
+ * record shows an earlier release (current one not yet E2E-tested), a plain `⏳
+ * none` when there is no record, and '—' for the advisory fork browsers the
+ * validated-versions record does not cover.
+ *
+ * A FAILED validation on the CURRENT version renders as `❌ E2E [triage](url)`:
+ * `triageIssues` is the per-browser map of open e2e-triage issues (built by the
+ * caller from the issues API — the triage job titles them per browser since the
+ * #136 rework). Nothing needs a hand-close: a green revalidation rewrites the
+ * record and the next nightly render shows the ✅ run link again.
  */
-export function validatedCell(browser, entry, validated) {
+export function validatedCell(browser, entry, validated, {triageIssues = null} = {}) {
   if (!VALIDATED_BROWSERS.includes(browser)) return '—';
   const v = validated?.browsers?.[browser]?.version;
+  const current = entry?.version;
+  // ⏳ none stays when there is NO record at all — an empty record means the
+  // revalidation has not landed yet (the publish gate fails closed on it);
+  // it is not the same fact as a KNOWN failed leg, which is what the ❌ triage
+  // link certifies: the record EXISTS but covers an OLDER release.
+  if (triageIssues?.[browser] && v && String(v) !== String(current)) {
+    return `❌ E2E [triage](${triageIssues[browser]})`;
+  }
   if (!v) return '⏳ none';
-  return v === entry?.version ? `✅ ${v}` : `⏳ ${v}`;
+  const link = validated?.browsers?.[browser]?.runUrl;
+  const shown = link ? `[${v}](${link})` : v;
+  return String(v) === String(current) ? `✅ ${shown}` : `⏳ ${shown}`;
+}
+
+/**
+ * Triagle-issue title (the #136 rework): the e2e-triage job now titles one
+ * issue PER FAILED GATE BROWSER (in addition to the hash-titled footer issue;
+ * see tools/ci/e2e-triage.mjs — the per-browser title is the contract both
+ * sides share so the watchdog can discover it while rendering the table).
+ */
+export function triageIssueTitle(browser) {
+  return `[e2e-triage] failed updater legs · ${browser}`;
+}
+
+/**
+ * The title mask used to discover open e2e-triage issues while rendering the
+ * table (caller lists open issues by title and matches with this).
+ */
+export function isTriageIssueTitle(browser, title) {
+  return title === triageIssueTitle(browser);
 }
 
 /**
@@ -645,7 +705,15 @@ export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {})
  *   now?: number;
  * }} opts
  */
-export function buildStatusTable({results, baseline, validated, browsers = BROWSERS, cache, now}) {
+export function buildStatusTable({
+  results,
+  baseline,
+  validated,
+  browsers = BROWSERS,
+  cache,
+  now,
+  triageIssues,
+}) {
   const rows = browsers.map(browser => {
     const res = results[browser] || {status: 'ok'};
     const entry = baseline[browser] || {};
@@ -658,7 +726,16 @@ export function buildStatusTable({results, baseline, validated, browsers = BROWS
     // no size/hash — render a clean dash instead of '— · —'.
     const sizeSha =
       entry.size || entry.sha256 ? `${formatSize(entry.size)} · ${shortSha(entry.sha256)}` : '—';
-    const lastCheck = formatCheck(entry.checkedAt, entry.checkedUrl);
+    // Updated (renamed from Last check, #136 rework): the table shows WHEN THIS
+    // ROW last changed — the run that verified this version/hash — not when the
+    // nightly last re-probed. Written by the caller only on a version/hash
+    // change; a green no-op run leaves the row, so the cell, byte-identical.
+    const updated = formatCheck(
+      entry.updatedAt ?? entry.checkedAt,
+      entry.updatedRunUrl ?? entry.checkedUrl
+    );
+    // ... status unchanged ...
+    const statusTagged = statusTag(res.status);
     // The CI cache always holds the last verified version, green run or not —
     // show it unconditionally. With a live inventory the cell is cache-backed
     // (cacheFallbackCell — real keys, ages, and fork versions decoded from the
@@ -671,123 +748,53 @@ export function buildStatusTable({results, baseline, validated, browsers = BROWS
         cacheFallbackCell(browser, cache[browser] || [], entry, {
           now: now ?? Date.now(),
         })
-      : failed ? `cached: ${version} · ${lastCheck}`
+      : failed ? `cached: ${version} · ${updated}`
       : `cached: ${version}`;
-    // Download time of the last VERIFIED full download — the transfer-speed
-    // history for the vendor hosts. Unknown until a browser's
-    // version has been fully downloaded at least once.
-    const downloadTime = formatDownloadMs(entry.downloadMs);
-    const e2e = validatedCell(browser, entry, validated);
+    // Download time of the last VERIFIED full download. #136 rework: the
+    // watchdog's own endpoint-probe timing (always 0–4 s on CI loaders) moved
+    // out; setup-browser's COLD-installer download wall-clock takes its place
+    // (`entry.coldDownloadMs`, recorded by the revalidation legs). The legacy
+    // field stays readable so pre-rework baselines still render something.
+    const downloadTime = formatDownloadMs(entry.coldDownloadMs ?? entry.downloadMs);
+    const e2e = validatedCell(browser, entry, validated, {triageIssues});
     // Every variable value goes through escapeTableCell: the row's cell
     // count must never depend on what a vendor feed returned.
-    return `| ${browser} | ${escapeTableCell(version)} | ${escapeTableCell(sizeSha)} | ${escapeTableCell(lastCheck)} | ${escapeTableCell(statusTag(res.status))} | ${escapeTableCell(fallback)} | ${escapeTableCell(downloadTime)} | ${escapeTableCell(e2e)} |`;
+    return `| ${browser} | ${escapeTableCell(version)} | ${escapeTableCell(sizeSha)} | ${escapeTableCell(updated)} | ${escapeTableCell(statusTagged)} | ${escapeTableCell(fallback)} | ${escapeTableCell(downloadTime)} | ${escapeTableCell(e2e)} |`;
   });
   return [
-    '| Browser | Last verified | Size · SHA-256 | Last check | Status | Fallback (CI cache) | Download time | E2E validated |',
+    '| Browser | Last verified | Size · SHA-256 | Updated | Status | Fallback (CI cache) | Download | E2E validated |',
     '| --- | --- | --- | --- | --- | --- | --- | --- |',
     ...rows,
   ].join('\n');
 }
 
 /**
- * Append one version-history entry per run with real updates ({date, runUrl,
- * changes: [{browser, prevVersion, newVersion, size, sha256, downloadMs}]}).
- * Capped per browser at HISTORY_PER_BROWSER — an entry whose every change
- * overflowed a browser's cap is dropped; one that only partially overflows
- * keeps its under-cap changes (splitting preserves the other browsers' data,
- * and the rendered line still carries the same date/run link).
- */
-export function updateHistory(history, entry, {perBrowser = HISTORY_PER_BROWSER} = {}) {
-  const next = [...history, entry];
-  // Total recorded occurrences per browser across the whole (new) history.
-  const totals = {};
-  for (const h of next) {
-    for (const c of h.changes ?? []) {
-      if (c.browser) totals[c.browser] = (totals[c.browser] ?? 0) + 1;
-    }
-  }
-  // Walk oldest → newest, keeping each browser's LAST perBrowser occurrences.
-  const seen = {};
-  const out = [];
-  for (const h of next) {
-    const changes = h.changes ?? [];
-    const kept = changes.filter(c => {
-      if (!c.browser) return true;
-      seen[c.browser] = (seen[c.browser] ?? 0) + 1;
-      return seen[c.browser] > totals[c.browser] - perBrowser;
-    });
-    if (kept.length === 0) continue;
-    out.push(kept.length === changes.length ? h : {...h, changes: kept});
-  }
-  return out;
-}
-
-/**
- * Seed the version history from the current baseline (used until the first real
- * update run persists a history entry — e.g. when the meta issue is first
- * created mid-life). Deliberately date-free so the rendered body stays stable
- * across no-op runs.
- */
-export function seedHistoryFromBaseline(baseline) {
-  const tracked = [...BROWSERS, ...esrLedgerNames(baseline.esr)];
-  const changes = tracked
-    .filter(b => baseline[b]?.version)
-    .map(b => ({
-      browser: b,
-      version: baseline[b].version,
-      size: baseline[b].size,
-      sha256: baseline[b].sha256,
-      downloadMs: baseline[b].downloadMs,
-    }));
-  return changes.length ? [{kind: 'baseline', changes}] : [];
-}
-
-/** Render the version-history section lines ('- [Sep 5](run) — update: …'). */
-export function renderHistory(history) {
-  return history
-    .map(h => {
-      const items = h.changes
-        .map(c => {
-          const sha = shortSha(c.sha256);
-          const dl =
-            formatDownloadMs(c.downloadMs) === '—' ? '' : ` · ${formatDownloadMs(c.downloadMs)}`;
-          if (h.kind === 'baseline') {
-            return `${c.browser} ${c.version} · ${formatSize(c.size)} · ${sha}${dl}`;
-          }
-          return `${c.browser} ${c.prevVersion ? `${c.prevVersion} → ` : 'new '}${
-            c.newVersion
-          } · ${formatSize(c.size)} · ${sha}${dl}`;
-        })
-        .join(' · ');
-      const label =
-        h.kind === 'baseline' ? 'baseline' : `${formatCheck(h.date, h.runUrl)} — update`;
-      return `- ${label}: ${items}`;
-    })
-    .join('\n');
-}
-
-/**
  * Static intro for the meta issue: what the watchdog is and that the body is
  * bot-maintained. Constant, so it never churns the body on its own — the body
- * still only changes when the table or the history changes.
+ * still only changes when the table (or the ESR data marker) changes.
  */
 const WATCHDOG_INTRO = `This is the status page for the **URL watchdog** — the nightly workflow
 (.github/workflows/url-watchdog.yml) that re-resolves every browser's latest version from its
 vendor API, verifies the download endpoint, and re-baselines the SHA-256 ledger on new releases
 (each new release — and a first run after state loss — also dispatches the browser E2E). The table
-and history below are bot-maintained and rewritten each run; download failures and size changes
-open separate [url-watchdog] issues that auto-close once the browser checks green again.`;
+and history below are bot-maintained and rewritten each run; download failures and size changes        open separate [url-watchdog] issues that auto-close once the browser checks green again.`;
+
+const WATCHDOG_INTRO_TAIL = `\n
+A failed E2E leg for a hard-gated browser is reported in its own titled issue (\`[e2e-triage] failed
+updater legs · <browser>\`) and linked from the table's E2E column until a green revalidation
+replaces it.`;
 
 /**
- * Meta-issue body: the static intro + the status table + the version history.
- * No run date in the header on purpose — the body must only change when the
- * table or the history changes, so fully-green no-op runs do not churn the
- * issue.
+ * Meta-issue body: the static intro + the status table + the ESR data marker
+ * (#136 rework — the version-history section is gone: the table's Updated
+ * column carries the same date/run link the history lines did, per row, and the
+ * full ledger stays in baseline.json for the machines that need it). No run
+ * date in the header on purpose — the body must only change when the table or
+ * the marker changes, so fully-green no-op runs do not churn the issue.
  */
-export function buildMetaIssueBody({table, history}) {
-  const historyBlock =
-    history ? `\n\n## Version history (runs with real updates)\n\n${history}\n` : '';
-  return `## Watchdog status\n\n${WATCHDOG_INTRO}\n\n${table}${historyBlock}`;
+export function buildMetaIssueBody({table, esrState}) {
+  const marker = esrMarkerBlock(esrState);
+  return `${WATCHDOG_INTRO}${WATCHDOG_INTRO_TAIL}\n\n## Watchdog status\n\n${table}${marker}`;
 }
 
 /**
