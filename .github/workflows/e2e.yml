@@ -1313,7 +1313,7 @@ jobs:
       # `watchdog:data` marker restores the watched majors — GitHub's issue
       # store is not an evictable cache. Fetched unconditionally into
       # ESR_WATCHDOG_MARKERS — ONE value, the WHOLE issue body (not a list;
-      # esrMatrix.mjs parses it as one body — batch #7); a miss degrades
+      # esrMatrix.mjs parses it as one body); a miss degrades
       # inside that tool to the generic serving-ESR leg, never a job failure
       # — the same fail-soft contract the baseline miss has.
       - name: Fetch the meta-issue ESR marker (fallback #2)

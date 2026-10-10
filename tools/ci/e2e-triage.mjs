@@ -351,7 +351,7 @@ async function main() {
   // — and only when SOME gate leg actually validated this run: a run whose
   // every leg was cancelled/never-ran (FAILED_CONCLUSIONS is failure-shaped
   // only) validated nothing, and closing "recovered" on it would certify a
-  // passing run behind the ❌ link that does not exist (batch #7 finding).
+  // passing run behind the ❌ link that does not exist).
   const anySuccess = jobs.some(job => job.conclusion === 'success');
   const recovered = anySuccess ? recoveredPerBrowserIssues(open, browsers) : [];
   for (const issue of recovered) {
@@ -387,8 +387,7 @@ async function main() {
  * now covers a passing run, and would suppress re-opening on a repeat failure.
  * A run that validated nothing (all legs cancelled or never ran — see
  * FAILED_CONCLUSIONS) passes no failedBrowsers but closes nothing: close
- * filtered by that condition in the caller (main()), not here (batch #7
- * finding).
+ * filtered by that condition in the caller (main()), not here.
  *
  * @param {{number: number; title: string}[]} open open triage issues
  * @param {string[]} failedBrowsers this run's failed gate browsers

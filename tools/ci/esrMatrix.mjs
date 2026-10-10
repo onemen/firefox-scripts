@@ -36,7 +36,7 @@ const baselineFile = args.find(arg => !arg.startsWith('--')) || '.watchdog/basel
 // Consume ESR_WATCHDOG_MARKERS — the WHOLE [url-watchdog] status issue body,
 // one env value (the workflow fetches the single meta issue verbatim). Not a
 // comma-separated list: splitting a body on commas shreds the marker JSON
-// (comma-keyed) and nothing parses (batch #7 finding, proven live).
+// (comma-keyed) and nothing parses.
 const markerBody = process.env.ESR_WATCHDOG_MARKERS || '';
 
 let esrState = null;
