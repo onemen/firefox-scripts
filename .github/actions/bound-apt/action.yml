@@ -47,11 +47,33 @@ runs:
         # 15-minute budget that installs apt packages (asserted by
         # test/unit/tools/boundApt.test.mjs).
         while [ "$attempt" -le 3 ]; do
-          if timeout 120 sudo apt-get update -qq "${opts[@]}" \
-            && timeout 150 sudo apt-get install -y -qq "${opts[@]}" $pkgs; then
+          # Capture apt's own words. `-qq` hides progress, and when the outer
+          # bound kills apt it has printed nothing at all — so on 2026-10-09 the
+          # aarch64 toolchain install burned all three attempts and the step
+          # said only "apt install failed after 3 attempts". That silent failure
+          # is what skipped the whole E2E matrix behind the snapshot job, with no
+          # reason to act on. The bound does not change; the reason does.
+          apt_log="$(mktemp)"
+          rc=0
+          timeout 120 sudo apt-get update -qq "${opts[@]}" >"$apt_log" 2>&1 || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            timeout 150 sudo apt-get install -y -qq "${opts[@]}" $pkgs >>"$apt_log" 2>&1 || rc=$?
+          fi
+          if [ "$rc" -eq 0 ]; then
+            rm -f "$apt_log"
             echo "apt install succeeded on attempt $attempt: $pkgs"
             exit 0
           fi
+          # 124 is `timeout`'s own status: the bound fired and apt was killed
+          # mid-fetch, which needs a mirror/bound answer. Any other status is
+          # apt's, which needs the apt answer.
+          if [ "$rc" -eq 124 ]; then
+            echo "apt attempt $attempt hit its bound (timeout killed it) — tail of its output:"
+          else
+            echo "apt attempt $attempt exited $rc — tail of its output:"
+          fi
+          tail -n 15 "$apt_log" | sed 's/^/    /' || true
+          rm -f "$apt_log"
           attempt=$((attempt + 1))
           # Sleep only when another attempt remains: a settle pause after the
           # LAST failure buys nothing and inflates the worst case (the test

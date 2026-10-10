@@ -94,6 +94,16 @@ test('worst-case stall time fits inside every apt-consuming job budget', () => {
   );
 });
 
+// A silent failure is the failure nobody can fix: the wrapper used to print
+// "apt attempt N failed" while `-qq` plus the SIGTERM from the outer bound left
+// no reason in the log (2026-10-09, snapshot job, whole E2E matrix skipped).
+// These properties keep the reason reachable without touching the bounds above.
+test('a failed attempt reports apt’s own output and names the bound firing', () => {
+  assert.match(raw, /apt_log="\$\(mktemp\)"/, 'apt output must be captured to a file');
+  assert.match(raw, /tail -n \d+ "\$apt_log"/, 'the capture must be printed on failure');
+  assert.match(raw, /"\$rc" -eq 124/, "timeout's own status must be told apart from apt's");
+});
+
 test('acquire and dpkg-lock timeouts are set', () => {
   for (const opt of [
     'Acquire::Retries',
