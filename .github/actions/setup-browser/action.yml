@@ -286,6 +286,12 @@ runs:
         # Empty for a cold record so a job-level dispatch pin set through
         # `env:` is never clobbered by an empty step value.
         BROWSER_PIN_VERSION: ${{ steps.fork-pin.outputs.version || inputs.pin-version }}
+        # The floorp and zen version lookups are single-source GitHub API calls;
+        # anonymous they share the runner IP's 60/hour budget and return 403
+        # (2026-10-08, 2026-10-09), which costs the leg its fresh installer and
+        # drops it to the cached fallback. browserResolver sends this token to
+        # api.github.com only.
+        GITHUB_TOKEN: ${{ github.token }}
       run: node test/e2e/shared/downloads.mjs "$BROWSER"
 
     # The sticky save key is the version that ACTUALLY ran — ground truth via
