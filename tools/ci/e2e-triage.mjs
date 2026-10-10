@@ -347,8 +347,13 @@ async function main() {
   // browser, the green close loop (legs.length === 0 above) never runs — a
   // per-browser issue for a browser that PASSED would stay open forever,
   // keep its stale ❌ triage link in the status table, and suppress
-  // re-opening when it fails again. Close the ones this run did not fail.
-  const recovered = recoveredPerBrowserIssues(open, browsers);
+  // re-opening when it fails again. Close the ones this run did not fail
+  // — and only when SOME gate leg actually validated this run: a run whose
+  // every leg was cancelled/never-ran (FAILED_CONCLUSIONS is failure-shaped
+  // only) validated nothing, and closing "recovered" on it would certify a
+  // passing run behind the ❌ link that does not exist (batch #7 finding).
+  const anySuccess = jobs.some(job => job.conclusion === 'success');
+  const recovered = anySuccess ? recoveredPerBrowserIssues(open, browsers) : [];
   for (const issue of recovered) {
     console.log(`  close recovered per-browser issue: ${issue.title}`);
     if (dryRun) continue;
@@ -356,9 +361,10 @@ async function main() {
       method: 'POST',
       body: {
         body:
-          `This browser is not among this run's failed gate browsers — the ` +
-          `recovery was partial (other legs still failed; see the aggregate ` +
-          `issue). Green nightly revalidation run: ${runUrl} — closing.`,
+          `This browser is not among this run's failed gate browsers and the run ` +
+          `validated (a gate leg concluded success) — the recovery was partial ` +
+          `(other legs still failed; see the aggregate issue). ` +
+          `Nightly revalidation run: ${runUrl} — closing.`,
       },
     });
     await ghApi(token, `/repos/${repo}/issues/${issue.number}`, {
@@ -374,11 +380,15 @@ async function main() {
  */
 /**
  * The open PER-BROWSER triage issues whose browser recovered: not among this
- * run's failed browsers. A night with OTHER failures never runs the green close
- * loop (it needs legs.length === 0), so this is the only recovery signal such a
- * night gets — the stale issue would keep the status table rendering its ❌
- * triage link for a browser whose record now covers a passing run, and would
- * suppress re-opening on a repeat failure.
+ * run's failed browsers AND the run validates something. A night with OTHER
+ * failures never runs the green close loop (it needs legs.length === 0), so
+ * this is the only recovery signal such a night gets — the stale issue would
+ * keep the status table rendering its ❌ triage link for a browser whose record
+ * now covers a passing run, and would suppress re-opening on a repeat failure.
+ * A run that validated nothing (all legs cancelled or never ran — see
+ * FAILED_CONCLUSIONS) passes no failedBrowsers but closes nothing: close
+ * filtered by that condition in the caller (main()), not here (batch #7
+ * finding).
  *
  * @param {{number: number; title: string}[]} open open triage issues
  * @param {string[]} failedBrowsers this run's failed gate browsers

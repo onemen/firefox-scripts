@@ -33,13 +33,11 @@ const args = process.argv.slice(2);
 const namesOnly = args.includes('--names');
 const baselineFile = args.find(arg => !arg.startsWith('--')) || '.watchdog/baseline.json';
 
-// Consume the ESR_WATCHDOG_MARKERS env var shapes the workflow passes. If the
-// intended fallback fires, the values are read directly from the issue —
-// machine-visible, no inference (the workflow's URL-fetch step sets this).
-const markerValues = (process.env.ESR_WATCHDOG_MARKERS || '')
-  .split(',')
-  .map(v => v.trim())
-  .filter(Boolean);
+// Consume ESR_WATCHDOG_MARKERS — the WHOLE [url-watchdog] status issue body,
+// one env value (the workflow fetches the single meta issue verbatim). Not a
+// comma-separated list: splitting a body on commas shreds the marker JSON
+// (comma-keyed) and nothing parses (batch #7 finding, proven live).
+const markerBody = process.env.ESR_WATCHDOG_MARKERS || '';
 
 let esrState = null;
 try {
@@ -49,19 +47,15 @@ try {
   console.error(`no readable watchdog baseline at ${baselineFile} — trying the meta-issue marker`);
 }
 
-if (!esrState && markerValues.length > 0) {
-  for (const markerValue of markerValues) {
-    const parsed = parseEsrMarker(markerValue);
-    if (parsed) {
-      esrState = parsed;
-      console.error(
-        `watchdog baseline absent — ESR window restored from the [url-watchdog] status issue marker`
-      );
-      break;
-    }
-  }
-  if (!esrState) {
-    console.error('no parseable watchdog:data marker in the provided values — generic fallback');
+if (!esrState && markerBody) {
+  const parsed = parseEsrMarker(markerBody);
+  if (parsed) {
+    esrState = parsed;
+    console.error(
+      `watchdog baseline absent — ESR window restored from the [url-watchdog] status issue marker`
+    );
+  } else {
+    console.error('no parseable watchdog:data marker in the issue body — generic fallback');
   }
 } else if (!esrState) {
   console.error('ESR_WATCHDOG_MARKERS not set — generic serving-ESR fallback');

@@ -11,6 +11,7 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
@@ -126,6 +127,28 @@ test('recoveredPerBrowserIssues: a browser not in the failed set has recovered',
   ];
   const out = recoveredPerBrowserIssues(open, ['waterfox']);
   assert.deepEqual(out, [{number: 11, title: perBrowserTitle('firefox'), browser: 'firefox'}]);
+});
+
+test('recoveredPerBrowserIssues: the helper stays failure-set-shaped; the all-cancelled guard lives in main()', () => {
+  // Batch #7: the helper cannot see conclusions, so the "a run that validated
+  // nothing closes nothing" decision lives at the call site
+  // (`anySuccess ? recoveredPerBrowserIssues(...) : []`). Pinned as
+  // documentation — if this helper ever grows a jobs parameter, move the
+  // guard inside and delete this comment.
+  assert.equal(recoveredPerBrowserIssues.length, 2);
+});
+
+test('main(): closes recovered issues only when a gate leg concluded success', () => {
+  // The all-cancelled shape: no FAILED legs (so browsers = []) but also no
+  // success — recoveredPerBrowserIssues is gated on anySuccess in main(), so
+  // the close loop must not run. Verify the source wires the guard on the
+  // job list, not on the failure set (whose emptiness here is a false green).
+  const src = fs.readFileSync(path.join(REPO_ROOT, 'tools', 'ci', 'e2e-triage.mjs'), 'utf8');
+  assert.match(src, /const anySuccess = jobs\.some\(job => job\.conclusion === 'success'\)/);
+  assert.match(
+    src,
+    /const recovered = anySuccess \? recoveredPerBrowserIssues\(open, browsers\) : \[\]/
+  );
 });
 
 test('recoveredPerBrowserIssues: firefox-dev failing does not cancel firefox recovery', () => {

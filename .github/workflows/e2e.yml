@@ -1312,18 +1312,20 @@ jobs:
       # evicted (wipe — the #462 incident), the meta-issue body's
       # `watchdog:data` marker restores the watched majors — GitHub's issue
       # store is not an evictable cache. Fetched unconditionally into
-      # ESR_WATCHDOG_MARKERS (what tools/ci/esrMatrix.mjs parses); a miss
-      # degrades inside that tool to the generic serving-ESR leg, never a
-      # job failure — the same fail-soft contract the baseline miss has.
+      # ESR_WATCHDOG_MARKERS — ONE value, the WHOLE issue body (not a list;
+      # esrMatrix.mjs parses it as one body — batch #7); a miss degrades
+      # inside that tool to the generic serving-ESR leg, never a job failure
+      # — the same fail-soft contract the baseline miss has.
       - name: Fetch the meta-issue ESR marker (fallback #2)
         id: esr-marker
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
-        # The meta issue's body carries the `watchdog:data` marker (view
-        # URL-searchable via the issue search API). Failure-tolerant: no issue
-        # or a failed lookup yields an EMPTY value — esrMatrix.mjs degrades to
-        # the generic serving-ESR fallback in that case (its own contract).
+        # The meta issue's body carries the `watchdog:data` marker. The value
+        # is ONE issue body (esrMatrix.mjs parses the whole value; it is not a
+        # comma list). Failure-tolerant: no issue or a failed lookup yields an
+        # EMPTY value — esrMatrix.mjs degrades to the generic serving-ESR
+        # fallback in that case (its own contract).
         run: |
           BODY=$(gh search issues --repo "${{ github.repository }}" \
             "[url-watchdog] status" --state open --json number --jq '.[0].number' 2>/dev/null \
