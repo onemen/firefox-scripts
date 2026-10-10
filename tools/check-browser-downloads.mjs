@@ -986,6 +986,12 @@ export async function main() {
         downloadMs: verified.downloadMs,
         checkedAt: new Date().toISOString(),
         checkedUrl: runUrl,
+        // The Updated cell shows WHEN THE ROW CHANGED (buildStatusTable):
+        // this run verified the new version/hash — stamp it. A green no-op
+        // run below carries the previous stamp instead, so the cell (and
+        // the meta-issue body) stays byte-identical on unchanged nights.
+        updatedAt: new Date().toISOString(),
+        updatedRunUrl: runUrl,
       };
       // A first run is treated exactly like a new release: status, ledger
       // row, and an E2E dispatch. After a state loss (cache eviction, wipe)
@@ -1035,6 +1041,12 @@ export async function main() {
         downloadMs: verified.downloadMs,
         checkedAt: new Date().toISOString(),
         checkedUrl: runUrl,
+        // The Updated cell shows WHEN THE ROW CHANGED (buildStatusTable):
+        // this run verified the new version/hash — stamp it. A green no-op
+        // run below carries the previous stamp instead, so the cell (and
+        // the meta-issue body) stays byte-identical on unchanged nights.
+        updatedAt: new Date().toISOString(),
+        updatedRunUrl: runUrl,
       };
       results[browser] = {status: 'ok'};
       return;
@@ -1053,6 +1065,13 @@ export async function main() {
       downloadMs: prev.downloadMs ?? null,
       checkedAt: new Date().toISOString(),
       checkedUrl: runUrl,
+      // Unchanged row: the Updated cell keeps the LAST CHANGE stamp, not
+      // this run's re-check — carries the no-churn contract
+      // (buildStatusTable comments it; the meta-issue PATCH must not fire
+      // on a green no-op night). Falls back to the checked stamp when
+      // only pre-rework baselines exist.
+      updatedAt: prev.updatedAt ?? prev.checkedAt ?? null,
+      updatedRunUrl: prev.updatedRunUrl ?? prev.checkedUrl ?? null,
     };
     if (sizeChanged) {
       console.log(`  ⚠ same version, binary size changed: ${prev.size} → ${total}`);

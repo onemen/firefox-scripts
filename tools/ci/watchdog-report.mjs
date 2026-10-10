@@ -530,10 +530,10 @@ export function validatedCell(browser, entry, validated, {triageIssues = null} =
 }
 
 /**
- * Triagle-issue title (the #136 rework): the e2e-triage job now titles one
- * issue PER FAILED GATE BROWSER (in addition to the hash-titled footer issue;
- * see tools/ci/e2e-triage.mjs — the per-browser title is the contract both
- * sides share so the watchdog can discover it while rendering the table).
+ * Triage-issue title (the #136 rework): the e2e-triage job now titles one issue
+ * PER FAILED GATE BROWSER (in addition to the hash-titled footer issue; see
+ * tools/ci/e2e-triage.mjs — the per-browser title is the contract both sides
+ * share so the watchdog can discover it while rendering the table).
  */
 export function triageIssueTitle(browser) {
   return `[e2e-triage] failed updater legs · ${browser}`;
@@ -782,7 +782,7 @@ const WATCHDOG_INTRO = `This is the status page for the **URL watchdog** — the
 (.github/workflows/url-watchdog.yml) that re-resolves every browser's latest version from its
 vendor API, verifies the download endpoint, and re-baselines the SHA-256 ledger on new releases
 (each new release — and a first run after state loss — also dispatches the browser E2E). The table
-below are bot-maintained and rewritten each run; download failures and size changes open separate
+below is bot-maintained and rewritten each run; download failures and size changes open separate
 [url-watchdog] issues that auto-close once the browser checks green again.`;
 
 const WATCHDOG_INTRO_TAIL = `\n

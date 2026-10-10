@@ -384,6 +384,53 @@ function assertTableIntegrity(table, label = 'table') {
   return expected;
 }
 
+test('buildStatusTable: the Updated cell renders the change stamp, falling back to check time', () => {
+  // The row's Updated cell shows WHEN the row last CHANGED (updatedAt),
+  // not when the nightly last re-probed (checkedAt) — the no-churn contract
+  // (issue #136 rework): a rendered stamp that drifted between dates would
+  // patch the meta-issue body on every green no-op night.
+  const withBoth = buildStatusTable({
+    results: {zen: {status: 'ok'}},
+    baseline: {
+      zen: {
+        version: '1.22b',
+        size: 114152784,
+        sha256: 'ab12cd',
+        checkedAt: '2026-10-09T04:00:00Z',
+        checkedUrl: 'https://github.com/o/r/actions/runs/9',
+        updatedAt: '2026-09-30T12:00:00Z',
+        updatedRunUrl: 'https://github.com/o/r/actions/runs/3',
+      },
+    },
+  });
+  assertTableIntegrity(withBoth, 'updatedAt + checkedAt table');
+  const row = withBoth.split('\n').find(l => l.startsWith('| zen '));
+  // The change stamp wins over the newer re-check stamp.
+  assert.match(
+    row,
+    /\| \[Sep 30\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/3\) \| ✅ up to date /
+  );
+  assert.ok(!row.includes('Oct 9'), 'the fresher re-check date must not win the Updated cell');
+
+  // Pre-rework baselines carry only checkedAt — it stands until a change
+  // stamps updatedAt; an all-dash cell must never appear.
+  const checkedOnly = buildStatusTable({
+    results: {zen: {status: 'ok'}},
+    baseline: {
+      zen: {
+        version: '1.22b',
+        size: 114152784,
+        sha256: 'ab12cd',
+        checkedAt: '2026-10-09T04:00:00Z',
+        checkedUrl: '',
+      },
+    },
+  });
+  assertTableIntegrity(checkedOnly, 'checkedAt-only table');
+  const legacy = checkedOnly.split('\n').find(l => l.startsWith('| zen '));
+  assert.match(legacy, /\| Oct 9 \| ✅ up to date /);
+});
+
 test('buildStatusTable: seven rows (incl. the informational nightly), fallback on failed browsers', () => {
   const results = {
     'firefox': {status: 'ok'},
