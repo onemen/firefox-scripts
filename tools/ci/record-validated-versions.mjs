@@ -106,9 +106,13 @@ export const FORK_RECORD_FILE = 'forks.json';
  *
  * @param {string} dir E2E_VERSIONS_DIR (where download-artifact flattened the
  *   e2e-version-*.json artifacts)
- * @returns {Record<string, {os: string; version: string; coldDownloadMs?: number}[]>} legs
- *   per browser (coldDownloadMs = the leg's COLD installer download wall-clock,
- *   exported by setup-browser via downloads.mjs; a cache-reuse leg omits it)
+ * @returns {Record<
+ *   string,
+ *   {os: string; version: string; coldDownloadMs?: number}[]
+ * >}
+ *   legs per browser (coldDownloadMs = the leg's COLD installer download
+ *   wall-clock, exported by setup-browser via downloads.mjs; a cache-reuse leg
+ *   omits it)
  */
 export function readLegArtifacts(dir) {
   if (!dir || !fs.existsSync(dir)) {
