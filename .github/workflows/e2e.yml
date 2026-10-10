@@ -1308,12 +1308,40 @@ jobs:
           path: .watchdog
           key: url-watchdog-baseline-not-used
           restore-keys: url-watchdog-baseline-
+      # Second home for the ESR window (#136): when the baseline cache is
+      # evicted (wipe — the #462 incident), the meta-issue body's
+      # `watchdog:data` marker restores the watched majors — GitHub's issue
+      # store is not an evictable cache. Fetched unconditionally into
+      # ESR_WATCHDOG_MARKERS (what tools/ci/esrMatrix.mjs parses); a miss
+      # degrades inside that tool to the generic serving-ESR leg, never a
+      # job failure — the same fail-soft contract the baseline miss has.
+      - name: Fetch the meta-issue ESR marker (fallback #2)
+        id: esr-marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        # The meta issue's body carries the `watchdog:data` marker (view
+        # URL-searchable via the issue search API). Failure-tolerant: no issue
+        # or a failed lookup yields an EMPTY value — esrMatrix.mjs degrades to
+        # the generic serving-ESR fallback in that case (its own contract).
+        run: |
+          BODY=$(gh search issues --repo "${{ github.repository }}" \
+            "[url-watchdog] status" --state open --json number --jq '.[0].number' 2>/dev/null \
+            | xargs -r -I{} gh api "repos/${{ github.repository }}/issues/{}" --jq .body || true)
+          {
+            echo 'markers<<ESR_MARKER_EOF'
+            printf '%s' "$BODY"
+            echo ''
+            echo 'ESR_MARKER_EOF'
+          } >> "$GITHUB_OUTPUT"
       - name: Build the ESR leg matrix
         id: mtx
         shell: bash
         # tools/ci/esrMatrix.mjs prints the matrix JSON on stdout (fallback
         # included). No inline node here: a multi-line -e string is split per
         # line in bash and each line becomes a shell command (exit 127).
+        env:
+          ESR_WATCHDOG_MARKERS: ${{ steps.esr-marker.outputs.markers }}
         run: |
           MATRIX=$(node tools/ci/esrMatrix.mjs .watchdog/baseline.json)
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
@@ -1328,6 +1356,8 @@ jobs:
         id: names
         if: steps.mtx.outputs.matrix != ''
         shell: bash
+        env:
+          ESR_WATCHDOG_MARKERS: ${{ steps.esr-marker.outputs.markers }}
         run: |
           NAMES=$(node tools/ci/esrMatrix.mjs .watchdog/baseline.json --names)
           echo "names=$NAMES" >> "$GITHUB_OUTPUT"
