@@ -130,8 +130,8 @@ test('recoveredPerBrowserIssues: a browser not in the failed set has recovered',
 });
 
 test('recoveredPerBrowserIssues: the helper stays failure-set-shaped; the all-cancelled guard lives in main()', () => {
-  // Batch #7: the helper cannot see conclusions, so the "a run that validated
-  // nothing closes nothing" decision lives at the call site
+  // The helper cannot see conclusions, so the "a run that validated nothing
+  // closes nothing" decision lives at the call site
   // (`anySuccess ? recoveredPerBrowserIssues(...) : []`). Pinned as
   // documentation — if this helper ever grows a jobs parameter, move the
   // guard inside and delete this comment.
