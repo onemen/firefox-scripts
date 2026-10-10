@@ -702,7 +702,10 @@ export function runPreflight(seams = {}) {
         `  ✗ the watchdog auto-dispatch failed — run it manually:\n` +
           `    gh workflow run url-watchdog.yml --ref main --repo ${REPO}`
       );
-      return {verdict: 'drift', drift};
+      // The caller gets THIS run's verdict, not a hardcoded drift: a
+      // no-baseline read that loses its fail-safe dispatch must not be
+      // re-described as drift with an empty drift list.
+      return {verdict, drift};
     }
     // The watchdog run URL is cosmetic — the dispatch IS the remediation. A
     // discovery miss here must not escape runPreflight (CodeRabbit PR #350):

@@ -343,9 +343,16 @@ test('runPreflight: no-baseline → watchdog dispatched + fail-closed (was the f
 });
 
 test('runPreflight: no-baseline with a failed watchdog dispatch still reports the verdict', () => {
+  // A watchdog listed since afterIso would take the already-dispatched
+  // early return and this test would never reach the {status: 1} fail-safe
+  // dispatch — the stub throws for url-watchdog so the real path runs and
+  // the verdict (not a hardcoded drift) is what comes back.
   const out = runPreflight({
     dispatch: argv => (argv.includes('url-watchdog.yml') ? {status: 1} : okDispatch(argv)),
-    find: () => ({databaseId: 7}),
+    find: workflow => {
+      if (workflow === 'url-watchdog.yml') throw new DispatchNotFoundError('none yet');
+      return {databaseId: 7};
+    },
     status: () => ({status: 'completed', conclusion: 'failure'}),
     verdict: () => ({verdict: 'no-baseline', drift: []}),
     sleep: () => {},
