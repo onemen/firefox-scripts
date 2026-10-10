@@ -17,8 +17,21 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const toolUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'ci', 'e2e-triage.mjs')).href;
 
-const {failedLegs, failuresHash, triageTitle, isTriageIssueTitle, triageBody, TRIAGE_LABEL} =
-  await import(toolUrl);
+const {
+  failedLegs,
+  failuresHash,
+  triageTitle,
+  isTriageIssueTitle,
+  triageBody,
+  TRIAGE_LABEL,
+  recoveredPerBrowserIssues,
+} = await import(toolUrl);
+
+// The per-browser title-maker lives in the reporting layer — e2e-triage
+// imports it from there, so the tests do the same (one source, no drift).
+const {triageIssueTitle: perBrowserTitle} = await import(
+  pathToFileURL(path.join(REPO_ROOT, 'tools', 'ci', 'watchdog-report.mjs')).href
+);
 
 const leg = (name, conclusion = 'failure') => ({name, conclusion, html_url: `u/${name}`});
 
@@ -103,4 +116,49 @@ test('triageBody: names the run, lists the legs, and says what closes the issue'
 test('the triage label is its own surface, not the watchdog’s', () => {
   assert.equal(TRIAGE_LABEL, 'e2e-nightly');
   assert.notEqual(TRIAGE_LABEL, 'url-watchdog');
+});
+
+test('recoveredPerBrowserIssues: a browser not in the failed set has recovered', () => {
+  const open = [
+    {number: 11, title: perBrowserTitle('firefox')},
+    {number: 12, title: perBrowserTitle('waterfox')},
+    {number: 13, title: '[e2e nightly] 2026-10-10 · abc123'}, // aggregate, not per-browser
+  ];
+  const out = recoveredPerBrowserIssues(open, ['waterfox']);
+  assert.deepEqual(out, [{number: 11, title: perBrowserTitle('firefox'), browser: 'firefox'}]);
+});
+
+test('recoveredPerBrowserIssues: firefox-dev failing does not cancel firefox recovery', () => {
+  // Recovery is per browser: firefox is green this night, so its issue
+  // closes even while firefox-dev still fails — and vice versa. The
+  // exact-segment browserOfLeg guarantees the failed-set names and the
+  // issue-title suffixes are drawn from the same exact-token space, so
+  // firefox-dev failing can never suppress the firefox close or the
+  // firefox-dev close: each is compared against its own name.
+  const open = [{number: 11, title: perBrowserTitle('firefox')}];
+  const out = recoveredPerBrowserIssues(open, ['firefox-dev']);
+  assert.deepEqual(
+    out.map(i => i.browser),
+    ['firefox']
+  );
+});
+
+test('recoveredPerBrowserIssues: still-failing browsers stay open', () => {
+  const open = [
+    {number: 11, title: perBrowserTitle('firefox')},
+    {number: 12, title: perBrowserTitle('firefox-dev')},
+  ];
+  const out = recoveredPerBrowserIssues(open, ['firefox', 'firefox-dev']);
+  assert.deepEqual(out, []);
+});
+
+test('recoveredPerBrowserIssues: a green night leaves the close to the green loop', () => {
+  // With NO failed browsers, everything open is recovered — but the green
+  // close loop (legs.length === 0) handles that night; this helper only
+  // runs on partial-recovery nights, where it must behave the same way.
+  const open = [{number: 11, title: perBrowserTitle('firefox')}];
+  assert.deepEqual(
+    recoveredPerBrowserIssues(open, []).map(i => i.browser),
+    ['firefox']
+  );
 });

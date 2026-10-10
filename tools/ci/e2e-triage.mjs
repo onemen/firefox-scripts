@@ -342,12 +342,59 @@ async function main() {
       },
     });
   }
+
+  // Recovery closes (#136 rework): on a night whose failures have ANOTHER
+  // browser, the green close loop (legs.length === 0 above) never runs — a
+  // per-browser issue for a browser that PASSED would stay open forever,
+  // keep its stale ❌ triage link in the status table, and suppress
+  // re-opening when it fails again. Close the ones this run did not fail.
+  const recovered = recoveredPerBrowserIssues(open, browsers);
+  for (const issue of recovered) {
+    console.log(`  close recovered per-browser issue: ${issue.title}`);
+    if (dryRun) continue;
+    await ghApi(token, `/repos/${repo}/issues/${issue.number}/comments`, {
+      method: 'POST',
+      body: {
+        body:
+          `This browser is not among this run's failed gate browsers — the ` +
+          `recovery was partial (other legs still failed; see the aggregate ` +
+          `issue). Green nightly revalidation run: ${runUrl} — closing.`,
+      },
+    });
+    await ghApi(token, `/repos/${repo}/issues/${issue.number}`, {
+      method: 'PATCH',
+      body: {state: 'closed', state_reason: 'completed'},
+    });
+  }
 }
 
 /**
  * The ledger browser a failed gate leg belongs to: `updater E2E · firefox ·
  * macos-latest` → `firefox`. Null for non-browser legs (snapshot, helper).
  */
+/**
+ * The open PER-BROWSER triage issues whose browser recovered: not among this
+ * run's failed browsers. A night with OTHER failures never runs the green close
+ * loop (it needs legs.length === 0), so this is the only recovery signal such a
+ * night gets — the stale issue would keep the status table rendering its ❌
+ * triage link for a browser whose record now covers a passing run, and would
+ * suppress re-opening on a repeat failure.
+ *
+ * @param {{number: number; title: string}[]} open open triage issues
+ * @param {string[]} failedBrowsers this run's failed gate browsers
+ * @returns {{number: number; title: string; browser: string}[]}
+ */
+export function recoveredPerBrowserIssues(open, failedBrowsers) {
+  const recovered = [];
+  for (const issue of open) {
+    if (!isPerBrowserTriageTitle(issue.title)) continue;
+    const browser = issue.title.slice(triageIssueTitle('').length);
+    if (failedBrowsers.includes(browser)) continue;
+    recovered.push({...issue, browser});
+  }
+  return recovered;
+}
+
 export function browserOfLeg(leg) {
   // Leg names read 'updater E2E · firefox-dev · macos-latest' — the browser is
   // the exact '·'-separated SEGMENT, not a substring: a substring probe (and
