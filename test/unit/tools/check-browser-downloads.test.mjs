@@ -53,6 +53,7 @@ const {
 
 const FINDINGS_ONE_FORK = [{kind: 'new-version', browser: 'librewolf', version: '157.0'}];
 const FINDINGS_HARD_GATE = [{kind: 'new-version', browser: 'firefox', version: '146.0'}];
+const FINDINGS_NIGHTLY = [{kind: 'new-version', browser: 'nightly', version: '160.0a1'}];
 
 function withEventName(name, fn) {
   const prev = process.env.GITHUB_EVENT_NAME;
@@ -79,6 +80,41 @@ test('buildDispatchPlan: a manual run plans only what the findings ask for', () 
 test('buildDispatchPlan: a quiet manual run plans nothing', () => {
   withEventName('workflow_dispatch', () => {
     assert.deepEqual(buildDispatchPlan([]).plans, []);
+  });
+});
+
+// Nightly churns daily and has no single-browser escape input, so a Nightly
+// movement must reach the matrix too — on a manual run as much as a scheduled
+// one. Informational excludes it from the publish gate, not from the dispatch.
+test('buildDispatchPlan: a Nightly movement dispatches the full matrix on a manual run', () => {
+  withEventName('workflow_dispatch', () => {
+    const plan = buildDispatchPlan(FINDINGS_NIGHTLY);
+    assert.equal(plan.nightly, false);
+    assert.deepEqual(plan.plans, [{workflow: 'e2e.yml', inputs: {browser: 'all', version: ''}}]);
+  });
+});
+
+test('buildDispatchPlan: a Nightly movement is marked as the nightly on a scheduled run', () => {
+  withEventName('schedule', () => {
+    const plan = buildDispatchPlan(FINDINGS_NIGHTLY);
+    assert.deepEqual(plan.plans, [
+      {workflow: 'e2e.yml', inputs: {browser: 'all', version: '', nightly: true}},
+      {workflow: 'core-smoke-nightly.yml', inputs: {}},
+    ]);
+  });
+});
+
+test('buildDispatchPlan: Nightly + hard gate + fork still plan ONE full run', () => {
+  withEventName('workflow_dispatch', () => {
+    const plan = buildDispatchPlan([
+      ...FINDINGS_NIGHTLY,
+      ...FINDINGS_HARD_GATE,
+      ...FINDINGS_ONE_FORK,
+    ]);
+    assert.deepEqual(plan.plans, [
+      {workflow: 'e2e.yml', inputs: {browser: 'librewolf', version: ''}},
+      {workflow: 'e2e.yml', inputs: {browser: 'all', version: ''}},
+    ]);
   });
 });
 

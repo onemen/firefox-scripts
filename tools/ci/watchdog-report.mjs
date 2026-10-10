@@ -285,17 +285,23 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  *   (`browser` absent = full matrix)
  */
 export function planDispatches(findings) {
-  // Informational rows (nightly) never dispatch — their coverage is the PR
-  // legs, and a nightly-churning channel would spam the dispatch API.
-  const newVersions = findings.filter(
-    f =>
-      (f.kind === 'new-version' || f.kind === 'first-run') &&
-      !INFORMATIONAL_BROWSERS.includes(f.browser)
-  );
+  // EVERY new version dispatches E2E, whatever triggered the check — a manual
+  // `workflow_dispatch` plans exactly what a scheduled nightly does.
+  //
+  // Nightly has no single-browser escape in e2e.yml (the `browser` input accepts
+  // all|librewolf|floorp|zen|waterfox|firefox-esr), so its coverage is the full
+  // matrix — the same run a hard-gate release asks for, never a second one: two
+  // full runs share a concurrency group and would cancel each other. Nightly's
+  // informational classification (INFORMATIONAL_BROWSERS) keeps it out of the
+  // PUBLISH GATE, which is a different question — see collectDrift below.
+  const newVersions = findings.filter(f => f.kind === 'new-version' || f.kind === 'first-run');
   const forks = [
     ...new Set(newVersions.map(f => f.browser).filter(b => FORK_BROWSERS.includes(b))),
   ];
-  const hardGates = newVersions.some(f => VALIDATED_BROWSERS.includes(f.browser));
+  // A hard-gate release and a Nightly build both mean "run the whole matrix".
+  const fullMatrix =
+    newVersions.some(f => VALIDATED_BROWSERS.includes(f.browser)) ||
+    newVersions.some(f => INFORMATIONAL_BROWSERS.includes(f.browser));
   // Any watched ESR major drifting (point release on the serving line, or the
   // archive-index catch on a retired line) → ONE dispatch that runs the whole
   // esr-portable matrix — both current ESR legs — via the `browser=firefox-esr`
@@ -308,7 +314,7 @@ export function planDispatches(findings) {
   /** @type {{browser?: string; ref: string}[]} */
   const plans = forks.map(browser => ({browser, ref: 'main'}));
   if (esr) plans.push({browser: 'firefox-esr', ref: 'main'});
-  if (hardGates) plans.push({ref: 'main'});
+  if (fullMatrix) plans.push({ref: 'main'});
   return plans;
 }
 
