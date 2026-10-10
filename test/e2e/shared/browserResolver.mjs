@@ -32,11 +32,35 @@ const backoffMs = () => {
 };
 
 /**
+ * Authorization for GitHub API requests — api.github.com and nothing else.
+ *
+ * `api.github.com`'s anonymous budget is 60 requests/hour **per IP**, and a
+ * GitHub-hosted runner does not own its egress address, so that budget is
+ * routinely already spent by the time a lookup runs. On 2026-10-08 and again on
+ * 2026-10-09 every attempt at the floorp and zen version lookups came back
+ * `HTTP 403`, and because those two are single-source browsers the watchdog
+ * failed closed (`NO baseline was saved`, E2E dispatch skipped) on both nights.
+ * A token raises the budget to 5,000/hour.
+ *
+ * Scoped to api.github.com by construction: a vendor host must never receive
+ * the workflow token.
+ *
+ * @param {string} url
+ * @returns {Record<string, string>} headers to send, `{}` when not applicable
+ */
+function githubApiHeaders(url) {
+  if (!/^https:\/\/api\.github\.com\//.test(url)) return {};
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+  return token ? {Authorization: `Bearer ${token}`} : {};
+}
+
+/**
  * Fetch a URL and parse the body, retrying with backoff.
  *
  * 3 attempts with 5s/10s/15s backoff (mirrors downloads.mjs's fetchWithRetry
  * ladder). Each attempt is bounded by `timeoutMs` so a stalled connection
- * cannot hang CI until the runner kills the job.
+ * cannot hang CI until the runner kills the job. api.github.com requests carry
+ * the workflow token when one is in the environment (see githubApiHeaders).
  *
  * @param {string} url
  * @param {{attempts?: number; timeoutMs?: number; as?: 'json' | 'text'}} [opts]
@@ -47,7 +71,10 @@ async function fetchWithRetry(url, {attempts = 3, timeoutMs = 30_000, as = 'json
   let lastErr;
   for (let i = 1; i <= total; i++) {
     try {
-      const res = await fetch(url, {signal: AbortSignal.timeout(timeoutMs)});
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: githubApiHeaders(url),
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
       return as === 'json' ? await res.json() : await res.text();
     } catch (err) {
