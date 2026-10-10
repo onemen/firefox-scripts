@@ -1120,13 +1120,19 @@ function readDriftGate() {
 
 /**
  * The verdict chain across drift-gate + drift-check.yml + the in-run consumers.
+ * `gate`/`probe` are injectable for the canary test — mutating a fixture copy
+ * beats writing the real action.yml from a parallel test runner (node --test
+ * runs files in processes, so a write-restore window is a race another file can
+ * read, and a hard kill leaves the tree corrupted).
  *
  * @param {string} file file containing the coupling, for messages
+ * @param {{gate?: string; probe?: string}} [texts] defaults read the real files
  * @returns {string[]}
  */
-export function noBaselineChainViolations(file) {
-  const gate = readDriftGate();
-  const probe = readWorkflow('drift-check.yml');
+export function noBaselineChainViolations(
+  file,
+  {gate = readDriftGate(), probe = readWorkflow('drift-check.yml')} = {}
+) {
   const violations = [];
 
   // 1. The gate surfaces the tool's marker as a distinct output + verdict:
@@ -1264,29 +1270,18 @@ test('the real drift-gate + drift-check + publish consumers satisfy the no-basel
 
 test('no-baseline chain: each link catches its own regression', () => {
   // Link 1: the gate must map the marker to its own verdict. Deleting the
-  // verdict step's no-baseline branch breaks the chain do-nothing-rely.
-  const gatePath = path.join(REPO_ROOT, '.github/actions/drift-gate/action.yml');
-  const originalGate = fs.readFileSync(gatePath, 'utf8');
-  const originalProbe = fs.readFileSync(
-    path.join(REPO_ROOT, '.github/workflows/drift-check.yml'),
-    'utf8'
-  );
-  try {
-    const brokenGate = originalGate
+  // verdict step's no-baseline branch breaks the chain — a MUTATED COPY passed
+  // through the {gate} seam, never a write to the real action.yml (node --test
+  // runs files in parallel processes; a write-then-restore window is a race
+  // another file can read, and a hard kill would leave the tree corrupted).
+  const brokenGate = stripComments(
+    readDriftGate()
       .replace(/verdict=no-baseline' /g, '')
-      .replace(/'verdict=no-baseline'/g, "'verdict=drift'");
-    fs.writeFileSync(gatePath, brokenGate, 'utf8');
-    const violations = noBaselineChainViolations('drift-check.yml');
-    assert.ok(
-      violations.some(v => /does not map the no-baseline marker/.test(v)),
-      `expected the gate link to fail; got ${JSON.stringify(violations)}`
-    );
-  } finally {
-    fs.writeFileSync(gatePath, originalGate, 'utf8');
-    fs.writeFileSync(
-      path.join(REPO_ROOT, '.github/workflows/drift-check.yml'),
-      originalProbe,
-      'utf8'
-    );
-  }
+      .replace(/'verdict=no-baseline'/g, "'verdict=drift'")
+  );
+  const violations = noBaselineChainViolations('drift-check.yml', {gate: brokenGate});
+  assert.ok(
+    violations.some(v => /does not map the no-baseline marker/.test(v)),
+    `expected the gate link to fail; got ${JSON.stringify(violations)}`
+  );
 });

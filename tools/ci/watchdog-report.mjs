@@ -782,7 +782,8 @@ const WATCHDOG_INTRO = `This is the status page for the **URL watchdog** — the
 (.github/workflows/url-watchdog.yml) that re-resolves every browser's latest version from its
 vendor API, verifies the download endpoint, and re-baselines the SHA-256 ledger on new releases
 (each new release — and a first run after state loss — also dispatches the browser E2E). The table
-and history below are bot-maintained and rewritten each run; download failures and size changes        open separate [url-watchdog] issues that auto-close once the browser checks green again.`;
+below are bot-maintained and rewritten each run; download failures and size changes open separate
+[url-watchdog] issues that auto-close once the browser checks green again.`;
 
 const WATCHDOG_INTRO_TAIL = `\n
 A failed E2E leg for a hard-gated browser is reported in its own titled issue (\`[e2e-triage] failed

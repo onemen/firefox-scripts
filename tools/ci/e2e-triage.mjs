@@ -132,6 +132,18 @@ export function isTriageIssueTitle(title) {
 }
 
 /**
+ * The per-browser issues' title shape (`[e2e-triage] failed updater legs ·
+ * <browser>` — triageIssueTitle in watchdog-report.mjs): same label, same
+ * close-on-green sweep, distinct prefix so the two shapes stay apart.
+ *
+ * @param {string} title
+ * @returns {boolean}
+ */
+export function isPerBrowserTriageTitle(title) {
+  return typeof title === 'string' && title.startsWith(triageIssueTitle(''));
+}
+
+/**
  * One GitHub REST call.
  *
  * @param {string} token
@@ -181,7 +193,12 @@ async function listRunJobs(token, repo, runId) {
 }
 
 /**
- * The open triage issues, oldest first.
+ * The open triage issues, oldest first: BOTH title shapes — the aggregate `[e2e
+ * nightly] …` issues and the per-browser `[e2e-triage] failed updater legs ·
+ * <browser>` ones the watchdog's status table links to. The dedup check and the
+ * green-night close loop both iterate this list, and a per-browser title that
+ * never matched caused a duplicate issue per failing night that no green night
+ * ever closed.
  *
  * @param {string} token
  * @param {string} repo
@@ -192,7 +209,9 @@ async function openTriageIssues(token, repo) {
     token,
     `/repos/${repo}/issues?state=open&labels=${TRIAGE_LABEL}&per_page=100`
   );
-  return open.filter(issue => isTriageIssueTitle(issue.title)).sort((a, b) => a.number - b.number);
+  return open
+    .filter(issue => isTriageIssueTitle(issue.title) || isPerBrowserTriageTitle(issue.title))
+    .sort((a, b) => a.number - b.number);
 }
 
 /**
@@ -295,8 +314,7 @@ async function main() {
   const browsers = [
     ...new Set(
       legs
-        .map(leg => leg.name)
-        .filter(n => /updater|installer|portable-firefox|core-lifecycle/.test(n))
+        .filter(leg => /updater|installer|portable-firefox|core-lifecycle/.test(leg.name))
         .map(browserOfLeg)
         .filter(Boolean)
     ),
@@ -331,11 +349,16 @@ async function main() {
  * macos-latest` → `firefox`. Null for non-browser legs (snapshot, helper).
  */
 export function browserOfLeg(leg) {
-  // Leg names read 'updater E2E · firefox-dev · macos-latest' — plain string
-  // probes, no RegExp (the name is GitHub-served data, and the reports gate
-  // flags non-literal RegExp constructors).
+  // Leg names read 'updater E2E · firefox-dev · macos-latest' — the browser is
+  // the exact '·'-separated SEGMENT, not a substring: a substring probe (and
+  // VALIDATED_BROWSERS' firefox-first order) attributed firefox-dev failures
+  // to firefox. Plain string splitting, no RegExp (the name is GitHub-served
+  // data, and the reports gate flags non-literal RegExp constructors).
+  const parts = String(leg?.name ?? '')
+    .split('·')
+    .map(segment => segment.trim());
   for (const browser of VALIDATED_BROWSERS) {
-    if (leg.name.includes(browser)) return browser;
+    if (parts.includes(browser)) return browser;
   }
   return null;
 }
