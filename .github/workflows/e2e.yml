@@ -408,11 +408,18 @@ jobs:
       - name: Capture installed ${{ matrix.browser }} version
         id: instver
         shell: bash
+        # COLD_DOWNLOAD_MS rides along (#136 rework): the same install step
+        # exports the wall-clock of its last fresh installer transfer
+        # (downloads.mjs / downloadTo). Absent on a cache-reuse leg — the
+        # recorder keeps the newest value it has seen per browser, so a
+        # cache-hit day never overwrites a cold number with an empty one
+        # and no cold download ever recorded stays unrecorded.
         run: |
           VER="$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --installed-version)"
           echo "Tested ${{ matrix.browser }} $VER on ${{ matrix.os }}"
-          printf '{"browser":"%s","os":"%s","version":"%s"}\n' \
+          printf '{"browser":"%s","os":"%s","version":"%s","coldDownloadMs":%s}\n' \
             "${{ matrix.browser }}" "${{ matrix.os }}" "$VER" \
+            "${COLD_DOWNLOAD_MS:-null}" \
             > "e2e-version-${{ matrix.browser }}-${{ matrix.os }}.json"
 
       - name: Upload ${{ matrix.browser }} version artifact

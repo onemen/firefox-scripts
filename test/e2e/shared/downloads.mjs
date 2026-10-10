@@ -783,6 +783,21 @@ async function downloadAttempt(url, dest, budgetEnd, resumeFrom) {
  * attempts fail (stall, budget, or HTTP error); the partial file is kept for
  * the next call.
  */
+/**
+ * Wall-clock millis of the last REAL (fresh, not cache-reuse) download this
+ * process made through downloadTo — spans all attempts including backoff, so a
+ * stalled mirror shows as slow, not as fast retry luck. 0 until a fresh
+ * transfer completes. Live timers + cache-reuse handling live inside
+ * downloadTo; this accessor is what the CLI's post-install step exports.
+ *
+ * @returns {number}
+ */
+export function coldDownloadMs() {
+  return lastFreshDownloadMs;
+}
+
+let lastFreshDownloadMs = 0;
+
 export async function downloadTo(url, dest) {
   if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
     try {
@@ -804,6 +819,9 @@ export async function downloadTo(url, dest) {
   fs.mkdirSync(path.dirname(dest), {recursive: true});
   const attempts = 5;
   const budgetEnd = Date.now() + totalBudgetMs();
+  // A fresh transfer (any attempt completing past this line is one) — cache
+  // reuse returned above and must not stamp the cold timing.
+  const coldStart = Date.now();
   let lastErr;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     // Resume only from a partial file written by a previous attempt of THIS
@@ -812,6 +830,7 @@ export async function downloadTo(url, dest) {
     const resumeFrom = attempt > 1 && fs.existsSync(dest) ? fs.statSync(dest).size : 0;
     try {
       await downloadAttempt(url, dest, budgetEnd, resumeFrom);
+      lastFreshDownloadMs = Date.now() - coldStart;
       return dest;
     } catch (err) {
       // Budget exhausted: no point burning the remaining attempts on
@@ -1829,6 +1848,18 @@ validated, since the "latest" redirect URLs embed no version.`);
   const binary = await installBrowser(browser, normalized);
   console.log(binary);
   exportBinaryPath(binary);
+  // Cold-download timing (#136 rework): the watchdog's status table shows how
+  // long the browser installer took to transfer on the last cold download —
+  // the number an operator cares about, recorded where the transfer happens.
+  // Exported for the setup-browser action to persist into its version
+  // artifact, and logged so any leg's console shows it too.
+  const cold = coldDownloadMs();
+  if (cold > 0) {
+    console.log(`  cold download: ${Math.round(cold / 1000)}s`);
+    if (process.env.GITHUB_ENV) {
+      fs.appendFileSync(process.env.GITHUB_ENV, `COLD_DOWNLOAD_MS=${cold}\n`);
+    }
+  }
 }
 
 // Basename (not endsWith) so modules with a similar name — e.g.

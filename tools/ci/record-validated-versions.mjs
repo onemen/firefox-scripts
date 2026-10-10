@@ -137,7 +137,11 @@ export function readLegArtifacts(dir) {
     // (PR #304), and '?' makes the unknown-OS error say so instead of looking
     // like a legitimately empty OS name.
     const os = typeof leg.os === 'string' && leg.os !== '' ? leg.os : '?';
-    (perBrowser[leg.browser] ??= []).push({os, version: leg.version});
+    // coldDownloadMs (#136 rework): absent on a cache-reuse leg (the JSON
+    // carries null) — treated as "no observation", never as 0.
+    const coldDownloadMs =
+      typeof leg.coldDownloadMs === 'number' && leg.coldDownloadMs > 0 ? leg.coldDownloadMs : null;
+    (perBrowser[leg.browser] ??= []).push({os, version: leg.version, coldDownloadMs});
   }
   return perBrowser;
 }
@@ -167,7 +171,11 @@ export function collectLegVersions(dir) {
           legs.map(l => `${l.os}=${l.version}`).join(', ')
       );
     }
+    // The recorder keeps the NEWEST cold-download observation across the legs
+    // (a cache-hit leg contributes none; at least the cold OS's number lands).
+    const colds = legs.map(l => l.coldDownloadMs).filter(c => typeof c === 'number');
     out[browser] = {version: distinct[0]};
+    if (colds.length > 0) out[browser].coldDownloadMs = Math.max(...colds);
   }
   return out;
 }

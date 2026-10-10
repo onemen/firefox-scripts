@@ -753,9 +753,13 @@ export function buildStatusTable({
     // Download time of the last VERIFIED full download. #136 rework: the
     // watchdog's own endpoint-probe timing (always 0–4 s on CI loaders) moved
     // out; setup-browser's COLD-installer download wall-clock takes its place
-    // (`entry.coldDownloadMs`, recorded by the revalidation legs). The legacy
-    // field stays readable so pre-rework baselines still render something.
-    const downloadTime = formatDownloadMs(entry.coldDownloadMs ?? entry.downloadMs);
+    // (the validated-versions record is the fresher source — it is written by
+    // the run that actually validated the release; the baseline entry is the
+    // fallback for advisory browsers the record does not cover, and the legacy
+    // watchdog downloadMs last so old baselines still show real data).
+    const cold =
+      validated?.browsers?.[browser]?.coldDownloadMs ?? entry.coldDownloadMs ?? entry.downloadMs;
+    const downloadTime = formatDownloadMs(cold);
     const e2e = validatedCell(browser, entry, validated, {triageIssues});
     // Every variable value goes through escapeTableCell: the row's cell
     // count must never depend on what a vendor feed returned.
