@@ -536,7 +536,16 @@ async function openIssueIfNew(token, repo, title, body) {
  * {browser: issueUrl}.
  */
 async function findOpenTriageIssues(token, repo) {
-  const open = await ghApi(token, `/repos/${repo}/issues?state=open&per_page=100`);
+  // Paged like listActionsCaches — page one of 100 alone can hide a triage
+  // issue behind a fuller open-issue list (the same first-page trap the
+  // label-indexed scans dodge via their label filter).
+  const open = [];
+  for (let page = 1; open.length < 100 * page; page++) {
+    const body = await ghApi(token, `/repos/${repo}/issues?state=open&per_page=100&page=${page}`);
+    if (!Array.isArray(body) || body.length === 0) break;
+    open.push(...body);
+    if (body.length < 100) break;
+  }
   const map = {};
   for (const browser of VALIDATED_BROWSERS) {
     const wanted = triageIssueTitle(browser);

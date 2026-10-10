@@ -108,7 +108,7 @@ export const FORK_RECORD_FILE = 'forks.json';
  *   e2e-version-*.json artifacts)
  * @returns {Record<
  *   string,
- *   {os: string; version: string; coldDownloadMs?: number}[]
+ *   {os: string; version: string; coldDownloadMs: number | null}[]
  * >}
  *   legs per browser (coldDownloadMs = the leg's COLD installer download
  *   wall-clock, exported by setup-browser via downloads.mjs; a cache-reuse leg
