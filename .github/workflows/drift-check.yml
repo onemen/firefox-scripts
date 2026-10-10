@@ -40,6 +40,9 @@ jobs:
       verdict: ${{ steps.gate.outputs.verdict }}
       drift: ${{ steps.gate.outputs.drift }}
       e2e-runs: ${{ steps.gate.outputs.e2e-runs }}
+    permissions:
+      contents: read
+      actions: write # the url-watchdog auto-dispatch on drift / no-baseline
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -67,7 +70,26 @@ jobs:
               echo "::error::$line"
             done <<< "$DRIFT"
             echo "::error::run the URL watchdog workflow (refreshes the baseline + triggers browser-specific E2E), then re-dispatch publish."
+          elif [ "$VERDICT" = 'no-baseline' ]; then
+            echo "::error::the watchdog baseline cache is gone (evicted — #462). The URL watchdog is being dispatched right below: it re-baselines every browser and dispatches the E2E matrix that rebuilds the validated-versions record."
           else
             echo "::error::no successful E2E workflow run for commit ${{ github.sha }} — let the E2E run on main finish (or re-run it), then re-dispatch publish."
           fi
           exit 1
+      # Auto-remediation for both baseline-side verdicts (#136 rework): on real
+      # drift the operator used to be told to run the watchdog by hand; on a
+      # WIPED baseline (#462) the publish wrapper read the probe as
+      # 'unobservable' and failed open. In both cases the fix is the same
+      # watchdog run, and this probe is already the cheapest place to detect
+      # it — so the probe dispatches it in both cases and the wrapper's own
+      # watchdog dispatch stays as the fail-safe for verdicts it reads
+      # directly. Fire-and-forget: the watchdog takes ~1 min + its E2E chain;
+      # the re-run of the publish command pre-flights again regardless.
+      - name: Dispatch url-watchdog (drift / no-baseline)
+        if:
+          always() && (steps.gate.outputs.verdict == 'drift' || steps.gate.outputs.verdict ==
+          'no-baseline')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh workflow run url-watchdog.yml --ref main --repo "${{ github.repository }}"

@@ -13,14 +13,19 @@ author: 'onemen/firefox-scripts'
 #   drift-check.yml (the publish wrapper's probe): forward the verdict to its outputs.
 #
 # Outputs:
-#   verdict   — 'green' | 'drift' | 'e2e-missing'
-#               drift: baseline drift, a validated-versions record that does not cover the
-#               current versions, or a hard-gate lookup failure (all remediated by the URL
-#               watchdog + its browser E2E);
-#               e2e-missing: no successful E2E workflow run for this commit (remediated by
-#               letting the E2E run on main finish — or dispatching it).
-#   drift     — the drift lines ("firefox-dev: 157.0b4 → 157.0b5"), one per line; empty when the
-#               block came from the validated-records side without a baseline entry.
+#   verdict      — 'green' | 'drift' | 'no-baseline' | 'e2e-missing'
+#                  drift: baseline drift, a validated-versions record that does not cover the
+#                  current versions, or a hard-gate lookup failure (all remediated by the URL
+#                  watchdog + its browser E2E);
+#                  no-baseline: the watchdog baseline cache is GONE (wipe / eviction — #462).
+#                  Same remedy as drift (the watchdog re-baselines every browser and rebuilds
+#                  the validated record), but the drift-check probe auto-dispatches it in both
+#                  cases, and the wrapper treats both as fail-closed rather than fail-open
+#                  (the missing-baseline case used to parse as 'unobservable' and publish open).
+#                  e2e-missing: no successful E2E workflow run for this commit (remediated by
+#                  letting the E2E run on main finish — or dispatching it).
+#   drift        — the drift lines ("firefox-dev: 157.0b4 → 157.0b5"), one per line; empty when
+#                  the block came from the validated-records side or a missing baseline.
 #   e2e-runs  — successful E2E run count for the commit (empty outside prod mode).
 
 inputs:
@@ -39,7 +44,7 @@ inputs:
 
 outputs:
   verdict:
-    description: "'green' | 'drift' | 'e2e-missing'"
+    description: "'green' | 'drift' | 'no-baseline' | 'e2e-missing'"
     value: ${{ steps.verdict.outputs.verdict }}
   drift:
     description: 'drift lines, one per browser (empty when none)'
@@ -82,6 +87,15 @@ runs:
         set +e
         out="$(node tools/check-browser-downloads.mjs $args 2>&1)"
         status=$?
+        set +e
+        # A cache-wiped watchdog baseline is its OWN verdict, not drift: the
+        # probe auto-dispatches the watchdog for it (the tool prints the
+        # machine-parsable 'no-baseline:' marker above the remedy text).
+        if printf '%s\n' "$out" | grep -q '^no-baseline:'; then
+          echo 'no-baseline=true' >> "$GITHUB_OUTPUT"
+          set -e
+          exit 0
+        fi
         set -e
         # The drift listing ("  - firefox-dev: 157.0b4 → 157.0b5") is what the
         # wrapper surfaces verbatim; strip the two-space list indent.
@@ -110,8 +124,11 @@ runs:
         DRIFT_STATUS: ${{ steps.drift.outputs.status }}
         E2E_COUNT: ${{ steps.e2e.outputs.count }}
         MODE: ${{ inputs.mode }}
+        NO_BASELINE: ${{ steps.drift.outputs.no-baseline }}
       run: |
-        if [ "$DRIFT_STATUS" != '0' ]; then
+        if [ "$NO_BASELINE" = 'true' ]; then
+          echo 'verdict=no-baseline' >> "$GITHUB_OUTPUT"
+        elif [ "$DRIFT_STATUS" != '0' ]; then
           echo 'verdict=drift' >> "$GITHUB_OUTPUT"
         elif [ "$MODE" = 'prod' ] && [ "${E2E_COUNT:-0}" -eq 0 ]; then
           echo 'verdict=e2e-missing' >> "$GITHUB_OUTPUT"

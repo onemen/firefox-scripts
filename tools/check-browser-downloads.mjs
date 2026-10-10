@@ -695,8 +695,17 @@ export async function main() {
   // the baseline (and triggers the browser-specific E2E).
   if (driftMode) {
     if (!fs.existsSync(baselineFile)) {
+      // Machine-parsable marker (the drift-gate action / publish wrapper grep
+      // the exit-1 output): a wipe of the watchdog baseline cache is not the
+      // same condition as drift — the remedy is the same watchdog run, but
+      // the probe can AUTO-dispatch it here (#136 rework), since every
+      // browser will re-baseline and the E2E matrix runs right after.
       console.error(
-        'baseline: cache miss — no watchdog baseline found. Run the URL watchdog workflow first.'
+        'no-baseline: cache miss — no watchdog baseline found (cache wipe or first run).'
+      );
+      console.error(
+        'Run the URL watchdog workflow first — it re-baselines every browser and\n' +
+          'dispatches the E2E matrix that rebuilds the validated-versions record.'
       );
       process.exit(1);
     }

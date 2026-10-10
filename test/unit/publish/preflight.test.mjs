@@ -290,6 +290,43 @@ test('runPreflight: a non-discovery error from find propagates (not swallowed as
   );
 });
 
+test('probeVerdict: the no-baseline remedy line picks its own verdict (wipe reads fail-closed, #462)', () => {
+  const v = probeVerdict(
+    1,
+    ghLog([
+      '##[error]the watchdog baseline cache is gone (evicted — #462). The URL watchdog is being dispatched right below: it re-baselines every browser and dispatches the E2E matrix that rebuilds the validated-versions record.',
+    ])
+  );
+  assert.deepEqual(v, {verdict: 'no-baseline', drift: []});
+});
+
+test('runPreflight: no-baseline → watchdog dispatched + fail-closed (was the fail-open hole)', () => {
+  const dispatched = [];
+  const out = runPreflight({
+    dispatch: argv => {
+      dispatched.push(argv.join(' '));
+      return okDispatch(argv);
+    },
+    find: workflow => ({databaseId: workflow === 'url-watchdog.yml' ? 12 : 7}),
+    status: () => ({status: 'completed', conclusion: 'failure'}),
+    verdict: () => ({verdict: 'no-baseline', drift: []}),
+    sleep: () => {},
+  });
+  assert.deepEqual(out, {verdict: 'no-baseline', drift: []});
+  assert.ok(dispatched.some(a => a.includes('workflow run url-watchdog.yml --ref main')));
+});
+
+test('runPreflight: no-baseline with a failed watchdog dispatch still reports the verdict', () => {
+  const out = runPreflight({
+    dispatch: argv => (argv.includes('url-watchdog.yml') ? {status: 1} : okDispatch(argv)),
+    find: () => ({databaseId: 7}),
+    status: () => ({status: 'completed', conclusion: 'failure'}),
+    verdict: () => ({verdict: 'no-baseline', drift: []}),
+    sleep: () => {},
+  });
+  assert.deepEqual(out, {verdict: 'no-baseline', drift: []});
+});
+
 test('runPreflight: e2e-missing → reported with its remedy, no watchdog dispatched', () => {
   const dispatched = [];
   const out = runPreflight({

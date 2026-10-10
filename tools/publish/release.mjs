@@ -523,13 +523,17 @@ export function waitForProbeRun(
  * (`##[error]firefox-dev: 157.0b4 → 157.0b5`) plus one fixed remedy line —
  * exactly what `gh run view --log` shows once the run completed. The drift
  * lines are surfaced to the operator verbatim; the remedy line's shape picks
- * drift vs e2e-missing. Unparseable/gh-error → 'unobservable' (the caller fails
- * open; pages.yml re-checks in-run).
+ * drift vs e2e-missing. The no-baseline remedy (a WIPED watchdog baseline
+ * cache, #462) used to hit the 'unparseable' → fail-open path and publish past
+ * a dead gate — it is now its own fail-closed verdict, and the probe dispatches
+ * the watchdog for it either way. Unparseable/gh-error → 'unobservable' (the
+ * caller fails open; pages.yml re-checks in-run).
  *
  * @param {number} runId
  * @param {(argv: string[]) => {status: number; stdout: string} | null} [ghFn]
  * @returns {{
- *   verdict: 'green' | 'drift' | 'e2e-missing' | 'unobservable';
+ *   verdict:
+ *     'green' | 'drift' | 'no-baseline' | 'e2e-missing' | 'unobservable';
  *   drift: string[];
  * }}
  */
@@ -544,7 +548,9 @@ export function probeVerdict(runId, ghFn) {
     .map(line => line.replace(/^.*?##\[error\]/, '').trim())
     .filter(Boolean);
   const drift = lines.filter(l => /^[a-z-]+: \S.+ → /.test(l));
+  const noBaseline = lines.some(l => l.startsWith('the watchdog baseline cache is gone'));
   const e2eMissing = lines.some(l => l.startsWith('no successful E2E workflow run'));
+  if (noBaseline && drift.length === 0) return {verdict: 'no-baseline', drift};
   if (e2eMissing && drift.length === 0) return {verdict: 'e2e-missing', drift};
   if (drift.length > 0) return {verdict: 'drift', drift};
   return {verdict: 'unobservable', drift: []};
@@ -555,9 +561,11 @@ export function probeVerdict(runId, ghFn) {
  * checking browser versions + E2E coverage (~30 s)…' green → '✓ pre-flight
  * green — publishing.' drift → the listing + the watchdog dispatched FOR them +
  * measured re-run timing, then exit 1 (the re-run is explicit, #347).
- * e2e-missing → the E2E-for-commit remedy with its timing, exit 1. unobservable
- * → fail-open: name it, point at the run, and publish anyway — pages.yml's
- * in-run gate remains the moment of truth.
+ * no-baseline (a WIPED watchdog baseline cache, #462) → fail-closed like drift:
+ * the gate could not observe any browser, so the watchdog is dispatched for the
+ * operator and the command exits 1. e2e-missing → the E2E-for-commit remedy
+ * with its timing, exit 1. unobservable → fail-open: name it, point at the run,
+ * and publish anyway — pages.yml's in-run gate remains the moment of truth.
  *
  * @param {{
  *   dispatch?: (argv: string[]) => {status: number; stderr?: string} | null;
@@ -570,7 +578,8 @@ export function probeVerdict(runId, ghFn) {
  * }} [seams]
  *   injectable for the unit tests
  * @returns {{
- *   verdict: 'green' | 'drift' | 'e2e-missing' | 'unobservable';
+ *   verdict:
+ *     'green' | 'drift' | 'no-baseline' | 'e2e-missing' | 'unobservable';
  *   drift: string[];
  * }}
  */
@@ -651,11 +660,14 @@ export function runPreflight(seams = {}) {
     );
     return {verdict: 'green', drift: []};
   }
-  if (verdict === 'drift') {
+  if (verdict === 'drift' || verdict === 'no-baseline') {
     console.error(
-      `✗ pre-flight: browser version drift — publishing would ship to a browser version no E2E has validated:\n` +
-        drift.map(d => `    - ${d}`).join('\n') +
-        `\n  → dispatching the URL watchdog for you now (re-baselines the browsers +\n` +
+      verdict === 'drift' ?
+        `✗ pre-flight: browser version drift — publishing would ship to a browser version no E2E has validated:\n` +
+          drift.map(d => `    - ${d}`).join('\n')
+      : `✗ pre-flight: the watchdog baseline cache is GONE (eviction / wipe, #462) —\n` +
+          `  the drift gate cannot observe any browser and fails closed.`,
+      `\n  → dispatching the URL watchdog for you now (re-baselines the browsers +\n` +
         `    dispatches their browser E2E; measured chain: watchdog ~1 min, E2E ~10–15 min —\n` +
         `    the E2E page shows RED on 'snap Firefox E2E · ubuntu-24.04' while the snap-store\n` +
         `    outage (#291) lasts; it still records and unblocks the publish).\n` +
@@ -667,7 +679,7 @@ export function runPreflight(seams = {}) {
         `  ✗ the watchdog auto-dispatch failed — run it manually:\n` +
           `    gh workflow run url-watchdog.yml --ref main --repo ${REPO}`
       );
-      return {verdict: 'drift', drift};
+      return {verdict, drift};
     }
     // The watchdog run URL is cosmetic — the dispatch IS the remediation. A
     // discovery miss here must not escape runPreflight (CodeRabbit PR #350):
@@ -687,7 +699,7 @@ export function runPreflight(seams = {}) {
       `  ✓ url-watchdog dispatched${wdRun ? ` — ${runUrl(wdRun.databaseId)}` : ''}.\n` +
         `  Re-run THIS command when the chain is done — it pre-flights again and publishes.`
     );
-    return {verdict: 'drift', drift};
+    return {verdict, drift};
   }
   // e2e-missing: the E2E run for this commit has not finished (or never ran).
   console.error(
