@@ -1146,16 +1146,17 @@ export function noBaselineChainViolations(
   if (!/NO_BASELINE: \$\{\{ steps.drift.outputs.no-baseline \}\}/.test(gate)) {
     violations.push(`${file}: the verdict step does not read steps.drift.outputs.no-baseline`);
   }
-  if (gate.indexOf('NO_BASELINE') > gate.indexOf('DRIFT_STATUS') === false) {
-    // The wipe verdict must win over the drift branch — re-derive: 'no-baseline'
-    // check sits before the DRIFT_STATUS branch in the verdict script.
-    const verdictIdx = gate.indexOf('NO_BASELINE');
-    const driftIdx = gate.indexOf('DRIFT_STATUS');
-    if (verdictIdx > -1 && driftIdx > -1 && verdictIdx > driftIdx) {
-      violations.push(
-        `${file}: verdict=no-baseline is checked after the drift branch — a wipe could read as drift and lose its auto-dispatch remedy`
-      );
-    }
+  // The wipe verdict must win over the drift branch: inside the verdict
+  // SCRIPT, the `$NO_BASELINE = 'true'` branch test must sit before the
+  // `$DRIFT_STATUS != '0'` one. (An earlier version indexed the bare tokens
+  // NO_BASELINE/DRIFT_STATUS — that compared the env: block keys, and the
+  // folded guard made the inner push unreachable.)
+  const nbIdx = gate.indexOf(`[ "$NO_BASELINE" = 'true' ]`);
+  const driftBranchIdx = gate.indexOf(`[ "$DRIFT_STATUS" != '0' ]`);
+  if (nbIdx === -1 || driftBranchIdx === -1 || nbIdx > driftBranchIdx) {
+    violations.push(
+      `${file}: verdict=no-baseline is checked after the drift branch — a wipe could read as drift and lose its auto-dispatch remedy`
+    );
   }
 
   // 2. drift-check.yml dispatches the watchdog for BOTH baseline-side verdicts.
@@ -1207,7 +1208,6 @@ export function noBaselineChainViolations(
       continue;
     }
     const run = stepRun(actor);
-    const first = run.indexOf("'[ \t]*'$VERDICT'") === -1 ? run.indexOf('[ "$VERDICT"') : -1;
     // Pin the shape: the ONLY exit-0 path in that script is the literal
     // 'green' comparison (or a dev-mode warn). A no-baseline line that falls
     // into a green exit is the regression the Publish pre-flight hole proved.
@@ -1216,12 +1216,6 @@ export function noBaselineChainViolations(
       violations.push(
         `${consumer}: the gate-actor's only green path must be the literal 'green' comparison`
       );
-    }
-    // And the script must exit 1 on anything that is not green (its final line).
-    if (!/exit 1\n?\s*$/.test(run.trimEnd().slice(-12))) {
-      if (first === -1) {
-        // keep light: the final-exit contract below is the real pin
-      }
     }
     if (!run.trimEnd().endsWith('exit 1')) {
       violations.push(

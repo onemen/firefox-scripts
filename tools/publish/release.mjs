@@ -673,18 +673,41 @@ export function runPreflight(seams = {}) {
         `    outage (#291) lasts; it still records and unblocks the publish).\n` +
         `  → re-run this command in ~15 min; the publish itself takes ~4 min.`
     );
+    // The drift-check job's 'Dispatch url-watchdog' step fires for BOTH
+    // baseline-side verdicts (afterIso, same verdict) — that run is the
+    // primary dispatch. The wrapper's own dispatch is the fail-safe ONLY:
+    // two watchdog runs would each plan a full E2E dispatch and cancel each
+    // other in their shared concurrency group.
+    let wdRun = null;
+    for (let attempt = 1; attempt <= PROBE_DISCOVERY_RETRIES; attempt++) {
+      try {
+        wdRun = find(WATCHDOG_WORKFLOW, afterIso);
+        break;
+      } catch (e) {
+        if (!(e instanceof DispatchNotFoundError)) throw e;
+        if (attempt === PROBE_DISCOVERY_RETRIES) break;
+        sleep(2000);
+      }
+    }
+    if (wdRun) {
+      console.error(
+        `  ✓ url-watchdog already dispatched (drift-check job) — ${runUrl(wdRun.databaseId)}.\n` +
+          `  Re-run THIS command when the chain is done — it pre-flights again and publishes.`
+      );
+      return {verdict, drift};
+    }
     const wdRes = dispatch([...repoFlag(), 'workflow', 'run', WATCHDOG_WORKFLOW, '--ref', 'main']);
     if (!wdRes || wdRes.status !== 0) {
       console.error(
         `  ✗ the watchdog auto-dispatch failed — run it manually:\n` +
           `    gh workflow run url-watchdog.yml --ref main --repo ${REPO}`
       );
-      return {verdict, drift};
+      return {verdict: 'drift', drift};
     }
     // The watchdog run URL is cosmetic — the dispatch IS the remediation. A
     // discovery miss here must not escape runPreflight (CodeRabbit PR #350):
     // retry briefly, then degrade to printing the notice without a URL.
-    let wdRun = null;
+    wdRun = null;
     for (let attempt = 1; attempt <= PROBE_DISCOVERY_RETRIES; attempt++) {
       try {
         wdRun = find(WATCHDOG_WORKFLOW, afterIso);

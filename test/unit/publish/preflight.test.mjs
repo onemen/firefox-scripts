@@ -192,13 +192,36 @@ test('runPreflight: drift → immediate notice + watchdog dispatched + exit sign
       dispatched.push(argv.join(' '));
       return okDispatch(argv);
     },
-    find: workflow => ({databaseId: workflow === 'url-watchdog.yml' ? 12 : 7}),
+    // No watchdog listed since the pre-flight opened (the drift-check job's
+    // own dispatch has not happened) — the wrapper's fail-safe must fire.
+    find: workflow => {
+      if (workflow === 'url-watchdog.yml') throw new DispatchNotFoundError('none yet');
+      return {databaseId: 7};
+    },
     status: () => ({status: 'completed', conclusion: 'failure'}),
     verdict: () => ({verdict: 'drift', drift: ['firefox-dev: 157.0b4 → 157.0b5']}),
     sleep: () => {},
   });
   assert.deepEqual(out, {verdict: 'drift', drift: ['firefox-dev: 157.0b4 → 157.0b5']});
   assert.ok(dispatched.some(a => a.includes('workflow run url-watchdog.yml --ref main')));
+});
+
+test('runPreflight: drift with the drift-check job having dispatched the watchdog already → no second one', () => {
+  const dispatched = [];
+  const out = runPreflight({
+    dispatch: argv => {
+      dispatched.push(argv.join(' '));
+      return okDispatch(argv);
+    },
+    // The primary dispatch already happened: url-watchdog IS listed since
+    // afterIso — a second run would duplicate the E2E chain.
+    find: workflow => ({databaseId: workflow === 'url-watchdog.yml' ? 12 : 7}),
+    status: () => ({status: 'completed', conclusion: 'failure'}),
+    verdict: () => ({verdict: 'drift', drift: ['firefox-dev: 157.0b4 → 157.0b5']}),
+    sleep: () => {},
+  });
+  assert.deepEqual(out, {verdict: 'drift', drift: ['firefox-dev: 157.0b4 → 157.0b5']});
+  assert.ok(!dispatched.some(a => a.includes('url-watchdog.yml')));
 });
 
 test('runPreflight: drift with a failed watchdog dispatch still reports the drift', () => {
@@ -273,7 +296,7 @@ test('runPreflight: watchdog run not listed yet → drift verdict kept, no escap
     sleep: () => {},
   });
   assert.deepEqual(out, {verdict: 'drift', drift: ['firefox-dev: 157.0b4 → 157.0b5']});
-  assert.equal(watchdogLookups, 10); // retried, then degraded to no URL — never thrown
+  assert.equal(watchdogLookups, 20); // pre-dispatch probe + post-fail-safe-dispatch discovery, 10 attempts each — retried, then degraded to no URL
 });
 
 test('runPreflight: a non-discovery error from find propagates (not swallowed as a race)', () => {
@@ -307,7 +330,10 @@ test('runPreflight: no-baseline → watchdog dispatched + fail-closed (was the f
       dispatched.push(argv.join(' '));
       return okDispatch(argv);
     },
-    find: workflow => ({databaseId: workflow === 'url-watchdog.yml' ? 12 : 7}),
+    find: workflow => {
+      if (workflow === 'url-watchdog.yml') throw new DispatchNotFoundError('none yet');
+      return {databaseId: 7};
+    },
     status: () => ({status: 'completed', conclusion: 'failure'}),
     verdict: () => ({verdict: 'no-baseline', drift: []}),
     sleep: () => {},
