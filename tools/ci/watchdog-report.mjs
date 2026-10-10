@@ -703,6 +703,7 @@ export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {})
  *   browsers?: string[];
  *   cache?: any;
  *   now?: number;
+ *   triageIssues?: any;
  * }} opts
  */
 export function buildStatusTable({
