@@ -421,7 +421,10 @@ function probeChunk(profileDir, byteOffset) {
   const size = fs.statSync(logPath).size;
   // Both logs are appended to by the LIVE browser while these readers poll
   // them, so a Windows hold would throw out of the poll (EBUSY). Retry.
-  return {size, chunk: readFileSyncWithRetry(logPath, 'utf-8').slice(byteOffset)};
+  return {
+    size,
+    chunk: readFileSyncWithRetry(logPath, 'utf-8').slice(byteOffset),
+  };
 }
 
 function countLifeLines(profileDir) {
@@ -528,13 +531,20 @@ async function runSession(firefoxBin, profileDir, prefs, label, sessionNo, opts)
   const okCount = newLines.filter(l => l.includes('=> OK')).length;
   const errCount = newLines.filter(l => l.includes('=> ERR')).length;
   // ERR samples before the first OK are the pre-registration window (the T+0
-  // probe fires before the loader has run) — only a fallback AFTER the first
-  // OK indicates a real liveness break.
-  const firstOk = newLines.findIndex(l => l.includes('=> OK'));
+  // probe fires before the loader has run) — only a fallback AFTER the last
+  // OK indicates a real liveness break. NOT "after the first OK in file
+  // order": on Windows a wedged browser the harness reaps at its leisure can
+  // keep its own probe timer appending to the same chrome-probe.log while the
+  // next session runs — the two writers' lines interleave out of T+ order, a
+  // pre-registration ERR lands after the first OK line, and a strict
+  // first-OK cut turned 12 OK / 2 ERR with an interleaved stale ERR into a
+  // false FAIL. The log ending on an OK says the most recent state is up —
+  // that is what "chrome stays live" pins.
+  const lastOk = newLines.findLastIndex(l => l.includes('=> OK'));
   const trailingErr =
-    firstOk < 0 ? errCount : newLines.slice(firstOk).filter(l => l.includes('=> ERR')).length;
+    lastOk < 0 ? errCount : newLines.slice(lastOk + 1).filter(l => l.includes('=> ERR')).length;
   console.log(
-    `  [${label}] probe this session: ${newLines.length} samples, ${okCount} OK, ${errCount} ERR (${trailingErr} after first OK)`
+    `  [${label}] probe this session: ${newLines.length} samples, ${okCount} OK, ${errCount} ERR (${trailingErr} after the last OK)`
   );
   // Show the transition samples: the leading ERRs and the first OKs. S4's whole
   // claim is WHEN the chrome came up relative to the loader hold, and the
@@ -552,23 +562,18 @@ async function runSession(firefoxBin, profileDir, prefs, label, sessionNo, opts)
     `  [${label}] browser-extension-data: ${JSON.stringify(bedFiles(path.join(profileDir, BED_REL)))}`
   );
 
-  // The T+ offsets of this session's samples. S4 needs them to prove the
-  // registration really was LATE: a chrome that comes up at T+2s would mean the
-  // hold did not take effect and the scenario proved nothing.
-  const timestamps = newLines
-    .map(l => {
-      const m = l.match(/T\+(\d+)ms/);
-      return m ? Number.parseInt(m[1], 10) : null;
-    })
-    .filter(v => v !== null);
-
   return {
     okCount,
     errCount,
     trailingErr,
     lifeDelta,
     probeSize: size,
-    firstOkAtMs: timestamps.length ? timestamps[firstOk < 0 ? 0 : firstOk] : null,
+    // S4 pins WHEN the chrome came up: the T+ offset of the FIRST OK line,
+    // read off the line itself.
+    firstOkAtMs:
+      newLines.find(l => l.includes('=> OK'))?.match(/T\+(\d+)ms/)?.[1] != null ?
+        Number.parseInt(newLines.find(l => l.includes('=> OK')).match(/T\+(\d+)ms/)[1], 10)
+      : null,
     lines: newLines,
   };
 }
