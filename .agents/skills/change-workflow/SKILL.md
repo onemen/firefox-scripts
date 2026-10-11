@@ -71,9 +71,12 @@ task worktrees.)
 Whenever PRs must merge in order — a batch of dependent tasks or not, including a new PR that should
 land after an already-open one — stack them with the `gh stack` CLI (`init` / `add` / `submit`)
 instead of hand-rolled base-setting. One ordered merge replaces N rounds of rebase, per-PR CI waits,
-and merge-queue ejections: checks evaluate against the trunk, the stack merges atomically, and a
+and merge-queue ejections: checks evaluate against the trunk, the stack mergesatomically, and a
 rebase keeps approvals when the diff is unchanged. Stack creation and any branch-base surgery need
-the user's explicit approval first (AGENTS.md Critical Rules); merging still needs it per PR.
+the user's explicit approval first (AGENTS.md Critical Rules); merging still needs it per PR. If
+`gh stack submit` trips the pre-push hook on a known-unrelated failure (issue #503's cross-thread
+temp dirt), push the branches with the documented ` --no-verify` justification first, then re-run
+submit for PR creation and stack linking.
 
 ## Before editing
 
