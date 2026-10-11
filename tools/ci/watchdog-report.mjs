@@ -872,27 +872,71 @@ export function formatGB(bytes) {
 }
 
 /**
+ * Thousands separator (`3026` → `3,026`). Plain loop, no regex — the nested
+ * quantifiers of the one-line regex trip the `detect-unsafe-regex` lint.
+ */
+export function sep(n) {
+  const digits = String(Math.trunc(Math.abs(n)));
+  let out = '';
+  for (let i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 === 0) out += ',';
+    out += digits[i];
+  }
+  return out;
+}
+
+/** Human megabytes (`3026` → `3,026MB`), rounded. */
+export function formatMB(bytes) {
+  return `${sep(Math.round(bytes / 1048576))}MB`;
+}
+
+/**
+ * Human kilobytes for the sub-megabyte JSON records (`900` → `1KB`, `0` →
+ * `0KB`).
+ */
+export function formatKB(bytes) {
+  if (!bytes) return '0KB';
+  return `${sep(Math.max(1, Math.round(bytes / 1024)))}KB`;
+}
+
+/**
  * Cache-usage footer (#499): prune health without API calls, from the same live
  * inventory the Fallback column reads. `summary` is prune-caches'
  * summarizeInventory output (or null when the inventory fetch failed — the
- * footer is then omitted, never guessed).
+ * footer is then omitted, never guessed). One row per family so every entry is
+ * visible: payloads and pnpm in MB, the JSON records in KB, each mark set
+ * against that row's own target (payload groups are keep-one — see keepFor — so
+ * entries > groups is exactly "a payload group over target"; pnpm's cache and
+ * lockfile groups carry different keeps, so its row counts groups and its mark
+ * follows the `over` list like every other row).
  */
 export function cacheUsageFooter(summary) {
   if (!summary) return '';
-  const over =
-    summary.over.length > 0 ?
-      ` — over target: ${summary.over.map(o => `${o.group} (${o.count}/${o.keep})`).join(', ')}`
-    : '';
-  // The mark sits next to the payload count, so it is a payload verdict:
-  // payload groups are keep-one (see keepFor), so entries > groups is
-  // exactly "a payload group over target". A non-payload group over target
-  // (e.g. browser-validated) still shows in the `over` list, but must not
-  // paint the payload count amber.
-  const payloadMark = summary.payloads.entries > summary.payloads.groups ? '⚠️' : '✅';
-  return (
-    `\n\nCache usage: ${summary.entries} entries — ${formatGB(summary.size)} ` +
-    `(browser payloads ${summary.payloads.entries}/${summary.payloads.groups} ${payloadMark}${over})`
-  );
+  const fams = summary.families ?? {};
+  const mark = over => (over ? '⚠️' : '✅');
+  const p = summary.payloads;
+  const rows = [
+    `browser payloads ${p.entries}/${p.groups} ${p.entries > p.groups ? '⚠️' : '✅'} — ${formatMB(p.size)}`,
+  ];
+  const pnpm = fams.pnpm;
+  if (pnpm?.entries)
+    rows.push(`pnpm ${pnpm.entries}/${pnpm.groups} ${mark(pnpm.over)} — ${formatMB(pnpm.size)}`);
+  const msys2 = fams.msys2;
+  if (msys2?.entries)
+    rows.push(`msys2 ${msys2.entries}/${msys2.keep} ${mark(msys2.over)} — ${formatMB(msys2.size)}`);
+  const records = ['validated', 'forkValidated', 'baseline']
+    .map(key => {
+      const r = fams[key];
+      if (!r?.entries) return null;
+      const label = key === 'forkValidated' ? 'fork-validated' : key;
+      return `${label} ${r.entries}/${r.keep} ${mark(r.over)} — ${formatKB(r.size)}`;
+    })
+    .filter(Boolean);
+  if (records.length > 0) rows.push(`records ${records.join(' · ')}`);
+  const smoke = fams.smoke;
+  if (smoke?.entries)
+    rows.push(`smoke ${smoke.entries}/${smoke.keep} ${mark(smoke.over)} — ${formatKB(smoke.size)}`);
+  return `\n\nCache usage: ${summary.entries} entries — ${formatGB(summary.size)}\n${rows.join('\n')}`;
 }
 
 /**

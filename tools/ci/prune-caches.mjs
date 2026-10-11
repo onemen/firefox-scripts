@@ -281,6 +281,33 @@ export function groupOf(key) {
 }
 
 /**
+ * Footer family for a group id (#499 follow-up): payloads stay in the payload
+ * rollup, the rest are the named rows the footer shows. Anything unrecognized
+ * is 'other' — still counted in the totals and the `over` list, just without
+ * its own row.
+ *
+ * @param {string} group a group id from {@link groupOf}
+ * @returns {'payloads'
+ *   | 'pnpm'
+ *   | 'msys2'
+ *   | 'validated'
+ *   | 'forkValidated'
+ *   | 'baseline'
+ *   | 'smoke'
+ *   | 'other'}
+ */
+export function familyOf(group) {
+  if (parseGroup(group)) return 'payloads';
+  if (group.startsWith('pnpm')) return 'pnpm';
+  if (group.startsWith('msys2')) return 'msys2';
+  if (group === 'browser-validated') return 'validated';
+  if (group === 'browser-fork-validated') return 'forkValidated';
+  if (group === 'url-watchdog-baseline') return 'baseline';
+  if (group === 'core-smoke') return 'smoke';
+  return 'other';
+}
+
+/**
  * Summarize a cache inventory for the status-issue footer (#499): per-group
  * counts against their keep targets, so prune health is readable without API
  * calls. Pure — the caller fetches the entries, this only groups them.
@@ -292,9 +319,45 @@ export function groupOf(key) {
  *   size: number;
  *   payloads: {groups: number; entries: number; size: number};
  *   over: {group: string; keep: number; count: number}[];
+ *   families: {
+ *     pnpm: {entries: number; groups: number; size: number; over: boolean};
+ *     msys2: {
+ *       entries: number;
+ *       keep: number | null;
+ *       size: number;
+ *       over: boolean;
+ *     };
+ *     validated: {
+ *       entries: number;
+ *       keep: number | null;
+ *       size: number;
+ *       over: boolean;
+ *     };
+ *     forkValidated: {
+ *       entries: number;
+ *       keep: number | null;
+ *       size: number;
+ *       over: boolean;
+ *     };
+ *     baseline: {
+ *       entries: number;
+ *       keep: number | null;
+ *       size: number;
+ *       over: boolean;
+ *     };
+ *     smoke: {
+ *       entries: number;
+ *       keep: number | null;
+ *       size: number;
+ *       over: boolean;
+ *     };
+ *   };
  * }}
  *   payloads = current-scheme browser groups (one useful entry each); over =
- *   groups holding more than their keep target
+ *   groups holding more than their keep target; families = the footer rows
+ *   (pnpm uses a group count — its cache and lockfile groups carry different
+ *   keep targets, so no single keep applies; the rest compare against their
+ *   keep, null when the family is absent).
  */
 export function summarizeInventory(caches, keep) {
   const byGroup = new Map();
@@ -303,22 +366,52 @@ export function summarizeInventory(caches, keep) {
     if (!byGroup.has(g)) byGroup.set(g, []);
     byGroup.get(g).push(c);
   }
+  const family = () => ({entries: 0, keep: null, size: 0, over: false});
   const summary = {
     entries: caches.length,
     size: caches.reduce((n, c) => n + (c.size || 0), 0),
     payloads: {groups: 0, entries: 0, size: 0},
     over: [],
+    families: {
+      pnpm: {entries: 0, groups: 0, size: 0, over: false},
+      msys2: family(),
+      validated: family(),
+      forkValidated: family(),
+      baseline: family(),
+      smoke: family(),
+    },
   };
   for (const [g, group] of byGroup) {
     const target = keepFor(g, keep);
+    const size = group.reduce((n, c) => n + (c.size || 0), 0);
     if (parseGroup(g)) {
       summary.payloads.groups += 1;
       summary.payloads.entries += group.length;
-      summary.payloads.size += group.reduce((n, c) => n + (c.size || 0), 0);
+      summary.payloads.size += size;
+    } else {
+      const fam = familyOf(g);
+      if (fam === 'pnpm') {
+        const f = summary.families.pnpm;
+        f.entries += group.length;
+        f.groups += 1;
+        f.size += size;
+      } else if (fam !== 'other') {
+        const f = summary.families[fam];
+        f.entries += group.length;
+        f.size += size;
+        f.keep = Math.max(f.keep ?? 0, target);
+      }
     }
     if (group.length > target) summary.over.push({group: g, keep: target, count: group.length});
   }
   summary.over.sort((a, b) => b.count - b.keep - (a.count - a.keep));
+  for (const o of summary.over) {
+    if (parseGroup(o.group)) continue; // the payload mark uses entries > groups
+    const fam = familyOf(o.group);
+    if (fam !== 'other' && fam !== 'payloads' && summary.families[fam]) {
+      summary.families[fam].over = true;
+    }
+  }
   return summary;
 }
 

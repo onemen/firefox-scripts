@@ -926,31 +926,63 @@ test('esrFallbackLine / cacheUsageFooter: human fallback + prune health (#499)',
   assert.equal(esrFallbackLine(null), '');
   assert.equal(esrFallbackLine({majors: []}), '');
   assert.equal(cacheUsageFooter(null), '');
+  const fam = (entries, keep, size, over = false) => ({entries, keep, size, over});
   const footer = cacheUsageFooter({
     entries: 43,
     size: 3758096384,
     payloads: {groups: 24, entries: 24, size: 2500000000},
     over: [],
+    families: {
+      pnpm: {entries: 6, groups: 6, size: 252706816, over: false},
+      msys2: fam(1, 3, 72351744),
+      validated: fam(3, 3, 1024),
+      forkValidated: fam(3, 3, 2048),
+      baseline: fam(3, 3, 5120),
+      smoke: fam(2, 3, 516),
+    },
   });
-  assert.match(footer, /Cache usage: 43 entries — 3\.5 GB \(browser payloads 24\/24 ✅\)/);
+  assert.match(footer, /Cache usage: 43 entries — 3\.5 GB\nbrowser payloads 24\/24 ✅ — 2,384MB/);
+  assert.match(footer, /\npnpm 6\/6 ✅ — 241MB/);
+  assert.match(footer, /\nmsys2 1\/3 ✅ — 69MB/);
+  assert.match(
+    footer,
+    /\nrecords validated 3\/3 ✅ — 1KB · fork-validated 3\/3 ✅ — 2KB · baseline 3\/3 ✅ — 5KB/
+  );
+  assert.match(footer, /\nsmoke 2\/3 ✅ — 1KB/);
   const overFooter = cacheUsageFooter({
     entries: 44,
     size: 3758096384,
     payloads: {groups: 24, entries: 25, size: 2500000000},
     over: [{group: 'browser-fork-validated', keep: 3, count: 4}],
+    families: {
+      pnpm: {entries: 6, groups: 6, size: 252706816, over: false},
+      msys2: fam(1, 3, 72351744),
+      validated: fam(3, 3, 1024),
+      forkValidated: {entries: 4, keep: 3, size: 2048, over: true},
+      baseline: fam(3, 3, 5120),
+      smoke: fam(2, 3, 516),
+    },
   });
-  assert.match(overFooter, /⚠️/);
-  assert.match(overFooter, /browser-fork-validated \(4\/3\)/);
-  // A non-payload group over target keeps its `over` listing but must not
+  assert.match(overFooter, /browser payloads 25\/24 ⚠️/);
+  assert.match(overFooter, /fork-validated 4\/3 ⚠️/);
+  // A non-payload group over target keeps its row mark but must not
   // paint the payload count: payloads are 24/24 here.
   const nonPayloadOver = cacheUsageFooter({
     entries: 44,
     size: 3758096384,
     payloads: {groups: 24, entries: 24, size: 2500000000},
     over: [{group: 'browser-validated', keep: 3, count: 4}],
+    families: {
+      pnpm: {entries: 6, groups: 6, size: 252706816, over: false},
+      msys2: fam(1, 3, 72351744),
+      validated: {entries: 4, keep: 3, size: 1024, over: true},
+      forkValidated: fam(3, 3, 2048),
+      baseline: fam(3, 3, 5120),
+      smoke: fam(2, 3, 516),
+    },
   });
   assert.match(nonPayloadOver, /browser payloads 24\/24 ✅/);
-  assert.match(nonPayloadOver, /browser-validated \(4\/3\)/);
+  assert.match(nonPayloadOver, /validated 4\/3 ⚠️/);
   const body = buildMetaIssueBody({
     table: 'T',
     esrState: {majors: ['140', '153']},

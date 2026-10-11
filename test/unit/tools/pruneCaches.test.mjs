@@ -21,9 +21,8 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const pruneUrl = pathToFileURL(path.join(REPO_ROOT, 'tools', 'ci', 'prune-caches.mjs')).href;
 
-const {stem, layout, groupOf, keepFor, parseKey, planDeletes, summarizeInventory} = await import(
-  pruneUrl
-);
+const {stem, layout, groupOf, keepFor, parseKey, planDeletes, summarizeInventory, familyOf} =
+  await import(pruneUrl);
 
 /** A cache entry as the API returns it. */
 const entry = (key, created_at, ref = 'refs/heads/main') => ({key, created_at, ref});
@@ -432,4 +431,45 @@ test('summarizeInventory: footer counts group against their keep targets (#499)'
   assert.equal(summary.payloads.groups, 3);
   assert.equal(summary.payloads.entries, 3);
   assert.deepEqual(summary.over, [{group: 'browser-validated', keep: 3, count: 4}]);
+});
+
+test('familyOf: every group lands on a footer row or other', () => {
+  assert.equal(familyOf('firefox-dl-windows-plain'), 'payloads');
+  assert.equal(familyOf('librewolf-dl-windows-plain'), 'payloads');
+  assert.equal(familyOf('pnpm-cache-windows-x64 :: plain'), 'pnpm');
+  assert.equal(familyOf('pnpm-lockfile-verified-Windows-x64'), 'pnpm');
+  assert.equal(familyOf('msys2-pkgs-upd:false-conf:abc-files'), 'msys2');
+  assert.equal(familyOf('browser-validated'), 'validated');
+  assert.equal(familyOf('browser-fork-validated'), 'forkValidated');
+  assert.equal(familyOf('url-watchdog-baseline'), 'baseline');
+  assert.equal(familyOf('core-smoke'), 'smoke');
+  assert.equal(familyOf('some-future-thing'), 'other');
+});
+
+test('summarizeInventory: families roll up the footer rows', () => {
+  const caches = [
+    {key: 'firefox-dl-windows-aaaaaaaaaaaaaaaa-plain', size: 89_000_000},
+    {key: 'pnpm-cache-Windows-X64-abc', size: 100_000_000},
+    {key: 'pnpm-lockfile-verified-Windows-x64-abc', size: 1_000},
+    {key: 'msys2-pkgs-upd:false-conf:abc-files:def', size: 72_000_000},
+    {key: 'browser-validated-1', size: 100},
+    {key: 'browser-fork-validated-1', size: 100},
+    {key: 'browser-fork-validated-2', size: 100},
+    {key: 'browser-fork-validated-3', size: 100},
+    {key: 'browser-fork-validated-4', size: 100},
+    {key: 'url-watchdog-baseline-1', size: 100},
+    {key: 'core-smoke-1', size: 100},
+    {key: 'core-smoke-2', size: 100},
+  ];
+  const {families} = summarizeInventory(caches, 3);
+  assert.equal(families.pnpm.entries, 2);
+  assert.equal(families.pnpm.groups, 2);
+  assert.equal(families.msys2.entries, 1);
+  assert.equal(families.msys2.keep, 3);
+  assert.equal(families.validated.entries, 1);
+  assert.equal(families.baseline.entries, 1);
+  assert.equal(families.smoke.entries, 2);
+  assert.equal(families.forkValidated.entries, 4);
+  assert.equal(families.forkValidated.over, true);
+  assert.equal(families.pnpm.over, false);
 });
