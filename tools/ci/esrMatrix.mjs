@@ -17,8 +17,8 @@
 //    the same nightly that rewrites the baseline also renders the block into
 //    the issue body. The issue lives in GitHub's DB, not in the evictable
 //    cache, so a wiped cache no longer degrades the window to the generic
-//    serving-ESR leg. Requires the ESR_WATCHDOG_MARKERS env (comma separated,
-//    optionally `owner/repo`-scoped) listing the marker values;
+//    serving-ESR leg. Requires the ESR_WATCHDOG_MARKERS env carrying the whole
+//    meta-issue body (the workflow fetches the single issue verbatim);
 // 3. the generic serving-ESR key (`["firefox-esr"]`), which resolves its
 //    version at run time from Mozilla's product-details keys: degradation,
 //    never a hardcoded version.

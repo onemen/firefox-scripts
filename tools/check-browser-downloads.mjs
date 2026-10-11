@@ -4,8 +4,8 @@
  * tools/check-browser-downloads.mjs — watchdog for the E2E browser download map
  * (test/e2e/shared/downloads.mjs).
  *
- * Runs in three modes (two driven by .github/workflows/url-watchdog.yml, one by
- * the Pages publish pre-flight):
+ * Runs in two CI modes (url-watchdog.yml and the Pages publish pre-flight),
+ * plus two local-only flags:
  *
  * - Nightly (schedule/workflow_dispatch). For each browser CI installs it:
  *
@@ -28,11 +28,11 @@
  *        a first run.
  *   4. META ISSUE — one `[url-watchdog] status` issue is kept current after every
  *        run: a per-browser status table (last verified version, size +
- *        SHA-256, the run that last checked it, a status tag, the CI-cache
- *        fallback version, the full-download transfer time, and the
- *        E2E-validated version for the hard-gate browsers) plus a version
- *        history that only grows on runs with real version updates — the
- *        durable SHA-256 ledger (search `label:url-watchdog` for it).
+ *        SHA-256, the run that last changed the row, a status tag, the CI-cache
+ *        fallback, the cold-download transfer time, and the E2E-validated
+ *        version with its run link for every row) plus the human ESR fallback
+ *        line and the cache-usage footer — the durable SHA-256 ledger itself
+ *        stays in baseline.json (search `label:url-watchdog` for it).
  *   5. ERROR ISSUES — rot and same-version size changes still open their own issue,
  *        deduped per browser (the exact issue title is matched against open
  *        issues carrying the `url-watchdog` label; rolling binaries like
@@ -42,10 +42,10 @@
  *        single-browser dispatch (the ADR 0021 manual escape), the hard-gate
  *        browsers share one full dispatch whose record-validation refreshes the
  *        validated-versions record. Non-fatal on failure.
- * - PR (pull_request touching the download map): stateless and always green —
- *   findings surface as ::warning:: / ::notice:: annotations, so the check can
- *   be marked required without ever blocking. No baseline, no issues, no full
- *   downloads.
+ * - Local PR probe (--pr, no CI caller since #499): the same stateless vendor
+ *   check the removed url-watchdog pr-check job ran — findings surface as
+ *   ::warning:: / ::notice:: annotations, always green. Kept for debugging the
+ *   download map by hand; no baseline, no issues, no full downloads.
  * - Drift (--drift, the Pages publish pre-flight): re-resolves every browser's
  *   current version and diffs it against the last watchdog baseline. No
  *   downloads, no issues. Exit 1 on drift so a prod publish is blocked until
