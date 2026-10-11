@@ -362,3 +362,70 @@ test('assertSafeScratchDir: traversal out of the repo throws', async () => {
     assert.throws(() => assertSafeScratchDir(escape, 'escape'), /not under the repo or OS temp/);
   }
 });
+
+// ── temp-root ownership (#503) ────────────────────────────────────────────
+// The OS-temp gate must fail only on roots THIS checkout created: another
+// thread's stranded fxs-state-branch-* dirt blocked unrelated pushes (every
+// bypass taught --no-verify). Creation is recorded per worktree in
+// dist/.created-temp-roots; the gate classifies old entries as offenders
+// (registered = ours) vs foreign (warn-only, never a push-blocker).
+
+const OWN_HOUR = 3_600_000;
+
+test('classifyTempRoots: old registered roots offend, old foreign roots only warn', async () => {
+  const {classifyTempRoots} = await import(helpersUrl);
+  const now = Date.now();
+  const entries = [
+    {name: 'fxs-e2e-aaa', mtimeMs: now - 25 * OWN_HOUR},
+    {name: 'fxs-state-branch-xyz', mtimeMs: now - 30 * OWN_HOUR},
+    {name: 'fxs-e2e-young', mtimeMs: now - 1 * OWN_HOUR},
+    {name: 'not-fxs-old', mtimeMs: now - 99 * OWN_HOUR},
+  ];
+  const {offenders, foreign} = classifyTempRoots({
+    entries,
+    registered: new Set(['fxs-e2e-aaa']),
+    keep: [],
+    minAgeMs: 24 * OWN_HOUR,
+    nowMs: now,
+  });
+  assert.deepEqual(
+    offenders.map(o => o.name),
+    ['fxs-e2e-aaa']
+  );
+  assert.deepEqual(
+    foreign.map(o => o.name),
+    ['fxs-state-branch-xyz']
+  );
+});
+
+test('classifyTempRoots: kept patterns cover exact names and prefixes', async () => {
+  const {classifyTempRoots} = await import(helpersUrl);
+  const now = Date.now();
+  const entries = [
+    {name: 'fxs-keepme', mtimeMs: now - 99 * OWN_HOUR},
+    {name: 'fxs-kept-prefix-1', mtimeMs: now - 99 * OWN_HOUR},
+  ];
+  const {offenders, foreign} = classifyTempRoots({
+    entries,
+    registered: new Set(['fxs-keepme', 'fxs-kept-prefix-1']),
+    keep: ['fxs-keepme', 'fxs-kept-prefix-'],
+    minAgeMs: 24 * OWN_HOUR,
+    nowMs: now,
+  });
+  assert.deepEqual(offenders, []);
+  assert.deepEqual(foreign, []);
+});
+
+test('recordCreatedTempRoot/readCreatedTempRoots: round-trip through an injected dir', async () => {
+  const {recordCreatedTempRoot, readCreatedTempRoots} = await import(helpersUrl);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fxs-503reg-'));
+  try {
+    const registry = path.join(dir, 'registry.txt');
+    recordCreatedTempRoot('/tmp/fxs-e2e-abc123', {registryPath: registry});
+    recordCreatedTempRoot('/tmp/fxs-e2e-abc123', {registryPath: registry});
+    assert.deepEqual([...readCreatedTempRoots({registryPath: registry})], ['fxs-e2e-abc123']);
+    assert.deepEqual([...readCreatedTempRoots({registryPath: path.join(dir, 'missing.txt')})], []);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});

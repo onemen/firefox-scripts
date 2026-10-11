@@ -20,14 +20,19 @@
 //      fixture — agent sessions must not stage scratch files into tempdir() at
 //      all (on this machine /tmp IS the user's Temp), so this fails loudly.
 //
-// Rule 3 is a MACHINE-STATE check (not a source scan): the OS temp dir must
-// hold no `fxs-*` entry older than 24h. It is the backstop for the two classes
-// the source scan cannot see — the E2E harness' ~50 MB profile roots when a run
-// is killed (the exit sweep and prune in test/e2e/shared/helpers.mjs normally
-// reclaim those; a hard kill escapes both), and ad-hoc agent scratch
-// (`fxs-manual-*`, `fxs-probe-*`, `s9keep*.log`, …) that no rule can attribute
-// to a file. On 2026-10-02 the user's Temp still held 11 stranded E2E profiles
-// (412 MB), a 365 MB `fxs-portable` browser and ~762 MB of probe scratch.
+// Rule 3 is a MACHINE-STATE check (not a source scan): OS temp entries older
+// than 24h that THIS checkout recorded in dist/.created-temp-roots must be
+// gone. It is the backstop for the two classes the source scan cannot see —
+// the E2E harness' ~50 MB profile roots when a run is killed (the exit sweep
+// and prune in test/e2e/shared/helpers.mjs normally reclaim those; a hard kill
+// escapes both), and ad-hoc agent scratch (`fxs-manual-*`, `fxs-probe-*`,
+// `s9keep*.log`, …) that no rule can attribute to a file. On 2026-10-02 the
+// user's Temp still held 11 stranded E2E profiles (412 MB), a 365 MB
+// `fxs-portable` browser and ~762 MB of probe scratch.
+//
+// Ownership (#503): old entries this checkout never recorded belong to another
+// thread — they are reported as warnings, never failures. A gate that blocks
+// an unrelated push on a stranger's litter teaches --no-verify bypass.
 //
 // Escape hatch for a deliberately long-lived `fxs-*` directory:
 // FXS_TEMP_KEEP=<comma-separated names or prefixes>.
@@ -41,11 +46,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const TEST_ROOT = path.join(REPO_ROOT, 'test');
 const SELF = fileURLToPath(import.meta.url);
+const {classifyTempRoots, readCreatedTempRoots} = await import(
+  pathToFileURL(path.join(REPO_ROOT, 'test', 'e2e', 'shared', 'helpers.mjs')).href
+);
 
 /** Every .mjs file under `dir`, recursively, as absolute paths. */
 function listTestFiles(dir) {
@@ -100,40 +108,43 @@ test('test files that mkdtemp must clean up (no leaked temp roots)', () => {
   );
 });
 
-/** Names in FXS_TEMP_KEEP that cover `name` (exact or prefix match). */
-function isKept(name, patterns) {
-  return patterns.some(p => name === p || name.startsWith(p));
-}
-
-test('the OS temp dir holds no firefox-scripts leftovers', () => {
+test('the OS temp dir holds no leftovers from this checkout', () => {
   const minAgeMs = 24 * 60 * 60 * 1000;
   const keep = (process.env.FXS_TEMP_KEEP || '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
-  const offenders = [];
+  const entries = [];
   for (const entry of fs.readdirSync(os.tmpdir(), {withFileTypes: true})) {
-    if (!entry.name.startsWith('fxs-')) continue;
-    if (isKept(entry.name, keep)) continue;
     let stat;
     try {
       stat = fs.statSync(path.join(os.tmpdir(), entry.name));
     } catch {
       continue;
     }
-    // Anything younger than the threshold belongs to a run in flight — the E2E
-    // sweep owns that window, and this gate must never race a live run.
-    if (Date.now() - stat.mtimeMs < minAgeMs) continue;
-    const hours = Math.round((Date.now() - stat.mtimeMs) / 3_600_000);
-    offenders.push(`${entry.name} (${hours}h old)`);
+    entries.push({name: entry.name, mtimeMs: stat.mtimeMs});
+  }
+  // Anything younger than the threshold belongs to a run in flight — the E2E
+  // sweep owns that window, and this gate must never race a live run.
+  const {offenders, foreign} = classifyTempRoots({
+    entries,
+    registered: readCreatedTempRoots(),
+    keep,
+    minAgeMs,
+  });
+  for (const f of foreign) {
+    console.warn(
+      `test-hygiene: ignoring foreign OS-temp entry ${f.name} (${f.hours}h old) — ` +
+        'not recorded by this checkout; its owner cleans it.'
+    );
   }
   assert.deepEqual(
-    offenders,
+    offenders.map(o => `${o.name} (${o.hours}h old)`),
     [],
-    'firefox-scripts leftovers in the OS temp dir — the E2E exit sweep ' +
-      '(test/e2e/shared/helpers.mjs) reclaims stranded profile roots at run ' +
-      'time, and agent scratch belongs in the repo gitignored dist/scratch/, ' +
-      'never in the OS temp dir. Remove the entries above, or mark a ' +
-      'deliberately long-lived one with FXS_TEMP_KEEP=<name>.'
+    'firefox-scripts leftovers from THIS checkout in the OS temp dir — the E2E ' +
+      'exit sweep (test/e2e/shared/helpers.mjs) reclaims stranded profile roots ' +
+      'at run time, and agent scratch belongs in the repo gitignored ' +
+      'dist/scratch/, never in the OS temp dir. Remove the entries above, or ' +
+      'mark a deliberately long-lived one with FXS_TEMP_KEEP=<name>.'
   );
 });
