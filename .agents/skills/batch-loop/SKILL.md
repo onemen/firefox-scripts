@@ -45,7 +45,10 @@ Scan the batch for tasks that touch the same files or subsystems.
   guessing.
 - **After a merge, verify the content is on main** — not just PR `state=MERGED` — before deleting
   branches/worktrees. A squash onto a deleted base orphans the change while the PR still reads
-  merged (#427): check the commits are reachable from main first.
+  merged (#427): confirm the merge commit is on main (`gh pr view --json mergeCommit`, then
+  `git merge-base --is-ancestor`) and the changed lines are present there — never branch-commit
+  reachability: squash-merge rewrites the commits, so the originals are ancestors of main only when
+  the PR merged without squashing.
 
 ## Loop
 
@@ -55,7 +58,8 @@ Scan the batch for tasks that touch the same files or subsystems.
    - No `pending` AND no `ci` → go to step 6.
 2. Do the task in its own worktree, strictly per the `change-workflow` skill (worktree path and
    naming, `pnpm install`, generated-file regeneration, validation matrix, commit footer, PR rules —
-   **deferred to that skill, not restated here**). Commit, push, `gh pr create`.
+   **deferred to that skill, not restated here**). Commit, push, `gh pr create` — or
+   `gh stack submit` for a stacked (dependent) task, per the Independence screen above.
 3. Mark the task `ci` and continue the loop with the next `pending` task.
 4. Between tasks, check CI one-shot — `gh pr checks <branch>` per open PR:
    - Green → mark `done`; remove that worktree (verify the directory is really gone — Windows
