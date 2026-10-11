@@ -196,20 +196,25 @@ function skillInfo(rel) {
 // Only this tool's own fixtures exemption: none — the tool and its test
 // never carry the literals (see the header), so no self-exclusion is needed.
 
-const tracked = readTrackedFiles();
-const codeFiles = tracked.filter(
-  rel => CODE_EXTS.has(path.extname(rel)) && !rel.startsWith('node_modules/')
-);
-const docsFiles = tracked.filter(rel => rel.endsWith('.md'));
-const files = [...codeFiles, ...docsFiles].map(rel => ({path: rel, lines: readLines(rel)}));
+// Argv-guarded like the other check-* tools: importing this module (the unit
+// test does) must not run a full-tree scan, let alone process.exit from
+// inside a test worker when the tree happens to be dirty.
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  const tracked = readTrackedFiles();
+  const codeFiles = tracked.filter(
+    rel => CODE_EXTS.has(path.extname(rel)) && !rel.startsWith('node_modules/')
+  );
+  const docsFiles = tracked.filter(rel => rel.endsWith('.md'));
+  const files = [...codeFiles, ...docsFiles].map(rel => ({path: rel, lines: readLines(rel)}));
 
-const violations = [...findLocalRefs(files), ...findMarkers(files), ...findChatRefs(files)];
+  const violations = [...findLocalRefs(files), ...findMarkers(files), ...findChatRefs(files)];
 
-const skillFiles = tracked.filter(rel => /^.agents\/skills\/[^/]+\/SKILL\.md$/.test(rel));
-violations.push(...overlongSkills(skillFiles.map(skillInfo)));
+  const skillFiles = tracked.filter(rel => /^.agents\/skills\/[^/]+\/SKILL\.md$/.test(rel));
+  violations.push(...overlongSkills(skillFiles.map(skillInfo)));
 
-if (violations.length > 0) {
-  for (const violation of violations) console.error(violation);
-  process.exit(1);
+  if (violations.length > 0) {
+    for (const violation of violations) console.error(violation);
+    process.exit(1);
+  }
+  console.log('check-hygiene: clean');
 }
-console.log('check-hygiene: clean');
