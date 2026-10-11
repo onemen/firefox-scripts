@@ -108,6 +108,8 @@ submit for PR creation and stack linking.
   base for C; text files are LF (normalize CRLF at read in tools that parse tracked files).
 - When a source of a generated file changes, regenerate on demand
   (`node tools/publish/syncGeneratedFiles.mjs`, Makefile targets, or it happens at publish time).
+- **A user question about a pending action is a gate** — answer it, then act. Never commit, push, or
+  restructure on top of an unanswered question about that exact action.
 
 ## Validate
 
@@ -129,6 +131,11 @@ passed if the required toolchain or environment was unavailable.**
 
 PRs that modify `core/**` must add or extend a test where feasible; if not, the PR description must
 explain why (CI gate tracked in issue #30).
+
+Heavy validation — installer/updater E2E and multi-browser matrices — runs in CI, never on the
+user's machine without explicit opt-in. The harness keeps its managed E2E temp dirs inside the
+worktree or OS temp (the #517 fail-closed gate); command scratch files still go to the repo's
+gitignored `dist/scratch/` per the finishing checklist — never bare `/tmp`.
 
 ## Never idle-wait
 
@@ -161,6 +168,8 @@ background processes run — and never re-run a finished command just to "check 
   you did not create;
 - no unrelated files were modified;
 - failed/unavailable validation is reported;
+- replies end with the summary (status, what changed, what is next) — no bare todo links mid-answer
+  — and respect brevity caps instead of mega-answers;
 - when the PR is ready for review, run the ADR 0020 review step (see the `ai-review` skill);
 - **merged-PR issues with open checklist items:** when the merge auto-closes a tracking issue that
   still has unchecked `- [ ]` items, the merge solved only part of the issue — re-open it (REST:
