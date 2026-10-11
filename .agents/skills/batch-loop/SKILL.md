@@ -40,8 +40,16 @@ final summary).
 Scan the batch for tasks that touch the same files or subsystems.
 
 - **Independent tasks** branch from `main` — parallel PRs.
-- **Dependent tasks** become **stacked PRs** (branch N+1 branches from branch N, PR base is branch
-  N, merge in order). Flag any suspect pair to the user before starting instead of guessing.
+- **Dependent tasks** become **stacked PRs** — see the stacking rule in the `change-workflow` skill
+  (the agent decides whether stacking fits, but creating the stack needs the user's explicit
+  approval first — ask before `gh stack`, including for confirmed-dependent tasks). Flag any suspect
+  pair to the user before starting instead of guessing.
+- **After a merge, verify the content is on main** — not just PR `state=MERGED` — before deleting
+  branches/worktrees. A squash onto a deleted base orphans the change while the PR still reads
+  merged (#427): confirm the merge commit is on main (`gh pr view --json mergeCommit`, then
+  `git merge-base --is-ancestor`) and the changed lines are present there — never branch-commit
+  reachability: squash-merge rewrites the commits, so the originals are ancestors of main only when
+  the PR merged without squashing.
 
 ## Loop
 
@@ -51,7 +59,8 @@ Scan the batch for tasks that touch the same files or subsystems.
    - No `pending` AND no `ci` → go to step 6.
 2. Do the task in its own worktree, strictly per the `change-workflow` skill (worktree path and
    naming, `pnpm install`, generated-file regeneration, validation matrix, commit footer, PR rules —
-   **deferred to that skill, not restated here**). Commit, push, `gh pr create`.
+   **deferred to that skill, not restated here**). Commit, push, `gh pr create` — or
+   `gh stack submit` for a stacked (dependent) task, per the Independence screen above.
 3. Mark the task `ci` and continue the loop with the next `pending` task.
 4. Between tasks, check CI one-shot — `gh pr checks <branch>` per open PR:
    - Green → mark `done`; remove that worktree (verify the directory is really gone — Windows
