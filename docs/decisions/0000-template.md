@@ -39,6 +39,8 @@ What stays simple, what gets harder, and the **revisit-if** — the concrete con
 reopen this. Half a page is enough.
 
 Do not use this template for a layout or UI tweak, a library pick the code already encodes, or
-because a PR shipped. One record per decision, not per PR: clarify or amend the existing record in
-place unless the new decision reverses it (then supersede with reciprocal links) — a pile of records
-amending records is a sign the log is being used as a changelog.
+because a PR shipped. One record per decision, not per PR: wording clarifications land in place with
+no new record; a substantive additive amendment keeps its own record with reciprocal Amends: /
+Amended: lines (the pair is enforced by `pnpm check:decisions`); only a reversal supersedes with
+reciprocal links — a pile of records amending records is a sign the log is being used as a
+changelog.
