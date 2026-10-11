@@ -66,7 +66,24 @@ test('record-validation still needs both the gate and the updater matrix', () =>
     .map(s => s.trim())
     .filter(Boolean);
   assert.ok(needs, 'record-validation declares its needs');
-  assert.deepEqual(needs, ['e2e-gate', 'updater']);
+  // esr-portable joined so the firefox-esr exception below can key on green
+  // ESR legs; the updater legs still decide the full-record path.
+  assert.deepEqual(needs, ['e2e-gate', 'updater', 'esr-portable']);
+});
+
+test('record-validation merges ESR-only evidence on a firefox-esr dispatch', () => {
+  // The exception to the partial-dispatch guard: a `browser=firefox-esr`
+  // dispatch with green ESR legs merges advisory ESR evidence without
+  // touching the hard gates — otherwise a green ESR validation leaves no
+  // trace (full dispatches skip the ESR legs by design).
+  const cond = jobIf('.github/workflows/e2e.yml', 'record-validation');
+  assert.match(cond, /inputs\.browser == 'firefox-esr'/);
+  assert.match(cond, /needs\.esr-portable\.result == 'success'/);
+  // Any OTHER partial dispatch still records nothing.
+  assert.match(
+    cond,
+    /github\.event_name == 'workflow_dispatch'\s*&&\s*inputs\.browser != ''\s*&&\s*inputs\.browser != 'all'/
+  );
 });
 
 test('record-validation never records from a PR', () => {

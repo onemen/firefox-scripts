@@ -427,6 +427,63 @@ export function mergeForkRecord(previous, found, meta) {
   return out;
 }
 
+/**
+ * ESR-only record merge: the ESR legs validated new point releases; merge their
+ * evidence into the restored full record without touching anything else. Pure
+ * merge, impure shell — the file and env reads stay here so the merge itself is
+ * the two spread lines below.
+ *
+ * The top-level provenance (recordedAt/runId/runUrl/sha) stays the previous
+ * full run's on purpose: hard-gate entries are bare and fall back to it, so
+ * refreshing it to the ESR run would mislink every hard gate. Fresh ESR entries
+ * carry this run's URL per-entry (collectEsrVersions stamps it); carried ones
+ * keep the run that produced them.
+ *
+ * Fail-closed without a previous record: an ESR-only file with no hard gates
+ * would trip the publish pre-flight until the next full run — throw instead, so
+ * the missing restore is visible. No meta-issue comment either: it names the
+ * hard-gate versions and their run, which an ESR run must not rewrite — the
+ * table picks the ESR evidence up from this record.
+ *
+ * @param {string} outDir VALIDATED_DIR
+ */
+function writeEsrRecord(outDir) {
+  const outFile = path.join(outDir, 'validated.json');
+  const previous = readJsonIfPresent(outFile);
+  if (!previous?.browsers) {
+    throw new Error(
+      'no previous validated record — refusing an ESR-only write that would pin no ' +
+        'hard-gate release (restore the browser-validated cache first; the nightly full ' +
+        'revalidation writes the full record)'
+    );
+  }
+  const url = runUrl();
+  const urls = url !== null ? {current: url, record: previous.runUrl ?? null} : null;
+  const browsers = {...previous.browsers};
+  Object.assign(
+    browsers,
+    collectEsrVersions(process.env.E2E_VERSIONS_DIR, previous.browsers, urls)
+  );
+  fs.mkdirSync(outDir, {recursive: true});
+  fs.writeFileSync(outFile, JSON.stringify({...previous, browsers}, null, 2) + '\n');
+  console.log(`ESR evidence merged into validated-versions record: ${outFile}`);
+  for (const [browser, entry] of Object.entries(browsers)) {
+    if (browser.startsWith('firefox-esr-')) console.log(`  ${browser}: ${entry.version}`);
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const lines = [
+      '### Validated ESR versions recorded',
+      '',
+      ...Object.entries(browsers)
+        .filter(([browser]) => browser.startsWith('firefox-esr-'))
+        .map(([browser, entry]) => `| ${browser} | ${entry.version} |`),
+      '',
+      `Run: ${url || 'local'}`,
+    ];
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+  }
+}
+
 /** Read a JSON file, or null when it is absent/unreadable (cold cache). */
 function readJsonIfPresent(file) {
   try {
@@ -514,6 +571,13 @@ async function main() {
   // fork-only run.
   if (process.argv.includes('--forks-only')) {
     writeForkRecord(outDir);
+    return;
+  }
+  // `--esr-only` merges ESR evidence from the watchdog's `browser=firefox-esr`
+  // dispatch into the restored full record — the only path that records ESR
+  // (full dispatches skip the ESR legs by design, so nothing else can).
+  if (process.argv.includes('--esr-only')) {
+    writeEsrRecord(outDir);
     return;
   }
   const outFile = path.join(outDir, 'validated.json');

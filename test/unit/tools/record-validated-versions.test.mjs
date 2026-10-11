@@ -209,6 +209,97 @@ test('--forks-only: writes forks.json, carries the other forks, never validated.
   }
 });
 
+test('--esr-only: merges ESR evidence into the restored full record', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'esr-cli-'));
+  const versions = path.join(tmp, 'legs');
+  const out = path.join(tmp, 'out');
+  fs.mkdirSync(versions, {recursive: true});
+  fs.mkdirSync(out, {recursive: true});
+  try {
+    // The restored full record: hard gates from the nightly full run, one
+    // stale ESR entry carried from an older validation.
+    fs.writeFileSync(
+      path.join(out, 'validated.json'),
+      JSON.stringify({
+        recordedAt: '2026-10-11T00:40:00Z',
+        runId: '100',
+        runUrl: 'https://example.invalid/run/100',
+        sha: 'abc123',
+        browsers: {
+          'firefox': {version: '157.0.1'},
+          'firefox-esr-153': {version: '153.3.0esr', runUrl: 'https://example.invalid/run/90'},
+        },
+      })
+    );
+    // This run validated only esr-140 (the point release that drifted).
+    writeLeg(versions, 'firefox-esr-140', 'windows-latest', '140.17.0esr', 1200);
+    execFileSync(
+      'node',
+      [path.join(REPO_ROOT, 'tools', 'ci', 'record-validated-versions.mjs'), '--esr-only'],
+      {
+        env: {
+          ...process.env,
+          E2E_VERSIONS_DIR: versions,
+          VALIDATED_DIR: out,
+          GITHUB_SERVER_URL: 'https://example.invalid',
+          GITHUB_REPOSITORY: 'o/r',
+          GITHUB_RUN_ID: '101',
+          GITHUB_SHA: 'def456',
+          GITHUB_STEP_SUMMARY: '',
+        },
+        stdio: 'pipe',
+      }
+    );
+    const record = JSON.parse(fs.readFileSync(path.join(out, 'validated.json'), 'utf8'));
+    // Hard gates byte-identical; top-level provenance stays the full run's
+    // (bare hard-gate entries fall back to it).
+    assert.deepEqual(record.browsers.firefox, {version: '157.0.1'});
+    assert.equal(record.runUrl, 'https://example.invalid/run/100');
+    assert.equal(record.sha, 'abc123');
+    // Fresh ESR evidence carries this run's URL; the absent major carries
+    // its producing run's URL forward.
+    assert.deepEqual(record.browsers['firefox-esr-140'], {
+      version: '140.17.0esr',
+      coldDownloadMs: 1200,
+      runUrl: 'https://example.invalid/o/r/actions/runs/101',
+    });
+    assert.deepEqual(record.browsers['firefox-esr-153'], {
+      version: '153.3.0esr',
+      runUrl: 'https://example.invalid/run/90',
+    });
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('--esr-only: no previous record is a hard error, never a gates-less file', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'esr-cli-empty-'));
+  const versions = path.join(tmp, 'legs');
+  fs.mkdirSync(versions, {recursive: true});
+  try {
+    writeLeg(versions, 'firefox-esr-140', 'windows-latest', '140.17.0esr');
+    assert.throws(
+      () =>
+        execFileSync(
+          'node',
+          [path.join(REPO_ROOT, 'tools', 'ci', 'record-validated-versions.mjs'), '--esr-only'],
+          {
+            env: {
+              ...process.env,
+              E2E_VERSIONS_DIR: versions,
+              VALIDATED_DIR: path.join(tmp, 'out'),
+              GITHUB_STEP_SUMMARY: '',
+            },
+            stdio: 'pipe',
+          }
+        ),
+      /no previous validated record/
+    );
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
 test('--forks-only: no fork artifacts at all is a hard error', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'forks-empty-'));
   const versions = path.join(tmp, 'legs');
