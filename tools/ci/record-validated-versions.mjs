@@ -56,6 +56,11 @@ import {
   VALIDATED_BROWSERS,
   WATCHDOG_LABEL,
 } from '../check-browser-downloads.mjs';
+// FORK_RECORD_FILE lives in the shared reporting layer (no imports, no
+// cycles); aliased locally and re-exported so existing importers keep working.
+import {FORK_RECORD_FILE as FORK_RECORD} from './watchdog-report.mjs';
+const FORK_RECORD_FILE = FORK_RECORD;
+export {FORK_RECORD_FILE};
 
 /**
  * Runner OSes of the `updater` matrix legs (e2e.yml) — the expected leg set for
@@ -68,6 +73,10 @@ export const BROWSER_LEG_OSES = {
   'firefox': UPDATER_LEG_OSES,
   'firefox-dev': UPDATER_LEG_OSES,
   'waterfox': ['windows-latest'],
+  // Nightly rides the same 3-OS updater matrix, but it is NOT in
+  // VALIDATED_BROWSERS: its entry feeds the status table's E2E/Download
+  // cells only and must never gate the publish pre-flight (it changes daily).
+  'nightly': UPDATER_LEG_OSES,
 };
 
 /**
@@ -81,9 +90,6 @@ export const FORK_LEG_OSES = {
   floorp: ['windows-latest'],
   zen: ['windows-latest'],
 };
-
-/** Sidecar record the fork pin reads; never the file the publish gate reads. */
-export const FORK_RECORD_FILE = 'forks.json';
 
 /**
  * Read the per-leg version artifacts the e2e workflow's updater matrix legs
@@ -153,15 +159,122 @@ export function readLegArtifacts(dir) {
 }
 
 /**
+ * Sparse single-browser collection: the legs that ran must agree, but absence
+ * is carried forward from the previous record (or null) instead of throwing —
+ * advisory rows must never fail the record write (#499).
+ *
+ * @param {Record<
+ *   string,
+ *   {os: string; version: string; coldDownloadMs: number | null}[]
+ * >} perBrowser
+ * @param {string} browser
+ * @param {string[]} expectedOses OSes required when the browser ran at all
+ * @param {{version?: string; coldDownloadMs?: number; runUrl?: string | null}
+ *   | undefined} prev
+ * @param {{current: string | null; record: string | null} | null} urls run-URL
+ *   provenance ({current: this run's URL, record: the previous record's URL}).
+ *   Null (the default) disables run-URL stamping entirely so callers that do
+ *   not track provenance get the bare {version, coldDownloadMs} shape. When
+ *   set, a fresh entry records `current` and a carried entry retains the
+ *   previous entry's URL, falling back to `record` for legacy entries recorded
+ *   before per-entry provenance existed — otherwise the status table would link
+ *   a carried version to a run that never tested it.
+ * @returns {{
+ *   version: string;
+ *   coldDownloadMs?: number;
+ *   runUrl?: string | null;
+ * } | null}
+ */
+export function collectSparseVersion(perBrowser, browser, expectedOses, prev, urls = null) {
+  const legs = perBrowser[browser] ?? [];
+  if (legs.length === 0) {
+    if (prev?.version) {
+      const carried = {version: prev.version};
+      if (typeof prev.coldDownloadMs === 'number') carried.coldDownloadMs = prev.coldDownloadMs;
+      if (urls) carried.runUrl = prev.runUrl ?? urls.record ?? null;
+      return carried;
+    }
+    return null;
+  }
+  const seenOses = legs.map(l => l.os);
+  const missing = expectedOses.filter(o => !seenOses.includes(o));
+  if (missing.length > 0) {
+    throw new Error(
+      `${browser}: missing version artifacts for ${missing.join(', ')} ` +
+        `(found: ${seenOses.join(', ') || 'none'})`
+    );
+  }
+  const distinct = [...new Set(legs.map(l => l.version))];
+  if (distinct.length !== 1) {
+    throw new Error(
+      `${browser}: OS legs disagree on the validated version — ` +
+        legs.map(l => `${l.os}=${l.version}`).join(', ')
+    );
+  }
+  const colds = legs.map(l => l.coldDownloadMs).filter(c => typeof c === 'number');
+  const out = {version: distinct[0]};
+  if (colds.length > 0) out.coldDownloadMs = Math.max(...colds);
+  else if (typeof prev?.coldDownloadMs === 'number') out.coldDownloadMs = prev.coldDownloadMs;
+  if (urls) out.runUrl = urls.current ?? null;
+  return out;
+}
+
+/**
+ * Sparse ESR collection: every `firefox-esr-<major>` artifact present in this
+ * run must agree per major (advisory single-OS legs); absent majors carry
+ * forward. Never throws on absence — an ESR leg that did not run is not
+ * evidence of anything.
+ *
+ * @param {string} dir E2E_VERSIONS_DIR
+ * @param {Record<
+ *       string,
+ *       {version?: string; coldDownloadMs?: number; runUrl?: string | null}
+ *     >
+ *   | undefined} prevBrowsers
+ * @param {{current: string | null; record: string | null} | null} urls run-URL
+ *   provenance, forwarded to collectSparseVersion (null disables stamping — see
+ *   its docs).
+ */
+export function collectEsrVersions(dir, prevBrowsers, urls = null) {
+  const perBrowser = readLegArtifacts(dir);
+  const out = {};
+  for (const browser of Object.keys(perBrowser)) {
+    if (!browser.startsWith('firefox-esr-')) continue;
+    const found = collectSparseVersion(perBrowser, browser, [], prevBrowsers?.[browser], urls);
+    if (found) out[browser] = found;
+  }
+  // Majors that ran before but not tonight survive via the carry-forward above
+  // only when their artifacts are absent AND a previous entry exists — however
+  // perBrowser has no key for them, so re-add them here.
+  for (const [browser, prev] of Object.entries(prevBrowsers ?? {})) {
+    if (!browser.startsWith('firefox-esr-') || out[browser] || !prev?.version) continue;
+    const carried = {version: prev.version};
+    if (typeof prev.coldDownloadMs === 'number') carried.coldDownloadMs = prev.coldDownloadMs;
+    if (urls) carried.runUrl = prev.runUrl ?? urls.record ?? null;
+    out[browser] = carried;
+  }
+  return out;
+}
+
+/**
  * The hard-gate record: every VALIDATED_BROWSER must have one artifact per
  * expected OS, and all legs must report the SAME version.
  *
  * @param {string} dir E2E_VERSIONS_DIR
- * @param {{browsers?: Record<string, {coldDownloadMs?: number}>} | null} previous
+ * @param {{
+ *   browsers?: Record<
+ *     string,
+ *     {coldDownloadMs?: number; runUrl?: string | null}
+ *   >;
+ *   runUrl?: string | null;
+ * } | null} previous
  *   the previous validated.json (read by main()); when this run has no cold
  *   observation for a browser (cache-hit day), its number is carried forward
+ * @param {string | null} currentRunUrl this run's URL (null disables per-entry
+ *   run-URL stamping — the advisory nightly/ESR entries then keep the bare
+ *   shape)
  */
-export function collectLegVersions(dir, previous = null) {
+export function collectLegVersions(dir, previous = null, currentRunUrl = null) {
   const perBrowser = readLegArtifacts(dir);
   const out = {};
   for (const browser of VALIDATED_BROWSERS) {
@@ -197,6 +310,27 @@ export function collectLegVersions(dir, previous = null) {
       out[browser].coldDownloadMs = previous.browsers[browser].coldDownloadMs;
     }
   }
+  // Nightly rides the same matrix but never gates publish: its entry is
+  // sparse (a path-filtered run may skip the updater legs entirely) and feeds
+  // the status table's E2E/Download cells only (#499).
+  // Per-entry run-URL provenance for the advisory entries: fresh evidence
+  // records this run, carried evidence keeps the run that produced it (the
+  // previous record's URL covers legacy entries from before per-entry
+  // provenance existed). Hard-gate browsers stay bare — they are always
+  // fresh, so the record-level URL is already theirs.
+  const urls =
+    currentRunUrl !== null ? {current: currentRunUrl, record: previous?.runUrl ?? null} : null;
+  const nightly = collectSparseVersion(
+    perBrowser,
+    'nightly',
+    BROWSER_LEG_OSES.nightly,
+    previous?.browsers?.nightly,
+    urls
+  );
+  if (nightly) out.nightly = nightly;
+  // ESR legs are advisory single-OS runs that only upload artifacts once the
+  // esr-portable job does so; each watched major is sparse and cumulative.
+  Object.assign(out, collectEsrVersions(dir, previous?.browsers, urls));
   return out;
 }
 
@@ -211,9 +345,14 @@ export function collectLegVersions(dir, previous = null) {
  * all three forks.
  *
  * @param {string} dir E2E_VERSIONS_DIR
- * @returns {Record<string, {os: string; version: string}>}
+ * @param {Record<string, {coldDownloadMs?: number}> | undefined} prevForks
+ *   previous forks map (cold-download carry-forward, as in collectLegVersions)
+ * @returns {Record<
+ *   string,
+ *   {os: string; version: string; coldDownloadMs?: number}
+ * >}
  */
-export function collectForkVersions(dir) {
+export function collectForkVersions(dir, prevForks) {
   const perBrowser = readLegArtifacts(dir);
   const out = {};
   for (const browser of FORK_BROWSERS) {
@@ -236,6 +375,11 @@ export function collectForkVersions(dir) {
       );
     }
     out[browser] = {version: distinct[0], os: ran.sort().join('+')};
+    const colds = legs.map(l => l.coldDownloadMs).filter(c => typeof c === 'number');
+    if (colds.length > 0) out[browser].coldDownloadMs = Math.max(...colds);
+    else if (typeof prevForks?.[browser]?.coldDownloadMs === 'number') {
+      out[browser].coldDownloadMs = prevForks[browser].coldDownloadMs;
+    }
   }
   return out;
 }
@@ -247,7 +391,11 @@ export function collectForkVersions(dir) {
  * unit-testable without a cache or a network.
  *
  * @param {{
- *   forks?: Record<string, {version: string; validatedAt: string}>;
+ *   runUrl?: string | null;
+ *   forks?: Record<
+ *     string,
+ *     {version: string; validatedAt: string; runUrl?: string | null}
+ *   >;
  * } | null} previous
  *   the restored record
  * @param {Record<string, {os: string; version: string}>} found this run's forks
@@ -265,7 +413,75 @@ export function mergeForkRecord(previous, found, meta) {
   for (const [browser, entry] of Object.entries(found)) {
     out[browser] = {...entry, ...meta};
   }
+  // Legacy carried entries predate per-entry provenance: without a backfill
+  // they would fall back to the NEW record-level URL once this partial
+  // update replaces it, linking an older validation to a run that never
+  // tested it. Entries that already carry their own URL are untouched.
+  if (previous?.runUrl) {
+    for (const [browser, entry] of Object.entries(out)) {
+      if (!Object.hasOwn(found, browser) && entry && entry.runUrl == null) {
+        out[browser] = {...entry, runUrl: previous.runUrl};
+      }
+    }
+  }
   return out;
+}
+
+/**
+ * ESR-only record merge: the ESR legs validated new point releases; merge their
+ * evidence into the restored full record without touching anything else. Pure
+ * merge, impure shell — the file and env reads stay here so the merge itself is
+ * the two spread lines below.
+ *
+ * The top-level provenance (recordedAt/runId/runUrl/sha) stays the previous
+ * full run's on purpose: hard-gate entries are bare and fall back to it, so
+ * refreshing it to the ESR run would mislink every hard gate. Fresh ESR entries
+ * carry this run's URL per-entry (collectEsrVersions stamps it); carried ones
+ * keep the run that produced them.
+ *
+ * Fail-closed without a previous record: an ESR-only file with no hard gates
+ * would trip the publish pre-flight until the next full run — throw instead, so
+ * the missing restore is visible. No meta-issue comment either: it names the
+ * hard-gate versions and their run, which an ESR run must not rewrite — the
+ * table picks the ESR evidence up from this record.
+ *
+ * @param {string} outDir VALIDATED_DIR
+ */
+function writeEsrRecord(outDir) {
+  const outFile = path.join(outDir, 'validated.json');
+  const previous = readJsonIfPresent(outFile);
+  if (!previous?.browsers) {
+    throw new Error(
+      'no previous validated record — refusing an ESR-only write that would pin no ' +
+        'hard-gate release (restore the browser-validated cache first; the nightly full ' +
+        'revalidation writes the full record)'
+    );
+  }
+  const url = runUrl();
+  const urls = url !== null ? {current: url, record: previous.runUrl ?? null} : null;
+  const browsers = {...previous.browsers};
+  Object.assign(
+    browsers,
+    collectEsrVersions(process.env.E2E_VERSIONS_DIR, previous.browsers, urls)
+  );
+  fs.mkdirSync(outDir, {recursive: true});
+  fs.writeFileSync(outFile, JSON.stringify({...previous, browsers}, null, 2) + '\n');
+  console.log(`ESR evidence merged into validated-versions record: ${outFile}`);
+  for (const [browser, entry] of Object.entries(browsers)) {
+    if (browser.startsWith('firefox-esr-')) console.log(`  ${browser}: ${entry.version}`);
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const lines = [
+      '### Validated ESR versions recorded',
+      '',
+      ...Object.entries(browsers)
+        .filter(([browser]) => browser.startsWith('firefox-esr-'))
+        .map(([browser, entry]) => `| ${browser} | ${entry.version} |`),
+      '',
+      `Run: ${url || 'local'}`,
+    ];
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+  }
 }
 
 /** Read a JSON file, or null when it is absent/unreadable (cold cache). */
@@ -293,14 +509,17 @@ function runUrl() {
  * "nothing to pin".
  */
 function writeForkRecord(outDir) {
-  const found = collectForkVersions(process.env.E2E_VERSIONS_DIR);
+  const outFile = path.join(outDir, FORK_RECORD_FILE);
+  const found = collectForkVersions(
+    process.env.E2E_VERSIONS_DIR,
+    readJsonIfPresent(outFile)?.forks
+  );
   if (Object.keys(found).length === 0) {
     throw new Error(
       'no fork version artifacts found — refusing to write a fork record that would ' +
         'pin nothing (the browser-matrix fork legs upload them; a green leg is the evidence)'
     );
   }
-  const outFile = path.join(outDir, FORK_RECORD_FILE);
   const forks = mergeForkRecord(readJsonIfPresent(outFile), found, {
     validatedAt: new Date().toISOString(),
     runId: process.env.GITHUB_RUN_ID || null,
@@ -354,6 +573,13 @@ async function main() {
     writeForkRecord(outDir);
     return;
   }
+  // `--esr-only` merges ESR evidence from the watchdog's `browser=firefox-esr`
+  // dispatch into the restored full record — the only path that records ESR
+  // (full dispatches skip the ESR legs by design, so nothing else can).
+  if (process.argv.includes('--esr-only')) {
+    writeEsrRecord(outDir);
+    return;
+  }
   const outFile = path.join(outDir, 'validated.json');
 
   // The tested versions come from the legs' artifacts, never from a live
@@ -361,19 +587,27 @@ async function main() {
   const versionsDir = process.env.E2E_VERSIONS_DIR;
   // The restored previous record feeds the cold-download carry-forward: a
   // cache-hit day has no observation of its own and must not erase the
-  // freshest cold number ever recorded.
-  const browsers = collectLegVersions(versionsDir, readJsonIfPresent(outFile));
+  // freshest cold number ever recorded. This run's URL rides along so the
+  // advisory (nightly/ESR) entries record the run that produced them.
+  const url = runUrl();
+  const browsers = collectLegVersions(versionsDir, readJsonIfPresent(outFile), url);
   for (const browser of VALIDATED_BROWSERS) {
     const osCount = (BROWSER_LEG_OSES[browser] ?? UPDATER_LEG_OSES).length;
     console.log(
       `  ${browser}: ${browsers[browser].version} (all ${osCount} OS leg${osCount === 1 ? '' : 's'} agreed)`
     );
   }
+  // Advisory extras (nightly + ESR): table evidence only, never the publish
+  // gate — logged at the same level so a missing one is visible, not silent.
+  for (const browser of Object.keys(browsers)) {
+    if (VALIDATED_BROWSERS.includes(browser)) continue;
+    console.log(`  ${browser}: ${browsers[browser].version} (advisory, table evidence only)`);
+  }
 
   const record = {
     recordedAt: new Date().toISOString(),
     runId: process.env.GITHUB_RUN_ID || null,
-    runUrl: runUrl(),
+    runUrl: url,
     sha: process.env.GITHUB_SHA || null,
     browsers,
   };

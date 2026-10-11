@@ -17,6 +17,7 @@ const scriptUrl = pathToFileURL(
 const {
   collectLegVersions,
   collectForkVersions,
+  collectEsrVersions,
   mergeForkRecord,
   planRollingComment,
   BROWSER_LEG_OSES,
@@ -202,6 +203,97 @@ test('--forks-only: writes forks.json, carries the other forks, never validated.
       fs.existsSync(path.join(out, 'validated.json')),
       false,
       '--forks-only must not create the publish pre-flight record'
+    );
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('--esr-only: merges ESR evidence into the restored full record', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'esr-cli-'));
+  const versions = path.join(tmp, 'legs');
+  const out = path.join(tmp, 'out');
+  fs.mkdirSync(versions, {recursive: true});
+  fs.mkdirSync(out, {recursive: true});
+  try {
+    // The restored full record: hard gates from the nightly full run, one
+    // stale ESR entry carried from an older validation.
+    fs.writeFileSync(
+      path.join(out, 'validated.json'),
+      JSON.stringify({
+        recordedAt: '2026-10-11T00:40:00Z',
+        runId: '100',
+        runUrl: 'https://example.invalid/run/100',
+        sha: 'abc123',
+        browsers: {
+          'firefox': {version: '157.0.1'},
+          'firefox-esr-153': {version: '153.3.0esr', runUrl: 'https://example.invalid/run/90'},
+        },
+      })
+    );
+    // This run validated only esr-140 (the point release that drifted).
+    writeLeg(versions, 'firefox-esr-140', 'windows-latest', '140.17.0esr', 1200);
+    execFileSync(
+      'node',
+      [path.join(REPO_ROOT, 'tools', 'ci', 'record-validated-versions.mjs'), '--esr-only'],
+      {
+        env: {
+          ...process.env,
+          E2E_VERSIONS_DIR: versions,
+          VALIDATED_DIR: out,
+          GITHUB_SERVER_URL: 'https://example.invalid',
+          GITHUB_REPOSITORY: 'o/r',
+          GITHUB_RUN_ID: '101',
+          GITHUB_SHA: 'def456',
+          GITHUB_STEP_SUMMARY: '',
+        },
+        stdio: 'pipe',
+      }
+    );
+    const record = JSON.parse(fs.readFileSync(path.join(out, 'validated.json'), 'utf8'));
+    // Hard gates byte-identical; top-level provenance stays the full run's
+    // (bare hard-gate entries fall back to it).
+    assert.deepEqual(record.browsers.firefox, {version: '157.0.1'});
+    assert.equal(record.runUrl, 'https://example.invalid/run/100');
+    assert.equal(record.sha, 'abc123');
+    // Fresh ESR evidence carries this run's URL; the absent major carries
+    // its producing run's URL forward.
+    assert.deepEqual(record.browsers['firefox-esr-140'], {
+      version: '140.17.0esr',
+      coldDownloadMs: 1200,
+      runUrl: 'https://example.invalid/o/r/actions/runs/101',
+    });
+    assert.deepEqual(record.browsers['firefox-esr-153'], {
+      version: '153.3.0esr',
+      runUrl: 'https://example.invalid/run/90',
+    });
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('--esr-only: no previous record is a hard error, never a gates-less file', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'esr-cli-empty-'));
+  const versions = path.join(tmp, 'legs');
+  fs.mkdirSync(versions, {recursive: true});
+  try {
+    writeLeg(versions, 'firefox-esr-140', 'windows-latest', '140.17.0esr');
+    assert.throws(
+      () =>
+        execFileSync(
+          'node',
+          [path.join(REPO_ROOT, 'tools', 'ci', 'record-validated-versions.mjs'), '--esr-only'],
+          {
+            env: {
+              ...process.env,
+              E2E_VERSIONS_DIR: versions,
+              VALIDATED_DIR: path.join(tmp, 'out'),
+              GITHUB_STEP_SUMMARY: '',
+            },
+            stdio: 'pipe',
+          }
+        ),
+      /no previous validated record/
     );
   } finally {
     fs.rmSync(tmp, {recursive: true, force: true});
@@ -433,4 +525,188 @@ test('planRollingComment: duplicate collapse works even when content already mat
   assert.equal(plan.mode, 'patch'); // not noop — the duplicate must go
   assert.equal(plan.commentId, 1);
   assert.deepEqual(plan.deleteIds, [2]);
+});
+
+test('collectLegVersions: nightly rides along as advisory evidence, never a hole (#499)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-nightly-'));
+  try {
+    fullLegSet(tmp);
+    for (const os of BROWSER_LEG_OSES.nightly) writeLeg(tmp, 'nightly', os, '160.0a1', 911);
+    const out = collectLegVersions(tmp, null);
+    assert.equal(out.nightly.version, '160.0a1');
+    assert.equal(out.nightly.coldDownloadMs, 911);
+    // A run whose nightly legs were skipped carries the previous entry, not a throw.
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-nightly-absent-'));
+    try {
+      fullLegSet(tmp2);
+      const carried = collectLegVersions(tmp2, {
+        browsers: {nightly: {version: '160.0a1', coldDownloadMs: 911}},
+      });
+      assert.deepEqual(carried.nightly, {version: '160.0a1', coldDownloadMs: 911});
+    } finally {
+      fs.rmSync(tmp2, {recursive: true, force: true});
+    }
+    // Disagreeing nightly legs throw — evidence integrity, like the gates.
+    const tmp3 = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-nightly-clash-'));
+    try {
+      fullLegSet(tmp3);
+      writeLeg(tmp3, 'nightly', 'ubuntu-24.04', '160.0a1');
+      writeLeg(tmp3, 'nightly', 'macos-latest', '160.0a1');
+      writeLeg(tmp3, 'nightly', 'windows-latest', '160.0a2');
+      assert.throws(() => collectLegVersions(tmp3, null), /nightly: OS legs disagree/);
+    } finally {
+      fs.rmSync(tmp3, {recursive: true, force: true});
+    }
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectEsrVersions: watched majors are sparse and cumulative (#499)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-esr-'));
+  try {
+    writeLeg(tmp, 'firefox-esr-140', 'windows-latest', '140.17.0esr', 1200);
+    assert.deepEqual(collectEsrVersions(tmp), {
+      'firefox-esr-140': {version: '140.17.0esr', coldDownloadMs: 1200},
+    });
+    // A major that ran before but not tonight carries forward; absence is never a throw.
+    assert.deepEqual(collectEsrVersions(tmp, {'firefox-esr-153': {version: '153.4.0esr'}}), {
+      'firefox-esr-140': {version: '140.17.0esr', coldDownloadMs: 1200},
+      'firefox-esr-153': {version: '153.4.0esr'},
+    });
+    assert.deepEqual(collectEsrVersions(tmp), {
+      'firefox-esr-140': {version: '140.17.0esr', coldDownloadMs: 1200},
+    });
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectLegVersions: advisory entries record the run that produced them (#500)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-url-'));
+  try {
+    fullLegSet(tmp);
+    for (const legOs of BROWSER_LEG_OSES.nightly) writeLeg(tmp, 'nightly', legOs, '160.0a1', 911);
+    const out = collectLegVersions(tmp, null, 'https://example.invalid/run/100');
+    assert.equal(out.nightly.runUrl, 'https://example.invalid/run/100');
+    // Hard-gate entries stay bare — the record-level URL is already theirs.
+    assert.equal(out.firefox.runUrl, undefined);
+    // A run whose nightly legs were skipped carries the previous entry's
+    // URL, not the new run's.
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-url-carry-'));
+    try {
+      fullLegSet(tmp2);
+      const carried = collectLegVersions(
+        tmp2,
+        {
+          runUrl: 'https://example.invalid/run/101',
+          browsers: {
+            nightly: {
+              version: '160.0a1',
+              coldDownloadMs: 911,
+              runUrl: 'https://example.invalid/run/100',
+            },
+          },
+        },
+        'https://example.invalid/run/101'
+      );
+      assert.equal(carried.nightly.runUrl, 'https://example.invalid/run/100');
+    } finally {
+      fs.rmSync(tmp2, {recursive: true, force: true});
+    }
+    // A legacy entry (no per-entry URL) falls back to the previous record's URL.
+    const tmp3 = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-url-legacy-'));
+    try {
+      fullLegSet(tmp3);
+      const legacy = collectLegVersions(
+        tmp3,
+        {
+          runUrl: 'https://example.invalid/run/99',
+          browsers: {nightly: {version: '160.0a1'}},
+        },
+        'https://example.invalid/run/101'
+      );
+      assert.equal(legacy.nightly.runUrl, 'https://example.invalid/run/99');
+    } finally {
+      fs.rmSync(tmp3, {recursive: true, force: true});
+    }
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectEsrVersions: run URLs ride along fresh and carried (#500)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-esr-url-'));
+  try {
+    writeLeg(tmp, 'firefox-esr-140', 'windows-latest', '140.17.0esr', 1200);
+    const urls = {
+      current: 'https://example.invalid/run/100',
+      record: 'https://example.invalid/run/99',
+    };
+    const out = collectEsrVersions(
+      tmp,
+      {'firefox-esr-153': {version: '153.4.0esr', runUrl: 'https://example.invalid/run/99'}},
+      urls
+    );
+    assert.equal(out['firefox-esr-140'].runUrl, 'https://example.invalid/run/100');
+    assert.equal(out['firefox-esr-153'].runUrl, 'https://example.invalid/run/99');
+    // Legacy re-add path (major absent from this run, no per-entry URL):
+    // the previous record URL, never the new run's.
+    const out2 = collectEsrVersions(tmp, {'firefox-esr-153': {version: '153.4.0esr'}}, urls);
+    assert.equal(out2['firefox-esr-153'].runUrl, 'https://example.invalid/run/99');
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('mergeForkRecord: legacy carried forks keep the previous record URL (#500)', () => {
+  const previous = {
+    runUrl: 'https://example.invalid/run/41',
+    forks: {
+      zen: {version: '1.22.2b', os: 'windows-latest', validatedAt: '2026-09-18T00:00:00Z'},
+      floorp: {
+        version: '12.18.0',
+        os: 'windows-latest',
+        validatedAt: '2026-09-18T00:00:00Z',
+        runUrl: 'https://example.invalid/run/40',
+      },
+    },
+  };
+  const merged = mergeForkRecord(
+    previous,
+    {librewolf: {version: '156.0.1-1', os: 'windows-latest'}},
+    {
+      validatedAt: '2026-09-22T00:00:00Z',
+      runId: '42',
+      runUrl: 'https://example.invalid/run/42',
+      sha: 'abc123',
+    }
+  );
+  assert.equal(merged.librewolf.runUrl, 'https://example.invalid/run/42');
+  assert.equal(merged.zen.runUrl, 'https://example.invalid/run/41');
+  assert.equal(merged.floorp.runUrl, 'https://example.invalid/run/40');
+});
+
+test('collectForkVersions: cold observations ride along, cache-hit days carry forward (#499)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'forks-cold-'));
+  try {
+    writeLeg(tmp, 'librewolf', 'windows-latest', '157.0.1-1', 2500);
+    assert.deepEqual(collectForkVersions(tmp).librewolf, {
+      version: '157.0.1-1',
+      os: 'windows-latest',
+      coldDownloadMs: 2500,
+    });
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'forks-cold-carry-'));
+    try {
+      writeLeg(tmp2, 'librewolf', 'windows-latest', '157.0.1-1');
+      assert.equal(
+        collectForkVersions(tmp2, {librewolf: {coldDownloadMs: 2500}}).librewolf.coldDownloadMs,
+        2500
+      );
+    } finally {
+      fs.rmSync(tmp2, {recursive: true, force: true});
+    }
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
 });

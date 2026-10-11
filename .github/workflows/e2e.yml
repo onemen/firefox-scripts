@@ -1152,12 +1152,15 @@ jobs:
       - name: Capture installed ${{ matrix.browser }} version
         if: ${{ contains(fromJSON('["librewolf","floorp","zen"]'), matrix.browser) }}
         shell: bash
+        # COLD_DOWNLOAD_MS rides along like the `updater` legs above: absent
+        # on a cache-reuse leg, carried forward by the recorder (#499).
         run: |
           VER="$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --installed-version)"
           OS="${{ matrix.os || 'windows-latest' }}"
           echo "Validated ${{ matrix.browser }} $VER on $OS"
-          printf '{"browser":"%s","os":"%s","version":"%s"}\n' \
-            "${{ matrix.browser }}" "$OS" "$VER" > "e2e-version-${{ matrix.browser }}-$OS.json"
+          printf '{"browser":"%s","os":"%s","version":"%s","coldDownloadMs":%s}\n' \
+            "${{ matrix.browser }}" "$OS" "$VER" \
+            "${COLD_DOWNLOAD_MS:-null}" > "e2e-version-${{ matrix.browser }}-$OS.json"
 
       - name: Upload ${{ matrix.browser }} version artifact
         if: ${{ contains(fromJSON('["librewolf","floorp","zen"]'), matrix.browser) }}
@@ -1425,6 +1428,27 @@ jobs:
       - name: Run updater E2E
         run: node test/e2e/updater/updater-e2e.mjs --scenario 1,6
 
+      # Version artifact, like the `updater` legs: the record-validation job
+      # downloads every e2e-version-* artifact, so ESR evidence lands in the
+      # validated record's advisory extras (#499). Runs only after the E2E
+      # above passed (failure stops the step chain).
+      - name: Capture installed ${{ matrix.browser }} version
+        shell: bash
+        run: |
+          VER="$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --installed-version)"
+          echo "Tested ${{ matrix.browser }} $VER on windows-latest"
+          printf '{"browser":"%s","os":"%s","version":"%s","coldDownloadMs":%s}\n' \
+            "${{ matrix.browser }}" "windows-latest" "$VER" \
+            "${COLD_DOWNLOAD_MS:-null}" \
+            > "e2e-version-${{ matrix.browser }}-windows-latest.json"
+
+      - name: Upload ${{ matrix.browser }} version artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-version-${{ matrix.browser }}-windows-latest
+          path: e2e-version-${{ matrix.browser }}-windows-latest.json
+          if-no-files-found: error
+
       - name: Upload diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1627,7 +1651,7 @@ jobs:
     # core-only main push (updater legs path-skipped → result 'skipped') must
     # not record — without a test run, re-resolving live versions would claim
     # untested releases as E2E-validated.
-    needs: [e2e-gate, updater]
+    needs: [e2e-gate, updater, esr-portable]
     # `always() &&` intentionally overrides the needs-graph skip rules. The
     # gate itself runs via if: always() and can succeed while a path-filtered
     # sibling (installer legs) was skipped; since ~2026-08-29 a needs entry
@@ -1654,9 +1678,19 @@ jobs:
     # only one fork, and overwriting the record could let the publish gate
     # ship a firefox/firefox-dev release that no full run ever tested. A FULL
     # dispatch (browser=all — the nightly revalidation, #426) still records.
+    # The one exception is `browser=firefox-esr` (the watchdog's ESR-drift
+    # validation): it merges ESR-only evidence into the record without
+    # touching the hard gates — otherwise a green ESR validation leaves no
+    # trace and the table shows ⏳ none forever (full dispatches skip the ESR
+    # legs by design, so no other path can record it).
     if: >-
-      always() && needs.updater.result == 'success' && github.event_name != 'pull_request' &&
-      !(github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser != 'all')
+      always() && github.event_name != 'pull_request' && (
+        (needs.updater.result == 'success' &&
+          !(github.event_name == 'workflow_dispatch' && inputs.browser != '' && inputs.browser !=
+      'all')) ||
+        (github.event_name == 'workflow_dispatch' && inputs.browser == 'firefox-esr' &&
+          needs.esr-portable.result == 'success')
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Only this job touches issues (meta-issue comment). Job-level permissions
@@ -1670,6 +1704,16 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+      # Best-effort restore of the previous record: feeds the cold-download
+      # and advisory carry-forwards (a cache-hit day must not erase the
+      # freshest observation) and lets --esr-only merge into the full
+      # record. A miss records cold, exactly as before.
+      - name: Restore previous validated-versions record
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-validated
+          key: browser-validated-${{ github.run_id }}
+          restore-keys: browser-validated-
       # The exact tested versions arrive as per-leg artifacts from the updater
       # matrix legs (matrix outputs do not aggregate — GitHub limitation
       # #17245, hence files). Each leg uploads e2e-version-<browser>-<os>.json;
@@ -1685,7 +1729,10 @@ jobs:
           VALIDATED_DIR: .watchdog-validated
           E2E_VERSIONS_DIR: .e2e-versions
           GITHUB_TOKEN: ${{ github.token }}
-        run: node tools/ci/record-validated-versions.mjs
+        run: |
+          ARGS=""
+          if [ "${{ inputs.browser }}" = "firefox-esr" ]; then ARGS="--esr-only"; fi
+          node tools/ci/record-validated-versions.mjs $ARGS
       - name: Save validated-versions record
         # Explicit cache/save with if: always() — the record must persist even
         # when a later leg fails (the save-always input is deprecated upstream

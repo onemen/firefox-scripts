@@ -19,11 +19,14 @@ const {
   triageIssueTitle,
   cacheFallbackCell,
   cacheKeyPrefixesFor,
-  escapeTableCell,
-  groupCacheKeysByBrowser,
+  cacheUsageFooter,
   collectDrift,
   collectValidatedDrift,
   compareBaseline,
+  e2eEvidence,
+  escapeTableCell,
+  esrFallbackLine,
+  groupCacheKeysByBrowser,
   formatAge,
   formatCheck,
   formatDownloadMs,
@@ -476,7 +479,7 @@ test('buildStatusTable: seven rows (incl. the informational nightly), fallback o
     librewolf,
     /\| ❌ lookup failed \| cached: 154\.0\.1-2 · \[Aug 31\]\([^)]+\) \| — \|/
   );
-  assert.match(librewolf, /\| — \|$/); // advisory fork → no E2E cell
+  assert.match(librewolf, /\| ⏳ none \|$/); // no record yet → ⏳, never a bare dash (#499)
 
   // A failed full-download verification must render as failed with the
   // CI-cache fallback, not default to 'ok' (results[browser] was unset).
@@ -525,7 +528,7 @@ test('buildStatusTable: fallback shows cached version on green runs, download ti
   });
   assertTableIntegrity(withData, 'green + downloadMs table');
   const row = withData.split('\n').find(l => l.startsWith('| librewolf '));
-  assert.match(row, /\| ✅ up to date \| cached: 155\.0\.1-1 \| 13s \| — \|$/);
+  assert.match(row, /\| ✅ up to date \| cached: 155\.0\.1-1 \| 13s \| ⏳ none \|$/);
 
   // Green run, no downloadMs yet (pre-baseline entry): em dash, never '0s'.
   const noTime = buildStatusTable({
@@ -534,7 +537,7 @@ test('buildStatusTable: fallback shows cached version on green runs, download ti
   });
   assertTableIntegrity(noTime, 'no-downloadMs table');
   const zenRow = noTime.split('\n').find(l => l.startsWith('| zen '));
-  assert.match(zenRow, /\| cached: 1\.22b \| — \| — \|$/);
+  assert.match(zenRow, /\| cached: 1\.22b \| — \| ⏳ none \|$/);
 });
 
 test('buildStatusTable: cell-count integrity under extreme cell values', () => {
@@ -803,7 +806,8 @@ test('validatedCell / E2E validated column: match, stale, none, fork, triage lin
     `⏳ [155.0.1](${runUrl})`
   );
   assert.equal(validatedCell('firefox', {version: '155.0.1'}, null), '⏳ none');
-  assert.equal(validatedCell('librewolf', {version: '155.0-1'}, validated), '—');
+  // Every row reports now (#499) — a fork with no evidence yet is ⏳, not —.
+  assert.equal(validatedCell('librewolf', {version: '155.0-1'}, validated), '⏳ none');
   // A FAILED validation on the current version links the open triage issue —
   // the title-based discovery, no workflow-to-workflow write (#136 rework).
   const triageIssues = {firefox: 'https://github.com/o/r/issues/9'};
@@ -826,6 +830,167 @@ test('validatedCell / E2E validated column: match, stale, none, fork, triage lin
   assertTableIntegrity(table, 'validated table');
   const row = table.split('\n').find(l => l.startsWith('| firefox '));
   assert.match(row, /\| ✅ \[155\.0\.1\]\([^)]+\) \|$/);
+});
+
+test('e2eEvidence / validatedCell: every row reads both records, links resolve (#499)', () => {
+  const top = 'https://github.com/o/r/actions/runs/1';
+  const forkTop = 'https://github.com/o/r/actions/runs/2';
+  const forkOwn = 'https://github.com/o/r/actions/runs/3';
+  const validated = {
+    runUrl: top,
+    browsers: {
+      'firefox': {version: '157.0.1'},
+      'nightly': {version: '160.0a1', coldDownloadMs: 3183},
+      'firefox-esr-140': {version: '140.17.0esr'},
+    },
+  };
+  const forks = {
+    runUrl: forkTop,
+    forks: {
+      librewolf: {version: '157.0.1-1', runUrl: forkOwn},
+      zen: {version: '1.23.2b'},
+    },
+  };
+  // Record-level run URL back-fills entries recorded before per-entry links.
+  assert.deepEqual(e2eEvidence('firefox', validated, null), {version: '157.0.1', runUrl: top});
+  assert.deepEqual(e2eEvidence('nightly', validated, null), {version: '160.0a1', runUrl: top});
+  // Per-entry fork URL wins; otherwise the fork record's own URL.
+  assert.deepEqual(e2eEvidence('librewolf', null, forks), {version: '157.0.1-1', runUrl: forkOwn});
+  assert.deepEqual(e2eEvidence('zen', null, forks), {version: '1.23.2b', runUrl: forkTop});
+  assert.equal(e2eEvidence('floorp', null, forks), null);
+  // Cells: nightly + ESR + forks link exactly like the hard gates.
+  assert.equal(
+    validatedCell('nightly', {version: '160.0a1'}, validated, {forks}),
+    `✅ [160.0a1](${top})`
+  );
+  assert.equal(
+    validatedCell('firefox-esr-140', {version: '140.17.0esr'}, validated, {forks}),
+    `✅ [140.17.0esr](${top})`
+  );
+  assert.equal(
+    validatedCell('librewolf', {version: '157.0.1-1'}, validated, {forks}),
+    `✅ [157.0.1-1](${forkOwn})`
+  );
+  // Fork Download time comes from the fork record's cold observation.
+  const table = buildStatusTable({
+    results: {librewolf: {status: 'ok'}},
+    baseline: {librewolf: {version: '157.0.1-1'}},
+    validated,
+    forks,
+    browsers: ['librewolf'],
+  });
+  assertTableIntegrity(table, 'fork download table');
+  const row = table.split('\n').find(l => l.startsWith('| librewolf '));
+  assert.match(row, /\| ✅ \[157\.0\.1-1\]\([^)]+\) \|$/);
+});
+
+test('validatedCell: floorp proves the release by date, never by string (#499)', () => {
+  // The leg records the Firefox base version in the binary (`157.0.1`)
+  // while the table tracks the Floorp release (`12.20.1`) — a green leg
+  // shows ✅ on the TRACKED release when its evidence postdates it.
+  const runUrl = 'https://github.com/o/r/actions/runs/7';
+  const entry = {version: '12.20.1', updatedAt: '2026-10-10T00:35:00Z'};
+  const fresh = {
+    runUrl,
+    forks: {
+      floorp: {version: '157.0.1', validatedAt: '2026-10-11T00:39:00Z', runUrl},
+    },
+  };
+  assert.equal(validatedCell('floorp', entry, null, {forks: fresh}), `✅ [12.20.1](${runUrl})`);
+  // Evidence older than the tracked release stays ⏳ — an untested
+  // release can never show ✅.
+  const stale = {
+    runUrl: 'https://github.com/o/r/actions/runs/6',
+    forks: {
+      floorp: {
+        version: '157.0.1',
+        validatedAt: '2026-10-09T00:39:00Z',
+        runUrl: 'https://github.com/o/r/actions/runs/6',
+      },
+    },
+  };
+  assert.match(validatedCell('floorp', entry, null, {forks: stale}), /^⏳ /);
+  // Undated on either side fails safe to ⏳; no evidence at all is ⏳ none.
+  const undated = {forks: {floorp: {version: '157.0.1'}}};
+  assert.match(validatedCell('floorp', entry, null, {forks: undated}), /^⏳ /);
+  assert.equal(validatedCell('floorp', entry, null, {forks: {forks: {}}}), '⏳ none');
+});
+
+test('esrFallbackLine / cacheUsageFooter: human fallback + prune health (#499)', () => {
+  assert.equal(
+    esrFallbackLine({majors: ['140', '153']}),
+    '\n\nESR window: 140 + 153 (watched majors). ' +
+      'A fresh-probe failure falls back to the `watchdog:data` marker in this issue, ' +
+      'then to the generic serving-ESR leg.'
+  );
+  assert.equal(esrFallbackLine(null), '');
+  assert.equal(esrFallbackLine({majors: []}), '');
+  assert.equal(cacheUsageFooter(null), '');
+  const fam = (entries, keep, size, over = false) => ({entries, keep, size, over});
+  const footer = cacheUsageFooter({
+    entries: 43,
+    size: 3758096384,
+    payloads: {groups: 24, entries: 24, size: 2500000000},
+    over: [],
+    families: {
+      pnpm: {entries: 6, groups: 6, size: 252706816, over: false},
+      msys2: fam(1, 3, 72351744),
+      validated: fam(3, 3, 1024),
+      forkValidated: fam(3, 3, 2048),
+      baseline: fam(3, 3, 5120),
+      smoke: fam(2, 3, 516),
+    },
+  });
+  assert.match(footer, /Cache usage: 43 entries — 3\.5 GB\nbrowser payloads 24\/24 ✅ — 2,384MB/);
+  assert.match(footer, /\npnpm 6\/6 ✅ — 241MB/);
+  assert.match(footer, /\nmsys2 1\/3 ✅ — 69MB/);
+  assert.match(
+    footer,
+    /\nrecords validated 3\/3 ✅ — 1KB · fork-validated 3\/3 ✅ — 2KB · baseline 3\/3 ✅ — 5KB/
+  );
+  assert.match(footer, /\nsmoke 2\/3 ✅ — 1KB/);
+  const overFooter = cacheUsageFooter({
+    entries: 44,
+    size: 3758096384,
+    payloads: {groups: 24, entries: 25, size: 2500000000},
+    over: [{group: 'browser-fork-validated', keep: 3, count: 4}],
+    families: {
+      pnpm: {entries: 6, groups: 6, size: 252706816, over: false},
+      msys2: fam(1, 3, 72351744),
+      validated: fam(3, 3, 1024),
+      forkValidated: {entries: 4, keep: 3, size: 2048, over: true},
+      baseline: fam(3, 3, 5120),
+      smoke: fam(2, 3, 516),
+    },
+  });
+  assert.match(overFooter, /browser payloads 25\/24 ⚠️/);
+  assert.match(overFooter, /fork-validated 4\/3 ⚠️/);
+  // A non-payload group over target keeps its row mark but must not
+  // paint the payload count: payloads are 24/24 here.
+  const nonPayloadOver = cacheUsageFooter({
+    entries: 44,
+    size: 3758096384,
+    payloads: {groups: 24, entries: 24, size: 2500000000},
+    over: [{group: 'browser-validated', keep: 3, count: 4}],
+    families: {
+      pnpm: {entries: 6, groups: 6, size: 252706816, over: false},
+      msys2: fam(1, 3, 72351744),
+      validated: {entries: 4, keep: 3, size: 1024, over: true},
+      forkValidated: fam(3, 3, 2048),
+      baseline: fam(3, 3, 5120),
+      smoke: fam(2, 3, 516),
+    },
+  });
+  assert.match(nonPayloadOver, /browser payloads 24\/24 ✅/);
+  assert.match(nonPayloadOver, /validated 4\/3 ⚠️/);
+  const body = buildMetaIssueBody({
+    table: 'T',
+    esrState: {majors: ['140', '153']},
+    cacheSummary: {entries: 1, size: 10, payloads: {groups: 1, entries: 1, size: 10}, over: []},
+  });
+  assert.match(body, /ESR window: 140 \+ 153/);
+  assert.match(body, /Cache usage: 1 entries/);
+  assert.match(body, /watchdog:data/);
 });
 
 test('triageIssueTitle: the per-browser title both sides share', () => {
