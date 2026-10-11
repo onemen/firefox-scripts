@@ -89,7 +89,14 @@ export function findLocalRefs(files) {
       const line = file.lines[i];
       let hit = false;
       if (isDocs) {
-        hit = LOCAL_CONCRETE_RE.test(line);
+        // Concrete dot-local paths count in docs — but the system-path
+        // distinction applies here too: an XDG location is not a repo draft.
+        for (const match of line.matchAll(/\.local\/[\w.-]+/g)) {
+          if (!isSystemAnchored(line, match.index)) {
+            hit = true;
+            break;
+          }
+        }
       } else {
         for (const match of line.matchAll(/\.local(?=[/\\])/g)) {
           if (!isSystemAnchored(line, match.index)) {
@@ -183,13 +190,16 @@ function readLines(rel) {
   return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8').replace(/\r\n/g, '\n').split('\n');
 }
 
-function skillInfo(rel) {
-  const text = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+export function skillInfo(rel) {
+  // Normalize CRLF at read (repo rule): a lingering CRLF working-tree copy
+  // would otherwise break the frontmatter match and misclassify a vendored
+  // skill as authored.
+  const text = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
   const match = /^---\n([\s\S]*?)\n---/.exec(text);
   return {
     path: rel,
     frontmatter: match ? match[1] : '',
-    lines: text.replace(/\r\n/g, '\n').split('\n').length,
+    lines: text.split('\n').length,
   };
 }
 

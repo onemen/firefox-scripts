@@ -11,6 +11,7 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import {
   LOCAL_CONCRETE_RE,
@@ -22,6 +23,7 @@ import {
   findMarkers,
   isSystemAnchored,
   overlongSkills,
+  skillInfo,
 } from '../../../tools/check-hygiene.mjs';
 
 // The literal tokens, assembled so this file never contains them.
@@ -76,6 +78,17 @@ test('findLocalRefs: quoted names in any separator shape flag; property access s
     },
   ]);
   assert.deepEqual(props, []);
+});
+
+test('findLocalRefs: docs exempt system paths but flag repo-relative drafts', () => {
+  const xdg = findLocalRefs([
+    {path: 'docs/x.md', lines: ['see ~/' + DOT_LOCAL_SLASH + 'share/pnpm']},
+  ]);
+  assert.deepEqual(xdg, []);
+  const draft = findLocalRefs([
+    {path: 'docs/x.md', lines: ['see ' + DOT_LOCAL_SLASH + 'review/plan.md']},
+  ]);
+  assert.equal(draft.length, 1);
 });
 
 test('isSystemAnchored: XDG and absolute paths are out of scope, repo-relative names are in', () => {
@@ -151,6 +164,22 @@ test('overlongSkills: authored skills over the cap are violations, vendored ones
   const violations = overlongSkills([authored, vendored]);
   assert.equal(violations.length, 1);
   assert.match(violations[0], /mine/);
+});
+
+test('skillInfo: a CRLF working-tree copy still parses frontmatter', () => {
+  // A lingering CRLF copy must not misclassify a vendored skill as authored:
+  // skillInfo normalizes at read, so the github-repo line is found.
+  const rel = 'test/tmp-skillinfo-crlf.md';
+  const abs = new URL('../../../' + rel, import.meta.url);
+  try {
+    fs.writeFileSync(
+      abs,
+      '---\r\nname: x\r\nmetadata:\r\n  github-repo: https://example.com/x\r\n---\r\n'
+    );
+    assert.match(skillInfo(rel).frontmatter, /github-repo:/);
+  } finally {
+    fs.rmSync(abs, {force: true});
+  }
 });
 
 test('overlongSkills: an authored skill at exactly the cap passes', () => {
