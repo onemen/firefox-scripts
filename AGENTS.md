@@ -23,7 +23,10 @@ Architecture deep dive: `docs/DEVELOPING.md` (structure, installer/updater flow,
   from their sources (see the Generated files section).
 - **Do not publish or upload** unless the user explicitly asks. Use `snapshot:*` for offline
   validation.
-- **Never merge a PR without the user's explicit approval** — open PRs for review and wait.
+- **Never merge a PR without the user's explicit approval** — open PRs for review and wait. Creating
+  or restructuring a PR stack (and any branch-base surgery) needs the same explicit approval: a
+  stack re-targets branches, and a squash onto a deleted base orphans the change while the PR still
+  reads merged (#427).
 - **Never expose the GitHub token.** It lives only in an untracked root `.env` under the fixed
   `GITHUB_TOKEN_VAR` name — do not commit, log, or rename that variable.
 - **Do not introduce Python**; build and asset tooling uses Node.js.

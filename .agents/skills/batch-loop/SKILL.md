@@ -40,8 +40,12 @@ final summary).
 Scan the batch for tasks that touch the same files or subsystems.
 
 - **Independent tasks** branch from `main` — parallel PRs.
-- **Dependent tasks** become **stacked PRs** (branch N+1 branches from branch N, PR base is branch
-  N, merge in order). Flag any suspect pair to the user before starting instead of guessing.
+- **Dependent tasks** become **stacked PRs** — see the stacking rule in the `change-workflow` skill
+  (the agent decides; `gh stack` CLI). Flag any suspect pair to the user before starting instead of
+  guessing.
+- **After a merge, verify the content is on main** — not just PR `state=MERGED` — before deleting
+  branches/worktrees. A squash onto a deleted base orphans the change while the PR still reads
+  merged (#427): check the commits are reachable from main first.
 
 ## Loop
 
