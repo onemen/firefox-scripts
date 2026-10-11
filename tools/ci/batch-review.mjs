@@ -9,8 +9,9 @@
 // canonical copy is the USAGE constant below, so the help text cannot drift
 // from what the parser accepts).
 //
-// After the review the script prints the findings it could anchor, writes them
-// to dist/review/batch-findings.json for the ADR 0020 posting step, and points
+// After the review the script prints the findings it could anchor, attributes
+// each hunk to its owning head (#504), writes them to
+// dist/review/batch-findings.json for the ADR 0020 posting step, and points
 // at the protocol; it also sweeps cr's own coderabbit-update-* temp dirs.
 //
 // Exit codes: 0 = review ran (or dry-run); 2 = nothing to review / bad usage;
@@ -85,7 +86,9 @@ Flags:
 
 After a review the findings report is written to dist/review/batch-findings.json
 and archived under review-history/; both are gitignored local artifacts, and the
-ADR 0020 posting protocol applies to the findings.`;
+ADR 0020 posting protocol applies to the findings. Each finding carries its
+owning head (and PR, when the head belongs to one) with the corrected
+per-head line — stale and ambiguous entries are flagged, not silently posted.`;
 
 export function parseArgs(argv) {
   const args = {
@@ -198,8 +201,8 @@ export function ageToUnixSeconds(age) {
 function openPrBranches({since} = {}) {
   const jq =
     since ?
-      `.[] | select(.updatedAt >= ${ageToUnixSeconds(since)}) | .headRefName`
-    : '.[] | .headRefName';
+      `.[] | select(.updatedAt >= ${ageToUnixSeconds(since)}) | "\\(.number)\\t\\(.headRefName)"`
+    : '.[] | "\\(.number)\\t\\(.headRefName)"';
   const out = gh([
     'pr',
     'list',
@@ -208,7 +211,7 @@ function openPrBranches({since} = {}) {
     '--state',
     'open',
     '--json',
-    'headRefName,updatedAt',
+    'number,headRefName,updatedAt',
     '--jq',
     jq,
   ]);
@@ -452,6 +455,100 @@ export function findingsJson(findings, {refs = [], base = 'origin/main'} = {}) {
   )}\n`;
 }
 
+// ── finding ownership (#504) ────────────────────────────────────────────
+// Merged-branch anchors shift per head (one PR's insertions move another's
+// lines), so every batch cost a manual re-verification pass: which head
+// contains the hunk, and at which line there. The report now carries that
+// attribution instead — matched by content, not by line number.
+
+/**
+ * All 0-based starts where `block` occurs contiguously in `lines`.
+ *
+ * @param {string[]} lines
+ * @param {string[]} block
+ * @returns {number[]}
+ */
+function blockMatches(lines, block) {
+  const hits = [];
+  for (let i = 0; i + block.length <= lines.length; i++) {
+    if (block.every((ln, j) => lines[i + j] === ln)) hits.push(i);
+  }
+  return hits;
+}
+
+/**
+ * Attribute each finding to the head branch owning its hunk.
+ *
+ * The finding's merged-tree range is matched by content against every head's
+ * copy of the file, so insertions above the hunk shift the per-head line
+ * without breaking the match. Exactly one containing head → `attributed`; none
+ * → `stale` (flagged, never silently posted); several (stacked pairs share
+ * hunks) → `ambiguous`, settled for fewest `base..ref` touches on the file with
+ * every candidate kept for the poster to verify.
+ *
+ * Pure over injected file readers so tests never need git; main() wires the
+ * git-backed ones (merged worktree + `git show ref:path`).
+ *
+ * @param {ReturnType<typeof parseFindings>} findings
+ * @param {{
+ *   refs: string[];
+ *   prOfRef?: Record<string, number>;
+ *   readMergedFile: (rel: string) => string[] | null;
+ *   readHeadFile: (ref: string, rel: string) => string[] | null;
+ *   headTouchCount: (ref: string, rel: string) => number;
+ * }} deps
+ * @returns {(ReturnType<typeof parseFindings>[number] & {
+ *   status: 'attributed' | 'stale' | 'ambiguous' | 'unanchored';
+ *   ownerRef: string | null;
+ *   ownerLine: number | null;
+ *   pr: number | null;
+ *   candidates?: {ref: string; line: number; pr: number | null}[];
+ * })[]}
+ */
+export function attributeFindings(
+  findings,
+  {refs, prOfRef = {}, readMergedFile, readHeadFile, headTouchCount}
+) {
+  return findings.map(f => {
+    if (!f.path || f.startLine == null || f.line == null) {
+      return {...f, status: 'unanchored', ownerRef: null, ownerLine: null, pr: null};
+    }
+    const merged = readMergedFile(f.path);
+    const block = merged ? merged.slice(f.startLine - 1, f.line) : [];
+    if (block.length === 0) {
+      return {...f, status: 'stale', ownerRef: null, ownerLine: null, pr: null};
+    }
+    const candidates = [];
+    for (const ref of refs) {
+      const head = readHeadFile(ref, f.path);
+      if (!head) continue;
+      // Every intra-head match is a candidate, not just the first: a short
+      // range (lone brace, blank line, repeated return) occurs many times in
+      // one file, and first-match would report attributed with the wrong
+      // line. Several matches route to the ambiguous path for spot-checking.
+      for (const at of blockMatches(head, block)) {
+        candidates.push({ref, line: at + (f.line - f.startLine) + 1, pr: prOfRef[ref] ?? null});
+      }
+    }
+    if (candidates.length === 0) {
+      return {...f, status: 'stale', ownerRef: null, ownerLine: null, pr: null};
+    }
+    candidates.sort((a, b) => headTouchCount(a.ref, f.path) - headTouchCount(b.ref, f.path));
+    const [owner, ...rest] = candidates;
+    if (rest.length === 0) {
+      return {...f, status: 'attributed', ownerRef: owner.ref, ownerLine: owner.line, pr: owner.pr};
+    }
+    return {
+      ...f,
+      status: 'ambiguous',
+      ownerRef: owner.ref,
+      ownerLine: owner.line,
+      pr: owner.pr,
+      candidates,
+    };
+  });
+}
+
 /**
  * A compact table for the terminal: what to triage, and where to post it.
  *
@@ -594,7 +691,15 @@ function mergedDiffStat(base, refs) {
 }
 
 export function parseOpenPrBranchesOutput(stdout) {
-  return stdout.trim().split('\n').filter(Boolean);
+  return stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      const [number, ...rest] = line.split('\t');
+      return {number: Number(number), branch: rest.join('\t')};
+    })
+    .filter(({number, branch}) => Number.isInteger(number) && branch);
 }
 
 export async function main() {
@@ -629,9 +734,19 @@ export async function main() {
   }
 
   const refs = [];
-  for (const pr of args.prs) refs.push(prHeadBranch(pr));
+  const prOfRef = {};
+  for (const pr of args.prs) {
+    const branch = prHeadBranch(pr);
+    refs.push(branch);
+    if (branch) prOfRef[branch] = pr;
+  }
   refs.push(...args.branches);
-  if (args.open) refs.push(...openPrBranches({since: args.since}));
+  if (args.open) {
+    for (const {number, branch} of openPrBranches({since: args.since})) {
+      refs.push(branch);
+      if (branch) prOfRef[branch] = number;
+    }
+  }
   const unique = [...new Set(refs.filter(Boolean))];
   if (unique.length === 0) {
     console.error('Nothing to review — pass --pr, --branch, or --open.');
@@ -728,7 +843,41 @@ export async function main() {
     // starts re-reading the raw output.
     const findings = parseFindings(cr.stdout);
     console.log(`\n${findingsTable(findings)}`);
-    const reportJson = findingsJson(findings, {refs: unique, base: args.base});
+    // Ownership (#504): match each hunk to its head while the merged tree
+    // still exists, so the report says which PR to post each thread on.
+    const attributed = attributeFindings(findings, {
+      refs: unique,
+      prOfRef,
+      readMergedFile: rel => {
+        try {
+          return fs.readFileSync(join(wtree, rel), 'utf8').replace(/\r\n/g, '\n').split('\n');
+        } catch {
+          return null;
+        }
+      },
+      readHeadFile: (ref, rel) => {
+        const r = run('git', ['show', `${ref}:${rel}`], {ignoreFail: true});
+        if (r.status !== 0) return null;
+        return String(r.stdout).replace(/\r\n/g, '\n').split('\n');
+      },
+      headTouchCount: (ref, rel) => {
+        const r = run('git', ['rev-list', '--count', `${args.base}..${ref}`, '--', rel], {
+          ignoreFail: true,
+        });
+        const n = Number(String(r.stdout).trim());
+        return Number.isFinite(n) ? n : 99;
+      },
+    });
+    for (const [i, f] of attributed.entries()) {
+      const where =
+        f.status === 'attributed' ? `PR ${f.pr ?? '(no PR)'} ${f.ownerRef} @ line ${f.ownerLine}`
+        : f.status === 'ambiguous' ?
+          `AMBIGUOUS (best guess PR ${f.pr ?? '(no PR)'} ${f.ownerRef} @ line ${f.ownerLine} — verify against candidates)`
+        : f.status === 'stale' ? 'STALE (no head contains this hunk — do not post)'
+        : '(no anchor in output — derive it before posting)';
+      console.log(`  ${i + 1}. -> ${where}`);
+    }
+    const reportJson = findingsJson(attributed, {refs: unique, base: args.base});
     try {
       const {current, archive} = writeFindingsReport(reportJson);
       console.log(`Anchors + bodies written to ${current}`);
@@ -748,9 +897,11 @@ export async function main() {
         'Next — ADR 0020 (.agents/skills/cr-batch-review/SKILL.md), not optional:',
         '  1. Assess every finding right / wrong / useless, quoting the disputed line.',
         '  2. Post each accepted finding as its own line-anchored, individually',
-        '     resolvable thread (gh api …/pulls/<n>/comments -f path=<path>',
-        '     -F line=<last line of the range> -f side=RIGHT), with the',
-        '     🤖 provenance marker naming this batch run.',
+        '     resolvable thread on the attributed PR at the attributed line',
+        '     (gh api …/pulls/<n>/comments -f path=<path>',
+        '     -F line=<attributed line> -f side=RIGHT), with the',
+        '     🤖 provenance marker naming this batch run. Spot-verify the anchor',
+        '     against that head (ambiguous/stale entries say so — never post those blind).',
         '  3. Leave a review record even when nothing is accepted',
         '     (gh pr review <n> --comment) — zero findings is a result, not',
         '     an absence, and it must be one review, not an issue comment.',
