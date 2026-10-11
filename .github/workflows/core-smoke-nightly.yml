@@ -45,6 +45,7 @@ jobs:
   gate:
     name: nightly build gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       build-id: ${{ steps.nightly.outputs.id }}
       skip: ${{ steps.cache.outputs.cache-hit == 'true' }}
@@ -87,6 +88,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # boots two browsers and runs the startup chain
     strategy:
       # One failure is enough to invalidate the build; no point paying for the
       # second leg once the first has answered the question.
@@ -135,6 +137,7 @@ jobs:
     needs: [gate, smoke]
     if: needs.gate.outputs.skip != 'true' && success()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Write validation marker
         run: |
