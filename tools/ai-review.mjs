@@ -586,10 +586,12 @@ export async function runReview(args = parseArgs(process.argv.slice(2))) {
   if (!args.baseRef) throw new Error('BASE_REF is required (--base-ref or $BASE_REF)');
   const providers = availableProviders(args);
   if (args.dryRun) {
-    let files = changedFiles(args.baseRef, args.headRef, args.maxFiles);
+    // A --files resume name may sit outside the first maxFiles entries, so
+    // fetch the full list first, filter, then cap.
+    let files = changedFiles(args.baseRef, args.headRef, args.files ? Infinity : args.maxFiles);
     if (args.files) {
       const wanted = new Set(args.files);
-      files = files.filter(f => wanted.has(f));
+      files = files.filter(f => wanted.has(f)).slice(0, args.maxFiles);
     }
     return {
       dryRun: true,
@@ -607,10 +609,10 @@ export async function runReview(args = parseArgs(process.argv.slice(2))) {
   if (providers.length === 0) {
     throw new Error('No provider keys configured. Set GEMINI_API_KEY and/or OPENROUTER_API_KEY.');
   }
-  let files = changedFiles(args.baseRef, args.headRef, args.maxFiles);
+  let files = changedFiles(args.baseRef, args.headRef, args.files ? Infinity : args.maxFiles);
   if (args.files) {
     const wanted = new Set(args.files);
-    files = files.filter(f => wanted.has(f));
+    files = files.filter(f => wanted.has(f)).slice(0, args.maxFiles);
   }
   const fileDiffs = new Map(files.map(file => [file, fileDiff(args.baseRef, args.headRef, file)]));
   const result = await reviewFiles({
