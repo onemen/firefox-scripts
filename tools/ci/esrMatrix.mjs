@@ -55,10 +55,19 @@ if (!esrState && markerBody) {
       `watchdog baseline absent — ESR window restored from the [url-watchdog] status issue marker`
     );
   } else {
-    console.error('no parseable watchdog:data marker in the issue body — generic fallback');
+    // Stable `esr-matrix: tier-3` prefix (#507): e2e.yml greps stderr for it
+    // and raises a ::warning:: — stdout must stay pure matrix JSON, so the
+    // marker can only live here.
+    console.error(
+      'esr-matrix: tier-3 generic fallback — no parseable watchdog:data marker ' +
+        'in the issue body (single serving-ESR leg, not the watched window)'
+    );
   }
 } else if (!esrState) {
-  console.error('ESR_WATCHDOG_MARKERS not set — generic serving-ESR fallback');
+  console.error(
+    'esr-matrix: tier-3 generic fallback — ESR_WATCHDOG_MARKERS not set ' +
+      '(single serving-ESR leg, not the watched window)'
+  );
 }
 
 process.stdout.write(namesOnly ? buildEsrCacheNames(esrState) : buildEsrMatrix(esrState));
