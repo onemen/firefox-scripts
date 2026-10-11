@@ -491,6 +491,111 @@ test('collectEsrVersions: watched majors are sparse and cumulative (#499)', () =
   }
 });
 
+test('collectLegVersions: advisory entries record the run that produced them (#500)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-url-'));
+  try {
+    fullLegSet(tmp);
+    for (const legOs of BROWSER_LEG_OSES.nightly) writeLeg(tmp, 'nightly', legOs, '160.0a1', 911);
+    const out = collectLegVersions(tmp, null, 'https://example.invalid/run/100');
+    assert.equal(out.nightly.runUrl, 'https://example.invalid/run/100');
+    // Hard-gate entries stay bare — the record-level URL is already theirs.
+    assert.equal(out.firefox.runUrl, undefined);
+    // A run whose nightly legs were skipped carries the previous entry's
+    // URL, not the new run's.
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-url-carry-'));
+    try {
+      fullLegSet(tmp2);
+      const carried = collectLegVersions(
+        tmp2,
+        {
+          runUrl: 'https://example.invalid/run/101',
+          browsers: {
+            nightly: {
+              version: '160.0a1',
+              coldDownloadMs: 911,
+              runUrl: 'https://example.invalid/run/100',
+            },
+          },
+        },
+        'https://example.invalid/run/101'
+      );
+      assert.equal(carried.nightly.runUrl, 'https://example.invalid/run/100');
+    } finally {
+      fs.rmSync(tmp2, {recursive: true, force: true});
+    }
+    // A legacy entry (no per-entry URL) falls back to the previous record's URL.
+    const tmp3 = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-url-legacy-'));
+    try {
+      fullLegSet(tmp3);
+      const legacy = collectLegVersions(
+        tmp3,
+        {
+          runUrl: 'https://example.invalid/run/99',
+          browsers: {nightly: {version: '160.0a1'}},
+        },
+        'https://example.invalid/run/101'
+      );
+      assert.equal(legacy.nightly.runUrl, 'https://example.invalid/run/99');
+    } finally {
+      fs.rmSync(tmp3, {recursive: true, force: true});
+    }
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectEsrVersions: run URLs ride along fresh and carried (#500)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-esr-url-'));
+  try {
+    writeLeg(tmp, 'firefox-esr-140', 'windows-latest', '140.17.0esr', 1200);
+    const urls = {
+      current: 'https://example.invalid/run/100',
+      record: 'https://example.invalid/run/99',
+    };
+    const out = collectEsrVersions(
+      tmp,
+      {'firefox-esr-153': {version: '153.4.0esr', runUrl: 'https://example.invalid/run/99'}},
+      urls
+    );
+    assert.equal(out['firefox-esr-140'].runUrl, 'https://example.invalid/run/100');
+    assert.equal(out['firefox-esr-153'].runUrl, 'https://example.invalid/run/99');
+    // Legacy re-add path (major absent from this run, no per-entry URL):
+    // the previous record URL, never the new run's.
+    const out2 = collectEsrVersions(tmp, {'firefox-esr-153': {version: '153.4.0esr'}}, urls);
+    assert.equal(out2['firefox-esr-153'].runUrl, 'https://example.invalid/run/99');
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('mergeForkRecord: legacy carried forks keep the previous record URL (#500)', () => {
+  const previous = {
+    runUrl: 'https://example.invalid/run/41',
+    forks: {
+      zen: {version: '1.22.2b', os: 'windows-latest', validatedAt: '2026-09-18T00:00:00Z'},
+      floorp: {
+        version: '12.18.0',
+        os: 'windows-latest',
+        validatedAt: '2026-09-18T00:00:00Z',
+        runUrl: 'https://example.invalid/run/40',
+      },
+    },
+  };
+  const merged = mergeForkRecord(
+    previous,
+    {librewolf: {version: '156.0.1-1', os: 'windows-latest'}},
+    {
+      validatedAt: '2026-09-22T00:00:00Z',
+      runId: '42',
+      runUrl: 'https://example.invalid/run/42',
+      sha: 'abc123',
+    }
+  );
+  assert.equal(merged.librewolf.runUrl, 'https://example.invalid/run/42');
+  assert.equal(merged.zen.runUrl, 'https://example.invalid/run/41');
+  assert.equal(merged.floorp.runUrl, 'https://example.invalid/run/40');
+});
+
 test('collectForkVersions: cold observations ride along, cache-hit days carry forward (#499)', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'forks-cold-'));
   try {

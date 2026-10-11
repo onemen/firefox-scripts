@@ -167,8 +167,11 @@ jobs:
       # env var, and the script reads only GITHUB_TOKEN_VAR/GH_TOKEN.
       # Skipped on the post-E2E refresh: it saved nothing, and the E2E run's
       # own post-gate prune already retired what that run superseded.
+      # Also skipped on a manual report-only refresh: the table is rebuilt
+      # from the live cache inventory first, so pruning after the render
+      # would delete entries the just-written footer still reports.
       - name: Prune stale Actions caches
-        if: github.event_name != 'workflow_run'
+        if: github.event_name != 'workflow_run' && inputs.report-only != true
         env:
           GITHUB_TOKEN_VAR: ${{ github.token }}
         run: node tools/ci/prune-caches.mjs --keep=3

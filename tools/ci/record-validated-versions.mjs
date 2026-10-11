@@ -169,15 +169,29 @@ export function readLegArtifacts(dir) {
  * >} perBrowser
  * @param {string} browser
  * @param {string[]} expectedOses OSes required when the browser ran at all
- * @param {{version?: string; coldDownloadMs?: number} | undefined} prev
- * @returns {{version: string; coldDownloadMs?: number} | null}
+ * @param {{version?: string; coldDownloadMs?: number; runUrl?: string | null}
+ *   | undefined} prev
+ * @param {{current: string | null; record: string | null} | null} urls run-URL
+ *   provenance ({current: this run's URL, record: the previous record's URL}).
+ *   Null (the default) disables run-URL stamping entirely so callers that do
+ *   not track provenance get the bare {version, coldDownloadMs} shape. When
+ *   set, a fresh entry records `current` and a carried entry retains the
+ *   previous entry's URL, falling back to `record` for legacy entries recorded
+ *   before per-entry provenance existed — otherwise the status table would link
+ *   a carried version to a run that never tested it.
+ * @returns {{
+ *   version: string;
+ *   coldDownloadMs?: number;
+ *   runUrl?: string | null;
+ * } | null}
  */
-export function collectSparseVersion(perBrowser, browser, expectedOses, prev) {
+export function collectSparseVersion(perBrowser, browser, expectedOses, prev, urls = null) {
   const legs = perBrowser[browser] ?? [];
   if (legs.length === 0) {
     if (prev?.version) {
       const carried = {version: prev.version};
       if (typeof prev.coldDownloadMs === 'number') carried.coldDownloadMs = prev.coldDownloadMs;
+      if (urls) carried.runUrl = prev.runUrl ?? urls.record ?? null;
       return carried;
     }
     return null;
@@ -201,6 +215,7 @@ export function collectSparseVersion(perBrowser, browser, expectedOses, prev) {
   const out = {version: distinct[0]};
   if (colds.length > 0) out.coldDownloadMs = Math.max(...colds);
   else if (typeof prev?.coldDownloadMs === 'number') out.coldDownloadMs = prev.coldDownloadMs;
+  if (urls) out.runUrl = urls.current ?? null;
   return out;
 }
 
@@ -211,14 +226,21 @@ export function collectSparseVersion(perBrowser, browser, expectedOses, prev) {
  * evidence of anything.
  *
  * @param {string} dir E2E_VERSIONS_DIR
- * @param {Record<string, {version?: string; coldDownloadMs?: number}> | undefined} prevBrowsers
+ * @param {Record<
+ *       string,
+ *       {version?: string; coldDownloadMs?: number; runUrl?: string | null}
+ *     >
+ *   | undefined} prevBrowsers
+ * @param {{current: string | null; record: string | null} | null} urls run-URL
+ *   provenance, forwarded to collectSparseVersion (null disables stamping — see
+ *   its docs).
  */
-export function collectEsrVersions(dir, prevBrowsers) {
+export function collectEsrVersions(dir, prevBrowsers, urls = null) {
   const perBrowser = readLegArtifacts(dir);
   const out = {};
   for (const browser of Object.keys(perBrowser)) {
     if (!browser.startsWith('firefox-esr-')) continue;
-    const found = collectSparseVersion(perBrowser, browser, [], prevBrowsers?.[browser]);
+    const found = collectSparseVersion(perBrowser, browser, [], prevBrowsers?.[browser], urls);
     if (found) out[browser] = found;
   }
   // Majors that ran before but not tonight survive via the carry-forward above
@@ -228,6 +250,7 @@ export function collectEsrVersions(dir, prevBrowsers) {
     if (!browser.startsWith('firefox-esr-') || out[browser] || !prev?.version) continue;
     const carried = {version: prev.version};
     if (typeof prev.coldDownloadMs === 'number') carried.coldDownloadMs = prev.coldDownloadMs;
+    if (urls) carried.runUrl = prev.runUrl ?? urls.record ?? null;
     out[browser] = carried;
   }
   return out;
@@ -238,11 +261,20 @@ export function collectEsrVersions(dir, prevBrowsers) {
  * expected OS, and all legs must report the SAME version.
  *
  * @param {string} dir E2E_VERSIONS_DIR
- * @param {{browsers?: Record<string, {coldDownloadMs?: number}>} | null} previous
+ * @param {{
+ *   browsers?: Record<
+ *     string,
+ *     {coldDownloadMs?: number; runUrl?: string | null}
+ *   >;
+ *   runUrl?: string | null;
+ * } | null} previous
  *   the previous validated.json (read by main()); when this run has no cold
  *   observation for a browser (cache-hit day), its number is carried forward
+ * @param {string | null} currentRunUrl this run's URL (null disables per-entry
+ *   run-URL stamping — the advisory nightly/ESR entries then keep the bare
+ *   shape)
  */
-export function collectLegVersions(dir, previous = null) {
+export function collectLegVersions(dir, previous = null, currentRunUrl = null) {
   const perBrowser = readLegArtifacts(dir);
   const out = {};
   for (const browser of VALIDATED_BROWSERS) {
@@ -281,16 +313,24 @@ export function collectLegVersions(dir, previous = null) {
   // Nightly rides the same matrix but never gates publish: its entry is
   // sparse (a path-filtered run may skip the updater legs entirely) and feeds
   // the status table's E2E/Download cells only (#499).
+  // Per-entry run-URL provenance for the advisory entries: fresh evidence
+  // records this run, carried evidence keeps the run that produced it (the
+  // previous record's URL covers legacy entries from before per-entry
+  // provenance existed). Hard-gate browsers stay bare — they are always
+  // fresh, so the record-level URL is already theirs.
+  const urls =
+    currentRunUrl !== null ? {current: currentRunUrl, record: previous?.runUrl ?? null} : null;
   const nightly = collectSparseVersion(
     perBrowser,
     'nightly',
     BROWSER_LEG_OSES.nightly,
-    previous?.browsers?.nightly
+    previous?.browsers?.nightly,
+    urls
   );
   if (nightly) out.nightly = nightly;
   // ESR legs are advisory single-OS runs that only upload artifacts once the
   // esr-portable job does so; each watched major is sparse and cumulative.
-  Object.assign(out, collectEsrVersions(dir, previous?.browsers));
+  Object.assign(out, collectEsrVersions(dir, previous?.browsers, urls));
   return out;
 }
 
@@ -351,7 +391,11 @@ export function collectForkVersions(dir, prevForks) {
  * unit-testable without a cache or a network.
  *
  * @param {{
- *   forks?: Record<string, {version: string; validatedAt: string}>;
+ *   runUrl?: string | null;
+ *   forks?: Record<
+ *     string,
+ *     {version: string; validatedAt: string; runUrl?: string | null}
+ *   >;
  * } | null} previous
  *   the restored record
  * @param {Record<string, {os: string; version: string}>} found this run's forks
@@ -368,6 +412,17 @@ export function mergeForkRecord(previous, found, meta) {
   const out = {...(previous?.forks ?? {})};
   for (const [browser, entry] of Object.entries(found)) {
     out[browser] = {...entry, ...meta};
+  }
+  // Legacy carried entries predate per-entry provenance: without a backfill
+  // they would fall back to the NEW record-level URL once this partial
+  // update replaces it, linking an older validation to a run that never
+  // tested it. Entries that already carry their own URL are untouched.
+  if (previous?.runUrl) {
+    for (const [browser, entry] of Object.entries(out)) {
+      if (!Object.hasOwn(found, browser) && entry && entry.runUrl == null) {
+        out[browser] = {...entry, runUrl: previous.runUrl};
+      }
+    }
   }
   return out;
 }
@@ -468,8 +523,10 @@ async function main() {
   const versionsDir = process.env.E2E_VERSIONS_DIR;
   // The restored previous record feeds the cold-download carry-forward: a
   // cache-hit day has no observation of its own and must not erase the
-  // freshest cold number ever recorded.
-  const browsers = collectLegVersions(versionsDir, readJsonIfPresent(outFile));
+  // freshest cold number ever recorded. This run's URL rides along so the
+  // advisory (nightly/ESR) entries record the run that produced them.
+  const url = runUrl();
+  const browsers = collectLegVersions(versionsDir, readJsonIfPresent(outFile), url);
   for (const browser of VALIDATED_BROWSERS) {
     const osCount = (BROWSER_LEG_OSES[browser] ?? UPDATER_LEG_OSES).length;
     console.log(
@@ -486,7 +543,7 @@ async function main() {
   const record = {
     recordedAt: new Date().toISOString(),
     runId: process.env.GITHUB_RUN_ID || null,
-    runUrl: runUrl(),
+    runUrl: url,
     sha: process.env.GITHUB_SHA || null,
     browsers,
   };
