@@ -1,0 +1,6 @@
+# githooks/main-allowlist.txt — paths that may commit in the main checkout.
+#
+# One pathspec per line; `#` comments and blanks are ignored. A trailing slash
+# covers the whole tree, anything else names an exact file. Empty by default:
+# task work belongs in worktrees (`change-workflow`), so most commits here are
+# refused by githooks/pre-commit (tools/check-main-guard.mjs, issue #518).

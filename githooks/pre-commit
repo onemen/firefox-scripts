@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Pre-commit: refuse commits made in the main checkout (issue #518). Opt-in —
+# install with `pnpm hooks:install` (sets git's core.hooksPath to githooks/).
+# Task work belongs in worktrees per `change-workflow`; paths listed in
+# githooks/main-allowlist.txt may still commit there.
+
+set -u
+
+node tools/check-main-guard.mjs || {
+  echo "pre-commit: commit refused — move the change to a task worktree." >&2
+  exit 1
+}
