@@ -714,6 +714,29 @@ function installTempSweep() {
   }
 }
 
+/**
+ * Fail closed unless `dir` resolves under the repo root or the OS temp dir
+ * (#517). Explicit scratch roots (a `--snapshot` path, an output dir) come from
+ * flags and env, so a wrong cwd or a user-profile path would otherwise write
+ * into the user's own folders — the daily-driver incident. Throws with the
+ * offending path and its label; the caller never writes.
+ *
+ * @param {string} dir
+ * @param {string} label what the dir is for (error detail)
+ */
+export function assertSafeScratchDir(dir, label) {
+  // path.resolve: the URL form keeps a trailing separator, which would break
+  // the equality below — normalize both sides the same way.
+  const root = path.resolve(fileURLToPath(new URL('../../..', import.meta.url)));
+  const resolved = path.resolve(dir);
+  const under = parent => resolved === parent || resolved.startsWith(parent + path.sep);
+  if (!under(root) && !under(path.resolve(os.tmpdir()))) {
+    throw new Error(
+      `${label}: ${resolved} is not under the repo or OS temp — refusing to write outside them`
+    );
+  }
+}
+
 /** Create a temp directory and return its path (registered for the sweep). */
 export function tempDir(prefix = 'fxs-e2e') {
   installTempSweep();

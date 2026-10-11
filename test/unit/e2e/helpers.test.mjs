@@ -326,3 +326,30 @@ test('rmDir: an unremovable tree the harness does not own is not logged as leake
     fs.rmSync(parent, {recursive: true, force: true});
   }
 });
+
+// ── assertSafeScratchDir (#517) ────────────────────────────────────────────
+
+test('assertSafeScratchDir: temp and repo roots pass, user-profile paths throw', async () => {
+  const {assertSafeScratchDir} = await import(helpersUrl);
+  assert.doesNotThrow(() => assertSafeScratchDir(os.tmpdir(), 'tmp'));
+  assert.doesNotThrow(() => assertSafeScratchDir(REPO_ROOT, 'repo'));
+  assert.doesNotThrow(() => assertSafeScratchDir(path.join(REPO_ROOT, 'dist'), 'dist'));
+  const home = os.homedir();
+  if (
+    path.resolve(home) !== path.resolve(os.tmpdir()) &&
+    !path.resolve(home).startsWith(path.resolve(REPO_ROOT))
+  ) {
+    assert.throws(
+      () => assertSafeScratchDir(path.join(home, 'Documents'), 'docs'),
+      /not under the repo or OS temp/
+    );
+  }
+});
+
+test('assertSafeScratchDir: traversal out of the repo throws', async () => {
+  const {assertSafeScratchDir} = await import(helpersUrl);
+  assert.throws(
+    () => assertSafeScratchDir(path.join(REPO_ROOT, '..', 'outside'), 'escape'),
+    /not under the repo or OS temp/
+  );
+});
