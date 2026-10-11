@@ -12,6 +12,7 @@ import os from 'node:os';
 import path, {join} from 'node:path';
 import {
   ageToUnixSeconds,
+  attributeFindings,
   cleanupCoderabbitTemp,
   findingsJson,
   findingsTable,
@@ -222,9 +223,15 @@ test('parseArgs: rejects missing or invalid values', () => {
   assert.throws(() => parseArgs(['--base']), /Missing value for --base/);
 });
 
-test('parseOpenPrBranchesOutput: splits and drops empties', () => {
-  assert.deepEqual(parseOpenPrBranchesOutput('buffy/a\nbuffy/b\n'), ['buffy/a', 'buffy/b']);
+test('parseOpenPrBranchesOutput: parses number/branch pairs, drops empties and malformed lines', () => {
+  assert.deepEqual(parseOpenPrBranchesOutput('536\twork/a\n537\twork/b\n'), [
+    {number: 536, branch: 'work/a'},
+    {number: 537, branch: 'work/b'},
+  ]);
   assert.deepEqual(parseOpenPrBranchesOutput('\n\n'), []);
+  assert.deepEqual(parseOpenPrBranchesOutput('oops\n538\twork/c\n'), [
+    {number: 538, branch: 'work/c'},
+  ]);
 });
 
 test('ageToUnixSeconds: converts human ages to timestamps', () => {
@@ -528,4 +535,124 @@ test('writeFindingsReport can skip the archive', t => {
   const {archive} = writeFindingsReport('{"count":0}', {keep: false});
   assert.equal(archive, null);
   assert.equal(fs.existsSync('review-history'), false);
+});
+
+// ── finding ownership (#504) ────────────────────────────────────────────
+// Merged-branch anchors shift per head, so the report must say which head
+// owns each hunk (and its line there) instead of leaving every agent to
+// re-derive it — and re-derive it wrong on stacked pairs.
+
+const OWN_FILES = {
+  // Merged tree: the finding's block lives at lines 10-12.
+  merged: [
+    'docs/x.md',
+    [
+      'l0',
+      'l1',
+      'l2',
+      'l3',
+      'l4',
+      'l5',
+      'l6',
+      'l7',
+      'l8',
+      'const p = 1;',
+      'const q = 2;',
+      'const r = 3;',
+      'l12',
+      'l13',
+    ].join('\n'),
+  ],
+  // Head a: same block shifted to lines 20-22 by insertions above.
+  headA: [
+    'docs/x.md',
+    [
+      ...Array.from({length: 19}, (_, i) => `pad${i}`),
+      'const p = 1;',
+      'const q = 2;',
+      'const r = 3;',
+    ].join('\n'),
+  ],
+};
+
+function ownDeps({mergedContent, heads, touches = {}}) {
+  const headFiles = {};
+  for (const [ref, content] of heads) headFiles[`${ref}\0${OWN_FILES.merged[0]}`] = content;
+  return {
+    refs: heads.map(([ref]) => ref),
+    prOfRef: {b1: 57, b2: 59},
+    readMergedFile: rel => (rel === OWN_FILES.merged[0] ? OWN_FILES.merged[1].split('\n') : null),
+    readHeadFile: (ref, rel) =>
+      headFiles[`${ref}\0${rel}`] !== undefined ? headFiles[`${ref}\0${rel}`].split('\n') : null,
+    headTouchCount: (ref, _rel) => touches[ref] ?? 1,
+    mergedContent,
+  };
+}
+
+function ownFinding(over = {}) {
+  return {
+    severity: 'minor',
+    category: 'Functional Correctness',
+    path: 'docs/x.md',
+    startLine: 10,
+    line: 12,
+    body: 'Use const.',
+    ...over,
+  };
+}
+
+test('attributeFindings: shifted block attributes to the owning head with its line', () => {
+  const [out] = attributeFindings([ownFinding()], ownDeps({heads: [['b1', OWN_FILES.headA[1]]]}));
+  assert.equal(out.status, 'attributed');
+  assert.equal(out.ownerRef, 'b1');
+  assert.equal(out.ownerLine, 22);
+  assert.equal(out.pr, 57);
+});
+
+test('attributeFindings: a block no head contains is stale, not silently posted', () => {
+  const [out] = attributeFindings([ownFinding()], ownDeps({heads: [['b1', 'unrelated\ncontent']]}));
+  assert.equal(out.status, 'stale');
+  assert.equal(out.ownerRef, null);
+  assert.equal(out.pr, null);
+});
+
+test('attributeFindings: stacked pairs go ambiguous with candidates, fewest touches wins', () => {
+  const [out] = attributeFindings(
+    [ownFinding()],
+    ownDeps({
+      heads: [
+        ['b1', OWN_FILES.headA[1]],
+        ['b2', OWN_FILES.headA[1]],
+      ],
+      touches: {b1: 1, b2: 4},
+    })
+  );
+  assert.equal(out.status, 'ambiguous');
+  assert.equal(out.ownerRef, 'b1');
+  assert.equal(out.candidates.length, 2);
+});
+
+test('attributeFindings: a block repeated twice in one head goes ambiguous, not first-match attributed', () => {
+  const twice = [
+    'const p = 1;',
+    'const q = 2;',
+    'const r = 3;',
+    'sep',
+    'const p = 1;',
+    'const q = 2;',
+    'const r = 3;',
+  ].join('\n');
+  const [out] = attributeFindings([ownFinding()], ownDeps({heads: [['b1', twice]]}));
+  assert.equal(out.status, 'ambiguous');
+  assert.equal(out.ownerRef, 'b1');
+  assert.equal(out.candidates.length, 2);
+});
+
+test('attributeFindings: unanchored findings and missing files stay triageable', () => {
+  const [free, gone] = attributeFindings(
+    [ownFinding({path: null, startLine: null, line: null}), ownFinding({path: 'docs/gone.md'})],
+    ownDeps({heads: [['b1', OWN_FILES.headA[1]]]})
+  );
+  assert.equal(free.status, 'unanchored');
+  assert.equal(gone.status, 'stale');
 });
