@@ -223,9 +223,15 @@ test('parseArgs: rejects missing or invalid values', () => {
   assert.throws(() => parseArgs(['--base']), /Missing value for --base/);
 });
 
-test('parseOpenPrBranchesOutput: splits and drops empties', () => {
-  assert.deepEqual(parseOpenPrBranchesOutput('buffy/a\nbuffy/b\n'), ['buffy/a', 'buffy/b']);
+test('parseOpenPrBranchesOutput: parses number/branch pairs, drops empties and malformed lines', () => {
+  assert.deepEqual(parseOpenPrBranchesOutput('536\twork/a\n537\twork/b\n'), [
+    {number: 536, branch: 'work/a'},
+    {number: 537, branch: 'work/b'},
+  ]);
   assert.deepEqual(parseOpenPrBranchesOutput('\n\n'), []);
+  assert.deepEqual(parseOpenPrBranchesOutput('oops\n538\twork/c\n'), [
+    {number: 538, branch: 'work/c'},
+  ]);
 });
 
 test('ageToUnixSeconds: converts human ages to timestamps', () => {
@@ -621,6 +627,22 @@ test('attributeFindings: stacked pairs go ambiguous with candidates, fewest touc
       touches: {b1: 1, b2: 4},
     })
   );
+  assert.equal(out.status, 'ambiguous');
+  assert.equal(out.ownerRef, 'b1');
+  assert.equal(out.candidates.length, 2);
+});
+
+test('attributeFindings: a block repeated twice in one head goes ambiguous, not first-match attributed', () => {
+  const twice = [
+    'const p = 1;',
+    'const q = 2;',
+    'const r = 3;',
+    'sep',
+    'const p = 1;',
+    'const q = 2;',
+    'const r = 3;',
+  ].join('\n');
+  const [out] = attributeFindings([ownFinding()], ownDeps({heads: [['b1', twice]]}));
   assert.equal(out.status, 'ambiguous');
   assert.equal(out.ownerRef, 'b1');
   assert.equal(out.candidates.length, 2);

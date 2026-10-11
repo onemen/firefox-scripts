@@ -201,8 +201,8 @@ export function ageToUnixSeconds(age) {
 function openPrBranches({since} = {}) {
   const jq =
     since ?
-      `.[] | select(.updatedAt >= ${ageToUnixSeconds(since)}) | .headRefName`
-    : '.[] | .headRefName';
+      `.[] | select(.updatedAt >= ${ageToUnixSeconds(since)}) | "\\(.number)\\t\\(.headRefName)"`
+    : '.[] | "\\(.number)\\t\\(.headRefName)"';
   const out = gh([
     'pr',
     'list',
@@ -211,7 +211,7 @@ function openPrBranches({since} = {}) {
     '--state',
     'open',
     '--json',
-    'headRefName,updatedAt',
+    'number,headRefName,updatedAt',
     '--jq',
     jq,
   ]);
@@ -522,8 +522,11 @@ export function attributeFindings(
     for (const ref of refs) {
       const head = readHeadFile(ref, f.path);
       if (!head) continue;
-      const [at] = blockMatches(head, block);
-      if (at !== undefined) {
+      // Every intra-head match is a candidate, not just the first: a short
+      // range (lone brace, blank line, repeated return) occurs many times in
+      // one file, and first-match would report attributed with the wrong
+      // line. Several matches route to the ambiguous path for spot-checking.
+      for (const at of blockMatches(head, block)) {
         candidates.push({ref, line: at + (f.line - f.startLine) + 1, pr: prOfRef[ref] ?? null});
       }
     }
@@ -688,7 +691,15 @@ function mergedDiffStat(base, refs) {
 }
 
 export function parseOpenPrBranchesOutput(stdout) {
-  return stdout.trim().split('\n').filter(Boolean);
+  return stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      const [number, ...rest] = line.split('\t');
+      return {number: Number(number), branch: rest.join('\t')};
+    })
+    .filter(({number, branch}) => Number.isInteger(number) && branch);
 }
 
 export async function main() {
@@ -730,7 +741,12 @@ export async function main() {
     if (branch) prOfRef[branch] = pr;
   }
   refs.push(...args.branches);
-  if (args.open) refs.push(...openPrBranches({since: args.since}));
+  if (args.open) {
+    for (const {number, branch} of openPrBranches({since: args.since})) {
+      refs.push(branch);
+      if (branch) prOfRef[branch] = number;
+    }
+  }
   const unique = [...new Set(refs.filter(Boolean))];
   if (unique.length === 0) {
     console.error('Nothing to review — pass --pr, --branch, or --open.');
