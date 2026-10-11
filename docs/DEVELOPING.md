@@ -120,6 +120,13 @@ output immediately (MZ/e_lfanew/PE-signature check). If it fires:
 3. CI is unaffected: GitHub Actions Windows runners have Defender's real-time scan disabled, and the
    publish gate re-checks every staged binary's magic bytes before hashing (#234).
 
+**MSYS path conversion (no code fix — set an env var).** Git Bash rewrites arguments that look like
+POSIX paths before the tool sees them, so `git show <rev>:<dot-path>` (a path starting with `.`) is
+mangled into a nonsense revision — export `MSYS_NO_PATHCONV=1` for the command. Separately, Node
+resolves `/tmp` to `C:\tmp` while Git Bash means the real temp dir, so never pass `/tmp` paths
+between the two: resolve the temp dir on the side that consumes it (`os.tmpdir()` in Node,
+`$TMPDIR`/`mktemp -d` in shell).
+
 ### Linux (native or WSL)
 
 ```bash
