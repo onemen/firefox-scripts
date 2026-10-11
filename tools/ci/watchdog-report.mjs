@@ -540,7 +540,32 @@ export function e2eEvidence(browser, validated, forks) {
   return null;
 }
 
+/**
+ * Floorp's E2E cell (#499 follow-up): the leg installs via a version-agnostic
+ * `latest` URL and records the Firefox base version stamped in the binary (e.g.
+ * `157.0.1`), while the table tracks the Floorp release (`12.20.1`) — the two
+ * strings can never be compared. A green leg instead proves the CURRENT release
+ * by date: the fork record's `validatedAt` must be at least as new as the
+ * baseline entry's `updatedAt` (the run that recorded the tracked release).
+ * Anything older — or undated on either side — stays ⏳ so an untested release
+ * can never show ✅.
+ */
+export function floorpCell(entry, forks) {
+  const current = entry?.version;
+  const fEntry = forks?.forks?.floorp;
+  if (!fEntry?.version) return '⏳ none';
+  const validatedAt = Date.parse(fEntry.validatedAt ?? '');
+  const updatedAt = Date.parse(entry?.updatedAt ?? entry?.checkedAt ?? '');
+  if (Number.isFinite(validatedAt) && Number.isFinite(updatedAt) && validatedAt >= updatedAt) {
+    const url = fEntry.runUrl ?? forks?.runUrl ?? null;
+    return url ? `✅ [${current}](${url})` : `✅ ${current}`;
+  }
+  const url = fEntry.runUrl ?? forks?.runUrl ?? null;
+  return url ? `⏳ [${current}](${url})` : `⏳ ${current}`;
+}
+
 export function validatedCell(browser, entry, validated, {triageIssues = null, forks = null} = {}) {
+  if (browser === 'floorp') return floorpCell(entry, forks);
   const evidence = e2eEvidence(browser, validated, forks);
   const v = evidence?.version;
   const current = entry?.version;

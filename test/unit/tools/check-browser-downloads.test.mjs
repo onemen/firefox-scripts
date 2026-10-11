@@ -884,6 +884,38 @@ test('e2eEvidence / validatedCell: every row reads both records, links resolve (
   assert.match(row, /\| ✅ \[157\.0\.1-1\]\([^)]+\) \|$/);
 });
 
+test('validatedCell: floorp proves the release by date, never by string (#499)', () => {
+  // The leg records the Firefox base version in the binary (`157.0.1`)
+  // while the table tracks the Floorp release (`12.20.1`) — a green leg
+  // shows ✅ on the TRACKED release when its evidence postdates it.
+  const runUrl = 'https://github.com/o/r/actions/runs/7';
+  const entry = {version: '12.20.1', updatedAt: '2026-10-10T00:35:00Z'};
+  const fresh = {
+    runUrl,
+    forks: {
+      floorp: {version: '157.0.1', validatedAt: '2026-10-11T00:39:00Z', runUrl},
+    },
+  };
+  assert.equal(validatedCell('floorp', entry, null, {forks: fresh}), `✅ [12.20.1](${runUrl})`);
+  // Evidence older than the tracked release stays ⏳ — an untested
+  // release can never show ✅.
+  const stale = {
+    runUrl: 'https://github.com/o/r/actions/runs/6',
+    forks: {
+      floorp: {
+        version: '157.0.1',
+        validatedAt: '2026-10-09T00:39:00Z',
+        runUrl: 'https://github.com/o/r/actions/runs/6',
+      },
+    },
+  };
+  assert.match(validatedCell('floorp', entry, null, {forks: stale}), /^⏳ /);
+  // Undated on either side fails safe to ⏳; no evidence at all is ⏳ none.
+  const undated = {forks: {floorp: {version: '157.0.1'}}};
+  assert.match(validatedCell('floorp', entry, null, {forks: undated}), /^⏳ /);
+  assert.equal(validatedCell('floorp', entry, null, {forks: {forks: {}}}), '⏳ none');
+});
+
 test('esrFallbackLine / cacheUsageFooter: human fallback + prune health (#499)', () => {
   assert.equal(
     esrFallbackLine({majors: ['140', '153']}),
