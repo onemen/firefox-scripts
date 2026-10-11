@@ -858,7 +858,12 @@ export function cacheUsageFooter(summary) {
     summary.over.length > 0 ?
       ` — over target: ${summary.over.map(o => `${o.group} (${o.count}/${o.keep})`).join(', ')}`
     : '';
-  const payloadMark = summary.over.length > 0 ? '⚠️' : '✅';
+  // The mark sits next to the payload count, so it is a payload verdict:
+  // payload groups are keep-one (see keepFor), so entries > groups is
+  // exactly "a payload group over target". A non-payload group over target
+  // (e.g. browser-validated) still shows in the `over` list, but must not
+  // paint the payload count amber.
+  const payloadMark = summary.payloads.entries > summary.payloads.groups ? '⚠️' : '✅';
   return (
     `\n\nCache usage: ${summary.entries} entries — ${formatGB(summary.size)} ` +
     `(browser payloads ${summary.payloads.entries}/${summary.payloads.groups} ${payloadMark}${over})`

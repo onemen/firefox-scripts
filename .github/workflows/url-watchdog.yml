@@ -193,9 +193,17 @@ jobs:
   # no-op when nothing changed, so quiet nights cost one short job, not churn.
   refresh-after-e2e:
     name: refresh status table after E2E
+    # head_branch alone is not a trust signal: a fork PR opened from a
+    # branch named `main` matches it, and workflow_run executes in the base
+    # repo (issues: write here). The repository check keeps forks out and the
+    # event check keeps PR-triggered E2E out (a PR run writes no records, so
+    # there is nothing new to render) — main-repo schedule/dispatch runs pass
+    # both.
     if: >-
       github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.event != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

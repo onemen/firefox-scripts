@@ -909,6 +909,16 @@ test('esrFallbackLine / cacheUsageFooter: human fallback + prune health (#499)',
   });
   assert.match(overFooter, /⚠️/);
   assert.match(overFooter, /browser-fork-validated \(4\/3\)/);
+  // A non-payload group over target keeps its `over` listing but must not
+  // paint the payload count: payloads are 24/24 here.
+  const nonPayloadOver = cacheUsageFooter({
+    entries: 44,
+    size: 3758096384,
+    payloads: {groups: 24, entries: 24, size: 2500000000},
+    over: [{group: 'browser-validated', keep: 3, count: 4}],
+  });
+  assert.match(nonPayloadOver, /browser payloads 24\/24 ✅/);
+  assert.match(nonPayloadOver, /browser-validated \(4\/3\)/);
   const body = buildMetaIssueBody({
     table: 'T',
     esrState: {majors: ['140', '153']},
