@@ -205,11 +205,19 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     rel => CODE_EXTS.has(path.extname(rel)) && !rel.startsWith('node_modules/')
   );
   const docsFiles = tracked.filter(rel => rel.endsWith('.md'));
-  const files = [...codeFiles, ...docsFiles].map(rel => ({path: rel, lines: readLines(rel)}));
+  // git ls-files still lists files deleted from the working tree before the
+  // deletion is staged — readFileSync would throw ENOENT and block the normal
+  // delete-then-validate flow, so lint only what is actually on disk.
+  const present = rel => fs.existsSync(path.join(REPO_ROOT, rel));
+  const files = [...codeFiles, ...docsFiles]
+    .filter(present)
+    .map(rel => ({path: rel, lines: readLines(rel)}));
 
   const violations = [...findLocalRefs(files), ...findMarkers(files), ...findChatRefs(files)];
 
-  const skillFiles = tracked.filter(rel => /^.agents\/skills\/[^/]+\/SKILL\.md$/.test(rel));
+  const skillFiles = tracked.filter(
+    rel => /^.agents\/skills\/[^/]+\/SKILL\.md$/.test(rel) && present(rel)
+  );
   violations.push(...overlongSkills(skillFiles.map(skillInfo)));
 
   if (violations.length > 0) {
