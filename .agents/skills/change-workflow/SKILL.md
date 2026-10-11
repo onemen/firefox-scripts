@@ -133,8 +133,9 @@ PRs that modify `core/**` must add or extend a test where feasible; if not, the 
 explain why (CI gate tracked in issue #30).
 
 Heavy validation — installer/updater E2E and multi-browser matrices — runs in CI, never on the
-user's machine without explicit opt-in. Scratch data stays inside the worktree or OS temp, never
-user profile folders.
+user's machine without explicit opt-in. The harness keeps its managed E2E temp dirs inside the
+worktree or OS temp (the #517 fail-closed gate); command scratch files still go to the repo's
+gitignored `dist/scratch/` per the finishing checklist — never bare `/tmp`.
 
 ## Never idle-wait
 
