@@ -30,6 +30,12 @@ pnpm install
   source. Run `node embed.mjs` to update the embedded installer assets. The updater tab reuses the
   same CSS (see the developer guide on generated files).
 
+### Docs
+
+A docs file over 100 lines gets a contents list at the top when next touched (TOC-on-touch) — no
+sweeping the files that lack one today. Keep entries as anchor links to the `##` sections so the
+list cannot drift from the headings.
+
 ### Generated files
 
 The generated files (`installer/src/_config.h`, `installer/src/_builddate.h`,
