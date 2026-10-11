@@ -79,6 +79,7 @@ import {downloadTo, resolveDownloadUrl} from '../test/e2e/shared/downloads.mjs';
 import {
   BROWSERS,
   FORK_BROWSERS,
+  FORK_RECORD_FILE,
   META_ISSUE_TITLE,
   VALIDATED_BROWSERS,
   WATCHDOG_LABEL,
@@ -98,6 +99,7 @@ import {
   triageIssueTitle,
   updateEsrState,
 } from './ci/watchdog-report.mjs';
+import {summarizeInventory} from './ci/prune-caches.mjs';
 
 // Compat surface: the reporting layer's names, re-exported so existing
 // importers (test/unit/tools/*, tools/ci/record-validated-versions.mjs) can
@@ -106,6 +108,7 @@ export {
   BROWSERS,
   ESR_BROWSER_PREFIX,
   FORK_BROWSERS,
+  FORK_RECORD_FILE,
   META_ISSUE_TITLE,
   VALIDATED_BROWSERS,
   WATCHDOG_LABEL,
@@ -114,15 +117,19 @@ export {
   buildStatusTable,
   cacheFallbackCell,
   cacheKeyPrefixesFor,
+  cacheUsageFooter,
   collectDrift,
   collectValidatedDrift,
   compareBaseline,
+  e2eEvidence,
   escapeTableCell,
+  esrFallbackLine,
   esrLedgerNames,
   esrMajorOf,
   formatAge,
   formatCheck,
   formatDownloadMs,
+  formatGB,
   formatRunDate,
   formatSize,
   groupCacheKeysByBrowser,
@@ -427,17 +434,24 @@ async function verifyFullDownload(url, browser) {
 }
 
 /**
- * List the repo's Actions-cache entries (key + creation time), all pages. Used
- * to derive the truthful Fallback (CI cache) column: the sticky fork keys
- * decode to their version; the shared Mozilla namespace proves presence/age.
- * Needs the `actions: read` scope (the watchdog's check job already carries
- * `actions: write` for the E2E dispatch).
+ * List the repo's Actions-cache entries (key + creation time + size), all
+ * pages. Used to derive the truthful Fallback (CI cache) column: the sticky
+ * fork keys decode to their version; the shared Mozilla namespace proves
+ * presence/age. Sizes feed the cache-usage footer (#499). Needs the `actions:
+ * read` scope (the watchdog's check job already carries `actions: write` for
+ * the E2E dispatch).
  */
 export async function listActionsCaches(token, repo) {
   const out = [];
   for (let page = 1; ; page++) {
     const body = await ghApi(token, `/repos/${repo}/actions/caches?per_page=100&page=${page}`);
-    out.push(...(body.actions_caches ?? []).map(c => ({key: c.key, createdAt: c.created_at})));
+    out.push(
+      ...(body.actions_caches ?? []).map(c => ({
+        key: c.key,
+        createdAt: c.created_at,
+        size: c.size_in_bytes ?? 0,
+      }))
+    );
     if ((body.actions_caches ?? []).length < 100) break;
     if (page >= (body.total_count ?? 0) / 100 + 1) break;
   }
@@ -875,6 +889,24 @@ export async function main() {
       console.log('validated: no record found (E2E has not recorded one yet)');
     }
   }
+  // Sidecar fork record (restored by the workflow into FORKS_DIR, written by
+  // the E2E record-fork-validation job): feeds the forks' E2E-validated cells
+  // and Download times (#499). Absent → forks render '⏳ none', same as before.
+  let forks = null;
+  const forksDir = process.env.FORKS_DIR || '';
+  if (!prMode && forksDir) {
+    const forksFile = path.join(forksDir, FORK_RECORD_FILE);
+    if (fs.existsSync(forksFile)) {
+      try {
+        forks = JSON.parse(fs.readFileSync(forksFile, 'utf-8'));
+        console.log(`forks: record from ${forks.recordedAt || 'unknown'}`);
+      } catch (err) {
+        console.log(`forks: unreadable record ignored: ${err.message}`);
+      }
+    } else {
+      console.log('forks: no record found (no fork dispatch has recorded one yet)');
+    }
+  }
 
   // ── ESR state machine (the dynamic firefox-esr-<major> rows) ─────────────
   // Rotate the watched two-major window from Mozilla's serving keys BEFORE the
@@ -1162,10 +1194,14 @@ export async function main() {
     // PR job has no actions scope and needs no table). Fail-open: without a
     // token the column degrades to the baseline-derived view.
     let cacheGroups;
+    let cacheSummary = null;
     if (token && repo && !prMode) {
       try {
         const caches = await listActionsCaches(token, repo);
         cacheGroups = groupCacheKeysByBrowser(caches, [...BROWSERS, ...esrNames], esrState);
+        // Same keep count the nightly prune enforces (prune-caches.mjs
+        // --keep=3 in url-watchdog.yml) so the footer judges by the same bar.
+        cacheSummary = summarizeInventory(caches, 3);
         console.log(`cache inventory: ${caches.length} entries fetched`);
       } catch (err) {
         console.log(
@@ -1194,11 +1230,12 @@ export async function main() {
       results,
       baseline: next,
       validated,
+      forks,
       browsers: [...BROWSERS, ...esrNames],
       cache: cacheGroups,
       triageIssues,
     });
-    const metaBody = buildMetaIssueBody({table, esrState});
+    const metaBody = buildMetaIssueBody({table, esrState, cacheSummary});
     if (dryRun || !token) {
       console.log(
         `\n${dryRun ? '[dry-run] ' : '[no GITHUB_TOKEN] '}meta issue would be kept current with:\n${metaBody}`

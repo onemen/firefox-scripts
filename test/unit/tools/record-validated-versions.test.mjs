@@ -17,6 +17,7 @@ const scriptUrl = pathToFileURL(
 const {
   collectLegVersions,
   collectForkVersions,
+  collectEsrVersions,
   mergeForkRecord,
   planRollingComment,
   BROWSER_LEG_OSES,
@@ -433,4 +434,83 @@ test('planRollingComment: duplicate collapse works even when content already mat
   assert.equal(plan.mode, 'patch'); // not noop — the duplicate must go
   assert.equal(plan.commentId, 1);
   assert.deepEqual(plan.deleteIds, [2]);
+});
+
+test('collectLegVersions: nightly rides along as advisory evidence, never a hole (#499)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-nightly-'));
+  try {
+    fullLegSet(tmp);
+    for (const os of BROWSER_LEG_OSES.nightly) writeLeg(tmp, 'nightly', os, '160.0a1', 911);
+    const out = collectLegVersions(tmp, null);
+    assert.equal(out.nightly.version, '160.0a1');
+    assert.equal(out.nightly.coldDownloadMs, 911);
+    // A run whose nightly legs were skipped carries the previous entry, not a throw.
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-nightly-absent-'));
+    try {
+      fullLegSet(tmp2);
+      const carried = collectLegVersions(tmp2, {
+        browsers: {nightly: {version: '160.0a1', coldDownloadMs: 911}},
+      });
+      assert.deepEqual(carried.nightly, {version: '160.0a1', coldDownloadMs: 911});
+    } finally {
+      fs.rmSync(tmp2, {recursive: true, force: true});
+    }
+    // Disagreeing nightly legs throw — evidence integrity, like the gates.
+    const tmp3 = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-nightly-clash-'));
+    try {
+      fullLegSet(tmp3);
+      writeLeg(tmp3, 'nightly', 'ubuntu-24.04', '160.0a1');
+      writeLeg(tmp3, 'nightly', 'macos-latest', '160.0a1');
+      writeLeg(tmp3, 'nightly', 'windows-latest', '160.0a2');
+      assert.throws(() => collectLegVersions(tmp3, null), /nightly: OS legs disagree/);
+    } finally {
+      fs.rmSync(tmp3, {recursive: true, force: true});
+    }
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectEsrVersions: watched majors are sparse and cumulative (#499)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-esr-'));
+  try {
+    writeLeg(tmp, 'firefox-esr-140', 'windows-latest', '140.17.0esr', 1200);
+    assert.deepEqual(collectEsrVersions(tmp), {
+      'firefox-esr-140': {version: '140.17.0esr', coldDownloadMs: 1200},
+    });
+    // A major that ran before but not tonight carries forward; absence is never a throw.
+    assert.deepEqual(collectEsrVersions(tmp, {'firefox-esr-153': {version: '153.4.0esr'}}), {
+      'firefox-esr-140': {version: '140.17.0esr', coldDownloadMs: 1200},
+      'firefox-esr-153': {version: '153.4.0esr'},
+    });
+    assert.deepEqual(collectEsrVersions(tmp), {
+      'firefox-esr-140': {version: '140.17.0esr', coldDownloadMs: 1200},
+    });
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test('collectForkVersions: cold observations ride along, cache-hit days carry forward (#499)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'forks-cold-'));
+  try {
+    writeLeg(tmp, 'librewolf', 'windows-latest', '157.0.1-1', 2500);
+    assert.deepEqual(collectForkVersions(tmp).librewolf, {
+      version: '157.0.1-1',
+      os: 'windows-latest',
+      coldDownloadMs: 2500,
+    });
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'forks-cold-carry-'));
+    try {
+      writeLeg(tmp2, 'librewolf', 'windows-latest', '157.0.1-1');
+      assert.equal(
+        collectForkVersions(tmp2, {librewolf: {coldDownloadMs: 2500}}).librewolf.coldDownloadMs,
+        2500
+      );
+    } finally {
+      fs.rmSync(tmp2, {recursive: true, force: true});
+    }
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
 });

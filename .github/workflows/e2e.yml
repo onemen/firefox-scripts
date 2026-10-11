@@ -1152,12 +1152,15 @@ jobs:
       - name: Capture installed ${{ matrix.browser }} version
         if: ${{ contains(fromJSON('["librewolf","floorp","zen"]'), matrix.browser) }}
         shell: bash
+        # COLD_DOWNLOAD_MS rides along like the `updater` legs above: absent
+        # on a cache-reuse leg, carried forward by the recorder (#499).
         run: |
           VER="$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --installed-version)"
           OS="${{ matrix.os || 'windows-latest' }}"
           echo "Validated ${{ matrix.browser }} $VER on $OS"
-          printf '{"browser":"%s","os":"%s","version":"%s"}\n' \
-            "${{ matrix.browser }}" "$OS" "$VER" > "e2e-version-${{ matrix.browser }}-$OS.json"
+          printf '{"browser":"%s","os":"%s","version":"%s","coldDownloadMs":%s}\n' \
+            "${{ matrix.browser }}" "$OS" "$VER" \
+            "${COLD_DOWNLOAD_MS:-null}" > "e2e-version-${{ matrix.browser }}-$OS.json"
 
       - name: Upload ${{ matrix.browser }} version artifact
         if: ${{ contains(fromJSON('["librewolf","floorp","zen"]'), matrix.browser) }}
@@ -1424,6 +1427,27 @@ jobs:
 
       - name: Run updater E2E
         run: node test/e2e/updater/updater-e2e.mjs --scenario 1,6
+
+      # Version artifact, like the `updater` legs: the record-validation job
+      # downloads every e2e-version-* artifact, so ESR evidence lands in the
+      # validated record's advisory extras (#499). Runs only after the E2E
+      # above passed (failure stops the step chain).
+      - name: Capture installed ${{ matrix.browser }} version
+        shell: bash
+        run: |
+          VER="$(node test/e2e/shared/downloads.mjs ${{ matrix.browser }} --installed-version)"
+          echo "Tested ${{ matrix.browser }} $VER on windows-latest"
+          printf '{"browser":"%s","os":"%s","version":"%s","coldDownloadMs":%s}\n' \
+            "${{ matrix.browser }}" "windows-latest" "$VER" \
+            "${COLD_DOWNLOAD_MS:-null}" \
+            > "e2e-version-${{ matrix.browser }}-windows-latest.json"
+
+      - name: Upload ${{ matrix.browser }} version artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-version-${{ matrix.browser }}-windows-latest
+          path: e2e-version-${{ matrix.browser }}-windows-latest.json
+          if-no-files-found: error
 
       - name: Upload diagnostics
         if: failure()

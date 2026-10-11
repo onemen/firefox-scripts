@@ -161,10 +161,11 @@ const KEY_TYPE = new Set(['dl', 'portable']);
  */
 const KEY_LAYOUT = new Set(['plain', 'dir']);
 /**
- * The release half: a URL hash (16 hex), a sticky `v<version>`, or a snap
- * revision.
+ * The release half: a URL hash (16 hex), a sticky `v<version>` (which may
+ * itself contain dashes — LibreWolf versions carry a build number, e.g.
+ * `v157.0.1-1`), or a snap revision.
  */
-const KEY_HASH_RE = /^(?:[0-9a-f]{16}|v[^-]+|\d+)$/;
+const KEY_HASH_RE = /^(?:[0-9a-f]{16}|v.+|\d+)$/;
 
 /**
  * Split a cache key of the current scheme (ADR 0045), or null when the key is
@@ -173,7 +174,9 @@ const KEY_HASH_RE = /^(?:[0-9a-f]{16}|v[^-]+|\d+)$/;
  *
  * Parsed right-to-left: `layout`, `os`, `type` come from closed sets, so the
  * remainder is the name even when it contains dashes (`firefox-dev`,
- * `esr-prev`).
+ * `esr-prev`) — and the hash may itself contain dashes (a sticky fork version
+ * with a build number, e.g. `v157.0.1-1`), so the `type`/`os` pair is located
+ * by scanning rather than by fixed position.
  *
  * @param {string} key a GitHub Actions cache key
  * @returns {{
@@ -187,11 +190,18 @@ const KEY_HASH_RE = /^(?:[0-9a-f]{16}|v[^-]+|\d+)$/;
 export function parseKey(key) {
   const parts = key.split('-');
   if (parts.length < 5) return null;
-  const [layout, hash, os, type] = parts.slice(-4).reverse();
-  if (!KEY_LAYOUT.has(layout) || !KEY_OS.has(os) || !KEY_TYPE.has(type)) return null;
-  if (!KEY_HASH_RE.test(hash)) return null;
-  const name = parts.slice(0, -4).join('-');
-  return name ? {name, type, os, hash, layout} : null;
+  const layout = parts[parts.length - 1];
+  if (!KEY_LAYOUT.has(layout)) return null;
+  // Scan for the type/os pair: the hash between os and layout may hold dashes.
+  for (let i = parts.length - 4; i >= 1; i--) {
+    if (!KEY_TYPE.has(parts[i]) || !KEY_OS.has(parts[i + 1])) continue;
+    const hash = parts.slice(i + 2, -1).join('-');
+    if (!KEY_HASH_RE.test(hash)) continue;
+    const name = parts.slice(0, i).join('-');
+    if (!name) continue;
+    return {name, type: parts[i], os: parts[i + 1], hash, layout};
+  }
+  return null;
 }
 
 /**
@@ -268,6 +278,48 @@ export function groupOf(key) {
   if (parsed) return `${parsed.name}-${parsed.type}-${parsed.os}-${parsed.layout}`;
   const family = stem(key);
   return KEEP_ONE.test(family) ? `${family} :: ${layout(key)}` : family;
+}
+
+/**
+ * Summarize a cache inventory for the status-issue footer (#499): per-group
+ * counts against their keep targets, so prune health is readable without API
+ * calls. Pure — the caller fetches the entries, this only groups them.
+ *
+ * @param {{key: string; size?: number}[]} caches
+ * @param {number} keep default count for the non-release-keyed groups
+ * @returns {{
+ *   entries: number;
+ *   size: number;
+ *   payloads: {groups: number; entries: number; size: number};
+ *   over: {group: string; keep: number; count: number}[];
+ * }}
+ *   payloads = current-scheme browser groups (one useful entry each); over =
+ *   groups holding more than their keep target
+ */
+export function summarizeInventory(caches, keep) {
+  const byGroup = new Map();
+  for (const c of caches) {
+    const g = groupOf(c.key);
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(c);
+  }
+  const summary = {
+    entries: caches.length,
+    size: caches.reduce((n, c) => n + (c.size || 0), 0),
+    payloads: {groups: 0, entries: 0, size: 0},
+    over: [],
+  };
+  for (const [g, group] of byGroup) {
+    const target = keepFor(g, keep);
+    if (parseGroup(g)) {
+      summary.payloads.groups += 1;
+      summary.payloads.entries += group.length;
+      summary.payloads.size += group.reduce((n, c) => n + (c.size || 0), 0);
+    }
+    if (group.length > target) summary.over.push({group: g, keep: target, count: group.length});
+  }
+  summary.over.sort((a, b) => b.count - b.keep - (a.count - a.keep));
+  return summary;
 }
 
 /**

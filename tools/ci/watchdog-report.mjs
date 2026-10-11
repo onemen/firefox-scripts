@@ -246,6 +246,9 @@ export const VALIDATED_BROWSERS = ['firefox', 'firefox-dev', 'waterfox'];
  */
 export const FORK_BROWSERS = ['librewolf', 'floorp', 'zen'];
 
+/** Sidecar record the fork pin reads; never the file the publish gate reads. */
+export const FORK_RECORD_FILE = 'forks.json';
+
 export const WATCHDOG_LABEL = 'url-watchdog';
 /** Single status + ledger issue updated after each run. */
 export const META_ISSUE_TITLE = '[url-watchdog] status';
@@ -512,9 +515,34 @@ export function statusTag(status) {
  * #136 rework). Nothing needs a hand-close: a green revalidation rewrites the
  * record and the next nightly render shows the ✅ run link again.
  */
-export function validatedCell(browser, entry, validated, {triageIssues = null} = {}) {
-  if (!VALIDATED_BROWSERS.includes(browser)) return '—';
-  const v = validated?.browsers?.[browser]?.version;
+/**
+ * E2E evidence for one table row, unified across both records (#499): the
+ * hard-gate record (`validated.json`, written by record-validation) covers the
+ * validated browsers plus the advisory nightly/ESR extras; the sidecar fork
+ * record (`forks.json`, written by record-fork-validation) covers the forks.
+ * Per-entry run URLs win; the record-level URL is the fallback for entries
+ * recorded before per-entry provenance existed.
+ *
+ * @param {string} browser
+ * @param {any} validated the validated.json record (or null)
+ * @param {any} forks the forks.json record (or null)
+ * @returns {{version: string; runUrl: string | null} | null}
+ */
+export function e2eEvidence(browser, validated, forks) {
+  const vEntry = validated?.browsers?.[browser];
+  if (vEntry?.version) {
+    return {version: vEntry.version, runUrl: vEntry.runUrl ?? validated?.runUrl ?? null};
+  }
+  const fEntry = forks?.forks?.[browser];
+  if (fEntry?.version) {
+    return {version: fEntry.version, runUrl: fEntry.runUrl ?? forks?.runUrl ?? null};
+  }
+  return null;
+}
+
+export function validatedCell(browser, entry, validated, {triageIssues = null, forks = null} = {}) {
+  const evidence = e2eEvidence(browser, validated, forks);
+  const v = evidence?.version;
   const current = entry?.version;
   // ⏳ none stays when there is NO record at all — an empty record means the
   // revalidation has not landed yet (the publish gate fails closed on it);
@@ -524,8 +552,7 @@ export function validatedCell(browser, entry, validated, {triageIssues = null} =
     return `❌ E2E [triage](${triageIssues[browser]})`;
   }
   if (!v) return '⏳ none';
-  const link = validated?.browsers?.[browser]?.runUrl;
-  const shown = link ? `[${v}](${link})` : v;
+  const shown = evidence.runUrl ? `[${v}](${evidence.runUrl})` : v;
   return String(v) === String(current) ? `✅ ${shown}` : `⏳ ${shown}`;
 }
 
@@ -687,7 +714,9 @@ export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {})
  * Markdown status table for the meta issue. `baseline` is the per-browser
  * record AFTER this run — a browser that failed keeps its previous entry, which
  * is exactly what the version-aware CI installer cache still serves (the
- * fallback column). `validated` is the E2E record (see validatedCell).
+ * fallback column). `validated` is the E2E record and `forks` the sidecar fork
+ * record (see validatedCell) — together they cover every row, not just the hard
+ * gates (#499).
  *
  * `cache` (optional) is the live Actions-cache inventory grouped per browser
  * (groupCacheKeysByBrowser). When provided, the Fallback column is derived from
@@ -700,6 +729,7 @@ export function cacheFallbackCell(browser, keys, entry, {now = Date.now()} = {})
  *   results: any;
  *   baseline: any;
  *   validated: any;
+ *   forks?: any;
  *   browsers?: string[];
  *   cache?: any;
  *   now?: number;
@@ -710,6 +740,7 @@ export function buildStatusTable({
   results,
   baseline,
   validated,
+  forks = null,
   browsers = BROWSERS,
   cache,
   now,
@@ -754,14 +785,16 @@ export function buildStatusTable({
     // Download time of the last VERIFIED full download. #136 rework: the
     // watchdog's own endpoint-probe timing (always 0–4 s on CI loaders) moved
     // out; setup-browser's COLD-installer download wall-clock takes its place
-    // (the validated-versions record is the fresher source — it is written by
-    // the run that actually validated the release; the baseline entry is the
-    // fallback for advisory browsers the record does not cover, and the legacy
-    // watchdog downloadMs last so old baselines still show real data).
+    // (the E2E records are the fresher source — written by the run that
+    // actually validated the release; the baseline entry is the fallback, and
+    // the legacy watchdog downloadMs last so old baselines still show data).
     const cold =
-      validated?.browsers?.[browser]?.coldDownloadMs ?? entry.coldDownloadMs ?? entry.downloadMs;
+      validated?.browsers?.[browser]?.coldDownloadMs ??
+      forks?.forks?.[browser]?.coldDownloadMs ??
+      entry.coldDownloadMs ??
+      entry.downloadMs;
     const downloadTime = formatDownloadMs(cold);
-    const e2e = validatedCell(browser, entry, validated, {triageIssues});
+    const e2e = validatedCell(browser, entry, validated, {triageIssues, forks});
     // Every variable value goes through escapeTableCell: the row's cell
     // count must never depend on what a vendor feed returned.
     return `| ${browser} | ${escapeTableCell(version)} | ${escapeTableCell(sizeSha)} | ${escapeTableCell(updated)} | ${escapeTableCell(statusTagged)} | ${escapeTableCell(fallback)} | ${escapeTableCell(downloadTime)} | ${escapeTableCell(e2e)} |`;
@@ -791,16 +824,63 @@ updater legs · <browser>\`) and linked from the table's E2E column until a gree
 replaces it.`;
 
 /**
+ * Human-readable ESR fallback line (#499): the `watchdog:data` marker below is
+ * the machine fallback (esrMatrix.mjs reads it when the baseline cache is
+ * absent) — this sentence is the human one, naming the watched majors and where
+ * a fresh-probe failure falls back to.
+ */
+export function esrFallbackLine(esrState) {
+  const majors = Array.isArray(esrState?.majors) ? esrState.majors : [];
+  if (majors.length === 0) return '';
+  const plural = majors.length === 1 ? '' : 's';
+  return (
+    `\n\nESR window: ${majors.join(' + ')} (watched major${plural}). ` +
+    `A fresh-probe failure falls back to the \`watchdog:data\` marker in this issue, ` +
+    `then to the generic serving-ESR leg.`
+  );
+}
+
+/** Human size in GB with one decimal ('3.5 GB'), '—' when unknown. */
+export function formatGB(bytes) {
+  if (!bytes) return '—';
+  return `${(bytes / 1073741824).toFixed(1)} GB`;
+}
+
+/**
+ * Cache-usage footer (#499): prune health without API calls, from the same live
+ * inventory the Fallback column reads. `summary` is prune-caches'
+ * summarizeInventory output (or null when the inventory fetch failed — the
+ * footer is then omitted, never guessed).
+ */
+export function cacheUsageFooter(summary) {
+  if (!summary) return '';
+  const over =
+    summary.over.length > 0 ?
+      ` — over target: ${summary.over.map(o => `${o.group} (${o.count}/${o.keep})`).join(', ')}`
+    : '';
+  const payloadMark = summary.over.length > 0 ? '⚠️' : '✅';
+  return (
+    `\n\nCache usage: ${summary.entries} entries — ${formatGB(summary.size)} ` +
+    `(browser payloads ${summary.payloads.entries}/${summary.payloads.groups} ${payloadMark}${over})`
+  );
+}
+
+/**
  * Meta-issue body: the static intro + the status table + the ESR data marker
  * (#136 rework — the version-history section is gone: the table's Updated
  * column carries the same date/run link the history lines did, per row, and the
  * full ledger stays in baseline.json for the machines that need it). No run
  * date in the header on purpose — the body must only change when the table or
- * the marker changes, so fully-green no-op runs do not churn the issue.
+ * the marker changes, so fully-green no-op runs do not churn the issue. (#499
+ * adds the human ESR fallback line + the cache-usage footer; both derive from
+ * state the run already holds, so they churn only with it.)
  */
-export function buildMetaIssueBody({table, esrState}) {
+export function buildMetaIssueBody({table, esrState, cacheSummary = null}) {
   const marker = esrMarkerBlock(esrState);
-  return `${WATCHDOG_INTRO}${WATCHDOG_INTRO_TAIL}\n\n## Watchdog status\n\n${table}${marker}`;
+  return (
+    `${WATCHDOG_INTRO}${WATCHDOG_INTRO_TAIL}\n\n## Watchdog status\n\n${table}` +
+    `${esrFallbackLine(esrState)}${cacheUsageFooter(cacheSummary)}${marker}`
+  );
 }
 
 /**

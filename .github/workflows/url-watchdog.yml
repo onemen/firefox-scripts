@@ -10,32 +10,19 @@
 # table + version history (the SHA-256 ledger); rot and size changes open
 # deduped error issues that auto-close once a later run checks green again.
 #
-# Three modes (see tools/check-browser-downloads.mjs):
+# Two modes (see tools/check-browser-downloads.mjs):
 # - Nightly (schedule/dispatch): version baseline + history in the Actions cache
 #   (.watchdog/baseline.json), status meta issue, deduped error issues.
-# - Report-only (dispatch with report-only=true): no vendor calls — rebuilds
-#   the status table from the baseline + the LIVE Actions-cache inventory, so
-#   the Fallback column stays truthful after any cache save.
-# - PR (pull_request touching the download map): stateless and always green —
-#   findings surface as ::warning:: / ::notice:: annotations, so the check can
-#   be required without ever blocking.
+# - Report-only (dispatch with report-only=true, or the post-E2E refresh
+#   below): no vendor calls — rebuilds the status table from the baseline +
+#   the LIVE Actions-cache inventory, so the Fallback column stays truthful
+#   after any cache save. The watchdog is the repo's only vendor-facing job:
+#   map-touching PRs prove the map through the E2E legs that install the URL
+#   (a rotten URL reds the leg for real), so no separate PR probe exists.
 
 name: URL watchdog
 
 on:
-  pull_request:
-    paths:
-      - 'test/e2e/shared/downloads.mjs'
-      # The stateless --pr pass exercises the watchdog tool itself, so tool
-      # changes get a live (vendor-facing, always-green) smoke run too — same
-      # set the browser-downloads filter ownership already defines. The
-      # watchdog's pure reporting layer (watchdog-report.mjs) is part of the
-      # tool surface.
-      - 'tools/check-browser-downloads.mjs'
-      - 'tools/ci/watchdog-report.mjs'
-  # The PR check is stateless + always green, so it can safely run on the
-  # merge queue too (a required check must report on merge_group).
-  merge_group:
   schedule:
     # 22:00 UTC daily — this is the repo's only nightly cron now. It drives the
     # nightly revalidation: the `Dispatch nightly revalidation` step below
@@ -44,6 +31,13 @@ on:
     # weeks), so the effective start is ~01:00-05:00 UTC; that is still a daily
     # cadence, and nothing else depends on the wall-clock time.
     - cron: '0 22 * * *'
+  # Post-E2E refresh (#499): the scheduled render runs BEFORE the dispatched
+  # E2E revalidation lands its records. Re-render report-only once E2E
+  # finishes so the table shows the just-finished validation, not last
+  # night's. Only the E2E workflow's completion matters here.
+  workflow_run:
+    workflows: ['E2E']
+    types: [completed]
   workflow_dispatch:
     inputs:
       report-only:
@@ -64,7 +58,7 @@ jobs:
   # ── Nightly: baseline + issues ────────────────────────────────────────────
   check:
     name: check browser download URLs
-    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: github.event_name != 'workflow_run'
     runs-on: ubuntu-24.04
     # The full-download path is progress-aware: a slow vendor
     # download runs to its 20 min transfer budget (plus retries) instead of
@@ -92,15 +86,24 @@ jobs:
           restore-keys: url-watchdog-baseline-
 
       # Validated-versions record (written by E2E's record-validation job):
-      # lets the status table show which firefox / firefox-dev release a
-      # successful E2E run actually tested (the publish pre-flight already
-      # restores the same cache under VALIDATED_DIR).
+      # lets the status table show which release a successful E2E run actually
+      # tested (the publish pre-flight already restores the same cache under
+      # VALIDATED_DIR).
       - name: Restore validated-versions record
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .watchdog-validated
           key: browser-validated-${{ github.run_id }}
           restore-keys: browser-validated-
+
+      # Sidecar fork record (written by E2E's record-fork-validation job):
+      # feeds the forks' E2E-validated cells and Download times (#499).
+      - name: Restore fork-validation record
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-fork-validated
+          key: browser-fork-validated-${{ github.run_id }}
+          restore-keys: browser-fork-validated-
 
       - name: Check browser downloads
         run: |
@@ -110,6 +113,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           VALIDATED_DIR: .watchdog-validated
+          FORKS_DIR: .watchdog-fork-validated
 
       # Explicit save (not save-always): the script rewrites baseline.json
       # every run even when the restore step hit; the fresh key persists a
@@ -125,7 +129,7 @@ jobs:
         # redundant ~KB cache entry per manual refresh.
         if: always() && inputs.report-only != true
 
-      # ── Nightly revalidation dispatch ───────────────────────────────────
+      # ── Nightly revalidation dispatch (plan replay) ───────────────────────
       # AFTER the baseline save, deliberately: the dispatched E2E run reads
       # this baseline (esr-matrix consumes it, and the record-validation
       # pre-flight compares against it), so dispatching before the save would
@@ -140,7 +144,11 @@ jobs:
       # core-smoke-nightly.yml is dispatched once — its own build-ID marker
       # skips nights without a new build. No `if: always()`: a failed check
       # step wrote no plan, so there is nothing to replay.
+      # Report-only refreshes (manual or the post-E2E job below) never
+      # dispatch: they wrote no plan, so there is nothing to replay — and a
+      # refresh must not fan out into another E2E run.
       - name: Dispatch nightly revalidation
+        if: inputs.report-only != true && github.event_name != 'workflow_run'
         run: node tools/check-browser-downloads.mjs --dispatch
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -157,34 +165,40 @@ jobs:
       # policy tools/ci/prune-caches.mjs documents. The token must be passed
       # explicitly — the job's actions: write permission does not export an
       # env var, and the script reads only GITHUB_TOKEN_VAR/GH_TOKEN.
+      # Skipped on the post-E2E refresh: it saved nothing, and the E2E run's
+      # own post-gate prune already retired what that run superseded.
       - name: Prune stale Actions caches
+        if: github.event_name != 'workflow_run'
         env:
           GITHUB_TOKEN_VAR: ${{ github.token }}
         run: node tools/ci/prune-caches.mjs --keep=3
 
     # Job-level scoping (the E2E workflow's precedent): dispatching the browser
     # E2E when a new release is recorded needs actions: write; the issue
-    # surface needs issues: write. The PR job below needs neither.
+    # surface needs issues: write.
     permissions:
       contents: read
       issues: write
       actions: write
 
-  # ── PR: stateless rot check at review time ────────────────────────────────
-  # Runs only when the download map itself changed. The script exits 0 and
-  # prints ::warning:: annotations on rot, so this job never blocks — but it
-  # can be added to branch protection as a required check.
-  pr-check:
-    name: browser download URLs (PR)
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+  # ── Post-E2E refresh: single post-validation render (#499) ───────────────
+  # The scheduled render above runs BEFORE the dispatched E2E revalidation
+  # lands its records, so its E2E column is structurally one night stale.
+  # This job re-renders report-only (no vendor calls, no baseline write, no
+  # dispatch) once the E2E run finishes — the table readers see already
+  # includes the just-finished validation. The meta-issue PATCH is itself a
+  # no-op when nothing changed, so quiet nights cost one short job, not churn.
+  refresh-after-e2e:
+    name: refresh status table after E2E
+    if: >-
+      github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
-    # Same progress-aware vendor fetches as the scheduled `check` (30 min);
-    # fewer URLs on a PR diff, so half the budget still gives ~5x headroom.
-    timeout-minutes: 15
-    # Stateless vendor checks + annotations only — no GitHub API calls, so no
-    # write scopes.
+    timeout-minutes: 10
     permissions:
       contents: read
+      issues: write
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -192,5 +206,30 @@ jobs:
         with:
           node-version: 24
 
-      - name: Check browser downloads
-        run: node tools/check-browser-downloads.mjs --pr
+      - name: Restore baseline
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog
+          key: url-watchdog-baseline-${{ github.run_id }}
+          restore-keys: url-watchdog-baseline-
+
+      - name: Restore validated-versions record
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-validated
+          key: browser-validated-${{ github.run_id }}
+          restore-keys: browser-validated-
+
+      - name: Restore fork-validation record
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .watchdog-fork-validated
+          key: browser-fork-validated-${{ github.run_id }}
+          restore-keys: browser-fork-validated-
+
+      - name: Refresh status table (report-only)
+        run: node tools/check-browser-downloads.mjs --report-only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VALIDATED_DIR: .watchdog-validated
+          FORKS_DIR: .watchdog-fork-validated
