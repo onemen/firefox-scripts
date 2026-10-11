@@ -1357,9 +1357,15 @@ jobs:
         env:
           ESR_WATCHDOG_MARKERS: ${{ steps.esr-marker.outputs.markers }}
         run: |
-          MATRIX=$(node tools/ci/esrMatrix.mjs .watchdog/baseline.json)
+          MATRIX=$(node tools/ci/esrMatrix.mjs .watchdog/baseline.json 2>esr-stderr.log)
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "ESR legs: $MATRIX"
+          # Loud tier-3 (#507): the generic single-leg fallback must never look
+          # clean-green. The marker grep reads the tool's stderr, not stdout —
+          # stdout is the matrix JSON the job outputs above.
+          if grep -q "esr-matrix: tier-3" esr-stderr.log; then
+            echo "::warning::esr-matrix is on the tier-3 generic fallback — this run tests only the serving ESR, not the watched window"
+          fi
 
       # The cache name each of those legs keys on (ADR 0045). It travels
       # BESIDE the matrix, not inside it: the dimension is `matrix.browser`, so
