@@ -66,7 +66,7 @@ if (current) {
 
 // Validate + chmod BEFORE flipping the config: a missing hook or a failed
 // chmod must never leave git pointed at hooks that cannot run.
-const hooks = ['pre-push', 'post-checkout'];
+const hooks = ['pre-commit', 'pre-push', 'post-checkout'];
 for (const name of hooks) {
   if (!fs.existsSync(path.join(HOOKS_DIR, name))) {
     console.error(`✗ ${HOOKS_DIR_REL}/${name} not found — core.hooksPath left unchanged.`);
@@ -87,7 +87,7 @@ if (!isWindows) {
 git('config', 'core.hooksPath', HOOKS_DIR_REL);
 console.log(`✓ core.hooksPath set to '${HOOKS_DIR_REL}'.`);
 console.log(
-  `✓ hooks installed: pre-push gate (lint/format/test) + post-checkout worktree install` +
+  `✓ hooks installed: pre-commit main-checkout guard + pre-push gate (lint/format/test) + post-checkout worktree install` +
     (isWindows ? '' : ' (chmod +x applied)') +
     `\n  bypass: git push --no-verify | uninstall: git config --unset core.hooksPath`
 );
