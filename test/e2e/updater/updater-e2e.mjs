@@ -72,6 +72,7 @@ import {
   withLockRetrySync,
   pruneStaleTempRoots,
   noteLeakedTempRoot,
+  assertSafeScratchDir,
 } from '../shared/helpers.mjs';
 import {
   startLocalManifestServer,
@@ -4465,6 +4466,7 @@ async function run() {
     console.error('No snapshot found. Run `pnpm snapshot:dev` first.');
     process.exit(1);
   }
+  assertSafeScratchDir(snapshotDir, 'snapshot dir');
   console.log(`Updater E2E\n  snapshot: ${snapshotDir}`);
   if (!fs.existsSync(path.join(snapshotDir, 'hashes.json'))) {
     console.error(

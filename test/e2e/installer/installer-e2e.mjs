@@ -30,6 +30,7 @@ import path from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {
   REPO_ROOT,
+  assertSafeScratchDir,
   check,
   createCounter,
   launchFirefox,
@@ -1886,6 +1887,7 @@ async function run() {
     }
     snapshotDir = snap.dir;
   }
+  assertSafeScratchDir(snapshotDir, 'snapshot dir');
   console.log(`Installer E2E\n  snapshot: ${snapshotDir}`);
 
   const bin = findInstaller(snapshotDir);
