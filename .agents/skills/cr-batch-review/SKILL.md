@@ -74,12 +74,14 @@ The script merges the heads onto one temp branch, reviews the combined diff in a
 and writes `dist/review/batch-findings.json`. Read that report — it carries `severity`, `category`,
 `path`, `startLine`/`line` and the body per finding.
 
-**The anchors are merged-branch-relative, not per-PR.** Several PRs share one tree, so one PR's
-insertions shift another's lines and the same `path:line` can point at different code on a given
-head. The report does not say which PR owns a finding. Before posting, work out the owning PR (which
-head contains that line) and **re-verify the anchor against that head**. A stale report is worse
-than none: the script now removes the old file before each run and exits non-zero if it cannot write
-a new one, so if the file is absent the run failed — say so instead of posting from memory.
+**The report carries ownership, not just merged-branch anchors.** Each finding has `status`
+(`attributed` / `ambiguous` / `stale` / `unanchored`) plus `ownerRef`, the corrected per-head
+`ownerLine`, and `pr` when the head belongs to one — matched by content, so another PR's insertions
+above the hunk no longer shift the anchor. Before posting, **spot-verify the attributed anchor
+against that head** (it is machine-matched, not hand-derived); never post `stale` entries, and treat
+`ambiguous` ones as candidates to pick between, not verdicts. A stale report is worse than none: the
+script now removes the old file before each run and exits non-zero if it cannot write a new one, so
+if the file is absent the run failed — say so instead of posting from memory.
 
 ## You do not fix anything
 
