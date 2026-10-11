@@ -348,8 +348,17 @@ test('assertSafeScratchDir: temp and repo roots pass, user-profile paths throw',
 
 test('assertSafeScratchDir: traversal out of the repo throws', async () => {
   const {assertSafeScratchDir} = await import(helpersUrl);
-  assert.throws(
-    () => assertSafeScratchDir(path.join(REPO_ROOT, '..', 'outside'), 'escape'),
-    /not under the repo or OS temp/
-  );
+  // The escape must lie outside BOTH allowed roots: when the checkout itself
+  // sits inside OS temp, a repo sibling is still inside temp and the guard
+  // correctly accepts it — escape past temp instead (same conditional style
+  // as the home-vs-tmp guard above).
+  const root = path.resolve(REPO_ROOT);
+  const tmp = path.resolve(os.tmpdir());
+  const under = (p, parent) => p === parent || p.startsWith(parent + path.sep);
+  const escape = [path.join(REPO_ROOT, '..', 'outside'), path.join(tmp, '..', 'outside')]
+    .map(p => path.resolve(p))
+    .find(p => !under(p, root) && !under(p, tmp));
+  if (escape) {
+    assert.throws(() => assertSafeScratchDir(escape, 'escape'), /not under the repo or OS temp/);
+  }
 });
