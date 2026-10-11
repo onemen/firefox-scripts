@@ -66,7 +66,7 @@ jobs:
   # Fast static gate: eslint (incl. security plugin) + prettier + clang-format
   # + the gcc -fanalyzer C analysis.  Runs on every PR and on main pushes.
   checks:
-    name: lint + format
+    name: repo checks
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
