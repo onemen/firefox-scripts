@@ -49,8 +49,9 @@ import {
   findSnapshot,
   discoverFirefoxBinary,
   findZip,
-  isSnapBinary,
+  findGreDir,
   missingFirefoxMessage,
+  selectRestartScopeMode,
 } from '../shared/browsers.mjs';
 import {
   closeBrowser,
@@ -863,13 +864,18 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
   );
 
   const firefoxBin = opts.firefox || process.env.FIREFOX_BINARY || discoverFirefoxBinary();
-  if (!firefoxBin || isSnapBinary(firefoxBin)) {
-    console.log('  SKIP: no non-snap Firefox binary found (restart-scope layer needs one)');
-    if (!firefoxBin) console.log(`  ${missingFirefoxMessage()}`);
+  const mode = selectRestartScopeMode(firefoxBin);
+  if (mode === 'snap') {
+    await runSnapRestartScopeLayer(counter, opts, snapshotDir, installerBin, firefoxBin);
+    return;
+  }
+  if (mode === 'skip') {
+    console.log('  SKIP: no Firefox binary found (restart-scope layer needs one)');
+    console.log(`  ${missingFirefoxMessage()}`);
     check(
       counter,
       process.env.FXS_REQUIRE_RESTART_SCOPE !== '1',
-      'RS-00 non-snap Firefox available (skip tolerated unless FXS_REQUIRE_RESTART_SCOPE=1)'
+      'RS-00 Firefox available (skip tolerated unless FXS_REQUIRE_RESTART_SCOPE=1)'
     );
     return;
   }
@@ -1249,6 +1255,228 @@ async function runRestartScopeLayer(counter, opts, snapshotDir, installerBin) {
     // is removed — Windows keeps dir handles open otherwise.
     try {
       killFirefoxMatching(workDir, [dirA, dirB, profA, profB]);
+    } catch {
+      /* ignore */
+    }
+    await sleep(1500);
+    if (prevHeadless === undefined) delete process.env.MOZ_HEADLESS;
+    else process.env.MOZ_HEADLESS = prevHeadless;
+    rmDir(workDir);
+  }
+}
+
+/**
+ * Single-install restart-scope path for snap binaries (#506). A snap app dir is
+ * a read-only squashfs mount, so the two-temp-copy shape cannot run — but the
+ * installer maps /snap/... app dirs to the host GreD (findGreDir), which the
+ * snap leg makes writable before this layer. One snap instance with a temp
+ * profile exercises the same installer flow: detection by profile, config
+ * upload/install/placement, restart, close. There is no bystander by
+ * construction (a second same-image install cannot exist), so the
+ * bystander-survival checks have no snap form.
+ */
+async function runSnapRestartScopeLayer(counter, opts, snapshotDir, installerBin, firefoxBin) {
+  console.log('\nRestart-scope layer, snap single-install path (#506)');
+  const workDir = tempDir('fxs-e2e');
+  const profS = path.join(workDir, 'profile-snap');
+  fs.mkdirSync(profS, {recursive: true});
+  removeProfileCompatibilityIni(profS);
+  check(
+    counter,
+    true,
+    'SN-01 snap single-install path (two-copy shape impossible on a squashfs mount)'
+  );
+  const prevHeadless = process.env.MOZ_HEADLESS;
+  let installer = null;
+  try {
+    if (opts.headless) process.env.MOZ_HEADLESS = '1';
+
+    console.log(`  launching snap Firefox (${firefoxBin})`);
+    launchDetachedFirefox(firefoxBin, profS, opts.headless);
+    const setS = await pollUntil(
+      () => {
+        const s = firefoxPidsForProfile(workDir, profS);
+        return s && s.length > 0 ? s : null;
+      },
+      30_000,
+      500,
+      'snap instance main-process PIDs'
+    );
+    check(counter, Boolean(setS), 'SN-02 snap instance is running');
+    if (!setS) throw new Error('snap Firefox instance did not start');
+
+    const envFile = path.join(workDir, 'env.json');
+    installer = spawn(installerBin, ['--smoke-test', '--env-file', envFile], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    installer.stdout.on('data', d => console.log(`  [installer] ${d}`.trimEnd()));
+    installer.stderr.on('data', d => console.log(`  [installer-err] ${d}`.trimEnd()));
+    const manifest = await pollUntil(
+      () => readJsonIfExists(envFile),
+      20_000,
+      200,
+      'installer env manifest'
+    );
+    check(
+      counter,
+      Boolean(manifest?.token && manifest?.port),
+      'SN-04 installer env manifest written (token + port)'
+    );
+    if (!manifest) throw new Error('installer did not write its env manifest');
+    const base = `http://127.0.0.1:${manifest.port}`;
+    const tq = `?t=${encodeURIComponent(manifest.token)}`;
+
+    let lastRescan = 0;
+    const row = await pollUntil(async () => {
+      if (Date.now() - lastRescan > 2_000) {
+        lastRescan = Date.now();
+        try {
+          await fetch(`${base}/api/rescan${tq}`, {
+            method: 'POST',
+            signal: AbortSignal.timeout(3000),
+          });
+        } catch {
+          // Server not up yet — the /api/browsers read below reports that.
+        }
+      }
+      try {
+        const res = await fetch(`${base}/api/browsers`, {signal: AbortSignal.timeout(3000)});
+        const arr = JSON.parse(await res.text());
+        return arr.find(r => samePath(r.profilePath, profS)) || null;
+      } catch {
+        return null;
+      }
+    }, 20_000);
+    check(
+      counter,
+      Boolean(row),
+      'SN-05 installer detected the snap install (row selected by profile path)',
+      row ? '' : 'snap instance alive but absent from the browser list after repeated /api/rescan'
+    );
+    if (!row) throw new Error('installer did not detect the snap install');
+
+    const fxZip = findZip(snapshotDir, ['fx-folder-dev.zip', 'fx-folder.zip']);
+    check(counter, Boolean(fxZip), 'SN-07 fx-folder zip present in the snapshot');
+    if (!fxZip) throw new Error('no fx-folder zip in snapshot');
+    const up = await fetch(`${base}/api/upload${tq}`, {
+      method: 'POST',
+      body: fs.readFileSync(fxZip),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    check(counter, up.ok, 'SN-08 config zip uploaded to the installer');
+
+    const workDirsBefore = new Set(installerWorkDirStrays());
+    const started = await fetch(
+      `${base}/api/install?browser=${row.index}&config=1${tq.replace('?t=', '&t=')}`,
+      {method: 'POST', signal: AbortSignal.timeout(TIMEOUT_MS)}
+    );
+    const startedBody = await started.json().catch(() => null);
+    check(
+      counter,
+      startedBody?.status === 'started',
+      'SN-09 config install started for the snap install',
+      JSON.stringify(startedBody)?.slice(0, 80)
+    );
+    const done = await pollUntil(
+      async () => {
+        try {
+          const res = await fetch(`${base}/api/status${tq}`, {signal: AbortSignal.timeout(3000)});
+          const j = JSON.parse(await res.text());
+          if (j.step === 'done') return j;
+          if (j.step === 'error') return {error: j.message};
+        } catch (err) {
+          console.warn(`  ⚠ /api/status poll failed: ${err instanceof Error ? err.message : err}`);
+        }
+        return null;
+      },
+      45_000,
+      400,
+      'config install completion'
+    );
+    check(
+      counter,
+      Boolean(done) && !done.error,
+      'SN-10 config install completed on the snap install',
+      done?.error || ''
+    );
+    if (!done || done.error) throw new Error('config install did not complete');
+
+    const cleared = await pollUntil(
+      () => installerWorkDirStrays().every(d => workDirsBefore.has(d)),
+      3000,
+      100,
+      'installer work dir removal'
+    );
+    check(counter, Boolean(cleared), 'SN-10b installer removed its temp work dir');
+
+    // Placement is the contract this path exists for: the snap app dir is
+    // read-only, so the installer must have written the fx-folder into the
+    // host GreD (findGreDir), not the mount.
+    const placedConfig = path.join(findGreDir(firefoxBin), 'config.js');
+    check(
+      counter,
+      fs.existsSync(placedConfig),
+      'SN-10c fx-folder config.js present in the snap GreD',
+      placedConfig
+    );
+
+    const rres = await fetch(
+      `${base}/api/restart?browser=${row.index}${tq.replace('?t=', '&t=')}`,
+      {method: 'POST', signal: AbortSignal.timeout(60_000)}
+    );
+    const rbody = await rres.json().catch(() => null);
+    check(
+      counter,
+      rbody?.status === 'restarted',
+      'SN-11 restart accepted for the snap install',
+      JSON.stringify(rbody)?.slice(0, 80)
+    );
+    const back = await pollUntil(
+      async () => {
+        const pids = firefoxPidsForProfile(workDir, profS) || [];
+        return pids.length > 0 ? pids : null;
+      },
+      45_000,
+      500,
+      'snap instance back after restart'
+    );
+    check(counter, Boolean(back), 'SN-12 snap instance running after the restart');
+
+    const ping = await fetch(`${base}/api/ping`, {signal: AbortSignal.timeout(3000)});
+    check(counter, ping.ok, 'SN-14 installer server still answering after the restart');
+
+    const closeRes = await fetch(
+      `${base}/api/close-browser?browser=${row.index}${tq.replace('?t=', '&t=')}`,
+      {method: 'POST', signal: AbortSignal.timeout(60_000)}
+    );
+    const closeBody = await closeRes.json().catch(() => null);
+    check(
+      counter,
+      closeRes.ok && closeBody?.status === 'closed',
+      'SN-15 close-browser accepted for the snap install',
+      JSON.stringify(closeBody)?.slice(0, 80)
+    );
+    const closed = await pollUntil(
+      async () => {
+        const pids = firefoxPidsForProfile(workDir, profS) || [];
+        return pids.length === 0 ? pids : null;
+      },
+      30_000,
+      500,
+      'snap instance exit after close-browser'
+    );
+    check(counter, Boolean(closed), 'SN-16 snap instance fully closed by /api/close-browser');
+  } catch (err) {
+    check(counter, false, 'SN-FIN snap restart-scope layer completed', err.message);
+  } finally {
+    try {
+      installer?.kill();
+      if (installer) await waitForProcessExit(installer, 5000);
+    } catch {
+      /* ignore */
+    }
+    try {
+      killFirefoxMatching(workDir, [profS]);
     } catch {
       /* ignore */
     }
