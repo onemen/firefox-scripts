@@ -1357,6 +1357,10 @@ jobs:
         env:
           ESR_WATCHDOG_MARKERS: ${{ steps.esr-marker.outputs.markers }}
         run: |
+          # The redirect below hides the tool's stderr from the job log — and
+          # under bash -e a tool crash exits at the assignment with the error
+          # text stuck in the unprinted file. Print it however the step exits.
+          trap 'cat esr-stderr.log >&2 2>/dev/null || true' EXIT
           MATRIX=$(node tools/ci/esrMatrix.mjs .watchdog/baseline.json 2>esr-stderr.log)
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "ESR legs: $MATRIX"

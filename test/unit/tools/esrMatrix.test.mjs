@@ -99,4 +99,7 @@ test('e2e.yml surfaces the tier-3 fallback as a workflow warning', () => {
   const e2e = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'e2e.yml'), 'utf8');
   assert.match(e2e, /grep -q "esr-matrix: tier-3"/);
   assert.match(e2e, /::warning::esr-matrix is on the tier-3 generic fallback/);
+  // The stderr redirect must not swallow the log: under bash -e a tool crash
+  // exits at the assignment, so the captured file is printed via an EXIT trap.
+  assert.match(e2e, /trap 'cat esr-stderr\.log >&2/);
 });
