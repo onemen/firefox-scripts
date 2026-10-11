@@ -405,6 +405,32 @@ export function artifactPairingViolations(artifacts) {
   return violations;
 }
 
+// ── contract 5: artifact retention ─────────────────────────────────────────
+
+/**
+ * Every `upload-artifact` step sets an explicit `retention-days`. Born from
+ * #508: e2e.yml's uploads kept the 90-day default while build-and-upload and
+ * pages pin 7 days — silent storage growth with no owner.
+ *
+ * @param {{name: string; body: string}[]} jobs
+ * @returns {string[]}
+ */
+export function artifactRetentionViolations(jobs) {
+  const violations = [];
+  for (const job of jobs) {
+    for (const step of jobSteps(job.body)) {
+      const uses = stepUses(step);
+      if (!uses || !/actions\/upload-artifact/.test(uses)) continue;
+      if (!withValue(step, 'retention-days')) {
+        violations.push(
+          `${job.name}: "${stepName(step)}" uploads an artifact with no retention-days`
+        );
+      }
+    }
+  }
+  return violations;
+}
+
 // ── the registry ───────────────────────────────────────────────────────────
 
 /**
@@ -432,6 +458,11 @@ export const CONTRACTS = [
     id: 'artifact-pairing',
     description: 'every downloaded artifact name is produced by an upload in the same workflow',
     check: text => artifactPairingViolations(artifactSteps(workflowJobs(text))),
+  },
+  {
+    id: 'artifact-retention',
+    description: 'every upload-artifact step sets an explicit retention-days',
+    check: text => artifactRetentionViolations(workflowJobs(text)),
   },
 ];
 
@@ -695,4 +726,26 @@ test('jobSteps: step bodies stop at the next step', () => {
   assert.equal(steps.length, 2);
   assert.match(steps[0], /echo one/);
   assert.doesNotMatch(steps[0], /echo two/);
+});
+
+test('artifact-retention: an upload without retention-days is a violation', () => {
+  const fixture = [
+    'jobs:',
+    '  leg:',
+    '    steps:',
+    '      - name: Upload diagnostics',
+    '        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1',
+    '        with:',
+    '          name: e2e-diagnostics',
+    '          path: out/',
+  ].join('\n');
+  const violations = artifactRetentionViolations(workflowJobs(fixture));
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /leg/);
+
+  const fixed = fixture.replace(
+    '          path: out/',
+    '          path: out/\n          retention-days: 7'
+  );
+  assert.deepEqual(artifactRetentionViolations(workflowJobs(fixed)), []);
 });
