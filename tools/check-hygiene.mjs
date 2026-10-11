@@ -11,8 +11,10 @@
  *    AGENTS.md). A bare dot-local-slash occurrence in code-like files is a
  *    violation, as is a quoted dot-local name in any separator shape — property
  *    access like `element.localName` is unquoted code and stays clean, as do
- *    system-anchored paths (the XDG store dir). Docs may explain the gitignore
- *    rule itself, so there only a concrete dot-local path reference counts.
+ *    system paths stay clean (the XDG store dir — judged absolute from the path
+ *    or string start, so dot-led and bare relative paths still flag). Docs may
+ *    explain the gitignore rule itself, so there only a concrete dot-local path
+ *    reference counts.
  * 2. Leftover markers: batch / audit / section tokens carrying an ID in code are
  *    review provenance that should never have shipped. The digit-less
  *    placeholders issues use to describe this rule stay clean.
@@ -53,16 +55,41 @@ export const LOCAL_REF_RE = /\.local[/\\]/;
 export const QUOTED_LOCAL_RE = /['"`][^'"`\n]*\.local(?=[./\\])/;
 
 /**
- * A dot-local occurrence anchored at a system path (tilde, slash, dollar,
- * backslash, drive colon) is XDG/absolute — not a repo draft. Repo-relative
- * drafts are bare or quote-led.
+ * Whether a bare occurrence sits in a system path. Tilde, dollar and drive
+ * colon always anchor; a slash anchors except for dot-led relative paths (`./`,
+ * `../`) — those are repo-relative, not system roots. Anything else before the
+ * dot (a bare name like `foo`) is a repo draft too.
  *
  * @param {string} line
  * @param {number} index index of the `.local` occurrence
  * @returns {boolean}
  */
 export function isSystemAnchored(line, index) {
-  return index > 0 && /[/~$\\:]/.test(line[index - 1]);
+  if (index === 0) return false;
+  const prev = line[index - 1];
+  if (prev === '/' || prev === '\\') {
+    return line[index - 2] !== '.';
+  }
+  return /[~$:]/.test(prev);
+}
+
+/**
+ * Whether a quoted string literal holds a system path, judged from inside the
+ * string: rooted at `/`, `\`, `~`, `$` or a drive letter it is absolute (the
+ * XDG store dir); anything else — bare names, dot-led paths — is a
+ * repo-relative draft. Only the first character decides, so absolute paths
+ * containing spaces stay safe.
+ *
+ * @param {string} line
+ * @param {number} quoteIndex index of the opening quote
+ * @returns {boolean}
+ */
+function isQuotedSystemPath(line, quoteIndex) {
+  let i = quoteIndex + 1;
+  while (line[i] === ' ' || line[i] === '\t') i++;
+  const head = line[i];
+  if (head === '/' || head === '\\' || head === '~' || head === '$') return true;
+  return /[A-Za-z]/.test(head) && line[i + 1] === ':';
 }
 export const LOCAL_CONCRETE_RE = /\.local\/[\w.-]+/;
 export const MARKER_RE =
@@ -106,8 +133,7 @@ export function findLocalRefs(files) {
         }
         if (!hit) {
           for (const match of line.matchAll(/['"`][^'"`\n]*\.local(?=[./\\])/g)) {
-            const at = match.index + match[0].lastIndexOf('.local');
-            if (!isSystemAnchored(line, at)) {
+            if (!isQuotedSystemPath(line, match.index)) {
               hit = true;
               break;
             }

@@ -31,6 +31,8 @@ const DOT_LOCAL_SLASH = '.loc' + 'al/';
 const BATCH_MARK = 'batch #' + '3';
 const AUDIT_MARK = 'audit P' + '2-10';
 const DOT_LOCAL_DOT = '.loc' + 'al.';
+const HERE = '.' + '/';
+const UP = '.' + '.' + '/';
 const SECTION_ZED = 'sect' + 'ion z';
 const SECTION_NUM = 'Sect' + 'ion 4.3';
 const CHAT_PHRASE = 'AI ch' + 'at';
@@ -40,10 +42,25 @@ const CHAT_LINK = 'chatgpt' + '.com/sh' + 'are/x';
 
 test('findLocalRefs: a code file touching the dot-local dir is a violation', () => {
   const violations = findLocalRefs([
-    {path: 'tools/foo.mjs', lines: ['const p = ' + `'.${DOT_LOCAL_SLASH}plan.md';`]},
+    {path: 'tools/foo.mjs', lines: ['const p = ' + `'${HERE}${DOT_LOCAL_SLASH}plan.md';`]},
   ]);
   assert.equal(violations.length, 1);
   assert.match(violations[0], /tools\/foo\.mjs/);
+});
+
+test('findLocalRefs: dot-led and quoted relative paths flag; absolute strings stay clean', () => {
+  const rel = findLocalRefs([
+    {path: 'tools/a.mjs', lines: ['const a = ' + `'${UP}${DOT_LOCAL_SLASH}x';`]},
+    {path: 'tools/b.mjs', lines: ['const b = ' + `'foo${DOT_LOCAL_SLASH}bar';`]},
+  ]);
+  assert.equal(rel.length, 2);
+  const abs = findLocalRefs([
+    {
+      path: 'tools/foo.mjs',
+      lines: ['const c = ' + `'~/${DOT_LOCAL_SLASH}share/pnpm';`],
+    },
+  ]);
+  assert.deepEqual(abs, []);
 });
 
 test('findLocalRefs: clean code passes', () => {
