@@ -737,11 +737,97 @@ export function assertSafeScratchDir(dir, label) {
   }
 }
 
+/**
+ * Per-worktree record of OS-temp roots this checkout created (#503). The
+ * OS-temp hygiene gate fails only on registered roots: another thread's
+ * stranded dirt must never block an unrelated push. One basename per line,
+ * gitignored under dist/ (same home as the leaked-roots breadcrumb).
+ *
+ * @param {{registryPath?: string}} [opts] test seam
+ * @returns {string}
+ */
+export function createdTempRootsPath({registryPath} = {}) {
+  return registryPath ?? path.join(REPO_ROOT, 'dist', '.created-temp-roots');
+}
+
+/**
+ * Remember an OS-temp root at creation (best-effort, never throws). Written
+ * synchronously so a hard kill between creation and use still leaves the record
+ * — the gate then correctly blames this checkout, not a stranger.
+ *
+ * @param {string} dir absolute path of the created root
+ * @param {{registryPath?: string}} [opts] test seam
+ */
+export function recordCreatedTempRoot(dir, {registryPath} = {}) {
+  try {
+    const file = createdTempRootsPath({registryPath});
+    fs.mkdirSync(path.dirname(file), {recursive: true});
+    fs.appendFileSync(file, `${path.basename(dir)}\n`);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Names this checkout recorded, de-duplicated. A torn concurrent append just
+ * yields a line that matches nothing — the benign direction (a miss warns
+ * instead of failing).
+ *
+ * @param {{registryPath?: string}} [opts] test seam
+ * @returns {Set<string>}
+ */
+export function readCreatedTempRoots({registryPath} = {}) {
+  let text;
+  try {
+    text = fs.readFileSync(createdTempRootsPath({registryPath}), 'utf8');
+  } catch {
+    return new Set();
+  }
+  return new Set(
+    text
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean)
+  );
+}
+
+/**
+ * Split old OS-temp entries into ours (fail the gate) and strangers' (warn-only
+ * — never block an unrelated push on another thread's litter). Pure over
+ * injected entries so the gate is unit-testable without the filesystem.
+ *
+ * @param {{
+ *   entries: {name: string; mtimeMs: number}[];
+ *   registered: Set<string>;
+ *   keep: string[];
+ *   minAgeMs: number;
+ *   nowMs?: number;
+ * }} opts
+ * @returns {{
+ *   offenders: {name: string; hours: number}[];
+ *   foreign: {name: string; hours: number}[];
+ * }}
+ */
+export function classifyTempRoots({entries, registered, keep, minAgeMs, nowMs = Date.now()}) {
+  const offenders = [];
+  const foreign = [];
+  for (const {name, mtimeMs} of entries) {
+    if (!name.startsWith('fxs-')) continue;
+    if (keep.some(p => name === p || name.startsWith(p))) continue;
+    if (nowMs - mtimeMs < minAgeMs) continue;
+    const hit = {name, hours: Math.round((nowMs - mtimeMs) / HOUR_MS)};
+    (registered.has(name) ? offenders : foreign).push(hit);
+  }
+  return {offenders, foreign};
+}
+
 /** Create a temp directory and return its path (registered for the sweep). */
 export function tempDir(prefix = 'fxs-e2e') {
   installTempSweep();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix + '-'));
   liveTempRoots.add(dir);
+  recordCreatedTempRoot(dir);
   return dir;
 }
 
