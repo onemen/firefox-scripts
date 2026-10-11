@@ -266,5 +266,9 @@ logic: the `generated-files` skill + `docs/DEVELOPING.md` + ADR
   `pnpm format:fix` / `pnpm lint` before finishing.
 - **Error handling:** fail-fast with clear messages; elevation failures distinguish cancel (exit 2);
   network failures surface a banner in the UI, not a silent partial install.
+- **Comments are essential and critical only.** No narration of what the code does, no fix recounts,
+  no audit/batch provenance, no stories — a comment earns its place by recording a why, a boundary,
+  or a trap the next reader will otherwise walk into (#460/#479 did the sweep; this states the
+  rule).
 - **Text files are LF**; a local working-tree copy can linger as CRLF, so when a tool parses a
   tracked text file, normalize `\r\n` → `\n` at read (`docs/continuous-integration.md`).
