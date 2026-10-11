@@ -48,9 +48,10 @@ because a PR looks unreviewed. Recommend it and wait.
 
 An external pass is expensive (quota) and shallow (one issue per pass is the observed yield). Before
 requesting one, self-review against CodeRabbit's criteria with the cheap local reviewer (`ai-review`
-/ `pnpm review:local`) and fix what it finds — the external pass then covers only what self-review
-cannot see. And batch: collect every open thread across the PRs and clear them in as few passes as
-possible instead of re-running one pass per fix.
+/ `pnpm review:local`) and fix what it finds in PRs you own — this batch pass itself never edits
+another agent's branch (see below) — the external pass then covers only what self-review cannot see.
+And batch: collect every open thread across the PRs and clear them in as few passes as possible
+instead of re-running one pass per fix.
 
 ## Run it
 
