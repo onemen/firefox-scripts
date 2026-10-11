@@ -44,6 +44,14 @@ waiting, and the quota is the user's.
 own GitHub account and spends their quota. Never run it unprompted — not on a PR you opened, not
 because a PR looks unreviewed. Recommend it and wait.
 
+## Self-review first, batch threads per pass
+
+An external pass is expensive (quota) and shallow (one issue per pass is the observed yield). Before
+requesting one, self-review against CodeRabbit's criteria with the cheap local reviewer (`ai-review`
+/ `pnpm review:local`) and fix what it finds — the external pass then covers only what self-review
+cannot see. And batch: collect every open thread across the PRs and clear them in as few passes as
+possible instead of re-running one pass per fix.
+
 ## Run it
 
 ```bash
