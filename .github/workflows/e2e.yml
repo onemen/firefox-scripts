@@ -237,6 +237,7 @@ jobs:
           name: dev-snapshot
           path: dist/
           if-no-files-found: error
+          retention-days: 7
 
   # ── Installer E2E ──────────────────────────────────────────────────────────
   installer:
@@ -428,6 +429,7 @@ jobs:
           name: e2e-version-${{ matrix.browser }}-${{ matrix.os }}
           path: e2e-version-${{ matrix.browser }}-${{ matrix.os }}.json
           if-no-files-found: error
+          retention-days: 7
 
       - name: Upload diagnostics
         if: failure()
@@ -438,6 +440,7 @@ jobs:
             dist/updater-e2e-*.png
             dist/installer-e2e-*.png
           if-no-files-found: ignore
+          retention-days: 7
 
   # ── Portable Firefox Release E2E (#56) ────────────────────────────────────
   # Firefox Release is installed into a runner-temp custom directory rather
@@ -578,6 +581,7 @@ jobs:
             dist/installer-e2e-*.png
             dist/updater-e2e-*.png
           if-no-files-found: ignore
+          retention-days: 7
 
   # ── Core lifecycle E2E (legacy chrome registration) ───────────────────────
   # Regression test for the SHIPPED core/chrome/utils/BootstrapLoader.js and
@@ -643,6 +647,7 @@ jobs:
             dist/manifest-lifecycle-*.png
             dist/updater-e2e-*.png
           if-no-files-found: ignore
+          retention-days: 7
 
   # ── Snap Firefox E2E (#55) ─────────────────────────────────────────────────
   # Ubuntu's default Firefox packaging is a snap; every other leg installs the
@@ -1019,6 +1024,7 @@ jobs:
             dist/installer-e2e-*.png
             dist/updater-e2e-*.png
           if-no-files-found: ignore
+          retention-days: 7
 
   # ── Snap store-down issue (deduped) ─────────────────────────────────────
   # When the snap leg could not install Firefox from the store AND had no
@@ -1169,6 +1175,7 @@ jobs:
           name: e2e-version-${{ matrix.browser }}-${{ matrix.os || 'windows-latest' }}
           path: e2e-version-${{ matrix.browser }}-${{ matrix.os || 'windows-latest' }}.json
           if-no-files-found: error
+          retention-days: 7
 
       - name: Upload diagnostics
         if: failure()
@@ -1177,6 +1184,7 @@ jobs:
           name: e2e-diagnostics-${{ matrix.browser }}
           path: dist/updater-e2e-*.png
           if-no-files-found: ignore
+          retention-days: 7
 
   # ── Fork-portable E2E (advisory, Windows; #38 pre-1.0) ────────────────
   # The fork legs above install into Program Files (registered layout). This
@@ -1271,6 +1279,7 @@ jobs:
           name: e2e-diagnostics-fork-portable-${{ matrix.browser }}
           path: dist/updater-e2e-*.png
           if-no-files-found: ignore
+          retention-days: 7
 
   # ── Firefox ESR legs (advisory, dynamic matrix) ───────────────────────
   # The watchdog baseline's ESR state (watchdog-report.mjs updateEsrState)
@@ -1448,6 +1457,7 @@ jobs:
           name: e2e-version-${{ matrix.browser }}-windows-latest
           path: e2e-version-${{ matrix.browser }}-windows-latest.json
           if-no-files-found: error
+          retention-days: 7
 
       - name: Upload diagnostics
         if: failure()
@@ -1456,6 +1466,7 @@ jobs:
           name: e2e-diagnostics-esr-portable-${{ matrix.browser }}
           path: dist/updater-e2e-*.png
           if-no-files-found: ignore
+          retention-days: 7
 
   # ── Waterfox hard gate (ADR 0025, amends ADR 0021) ────────────────────────────
   # Waterfox is ≈40% of the user base; after a 4-green-run soak (ADR 0021's
@@ -1522,6 +1533,7 @@ jobs:
           name: e2e-version-waterfox-windows-latest
           path: e2e-version-waterfox-windows-latest.json
           if-no-files-found: error
+          retention-days: 7
 
       - name: Upload diagnostics
         if: failure()
@@ -1530,6 +1542,7 @@ jobs:
           name: e2e-diagnostics-waterfox
           path: dist/updater-e2e-*.png
           if-no-files-found: ignore
+          retention-days: 7
 
   # ── E2E gate ─────────────────────────────────────────────────────────────
   # Required branch-protection check: needs the required legs ONLY, so it
