@@ -17,8 +17,10 @@ import {
   LOCAL_REF_RE,
   MARKER_RE,
   SKILL_LINE_CAP,
+  findChatRefs,
   findLocalRefs,
   findMarkers,
+  isSystemAnchored,
   overlongSkills,
 } from '../../../tools/check-hygiene.mjs';
 
@@ -26,6 +28,11 @@ import {
 const DOT_LOCAL_SLASH = '.loc' + 'al/';
 const BATCH_MARK = 'batch #' + '3';
 const AUDIT_MARK = 'audit P' + '2-10';
+const DOT_LOCAL_DOT = '.loc' + 'al.';
+const SECTION_ZED = 'sect' + 'ion z';
+const SECTION_NUM = 'Sect' + 'ion 4.3';
+const CHAT_PHRASE = 'AI ch' + 'at';
+const CHAT_LINK = 'chatgpt' + '.com/sh' + 'are/x';
 
 // ── dot-local references ───────────────────────────────────────────────────
 
@@ -52,6 +59,33 @@ test('findLocalRefs: bare prose about the ignored dir is not a concrete referenc
   assert.equal(LOCAL_REF_RE.test('x' + DOT_LOCAL_SLASH + 'y'), true);
 });
 
+test('findLocalRefs: quoted names in any separator shape flag; property access stays clean', () => {
+  const quoted = findLocalRefs([
+    {path: 'tools/foo.mjs', lines: [`const p = 'abc${DOT_LOCAL_DOT}xyz';`]},
+  ]);
+  assert.equal(quoted.length, 1);
+  const backslash = findLocalRefs([
+    {path: 'tools/foo.mjs', lines: [`const p = 'drafts${DOT_LOCAL_SLASH}plan.md';`]},
+  ]);
+  assert.equal(backslash.length, 1);
+  // Unquoted property access is code, not a file reference.
+  const props = findLocalRefs([
+    {
+      path: 'core/x.sys.mjs',
+      lines: ['el.localName;', 'e.localOffset + 1;', 'hit.loc' + 'al.branches;'],
+    },
+  ]);
+  assert.deepEqual(props, []);
+});
+
+test('isSystemAnchored: XDG and absolute paths are out of scope, repo-relative names are in', () => {
+  // The pnpm-store assertion shape: an XDG system path, not a repo draft.
+  assert.equal(isSystemAnchored('~/.loc' + 'al/share/pnpm', 2), true);
+  assert.equal(isSystemAnchored(`'abc${DOT_LOCAL_DOT}xyz'`, 4), false);
+  assert.equal(isSystemAnchored('x' + DOT_LOCAL_SLASH + 'y', 1), false);
+  assert.equal(isSystemAnchored('.loc' + 'al/y', 0), false);
+});
+
 // ── leftover markers ───────────────────────────────────────────────────────
 
 test('findMarkers: batch and audit tokens in code are violations', () => {
@@ -59,6 +93,35 @@ test('findMarkers: batch and audit tokens in code are violations', () => {
     {path: 'tools/foo.mjs', lines: [`// ${BATCH_MARK} leftover`, `// ${AUDIT_MARK} note`]},
   ]);
   assert.equal(violations.length, 2);
+});
+
+test('findMarkers: numbers are arbitrary and section tokens count too', () => {
+  const violations = findMarkers([
+    {
+      path: 'tools/foo.mjs',
+      lines: [
+        `// batch #${'29'} here`,
+        `// audit P${'10'}`,
+        `// ${SECTION_ZED}`,
+        `// ${SECTION_NUM}`,
+      ],
+    },
+  ]);
+  assert.equal(violations.length, 4);
+});
+
+test('findChatRefs: share links and chat phrasing are violations; provider names stay clean', () => {
+  const violations = findChatRefs([
+    {
+      path: 'tools/foo.mjs',
+      lines: [`// see ${CHAT_LINK}`, `// discussed in ${CHAT_PHRASE} yesterday`],
+    },
+  ]);
+  assert.equal(violations.length, 2);
+  const clean = findChatRefs([
+    {path: 'tools/foo.mjs', lines: ['const k = process.env.GEMINI_API_KEY;']},
+  ]);
+  assert.deepEqual(clean, []);
 });
 
 test('findMarkers: the issue-style placeholders stay clean', () => {
