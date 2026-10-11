@@ -24,6 +24,7 @@ const {
   gitBranchAndSha,
   grePrefsDir,
   isSnapBinary,
+  selectRestartScopeMode,
 } = await import(browsersUrl);
 
 // ── findGreDir ─────────────────────────────────────────────────────────────
@@ -110,6 +111,24 @@ test('isSnapBinary: non-Snap paths return false on any platform', () => {
 
 test('isSnapBinary: Snap paths detected on Linux', {skip: process.platform !== 'linux'}, () => {
   assert.equal(isSnapBinary('/snap/bin/firefox'), true);
+});
+
+// ── selectRestartScopeMode ────────────────────────────────────────────────
+
+test('selectRestartScopeMode: no binary means the tolerated skip', () => {
+  assert.equal(selectRestartScopeMode(''), 'skip');
+  assert.equal(selectRestartScopeMode(null), 'skip');
+});
+
+test('selectRestartScopeMode: ordinary installs run the full two-copy path', () => {
+  assert.equal(selectRestartScopeMode('/usr/bin/firefox'), 'full');
+});
+
+test('selectRestartScopeMode: a snap binary takes the single-install path (Linux only, like isSnapBinary)', () => {
+  assert.equal(
+    selectRestartScopeMode('/snap/bin/firefox'),
+    isSnapBinary('/snap/bin/firefox') ? 'snap' : 'full'
+  );
 });
 
 // ── gitBranchAndSha ───────────────────────────────────────────────────────

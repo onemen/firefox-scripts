@@ -293,3 +293,17 @@ export function grePrefsDir(greDir) {
 export function isSnapBinary(firefoxBin) {
   return process.platform === 'linux' && /\/snap\//.test(firefoxBin);
 }
+
+/**
+ * Which restart-scope shape to run for this binary (#506). A snap binary cannot
+ * be copied into two temp installs (its app dir is a read-only squashfs mount),
+ * so it gets the single-install path; no binary at all means the tolerated
+ * skip.
+ *
+ * @returns {'skip' | 'snap' | 'full'}
+ */
+export function selectRestartScopeMode(firefoxBin) {
+  if (!firefoxBin) return 'skip';
+  if (isSnapBinary(firefoxBin)) return 'snap';
+  return 'full';
+}
