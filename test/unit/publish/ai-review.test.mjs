@@ -440,3 +440,57 @@ test('reviewFiles reviews files concurrently by default', async () => {
 // Reply-shape classification (invalid JSON, bare null, non-object payloads,
 // missing content) lives in ai-review-reply-corpus.test.mjs — one table-driven
 // fixture corpus that runs every shape through the real reviewFiles.
+
+// Garbage-reply recovery (Phase 2): an unusable reply burns the provider, not
+// the file — the next provider is tried, then one bounded re-ask, and only
+// then does the existing soft-skip note render (reply-corpus contract kept).
+test('reviewFiles: garbage JSON falls through to the next provider', async () => {
+  const seen = [];
+  const requestImpl = async provider => {
+    seen.push(provider.name);
+    return provider.name === 'p1' ?
+        {kind: 'success', body: {choices: [{message: {content: 'looks good-ish'}}]}}
+      : {
+          kind: 'success',
+          body: {
+            choices: [{message: {content: JSON.stringify({summary: 'Clean.', findings: []})}}],
+          },
+        };
+  };
+  const result = await reviewFiles({
+    files: ['a.mjs'],
+    fileDiffs: new Map([['a.mjs', 'diff-a']]),
+    providers: [{name: 'p1'}, {name: 'p2'}],
+    requestImpl,
+  });
+  assert.deepEqual(seen, ['p1', 'p2']);
+  assert.equal(result.coverage.reviewed, 1);
+  assert.equal(result.coverage.failed, 0);
+});
+
+test('reviewFiles: garbage everywhere re-asks once, then keeps the soft-skip note', async () => {
+  let calls = 0;
+  const requestImpl = async () => {
+    calls += 1;
+    return {kind: 'success', body: {choices: [{message: {content: 'not json'}}]}};
+  };
+  const result = await reviewFiles({
+    files: ['a.mjs', 'b.mjs'],
+    fileDiffs: new Map([
+      ['a.mjs', 'diff-a'],
+      ['b.mjs', 'diff-b'],
+    ]),
+    providers: [{name: 'p1'}, {name: 'p2'}],
+    requestImpl,
+  });
+  // 2 providers x 2 rounds x 2 files: one bounded re-ask per file.
+  assert.equal(calls, 8);
+  assert.equal(result.coverage.reviewed, 2);
+  assert.equal(result.coverage.failed, 0);
+  assert.match(result.summary.join('\n'), /invalid or unusable JSON/);
+});
+
+test('parseArgs: --files limits the run to the listed files (resume a partial run)', () => {
+  assert.deepEqual(parseArgs(['--files', 'a.mjs,b.mjs']).files, ['a.mjs', 'b.mjs']);
+  assert.deepEqual(parseArgs([]).files, null);
+});

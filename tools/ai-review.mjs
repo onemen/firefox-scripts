@@ -87,6 +87,10 @@ export function parseArgs(argv) {
     dryRun: false,
     out: join(process.cwd(), 'dist', 'review'),
     name: 'AI review',
+    // Resume a partial run: after a rate limit guts coverage, re-run with
+    // only the uncovered files instead of re-reviewing (and re-spending
+    // quota on) everything.
+    files: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -129,6 +133,15 @@ export function parseArgs(argv) {
       case '--name':
         args.name = value();
         break;
+      case '--files': {
+        const v = value();
+        if (!v) throw new Error('Missing value for --files');
+        args.files = v
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+        break;
+      }
       default:
         throw new Error(`Unknown flag: ${arg}`);
     }
@@ -360,6 +373,88 @@ async function withConcurrency(items, limit, fn) {
   return results;
 }
 
+/**
+ * Whether a model reply is a usable review object (not prose, `null`, or a bare
+ * scalar). Checked before accepting a provider's answer, so garbage burns the
+ * provider — never the file.
+ *
+ * @param {unknown} content the message content
+ * @returns {boolean}
+ */
+export function isUsableReview(content) {
+  if (typeof content !== 'string') return false;
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return false;
+  }
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+}
+
+/**
+ * One pass over the providers for a single file. A success with unusable
+ * content burns that provider (fall through to the next); a 429 or a permanent
+ * rejection stops the pass. Never throws for provider outcomes.
+ *
+ * @param {{
+ *   file: string;
+ *   prompt: string;
+ *   providers: {name: string; model: string}[];
+ *   requestImpl: Function;
+ *   signal?: AbortSignal;
+ * }} opts
+ * @returns {Promise<{
+ *   result?: unknown;
+ *   providerName?: string;
+ *   garbageBody?: unknown;
+ *   garbageProvider?: string;
+ *   allGarbage?: boolean;
+ *   failure?: {kind: string; status?: number; provider?: string};
+ *   rateLimited?: boolean;
+ *   rateLimitProvider?: string;
+ * }>}
+ */
+export async function tryProvidersOnce({file, prompt, providers, requestImpl, signal}) {
+  let failure;
+  let garbageBody;
+  let garbageProvider;
+  let allGarbage = true;
+  for (const provider of providers) {
+    const outcome = await requestImpl(
+      provider,
+      {
+        model: provider.model,
+        temperature: 0.2,
+        response_format: {type: 'json_object'},
+        messages: [
+          {role: 'system', content: DEFAULT_SYSTEM_PROMPT},
+          {
+            role: 'user',
+            content: `${REPO_CONTEXT}\n\nReview the diff of ${file}:\n\n${prompt}`,
+          },
+        ],
+      },
+      signal
+    );
+    if (outcome.kind === 'success') {
+      if (isUsableReview(outcome.body?.choices?.[0]?.message?.content)) {
+        return {result: outcome.body, providerName: provider.name};
+      }
+      garbageBody ??= outcome.body;
+      garbageProvider ??= provider.name;
+      continue;
+    }
+    allGarbage = false;
+    failure = outcome;
+    if (outcome.status === 429)
+      return {failure, rateLimited: true, rateLimitProvider: provider.name};
+    if (outcome.kind === 'permanent' && outcome.status !== 404) break;
+  }
+  if (garbageBody) return {garbageBody, garbageProvider, allGarbage, failure};
+  return {failure};
+}
+
 export async function reviewFiles({
   files,
   fileDiffs,
@@ -383,45 +478,34 @@ export async function reviewFiles({
   const results = await withConcurrency(entries, concurrency, async ({file, diff}) => {
     if (rateLimited) return {file, skipped: true};
     const prompt = truncateDiff(diff, maxDiffChars);
-    let result;
-    let providerName = 'none';
-    let providerFailure;
-    for (const provider of providers) {
-      const outcome = await requestImpl(
-        provider,
-        {
-          model: provider.model,
-          temperature: 0.2,
-          response_format: {type: 'json_object'},
-          messages: [
-            {role: 'system', content: DEFAULT_SYSTEM_PROMPT},
-            {
-              role: 'user',
-              content: `${REPO_CONTEXT}\n\nReview the diff of ${file}:\n\n${prompt}`,
-            },
-          ],
-        },
-        controller.signal
-      );
+    // One pass across all providers, plus one bounded re-ask when every
+    // provider answered garbage: transient model glitches clear on retry.
+    // Anything else terminal (transport failure, or garbage mixed with it)
+    // keeps the old accounting — the garbage body passes through to the
+    // existing soft-skip note, transport failures fail the file.
+    for (let round = 0; round < 2; round += 1) {
+      const attempt = await tryProvidersOnce({
+        file,
+        prompt,
+        providers,
+        requestImpl,
+        signal: controller.signal,
+      });
       // A rate limit on another file aborts everything still in flight.
       if (rateLimited) return {file, skipped: true};
-      if (outcome.kind === 'success') {
-        result = outcome.body;
-        providerName = provider.name;
-        break;
-      }
-      providerFailure = outcome;
-      if (outcome.status === 429) rateLimitProvider = provider.name;
-      if (outcome.kind === 'permanent' && outcome.status !== 404) break;
-    }
-    if (!result) {
-      if (providerFailure?.status === 429) {
+      if (attempt.rateLimited) {
         rateLimited = true;
+        rateLimitProvider = attempt.rateLimitProvider;
         controller.abort();
+        return {file, failed: attempt.failure};
       }
-      return {file, failed: providerFailure};
+      if (attempt.result) return {file, result: attempt.result, providerName: attempt.providerName};
+      if (attempt.garbageBody) {
+        if (round === 0 && attempt.allGarbage) continue;
+        return {file, result: attempt.garbageBody, providerName: attempt.garbageProvider};
+      }
+      return {file, failed: attempt.failure};
     }
-    return {file, result, providerName};
   });
 
   let skipped = 0;
@@ -502,7 +586,13 @@ export async function runReview(args = parseArgs(process.argv.slice(2))) {
   if (!args.baseRef) throw new Error('BASE_REF is required (--base-ref or $BASE_REF)');
   const providers = availableProviders(args);
   if (args.dryRun) {
-    const files = changedFiles(args.baseRef, args.headRef, args.maxFiles);
+    // A --files resume name may sit outside the first maxFiles entries, so
+    // fetch the full list first, filter, then cap.
+    let files = changedFiles(args.baseRef, args.headRef, args.files ? Infinity : args.maxFiles);
+    if (args.files) {
+      const wanted = new Set(args.files);
+      files = files.filter(f => wanted.has(f)).slice(0, args.maxFiles);
+    }
     return {
       dryRun: true,
       files,
@@ -519,7 +609,11 @@ export async function runReview(args = parseArgs(process.argv.slice(2))) {
   if (providers.length === 0) {
     throw new Error('No provider keys configured. Set GEMINI_API_KEY and/or OPENROUTER_API_KEY.');
   }
-  const files = changedFiles(args.baseRef, args.headRef, args.maxFiles);
+  let files = changedFiles(args.baseRef, args.headRef, args.files ? Infinity : args.maxFiles);
+  if (args.files) {
+    const wanted = new Set(args.files);
+    files = files.filter(f => wanted.has(f)).slice(0, args.maxFiles);
+  }
   const fileDiffs = new Map(files.map(file => [file, fileDiff(args.baseRef, args.headRef, file)]));
   const result = await reviewFiles({
     files,

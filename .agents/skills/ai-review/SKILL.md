@@ -129,6 +129,11 @@ rejecting. Keep both halves in view: the rule is "quote it", not "always accept"
   review. Repo secrets are never part of a diff.
 - The review is not gated on CI. It can help debug failing checks; it never blocks a merge by itself
   — the agent's assessment is the filter.
+- Tests must not assume the checkout location: a test asserting accept/throw on absolute paths that
+  passes only when the repo sits outside OS temp (or vice versa) is environment-dependent — flag it.
+  Fixtures must lie outside _all_ allowed roots or gate the assertion on the environment
+  (precedents: the home-vs-tmp guard, the #534 escape fix). Same for any test that fails on a
+  stranger's litter instead of its own fixtures (#503).
 
 ## Local reviewer vs CodeRabbit — evidence from PR #123 (2026-09)
 
