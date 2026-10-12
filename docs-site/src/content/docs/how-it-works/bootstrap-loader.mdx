@@ -8,7 +8,16 @@ import { Aside, Steps } from '@astrojs/starlight/components'
 A **legacy add-on** is an XPI whose metadata lives in an RDF file called `install.rdf`, with its
 code in `bootstrap.js`. Firefox 57 removed the component that loaded these; `BootstrapLoader.js`
 puts it back. Why Firefox removed that capability, and why these scripts restore it anyway, is in
-[Introduction](../../introduction/#what-firefox-removed-and-why).
+[Why we need it](../../introduction/#what-firefox-removed-and-why).
+
+## In plain language
+
+Old-style extensions (like Tab Mix Plus) speak a language Firefox no longer understands out of
+the box. This file is the translator: it teaches Firefox to recognize, start, and stop those
+extensions again. There is nothing to configure — if the file is installed, legacy add-ons
+simply appear in `about:addons` like any other extension. (Waterfox users can skip this page:
+that browser ships its own translator, and ours politely steps aside.) How the translation
+works, for the curious, is below.
 
 ## The one-line idea
 
@@ -34,7 +43,7 @@ that registration.
 <Aside type="note">
   This file comes from [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts)
   (MPL-2.0) — the original project that made this possible. The full provenance and license note
-  lives in [Introduction](../../introduction/#provenance); this is the only in-page reference to the
+  lives in [Why we need it](../../introduction/#provenance); this is the only in-page reference to the
   upstream repo.
   
   It is loaded from `chrome://userchromejs/content/BootstrapLoader.js` — the path the utils'

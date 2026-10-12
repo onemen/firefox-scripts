@@ -9,6 +9,15 @@ A `.uc.js` script is ordinary JavaScript that runs inside a Firefox **chrome** w
 that holds the tab strip, the toolbar and the menus. That is the whole idea: script the browser's
 own interface.
 
+## Who is this page for
+
+Two kinds of readers land here. **If you just want to use someone else's script**, you need
+three steps and no programming: save the `.uc.js` file into the `chrome` folder in your profile
+folder, restart Firefox, done — what that folder is lives on the [userChrome.js
+page](../userchrome-js/#in-plain-language). **If you want to write your own**, read on: a few
+lines of JavaScript plus a small header block are the whole skill, and the tutorial below builds
+it up piece by piece.
+
 ## Your first script
 
 <Steps>
@@ -177,5 +186,5 @@ chrome window.
   Firefox's own code. Only run scripts you have read and trust. The same is true of any legacy
   add-on a script exists to load: both run with the browser's full privileges, and both are limited
   by the trust you place in their source — see
-  [Introduction](../../introduction/#what-firefox-removed-and-why).
+  [Why we need it](../../introduction/#what-firefox-removed-and-why).
 </Aside>

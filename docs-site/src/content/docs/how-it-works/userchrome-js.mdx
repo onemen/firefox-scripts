@@ -9,6 +9,17 @@ import { Aside, Steps } from '@astrojs/starlight/components'
 `.uc.js`, reads a metadata header from each one, and executes the matching scripts in every browser
 window — including new windows opened later.
 
+## In plain language
+
+A `.uc.js` script is a small tweak to Firefox itself, written by someone in the community: an
+extra button, a different tab behavior, a menu fix. **Using** one needs no skill — download the
+`.uc.js` file, drop it into the `chrome` folder inside your profile folder, restart Firefox,
+done. (That folder also holds `userChrome.css`, which only *restyles* the browser — scripts can
+*do* things. They are neighbors, not the same thing.) If a script stops working, the checklist
+is short: right file name, right folder, restart — see [Writing your own
+.uc.js](../writing-uc-js/#debugging-a-script). **Writing** one is programming; the rest of this
+page and the writing tutorial are for that.
+
 It is unrelated to Firefox's own `userChrome.css`. The name `.uc.js` (and the idea of dropping
 arbitrary JavaScript into the chrome window) comes from the userChromeJS project; that GitHub
 repository is dead, and the convention is now carried forward by loaders such as this one and by the
