@@ -40,15 +40,8 @@ AddonManager.addExternalExtensionLoader({
 `BootstrapLoader.js` is a loader with the `install.rdf` manifest type. Everything it does hangs off
 that registration.
 
-<Aside type="note">
-  This file comes from [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts)
-  (MPL-2.0), the original project that made this possible. The full provenance and license note
-  lives in [Why we need it](../../introduction/#provenance); this is the only in-page reference to the
-  upstream repo.
-  
-  It is loaded from `chrome://userchromejs/content/BootstrapLoader.js` (the path the utils'
-  `chrome.manifest` registers in [config.js](../config-js/)).
-</Aside>
+It is loaded from `chrome://userchromejs/content/BootstrapLoader.js` (the path the utils'
+`chrome.manifest` registers in [config.js](../config-js/)).
 
 ## What happens to a legacy add-on
 
