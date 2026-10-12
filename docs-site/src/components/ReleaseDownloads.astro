@@ -1,0 +1,138 @@
+---
+// A version picker for one release family (installer binaries or script
+// zips): a dropdown of frozen tags, newest first, with the selected
+// version's file links below it. The newest version's files link through
+// the moving `latest` tag (tag/latest), older versions through their own
+// frozen tag — so the newest entry is always the current build even when
+// the generated release list is a fetch behind.
+//
+// Everything but the dropdown switching is prerendered: with JS disabled
+// the newest version's files are simply shown.
+interface VersionFile {
+  name: string;
+  label: string;
+}
+interface VersionAsset {
+  name: string;
+  href: string;
+}
+interface Version {
+  tag: string;
+  date: string;
+  htmlUrl: string;
+  assets: VersionAsset[];
+}
+interface Props {
+  id: string;
+  versions: Version[];
+  files: VersionFile[];
+  latestAssets: VersionAsset[];
+}
+
+const { id, versions, files, latestAssets } = Astro.props;
+const selectId = `${id}-select`;
+const latestByName = new Map(latestAssets.map((a) => [a.name, a.href]));
+
+// File href for one version: the `latest`-tag URL for the newest version of
+// the family, that version's own frozen-tag URL otherwise. Null when the
+// version never shipped the file (the link is then omitted, never dead).
+function fileHref(version: Version, newest: boolean, name: string): string | null {
+  const own = version.assets.find((a) => a.name === name)?.href ?? null;
+  if (!newest) return own;
+  return latestByName.get(name) ?? own;
+}
+---
+
+{
+  versions.length === 0 ? (
+    <p>
+      No frozen releases of this kind are listed. See the{" "}
+      <a href="https://github.com/onemen/firefox-scripts/releases">releases page</a>{" "}
+      directly.
+    </p>
+  ) : (
+    <div data-release-downloads>
+      <p>
+        <label for={selectId}>Version </label>
+        <select id={selectId} data-version-select>
+          {versions.map((v, i) => (
+            <option value={v.tag} selected={i === 0 ? true : undefined}>
+              {v.date} ({v.tag}){i === 0 ? " — Latest" : ""}
+            </option>
+          ))}
+        </select>
+      </p>
+      {versions.map((v, i) => {
+        const newest = i === 0;
+        const links = files
+          .map((f) => ({
+            ...f,
+            href: fileHref(v, newest, f.name),
+            sha: fileHref(v, newest, `${f.name}.sha256`),
+          }))
+          .filter((f) => f.href !== null);
+        return (
+          <div data-version-files data-tag={v.tag} hidden={i === 0 ? undefined : true}>
+            <p>
+              Published {v.date}
+              {newest ? (
+                <>
+                  {" "}· newest build, served from{" "}
+                  <a href="https://github.com/onemen/firefox-scripts/releases/tag/latest">
+                    tag/latest
+                  </a>
+                </>
+              ) : (
+                <>
+                  {" "}· <a href={v.htmlUrl}>release page</a>
+                </>
+              )}
+            </p>
+            <ul>
+              {links.map((f) => (
+                <li>
+                  <a href={f.href ?? ""}>
+                    <code>{f.name}</code>
+                  </a>{" "}
+                  — {f.label}
+                  {f.sha !== null && (
+                    <>
+                      {" "}
+                      (<a href={f.sha}>sha256</a>)
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
+  )
+}
+
+<script>
+  // One copy of this script lands per component instance; the guard keeps
+  // the second copy from double-wiring the same dropdowns.
+  document.querySelectorAll('select[data-version-select]').forEach((node) => {
+    const sel = /** @type {HTMLSelectElement} */ (node);
+    if (sel.dataset.wired) return;
+    sel.dataset.wired = '1';
+    const root = sel.closest('[data-release-downloads]');
+    if (!root) return;
+    sel.addEventListener('change', () => {
+      root.querySelectorAll('[data-version-files]').forEach((el) => {
+        const div = /** @type {HTMLElement} */ (el);
+        div.hidden = div.dataset.tag !== sel.value;
+      });
+    });
+  });
+</script>
+
+<style>
+  [data-release-downloads] select {
+    font-size: 1rem;
+    padding: 0.25rem 0.5rem;
+    max-width: 100%;
+  }
+</style>

@@ -4,13 +4,17 @@ description: The current Firefox Scripts packages, the installer binaries, and h
 ---
 
 import { Aside } from '@astrojs/starlight/components'
+import ReleaseDownloads from '../../components/ReleaseDownloads.astro'
 import {
   assetUrl,
-  frozenReleases,
+  coreReleases,
   hashesUrl,
-  latestRelease,
+  INSTALLER_FILES,
+  latestAssets,
   packages,
   releases,
+  SCRIPT_FILES,
+  installerReleases,
 } from '../../utils/getDownloadsInfoSync.mjs'
 
 // Fallback for a missing asset entry in downloadsInfo.json: the releases page
@@ -60,73 +64,32 @@ installer shows the same per-package dates, plus each browser's Up to date / Upd
 ## Reverting to an earlier build
 
 The `latest` release always holds the newest build of every file. Each past publish is also frozen
-in a dated release — one for the package zips and one for the installer binaries and helpers:
+in a dated release — `installer-<date>` for the installer binaries and helpers, `core-<date>`
+for the package zips. Pick a version in each dropdown to get its files: the newest entry of each
+kind links through `tag/latest` (always the current build), older entries through their own frozen
+tag.
 
-| Release                                                                  | Contains                                        |
-| ------------------------------------------------------------------------ | ----------------------------------------------- |
-| [`core-<date>`](https://github.com/onemen/firefox-scripts/releases)      | the package zips (`utils.zip`, `fx-folder.zip`) |
-| [`installer-<date>`](https://github.com/onemen/firefox-scripts/releases) | the installer binaries and helpers              |
+### Installer versions
 
-Download the package zip from the dated release you want and install it by hand — unpack it over
-the existing files (or use the updater tab's manual-download link). The next daily check will offer
-the newer version again; use the tab's **skip** option if you want to stay on the older build.
+<ReleaseDownloads
+  id="installer-versions"
+  versions={installerReleases}
+  files={INSTALLER_FILES}
+  latestAssets={latestAssets}
+/>
 
-{latestRelease && (
-  <p class="release-note">
-    Latest release: <a href={latestRelease.htmlUrl}>{latestRelease.name}</a>
-    {latestRelease.assets.length} assets.
-  </p>
-)}
+### Script versions
 
-{frozenReleases.length > 0 && (
-  <>
-    <h2>Past builds</h2>
+<ReleaseDownloads
+  id="script-versions"
+  versions={coreReleases}
+  files={SCRIPT_FILES}
+  latestAssets={latestAssets}
+/>
 
-    <h3>Package builds (<code>core-&lt;date&gt;</code>)</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Release</th>
-          <th>Assets</th>
-          <th>Published</th>
-        </tr>
-      </thead>
-      <tbody>
-        {frozenReleases.filter(release => release.tag.startsWith('core-')).map(release => (
-          <tr>
-            <td>
-              <a href={release.htmlUrl}>{release.name}</a>
-            </td>
-            <td>{release.assets.map(asset => asset.name).join(', ')}</td>
-            <td>{new Date(release.publishedAt).toISOString().slice(0, 10)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-
-    <h3>Installer builds (<code>installer-&lt;date&gt;</code>)</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Release</th>
-          <th>Assets</th>
-          <th>Published</th>
-        </tr>
-      </thead>
-      <tbody>
-        {frozenReleases.filter(release => release.tag.startsWith('installer-')).map(release => (
-          <tr>
-            <td>
-              <a href={release.htmlUrl}>{release.name}</a>
-            </td>
-            <td>{release.assets.map(asset => asset.name).join(', ')}</td>
-            <td>{new Date(release.publishedAt).toISOString().slice(0, 10)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </>
-)}
+Download the files for the dated release you want and install them by hand — unpack a package zip
+over the existing files (or use the updater tab's manual-download link). The next daily check will
+offer the newer version again; use the tab's **skip** option if you want to stay on the older build.
 
 {releases.length === 0 && (
   <Aside type="caution" title="Release list unavailable">
