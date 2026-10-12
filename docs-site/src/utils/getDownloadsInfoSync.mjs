@@ -20,22 +20,48 @@ try {
   // No generated file (fetch skipped or failed). Keep the empty shape.
 }
 
-const { generatedAt, hashesUrl, packages, releases } = {
-  ...EMPTY,
-  ...downloadsInfo,
-};
-
 /**
- * The `latest` release, or null when the release list is unavailable.
- * @type {{tag: string, name: string, assets: Array<{name: string, href: string}>} | null}
+ * The page-ready derivation of one downloadsInfo payload, pure so the
+ * multi-release history is unit-testable without touching the network.
+ *
+ * @param {typeof EMPTY} raw parsed downloadsInfo.json (or a fixture shape)
  */
-const latestRelease = releases.find((r) => r.tag === "latest") ?? null;
+export function deriveDownloadsInfo(raw) {
+  const { generatedAt, hashesUrl, packages, releases } = {
+    ...EMPTY,
+    ...raw,
+  };
+  const latestRelease = releases.find((r) => r.tag === "latest") ?? null;
+  const frozenReleases = releases.filter((r) => r.tag !== "latest");
+  const installerReleases = frozenReleases.filter((r) =>
+    r.tag.startsWith("installer-"),
+  );
+  const coreReleases = frozenReleases.filter((r) => r.tag.startsWith("core-"));
+  const latestAssets = latestRelease ? latestRelease.assets : [];
+  return {
+    generatedAt,
+    hashesUrl,
+    packages,
+    releases,
+    latestRelease,
+    frozenReleases,
+    installerReleases,
+    coreReleases,
+    latestAssets,
+  };
+}
 
-/**
- * The frozen releases a user can revert to, newest first: `core-<date>`
- * (package zips) then `installer-<date>` (binaries).
- */
-const frozenReleases = releases.filter((r) => r.tag !== "latest");
+const {
+  generatedAt,
+  hashesUrl,
+  packages,
+  releases,
+  latestRelease,
+  frozenReleases,
+  installerReleases,
+  coreReleases,
+  latestAssets,
+} = deriveDownloadsInfo(downloadsInfo);
 
 /**
  * Direct download URL for one asset of a release, or null when the release list
@@ -47,19 +73,12 @@ const frozenReleases = releases.filter((r) => r.tag !== "latest");
 export function assetUrl(tag, assetName) {
   const release = releases.find((r) => r.tag === tag);
   return release?.assets.find((a) => a.name === assetName)?.href ?? null;
-}
-
-/**
+} /**
  * One dropdown per release family, newest first (the releases API returns
  * newest first, and frozenReleases preserves that order). Kept here and not
  * in download.mdx: MDX top-level statements cannot contain `{` object
  * literals, so the page imports these ready-made.
  */
-const installerReleases = frozenReleases.filter((r) =>
-  r.tag.startsWith("installer-")
-);
-const coreReleases = frozenReleases.filter((r) => r.tag.startsWith("core-"));
-const latestAssets = latestRelease ? latestRelease.assets : [];
 
 /** The files each dropdown offers, with the per-OS / per-package labels. */
 const INSTALLER_FILES = [
