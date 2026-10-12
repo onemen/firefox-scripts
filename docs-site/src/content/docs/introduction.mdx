@@ -60,20 +60,11 @@ second package and loads the rest. The full chain is explained in
 
 ## Why an updater is not optional
 
-Legacy add-ons are extremely version-sensitive: they hook deep into browser internals, and most of
-them break on the next Firefox release until their author adapts them. Meanwhile **your installed
-files never change on their own** — they sit in the installation directory and the profile, and no
-updater will touch them.
-
-So a browser update is, by default, a broken extension until you notice. The in-browser updater
-closes that loop: once a day it compares a SHA-256 manifest of the published files against what you
-have installed, and offers you the new ones in a tab you can act on immediately. Updates to the
-configuration files need write access to an admin-protected directory, so that one step asks for a
-single elevation via a checksum-verified helper.
-
-The technical details of the installer and the updater live in [Installation](../installation/#install-firefox-scripts)
-and [Download](../download/); this page stays focused on **why** the project exists and where the
-security line sits.
+Legacy add-ons break on browser updates while your installed files never change on their own —
+so someone has to close that loop. That someone is the
+[Installer & auto-updater](../how-it-works/installer-updater/): what it is, what it does, and
+what it deliberately does not do. This page stays focused on **why** the project exists and
+where the security line sits.
 
 ## Provenance
 

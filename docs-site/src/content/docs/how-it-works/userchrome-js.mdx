@@ -13,6 +13,8 @@ It is unrelated to Firefox's own `userChrome.css`. The name `.uc.js` (and the id
 arbitrary JavaScript into the chrome window) comes from the userChromeJS project; that GitHub
 repository is dead, and the convention is now carried forward by loaders such as this one and by the
 scripts in [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts).
+Firefox itself no longer loads these files — restoring that is this loader's whole job, and
+[Why we need it](../../introduction/#the-short-version) is the short version of why it went missing.
 
 ## Where scripts are looked for
 

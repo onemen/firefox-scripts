@@ -16,22 +16,8 @@ The short version of why is in [Introduction](../introduction/#the-short-version
 :::tip
 If you are using **Waterfox** browser, it ships with a built-in **Bootstrap Loader**, so you only
 need to install the `firefox-scripts` configuration files if you use [`userChromeJS` scripts](../how-it-works/userchrome-js/).
-
-<details>
-<summary>What is userChromeJS? — [userChrome.js page](../how-it-works/userchrome-js/)</summary>
-
-[userChrome.js](../how-it-works/userchrome-js/) is the script loader that finds your `.uc.js` files
-in the profile's `chrome` directory, reads their headers, and runs them in every browser window.
-`userChromeJS` is the name of the broader mechanism and the original project behind it; Firefox
-removed the internal component that loaded these files, so both legacy extensions like **Tab Mix Plus**
-and `userChromeJS` scripts need helper scripts installed to load them.
-
-- If you only want to customize the browser appearance with `userChrome.css`, **Waterfox**'s
-  built-in Bootstrap Loader or a plain `userChromeJS` loader may be all you need.
-- If you want to use **Tab Mix Plus** or other legacy extensions, follow the
-  [installation steps](#install-firefox-scripts) below.
-
-</details>
+If you only restyle the browser with `userChrome.css` and run no scripts or legacy extensions,
+Waterfox's built-in loader may be all you need.
 :::
 
 ## Install Firefox Scripts
@@ -43,7 +29,8 @@ work if you install any files in the wrong location.
 
 **firefox-scripts** installs and keeps the helper scripts up to date — a small native installer
 copies the two packages into the browser, and an in-browser updater keeps them current
-automatically as new versions are released.
+automatically as new versions are released. Background and rationale live on the
+[Installer & auto-updater](../how-it-works/installer-updater/) page; here is how to use them.
 
 #### The installer
 

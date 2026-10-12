@@ -39,6 +39,10 @@ export const starlightConfig = {
       collapsed: false,
       items: [
         {
+          label: "Installer & auto-updater",
+          link: "/how-it-works/installer-updater",
+        },
+        {
           label: "Configuration files (config.js)",
           link: "/how-it-works/config-js",
         },

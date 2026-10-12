@@ -1,0 +1,51 @@
+---
+title: Installer & auto-updater
+description: The tiny native installer that puts both packages in place, and the in-browser updater that keeps them current.
+---
+
+The two packages (`fx-folder` and `utils`) are just files — and files sitting in an
+installation directory and a profile never change on their own. These two small tools close
+that gap: one puts the files in place, the other keeps them current. Neither runs in the
+background and neither phones anywhere except the published release artifacts.
+
+## The installer
+
+A tiny native app, one per OS (`installer_win.exe`, `installer_linux` /
+`installer_linux_aarch64`, `installer_mac`). It is a one-shot setup tool:
+
+1. It finds your running Firefox-family browsers (detection scans processes and lock files,
+   so the browser must be running).
+2. It opens an install screen in a browser tab where you pick the browser and the components
+   (configuration files and/or utils).
+3. It copies the files into place — the only step that can ask for a single elevation prompt,
+   via a checksum-verified helper, when the target directory is admin-protected.
+
+When it finishes there is nothing left behind: no background process, no scheduled task. You
+can delete the downloaded executable. Step-by-step instructions live in
+[Installation](../../installation/#install-firefox-scripts).
+
+## The auto-updater
+
+The updater is a small privileged script that ships inside the `utils` package, so it only
+exists once the scripts are installed — and it goes away with them if you remove the scripts.
+
+- **Daily check.** Once a day it compares a SHA-256 manifest of the published files against
+  what you have installed.
+- **Notification tab.** When an update is available it opens a tab showing what would change.
+  Install it there, skip it for the day, or permanently ignore that specific update.
+- **In-tab install.** Applying an update copies the new packages into place from inside the
+  browser — no installer download needed. Configuration-file updates ask for the same single
+  elevation as the installer.
+- **Manual update.** Open it any time from the browser menu, or grab the zips from the
+  [Download](../../download/) page.
+
+What it deliberately does **not** do: update your extensions. It notifies about new versions
+of the `firefox-scripts` packages only. Extensions update through their own mechanism (check
+`about:addons`), and whether an extension survives a browser update is up to its author.
+
+## Why it is not optional
+
+Legacy add-ons hook deep into browser internals, and most of them break on the next Firefox
+release until their author adapts them. So a browser update is, by default, a broken extension
+until you notice — the updater turns "until you notice" into "the next morning, in a tab you
+can act on".
