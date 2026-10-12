@@ -46,6 +46,8 @@ of the `firefox-scripts` packages only. Extensions update through their own mech
 ## Why it is not optional
 
 Legacy add-ons hook deep into browser internals, and most of them break on the next Firefox
-release until their author adapts them. So a browser update is, by default, a broken extension
-until you notice — the updater turns "until you notice" into "the next morning, in a tab you
-can act on".
+release until their author adapts them. When that happens, the fix ships as a new
+`firefox-scripts` package — and your installed files never change on their own. Without the
+updater, a published fix sits on the releases page until you go looking for it; with it, the
+fix is offered in a tab the next morning. The updater delivers the fix — it is the add-on
+(and the package) update that repairs the breakage, never the updater by itself.
