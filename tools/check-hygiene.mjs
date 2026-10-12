@@ -103,8 +103,8 @@ export const CHAT_RE =
 
 // Code-like extensions under the strict rules. Docs (.md) get the concrete
 // path rule only — prose about the gitignore rule itself is legitimate.
-// The em dash, matched by escape so this file never carries the literal: the
-// test builds it the same way, and added-lines-only judging keeps this very// description clean.
+// The em dash, matched by escape so this file never carries the literal; the
+// test builds it the same way, and added-lines-only judging keeps this comment clean.
 export const EM_DASH_RE = /\u2014/;
 const MD_FENCE_RE = /^(`{3,}|~{3,})/;
 const MD_INLINE_CODE_RE = /`[^`\n]*`/g;
@@ -316,13 +316,46 @@ function runGit(args) {
   return execFileSync('git', args, {cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 8 << 20});
 }
 
-function safeMergeBase(base) {
+function safeMergeBase(git, base) {
   try {
-    const out = runGit(['merge-base', 'HEAD', base]).trim();
+    const out = git(['merge-base', 'HEAD', base]).trim();
     return out || null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The base ref to diff the PR range against. A bare CI base name never resolves
+ * (detached HEAD, no local branch), while the origin-prefixed name does, so
+ * prefix it unless a ref was passed explicitly or is prefixed already.
+ *
+ * @param {{base?: string}} [opts]
+ * @returns {string}
+ */
+export function resolveRef({base} = {}) {
+  if (base) return base;
+  const prBase = process.env.GITHUB_BASE_REF;
+  if (prBase) return prBase.includes('/') ? prBase : `origin/${prBase}`;
+  return 'origin/main';
+}
+
+/**
+ * Prefer working-tree line numbers when a file is dirty: the PR-range diff
+ * numbers lines as of HEAD, which points at the wrong lines once uncommitted
+ * edits shift them. A file with working-tree changes is judged on those alone;
+ * the PR range covers only files the working tree left untouched.
+ *
+ * @param {Map<string, Set<number>>} work added lines from `diff HEAD`
+ * @param {Map<string, Set<number>>} pr added lines from the merge-base range
+ * @returns {Map<string, Set<number>>}
+ */
+export function mergeAddedMaps(work, pr) {
+  const merged = new Map(work);
+  for (const [file, lines] of pr) {
+    if (!merged.has(file)) merged.set(file, lines);
+  }
+  return merged;
 }
 
 /**
@@ -332,28 +365,30 @@ function safeMergeBase(base) {
  * untracked files (all of it is new). Throws when git cannot answer, so main()
  * can stand this guard down loudly while the other guards still run.
  *
- * @param {{base?: string}} [opts]
- * @returns {Map<string, Set<number>>}
+ * @param {{base?: string; git?: Function}} [opts]
+ * @returns {{work: Map<string, Set<number>>; pr: Map<string, Set<number>>}}
  */
-export function collectAddedLines({base} = {}) {
-  const added = new Map();
-  const merge = other => {
+export function collectAddedLines({base, git = runGit} = {}) {
+  const work = new Map();
+  const pr = new Map();
+  const mergeInto = (target, other) => {
     for (const [file, lines] of other) {
-      if (!added.has(file)) added.set(file, new Set());
-      for (const no of lines) added.get(file).add(no);
+      if (!target.has(file)) target.set(file, new Set());
+      for (const no of lines) target.get(file).add(no);
     }
   };
-  merge(parseAddedLines(runGit(['diff', 'HEAD', '--unified=0', '--no-color', '--'])));
-  const ref = base || process.env.GITHUB_BASE_REF || 'origin/main';
-  const mergeBase = safeMergeBase(ref);
+  mergeInto(work, parseAddedLines(git(['diff', 'HEAD', '--unified=0', '--no-color', '--'])));
+  const ref = resolveRef({base});
+  const mergeBase = safeMergeBase(git, ref);
   if (mergeBase) {
-    merge(
-      parseAddedLines(runGit(['diff', '--unified=0', '--no-color', `${mergeBase}...HEAD`, '--']))
+    mergeInto(
+      pr,
+      parseAddedLines(git(['diff', '--unified=0', '--no-color', `${mergeBase}...HEAD`, '--']))
     );
   } else {
-    merge(parseAddedLines(runGit(['diff', '--unified=0', '--no-color', ref, 'HEAD', '--'])));
+    mergeInto(pr, parseAddedLines(git(['diff', '--unified=0', '--no-color', ref, 'HEAD', '--'])));
   }
-  const others = runGit(['ls-files', '--others', '--exclude-standard'])
+  const others = git(['ls-files', '--others', '--exclude-standard'])
     .split('\n')
     .map(l => l.trim())
     .filter(Boolean);
@@ -363,10 +398,10 @@ export function collectAddedLines({base} = {}) {
     const abs = path.join(REPO_ROOT, rel);
     if (!fs.existsSync(abs)) continue;
     const count = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n').split('\n').length;
-    if (!added.has(rel)) added.set(rel, new Set());
-    for (let no = 1; no <= count; no++) added.get(rel).add(no);
+    if (!work.has(rel)) work.set(rel, new Set());
+    for (let no = 1; no <= count; no++) work.get(rel).add(no);
   }
-  return added;
+  return {work, pr};
 }
 
 /**
@@ -433,7 +468,8 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
   // When git cannot answer, only this guard stands down (loudly); the rest
   // still run.
   try {
-    const added = collectAddedLines();
+    const {work, pr} = collectAddedLines();
+    const added = mergeAddedMaps(work, pr);
     const fresh = [...added.keys()]
       .filter(rel => {
         const ext = path.extname(rel).toLowerCase();
