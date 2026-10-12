@@ -105,24 +105,9 @@ Once installed, the scripts keep themselves current without you re-running the i
 - **Notification tab.** When an update is available, the updater opens a tab showing what would
   change. You can install the update right there, skip it for the day, or permanently ignore a
   specific update.
-- **Your choices.** **Remind me Tomorrow** closes the tab and the daily check keeps it closed
-  until tomorrow. **Don't show again for this update** (a checkbox per package) ignores that one
-  published version; it is offered again only when a newer package is published. Both are stored
-  as preferences (`extensions.firefox-scripts.skippedHash.<package>`), so clearing one in
-  `about:config` re-offers the update.
-
-<a
-  href="https://raw.githubusercontent.com/onemen/firefox-scripts/main/docs/screenshots/options.png"
-  target="_blank"
-  rel="noopener"
-  class="screenshot"
->
-  <img
-    src="https://raw.githubusercontent.com/onemen/firefox-scripts/main/docs/screenshots/options.png"
-    width="420"
-    alt="Updater tab update choices: Remind me Tomorrow and per-package skip"
-  />
-</a>
+- **Your choices.** Install the update, **Remind me Tomorrow**, or **Don't show again for this
+  update** (per package). Each choice and the preferences behind it are explained in
+  [Installer and auto-updater](../how-it-works/installer-updater/#update-choices).
 - **In-tab install.** Applying an update downloads the new packages and copies them into place
   inside the browser. No installer download needed. Updating the configuration files, which live
   in admin-protected folders (e.g. Program Files on Windows), triggers a single elevation prompt
