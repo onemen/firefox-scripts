@@ -3,7 +3,7 @@ title: Installer & auto-updater
 description: The tiny native installer that puts both packages in place, and the in-browser updater that keeps them current.
 ---
 
-The two packages (`fx-folder` and `utils`) are just files — and files sitting in an
+The two packages (`fx-folder` and `utils`) are just files. Files sitting in an
 installation directory and a profile never change on their own. These two small tools close
 that gap: one puts the files in place, the other keeps them current. Neither runs in the
 background and neither phones anywhere except the published release artifacts.
@@ -17,7 +17,7 @@ A tiny native app, one per OS (`installer_win.exe`, `installer_linux` /
    so the browser must be running).
 2. It opens an install screen in a browser tab where you pick the browser and the components
    (configuration files and/or utils).
-3. It copies the files into place — the only step that can ask for a single elevation prompt,
+3. It copies the files into place. The only step that can ask for a single elevation prompt,
    via a checksum-verified helper, when the target directory is admin-protected.
 
 When it finishes there is nothing left behind: no background process, no scheduled task. You
@@ -27,14 +27,14 @@ can delete the downloaded executable. Step-by-step instructions live in
 ## The auto-updater
 
 The updater is a small privileged script that ships inside the `utils` package, so it only
-exists once the scripts are installed — and it goes away with them if you remove the scripts.
+exists once the scripts are installed, and it goes away with them if you remove the scripts.
 
 - **Daily check.** Once a day it compares a SHA-256 manifest of the published files against
   what you have installed.
 - **Notification tab.** When an update is available it opens a tab showing what would change.
   Install it there, skip it for the day, or permanently ignore that specific update.
 - **In-tab install.** Applying an update copies the new packages into place from inside the
-  browser — no installer download needed. Configuration-file updates ask for the same single
+  browser. No installer download needed. Configuration-file updates ask for the same single
   elevation as the installer.
 - **Manual update.** Open it any time from the browser menu, or grab the zips from the
   [Download](../../download/) page.
@@ -50,7 +50,7 @@ of the `firefox-scripts` packages only. Extensions update through their own mech
 
 Legacy add-ons hook deep into browser internals, and most of them break on the next Firefox
 release until their author adapts them. When that happens, the fix ships as a new
-`firefox-scripts` package — and your installed files never change on their own. Without the
+`firefox-scripts` package, and your installed files never change on their own. Without the
 updater, a published fix sits on the releases page until you go looking for it; with it, the
-fix is offered in a tab the next morning. The updater delivers the fix — it is the add-on
+fix is offered in a tab the next morning. The updater delivers the fix. It is the add-on
 (and the package) update that repairs the breakage, never the updater by itself.

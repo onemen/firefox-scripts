@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install the Firefox Scripts helper scripts with the installer, or by hand — including the exact paths per OS.
+description: Install the Firefox Scripts helper scripts with the installer, or by hand, including the exact paths per OS.
 ---
 
 import chromeUtils from '@assets/chrome_utils.png'
@@ -27,7 +27,7 @@ work if you install any files in the wrong location.
 
 ### Installer and updater
 
-**firefox-scripts** installs and keeps the helper scripts up to date — a small native installer
+**firefox-scripts** installs and keeps the helper scripts up to date. A small native installer
 copies the two packages into the browser, and an in-browser updater keeps them current
 automatically as new versions are released. Background and rationale live on the
 [Installer & auto-updater](../how-it-works/installer-updater/) page; here is how to use them.
@@ -45,7 +45,7 @@ which browser to set up.
 
 :::note
 The installer is currently **unsigned**, so on Windows **SmartScreen** may show
-_"Windows protected your PC"_ on first run — click **More info** and then **Run anyway** to
+_"Windows protected your PC"_ on first run. Click **More info** and then **Run anyway** to
 continue, and approve the single **UAC prompt** if it appears (one checksum-verified elevation,
 for the copy step only).
 :::
@@ -65,15 +65,15 @@ for the copy step only).
 
 Choose the components to install:
 
-- **Configuration files** (`config.js`, `config-prefs.js`) — copied to the browser's installation
+- **Configuration files** (`config.js`, `config-prefs.js`): copied to the browser's installation
   directory.
-- **Utils** (the chrome scripts) — copied to your profile's `chrome/utils/` directory.
+- **Utils** (the chrome scripts): copied to your profile's `chrome/utils/` directory.
 
 Click **Install**, wait for completion, then **Restart the browser** when prompted.
 
 The installer is a one-shot setup tool: it installs only the components you pick and **does not**
 leave behind any other files, background processes, or scheduled tasks. After the install completes
-you can delete the downloaded executable — nothing else was installed besides the configuration
+you can delete the downloaded executable. Nothing else was installed besides the configuration
 files and scripts you chose.
 
 #### The updater
@@ -99,7 +99,7 @@ Once installed, the scripts keep themselves current without you re-running the i
   change. You can install the update right there, skip it for the day, or permanently ignore a
   specific update.
 - **In-tab install.** Applying an update downloads the new packages and copies them into place
-  inside the browser — no installer download needed. Updating the configuration files, which live
+  inside the browser. No installer download needed. Updating the configuration files, which live
   in admin-protected folders (e.g. Program Files on Windows), triggers a single elevation prompt
   via a small helper that ships with the update.
 - **Manual update.** You can always open the updater manually from the browser menu, or download
@@ -116,7 +116,7 @@ You should download the latest version of the scripts from the links below.
 - Download [utils][UTILS_EXTENSIONS_AND_SCRIPTS]
 
 `utils.zip` and `fx-folder.zip` are published with every build on the
-[firefox-scripts](https://github.com/onemen/firefox-scripts) repository — the links above always
+[firefox-scripts](https://github.com/onemen/firefox-scripts) repository. The links above always
 point at the latest build.
 
 <Aside type="caution">
@@ -267,7 +267,7 @@ ensuring **Tab Mix Plus** works seamlessly within each individual profile.
 
 The updater goes away with the utils, so nothing will try to re-install anything. If you still have
 `config.js` and `config-prefs.js` in the browser root after this, Firefox will still try to run
-AutoConfig on the next start — remove those too, or it will log that `config.js` is missing.
+AutoConfig on the next start. Remove those too, or it will log that `config.js` is missing.
 
 ## Browser compatibility
 
@@ -276,19 +276,19 @@ here may work, but is not covered by the release gates.
 
 | Browser | Notes |
 | ------- | ----- |
-| Firefox (stable, ESR, Developer Edition, Nightly) | Fully supported. Nightly is the leading edge — see the current Nightly version below. |
+| Firefox (stable, ESR, Developer Edition, Nightly) | Fully supported. Nightly is the leading edge (see the current Nightly version below). |
 | Waterfox | Ships its own Bootstrap Loader, so ours skips loading it (loading both would double-register and break legacy add-ons). `userChrome.js` and the updater still work. |
 | Zen Browser | No special handling needed. |
 | LibreWolf | No special handling needed. |
 | Floorp | No special handling needed. |
 
-A browser must be **running** when the installer runs — detection uses process scanning and lock-file
+A browser must be **running** when the installer runs. Detection uses process scanning and lock-file
 inspection.
 
 :::note
 The latest Firefox Nightly this was tested against is **Firefox Nightly 159**. To keep this number
 current automatically, wire it from the same source the TabMixPlus docs use (see
-`tabmixplus-docs/src/utils/helper.mjs` for the pattern) — that is a follow-up, not done here.
+`tabmixplus-docs/src/utils/helper.mjs` for the pattern). That is a follow-up, not done here.
 :::
 
 ## In three steps

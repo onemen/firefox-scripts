@@ -5,7 +5,7 @@ description: What to check when the scripts do not load, an add-on is reported a
 
 import { Aside, Steps } from '@astrojs/starlight/components'
 
-Work top to bottom — the order is cheapest check first.
+Work top to bottom. The order is cheapest check first.
 
 ## The add-on is reported as corrupt
 
@@ -31,7 +31,7 @@ by hand, follow the manual path below.
 2. Check the file locations against [Installation → by hand](../installation/#install-config-script):
    `config.js` next to the browser binary, `config-prefs.js` in `defaults/pref/`, and the utils
    unpacked **directly into** `<profile>/chrome/utils/`.
-3. Restart the browser fully — quit it, do not just close the window.
+3. Restart the browser fully (quit it, do not just close the window).
 
 </Steps>
 
@@ -40,7 +40,7 @@ by hand, follow the manual path below.
 `config.js` is loaded by Firefox's AutoConfig mechanism, which only runs when the enabling
 preferences are in `defaults/pref/`. Check, in order:
 
-1. `config-prefs.js` is in `<FIREFOX ROOT>/defaults/pref/` — the file name and the `.js` extension
+1. `config-prefs.js` is in `<FIREFOX ROOT>/defaults/pref/`: the file name and the `.js` extension
    matter, and this directory is the one Firefox itself reads preferences from.
 2. The contents are exactly:
 
@@ -50,15 +50,14 @@ preferences are in `defaults/pref/`. Check, in order:
    pref("general.config.sandbox_enabled", false);
    ```
 
-3. `config.js` is next to the browser binary, and **starts with the `// skip 1st line` comment** —
-   AutoConfig ignores the first line, so the preferences on the second line are the first statements
-   that execute.
+3. `config.js` is next to the browser binary, and **starts with the `// skip 1st line` comment** (AutoConfig ignores the first line, so the preferences on the second line are the first statements
+   that execute).
 
 Details: [Configuration files (config.js)](../how-it-works/config-js/).
 
 ## The scripts were working and now they are not
 
-A browser update is the usual cause — either it broke a legacy add-on, or it invalidated the
+A browser update is the usual cause: either it broke a legacy add-on, or it invalidated the
 startup cache.
 
 <Steps>
@@ -76,7 +75,7 @@ If the updater tab itself will not open, install by hand from the [Download](../
 1. Is the file in the **profile's** `chrome/` directory (not `chrome/utils/`, and not in a
    subfolder)? The loader scans the top level only.
 2. Does the extension end in `.uc.js`?
-3. Is the header block complete — `// ==UserScript==` … `// ==/UserScript==`?
+3. Is the header block complete (`// ==UserScript==` … `// ==/UserScript==`)?
 4. Does `@include` match the window you are testing in? With no `@include`, the script runs only in
    the browser window.
 5. Is the file listed in the `userChromeJS.scriptsDisabled` preference?
@@ -99,12 +98,12 @@ Detection needs a **running** browser: it inspects running processes and lock fi
 browser first, then run the installer.
 
 If the browser runs from an unusual location (a portable build, an extracted archive), install by
-hand instead — [Installation → by hand](../installation/#install-config-script) uses the paths from `about:support`,
+hand instead. [Installation → by hand](../installation/#install-config-script) uses the paths from `about:support`,
 so it works regardless of where the browser lives.
 
 ## The installer tab shows a network error
 
-The installer performs no network I/O of its own — the tab it opens is the component that downloads
+The installer performs no network I/O of its own. The tab it opens is the component that downloads
 the packages. A network error banner means that tab could not reach the release host. Check for a
 proxy, an extension blocking requests, or a firewall rule for the browser, and try again.
 
@@ -126,6 +125,6 @@ Collect this before opening an [issue](https://github.com/onemen/firefox-scripts
 
 <Aside type="tip" title="A quick diagnostic">
   `about:support` → **Extensions** lists the legacy add-ons the loader found. If
-  TabMixPlus is not listed there, the loader did not run — go back to the first
+  TabMixPlus is not listed there, the loader did not run. Go back to the first
   two sections.
 </Aside>

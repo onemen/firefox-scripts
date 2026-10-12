@@ -1,12 +1,12 @@
-// Builds src/utils/downloadsInfo.json — the data behind /download.
+// Builds src/utils/downloadsInfo.json, the data behind /download.
 //
 // Two sources, both read-only and both public:
 //
-//   1. hashes.json from the Pages branch — the SAME manifest the installer and
+//   1. hashes.json from the Pages branch, the SAME manifest the installer and
 //      the in-browser updater hash-compare against, so the per-package dates
 //      shown here are the dates the updater offers (issue #202: "from the same
 //      release data the updater already consumes").
-//   2. the GitHub releases API — the moving `latest` release plus the frozen
+//   2. the GitHub releases API, the moving `latest` release plus the frozen
 //      `core-<date>` (package zips) and `installer-<date>` (binaries) tags,
 //      which is what a user needs in order to revert a package.
 //
@@ -16,7 +16,7 @@
 // data is visible instead of silent.
 //
 // Usage: node src/utils/getDownloadsInfo.mjs
-// Env:   HASHES_URL (default the live Pages manifest), GITHUB_TOKEN_VAR — the
+// Env:   HASHES_URL (default the live Pages manifest), GITHUB_TOKEN_VAR, the
 //        repo-wide fixed name the publish tooling also reads (optional: the
 //        unauthenticated API allows 60 requests/hour, enough for a build).
 
@@ -64,7 +64,7 @@ async function getPackages() {
       throw new Error(`hashes.json has no "${name}" package`);
     }
     packages[name] = {
-      // The binaries (installer/helper) have no `files` list — they ship as
+      // The binaries (installer/helper) have no `files` list. They ship as
       // single artifacts, so only the package zips are listed here.
       date: entry.date,
       files: entry.files ?? [],
@@ -118,16 +118,16 @@ const result = {
 try {
   result.packages = await getPackages();
 } catch (error) {
-  console.warn(`[docs] WARNING: package dates unavailable — ${error.message}`);
+  console.warn(`[docs] WARNING: package dates unavailable (${error.message})`);
 }
 try {
   result.releases = await getReleases();
 } catch (error) {
-  console.warn(`[docs] WARNING: release list unavailable — ${error.message}`);
+  console.warn(`[docs] WARNING: release list unavailable (${error.message})`);
 }
 
 await fs.writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
 console.log(
-  `[docs] downloadsInfo.json written — ${Object.keys(result.packages).length} packages, ` +
-    `${result.releases.length} releases`,
+  `[docs] downloadsInfo.json written (${Object.keys(result.packages).length} packages, ` +
+    `${result.releases.length} releases)`,
 );

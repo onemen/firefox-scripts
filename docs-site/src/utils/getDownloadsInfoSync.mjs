@@ -1,5 +1,5 @@
 // Build-time reader for src/utils/downloadsInfo.json (written by
-// getDownloadsInfo.mjs). Missing file = the fetch step never ran — the page
+// getDownloadsInfo.mjs). Missing file means the fetch step never ran. The page
 // renders its static fallback links instead of failing the build.
 
 import fs from "node:fs";
@@ -17,7 +17,7 @@ let downloadsInfo = EMPTY;
 try {
   downloadsInfo = JSON.parse(fs.readFileSync(GENERATED, "utf8"));
 } catch {
-  // No generated file (fetch skipped or failed) — keep the empty shape.
+  // No generated file (fetch skipped or failed). Keep the empty shape.
 }
 
 const { generatedAt, hashesUrl, packages, releases } = {

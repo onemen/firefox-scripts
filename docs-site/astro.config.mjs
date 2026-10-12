@@ -5,14 +5,14 @@ import { defineConfig } from "astro/config";
 // artifact branch's ROOT (ADR 0038): https://onemen.github.io/firefox-scripts/.
 // The release artifacts (utils.zip, hashes.json, the installer binaries) live
 // as siblings of this build output on the gh-pages branch, so `base` is the
-// project path — never `/firefox-scripts/docs`.
+// project path, never `/firefox-scripts/docs`.
 const base = "/firefox-scripts";
 
 // https://starlight.astro.build/reference/configuration/
 export const starlightConfig = {
   title: "Firefox Scripts",
   description:
-    "Install and keep Firefox-family browser scripts up to date — and run legacy extensions such as TabMixPlus.",
+    "Install and keep Firefox-family browser scripts up to date, and run legacy extensions such as TabMixPlus.",
   favicon: "/favicon.svg",
   logo: {
     src: "./src/assets/favicon.svg",

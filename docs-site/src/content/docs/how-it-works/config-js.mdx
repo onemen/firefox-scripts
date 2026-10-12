@@ -6,17 +6,17 @@ description: How Firefox AutoConfig works, what our config.js does, and how the 
 import { Aside } from '@astrojs/starlight/components'
 
 `config.js` is the entry point of the whole system. It is the only file Firefox itself has to
-notice — everything else is loaded from it. Its job is to **start the chain**: enable Firefox's
+notice. Everything else is loaded from it. Its job is to **start the chain**: enable Firefox's
 AutoConfig mechanism, lock the two preferences that let legacy add-ons load, register the utils'
 `chrome.manifest`, and then load `BootstrapLoader.js` and `userChrome.js` in order.
 
 ## In plain language
 
-Firefox has a switch that lets an administrator run a startup script — normally used by IT
+Firefox has a switch that lets an administrator run a startup script, normally used by IT
 departments. These two small files flip that switch so Firefox loads the helper scripts every
 time it starts. You never edit them: the [installer](../installer-updater/) puts them in
 Firefox's own folder, and they sit there quietly. The one thing worth knowing is that a Firefox
-update (and on macOS, every update) can wipe that folder — if your add-ons suddenly stop
+update (and on macOS, every update) can wipe that folder. If your add-ons suddenly stop
 loading after an update, reinstalling the configuration files is the first fix to try. How it
 works under the hood follows below.
 
@@ -47,18 +47,18 @@ pref("general.config.filename", "config.js");
 pref("general.config.sandbox_enabled", false);
 ```
 
-- **`general.config.filename`** — the name of the script AutoConfig runs, relative to the browser
+- **`general.config.filename`**: the name of the script AutoConfig runs, relative to the browser
   installation directory. Firefox's default is `mozilla.cfg`; ours is `config.js`.
-- **`general.config.sandbox_enabled`** — when `true` (the default), the AutoConfig script runs in a
-  restricted sandbox limited to a documented API — enough for `pref()`, and nothing more. These
+- **`general.config.sandbox_enabled`**: when `true` (the default), the AutoConfig script runs in a
+  restricted sandbox limited to a documented API, enough for `pref()`, and nothing more. These
   scripts need `Services`, `Components` and chrome-privileged APIs, so the sandbox is disabled.
-- **`general.config.obscure_value`** — when `true`, the values of the preferences AutoConfig sets are
+- **`general.config.obscure_value`**: when `true`, the values of the preferences AutoConfig sets are
   hidden in `about:config`. Set to `0` so the two locked preferences below are visible and can be
   verified.
 
 :::note[Why the first line is skipped]
 AutoConfig ignores the **first line** of its configuration file, so the file starts with the comment
-`// skip 1st line`. Do not remove it — `lockPref()` on the second line is the first statement that
+`// skip 1st line`. Do not remove it. `lockPref()` on the second line is the first statement that
 actually runs.
 :::
 
@@ -71,9 +71,9 @@ lockPref("xpinstall.signatures.required", false);
 lockPref("extensions.install_origins.enabled", false);
 ```
 
-- **`xpinstall.signatures.required`** — legacy add-ons are not signed. With signature enforcement
+- **`xpinstall.signatures.required`**: legacy add-ons are not signed. With signature enforcement
   on, they are refused as corrupt.
-- **`extensions.install_origins.enabled`** — legacy extensions install from any origin rather than
+- **`extensions.install_origins.enabled`**: legacy extensions install from any origin rather than
   being pinned to the add-on site's host.
 
 Then the loading itself:
@@ -101,11 +101,11 @@ Three steps, all inside `try`/`catch` so a failure in one cannot stop the browse
 
 1. **Register the utils' `chrome.manifest`.** It maps `chrome://userchromejs/` to the `utils`
    folder and `chrome://firefox-scripts/` to `updater/`, so the other scripts can be loaded by
-   `chrome://` URL. `UChrm` is the profile's `chrome` directory — this is why the **utils must be
+   `chrome://` URL. `UChrm` is the profile's `chrome` directory. This is why the **utils must be
    unpacked to `chrome/utils/`**, not anywhere else.
-2. **Load `BootstrapLoader.js`** — brings legacy add-ons back, unless the browser already ships its
+2. **Load `BootstrapLoader.js`**: brings legacy add-ons back, unless the browser already ships its
    own loader (see below).
-3. **Load `userChrome.js`** — the `.uc.js` loader, and the in-browser updater's UI hook.
+3. **Load `userChrome.js`**: the `.uc.js` loader, and the in-browser updater's UI hook.
 
 ## Waterfox: skipping the loader
 
@@ -115,7 +115,7 @@ const isWaterfox = /waterfox/i.test(Services.appinfo.name);
 
 **Waterfox** bundles its own Bootstrap Loader. Loading ours as well would register a second
 `bootstrap` loader and double-patch the `about:addons` internals, which breaks legacy add-ons. So
-on Waterfox the `BootstrapLoader.js` load is skipped — `userChrome.js` and the updater still load,
+on Waterfox the `BootstrapLoader.js` load is skipped. `userChrome.js` and the updater still load,
 because those are what a user installing these files on Waterfox actually wants.
 
 `BootstrapLoader.js` carries the same guard internally, so it also stays inert if something else
@@ -129,20 +129,20 @@ loads it (a custom `config.js` that ignores the check, or a user script re-evalu
   directory must live.
 - `about:support` → **Extensions** lists the loaded legacy add-on.
 
-If the preferences are not locked, the file is not being read — see
+If the preferences are not locked, the file is not being read. See
 [Troubleshooting](../../troubleshooting/#the-preferences-are-not-locked).
 
 <Aside type="caution" title="These preferences are locked">
   `lockPref()` cannot be undone from the profile: the value comes from the file
   in the installation directory, and no `user.js` or `about:config` edit can
   override a locked preference. To get rid of it, delete `config.js` and
-  `config-prefs.js` — see [Removing the
+  `config-prefs.js`. See [Removing the
   scripts](../../installation/#removing-the-scripts).
 </Aside>
 
 <Aside type="caution" title="Signing and updates">
   These scripts disable the add-on signature requirement for legacy add-ons
   (`xpinstall.signatures.required`). Install extensions only from sources you
-  trust — a legacy add-on runs with the full privileges of the browser, as
+  trust. A legacy add-on runs with the full privileges of the browser, as
   explained in [Why we need it](../../introduction/#what-firefox-removed-and-why).
 </Aside>

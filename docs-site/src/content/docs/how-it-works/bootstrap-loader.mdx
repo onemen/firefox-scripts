@@ -14,14 +14,14 @@ puts it back. Why Firefox removed that capability, and why these scripts restore
 
 Old-style extensions (like Tab Mix Plus) speak a language Firefox no longer understands out of
 the box. This file is the translator: it teaches Firefox to recognize, start, and stop those
-extensions again. There is nothing to configure — if the file is installed, legacy add-ons
+extensions again. There is nothing to configure. If the file is installed, legacy add-ons
 simply appear in `about:addons` like any other extension. (Waterfox users can skip this page:
 that browser ships its own translator, and ours politely steps aside.) How the translation
 works, for the curious, is below.
 
 ## The one-line idea
 
-Firefox did not delete the add-on machinery — it deleted the _registration_ of external loaders.
+Firefox did not delete the add-on machinery. It deleted the _registration_ of external loaders.
 Gecko's `AddonManager` still supports them through a single, public entry point:
 
 ```js
@@ -42,12 +42,12 @@ that registration.
 
 <Aside type="note">
   This file comes from [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts)
-  (MPL-2.0) — the original project that made this possible. The full provenance and license note
+  (MPL-2.0), the original project that made this possible. The full provenance and license note
   lives in [Why we need it](../../introduction/#provenance); this is the only in-page reference to the
   upstream repo.
   
-  It is loaded from `chrome://userchromejs/content/BootstrapLoader.js` — the path the utils'
-  `chrome.manifest` registers in [config.js](../config-js/).
+  It is loaded from `chrome://userchromejs/content/BootstrapLoader.js` (the path the utils'
+  `chrome.manifest` registers in [config.js](../config-js/)).
 </Aside>
 
 ## What happens to a legacy add-on
@@ -60,14 +60,14 @@ that registration.
    properties that no longer exist are ignored.
 2. **Type mapping.** The old numeric `type` values are translated to modern names
    (`2` → `extension`, `64` → `dictionary`).
-3. **`bootstrap.js` is executed.** In a `Cu.Sandbox` with the **system principal** — the same trust
+3. **`bootstrap.js` is executed.** In a `Cu.Sandbox` with the **system principal**, the same trust
    level as the browser's own code, which is inherent to how legacy add-ons work. The sandbox is
    created with `ChromeUtils.compileScript` rather than a plain `loadSubScript`, working around
    [bug 1974213](https://bugzilla.mozilla.org/show_bug.cgi?id=1974213) (loading `file:` and `jar:`
    URIs). It waits for the script to finish before continuing.
 4. **`startup()` / `shutdown()` are called.** Before `startup()`, the add-on's `chrome.manifest` is
-   registered **temporarily** as `chrome://` chrome registrations, and removed again on shutdown —
-   that is how a legacy add-on's own UI files become reachable.
+   registered **temporarily** as `chrome://` chrome registrations, and removed again on shutdown.
+   That is how a legacy add-on's own UI files become reachable.
 5. **Re-registration is cleaned up.** A killed session can leave a stale `chrome.manifest*` in
    `browser-extension-data/<id>/`; the leftovers are swept at startup, and fresh registrations are
    re-derived each session.
@@ -76,7 +76,7 @@ that registration.
 
 ## The patches that keep old add-ons alive
 
-Restoring the loader is not enough — the surrounding browser code has moved on. The loader
+Restoring the loader is not enough. The surrounding browser code has moved on. The loader
 re-implements or overrides the pieces an old add-on expects:
 
 - **`XPIDatabase.isDisabledLegacy`** → forced to `false`, so the add-on subsystem does not skip
@@ -116,7 +116,7 @@ function bootstrapLoaderBundled() {
 }
 ```
 
-Two signals: the brand name (deterministic — AutoConfig runs before the AddonManager registry
+Two signals: the brand name (deterministic: AutoConfig runs before the AddonManager registry
 exists, so the registry check only protects later evaluations), and the loader registry itself
 (name-independent, so a re-evaluation of the file in any browser is a no-op).
 
@@ -128,5 +128,3 @@ Waterfox neither copy's patches run.
   the add-on is reported as
   corrupt](../../troubleshooting/#the-add-on-is-reported-as-corrupt).
 </Aside>
-
-Next: [userChrome.js](../userchrome-js/) — the `.uc.js` script loader.

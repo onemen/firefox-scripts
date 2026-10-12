@@ -1,17 +1,17 @@
 ---
 title: FAQ
-description: Common questions about Firefox Scripts — safe mode, profiles, forks, security and updates.
+description: "Common questions about Firefox Scripts: safe mode, profiles, forks, security and updates."
 ---
 
 import { Aside } from '@astrojs/starlight/components'
 
 ## Does this work in safe mode?
 
-**No — and that is intentional.** Safe mode exists to start the browser _without_ your
+**No, and that is intentional.** Safe mode exists to start the browser _without_ your
 configuration, and these scripts are configuration. In safe mode:
 
 - `config.js` is skipped (Firefox disables AutoConfig in safe mode),
-- `userChrome.js` returns early — it explicitly checks `Services.appinfo.inSafeMode`,
+- `userChrome.js` returns early (it explicitly checks `Services.appinfo.inSafeMode`),
 - your `.uc.js` scripts do not run.
 
 So if a script breaks your browser and you cannot reach the troubleshooting tools, **safe mode is
@@ -20,7 +20,7 @@ until the next normal start.
 
 ## Do I have to install it for every profile?
 
-**The configuration files: no — per browser. The utils: yes — per profile.**
+**The configuration files: no (per browser). The utils: yes (per profile).**
 
 `config.js` lives in the browser's installation directory and is read once per browser. The utils
 live in `<profile>/chrome/utils/`, and `UChrm` resolves per profile. A second profile (including a
@@ -32,7 +32,7 @@ profile's `chrome/utils/` as described in [Installation](../installation/#instal
 
 ## Does it slow the browser down?
 
-The loader work is a handful of file reads and a manifest hash comparison at startup — the daily
+The loader work is a handful of file reads and a manifest hash comparison at startup. The daily
 update check re-reads a small JSON manifest over the network at most once a day, and only when the
 browser starts. No background service, no scheduled task, no telemetry.
 
@@ -48,19 +48,19 @@ running it, download from the [Download](../download/) page and check the hash y
 
 ## Will an extension still work after a browser update?
 
-Not automatically — and the updater is not what keeps an individual extension working. The updater
+Not automatically, and the updater is not what keeps an individual extension working. The updater
 only notifies you when a new version of the **firefox-scripts packages** (`utils.zip`,
 `fx-folder.zip`) is published; it does not update your extensions.
 
 Whether an extension keeps working after a browser update is a separate question. Legacy add-ons hook
-deep into browser internals, and most of them need an update for each Firefox release — whether a fix
+deep into browser internals, and most of them need an update for each Firefox release. Whether a fix
 exists, and how quickly, depends on each extension's author. If you let Firefox auto-update extensions
 (in **Add-ons Manager → ⋯ → Restart Firefox** / the extension's auto-update setting in
 `about:addons`), those updates arrive from the extension's own update channel, not from this project.
 
 What the updater does is close the other half of the problem: when a browser update breaks an add-on
 and a fix is published in the firefox-scripts packages, it offers that fix to you once a day in a tab
-you can act on immediately — instead of leaving you with a broken extension until you notice.
+you can act on immediately, instead of leaving you with a broken extension until you notice.
 
 ## Waterfox / Zen / LibreWolf / Floorp
 
@@ -79,7 +79,7 @@ installer runs.
 ## Is it safe?
 
 The honest answer: **it is privileged code, and you should trust its source.** A legacy add-on and a
-`.uc.js` script both run with the full privileges of the browser — the same level as Firefox's own
+`.uc.js` script both run with the full privileges of the browser, the same level as Firefox's own
 code. That is inherent to what they are, not a flaw in this project.
 
 What you can rely on:
@@ -94,7 +94,7 @@ Install add-ons and user scripts only from sources you trust.
 
 ## Can I install only the configuration files?
 
-Yes — the installer's component list is per package. But the **configuration files alone do not run
+Yes, the installer's component list is per package. But the **configuration files alone do not run
 anything**: `config.js` + `config-prefs.js` only enable AutoConfig. To run legacy add-ons or your own
 `.uc.js` scripts you also need the **utils** package (`BootstrapLoader.js`, `userChrome.js` and the
 updater). With only the configuration files installed, no legacy add-on and no `.uc.js` script will
@@ -104,8 +104,7 @@ So:
 
 - If you only want your own `.uc.js` scripts and no legacy add-ons, install the configuration files
   **and** the utils, and leave TabMixPlus out.
-- If you only run add-ons and write no scripts, install the configuration files **and** the utils —
-  the updater in `utils.zip` still keeps itself current without anything extra.
+- If you only run add-ons and write no scripts, install the configuration files **and** the utils. The updater in `utils.zip` still keeps itself current without anything extra.
 
 Installation paths per OS are in [Installation → by hand](../installation/#install-config-script).
 
@@ -113,7 +112,7 @@ Installation paths per OS are in [Installation → by hand](../installation/#ins
 
 When macOS updates Firefox it replaces the whole `Firefox.app` bundle, which removes the
 configuration files you put inside it (`config.js` and `defaults/pref/config-prefs.js`). After a
-macOS Firefox update, reinstall the configuration files into the fresh bundle — see
+macOS Firefox update, reinstall the configuration files into the fresh bundle. See
 [Installation → by hand](../installation/#install-config-script). If macOS blocked the modified
 bundle from launching, check **System Settings → Privacy & Security → Security** and allow it.
 
@@ -125,6 +124,6 @@ Remove `config.js` and `defaults/pref/config-prefs.js` from the browser root dir
 
 <Aside type="note" title="Still stuck?">
   See [Troubleshooting](../troubleshooting/), then open an
-  [issue](https://github.com/onemen/firefox-scripts/issues) — please include
+  [issue](https://github.com/onemen/firefox-scripts/issues). Please include
   your browser version and the output of `about:support`.
 </Aside>

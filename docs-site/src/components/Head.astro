@@ -3,7 +3,7 @@
 // router, so navigating between pages is a client-side swap animated by the
 // browser's View Transition API instead of a full page load (issue #28).
 //
-// Starlight's own <Head /> is kept and wrapped — re-implementing it would
+// Starlight's own <Head /> is kept and wrapped. Re-implementing it would
 // mean duplicating `Astro.locals.starlightRoute.head` handling here.
 import Default from '@astrojs/starlight/components/Head.astro';
 import { ClientRouter } from 'astro:transitions';
@@ -22,7 +22,7 @@ import { ClientRouter } from 'astro:transitions';
   // are identical on both sides of the swap, so only the article area changes
   // and a full-viewport fade draws the eye to something that did not move.
   // Setting the attribute on <html> also means it survives each swap, because
-  // ClientRouter copies the current <html> onto the incoming page — hence
+  // ClientRouter copies the current <html> onto the incoming page, hence
   // re-applying it on astro:after-swap as well as once up front.
   const ANIMATE = 'transition:animate';
 
@@ -37,7 +37,7 @@ import { ClientRouter } from 'astro:transitions';
   disableTransitionAnimate();
 
   // Starlight builds its Pagefind UI inside the <site-search> custom element.
-  // <ClientRouter /> re-creates the header — and that element — on every in-site
+  // <ClientRouter /> re-creates the header (and that element) on every in-site
   // navigation, so the UI has to be rebuilt after each swap or the search
   // dialog opens empty.
   //
@@ -49,7 +49,7 @@ import { ClientRouter } from 'astro:transitions';
   //     initialised" from "container present but empty".
   //
   // Without the second guard a UI is stacked into the same container on every
-  // navigation — measured 1 -> 2 -> 3 -> 4 over four navigations.
+  // navigation, measured 1 -> 2 -> 3 -> 4 over four navigations.
   let initialLoad = true;
 
   document.addEventListener('astro:page-load', () => {
@@ -65,7 +65,7 @@ import { ClientRouter } from 'astro:transitions';
 
     const onIdle = window.requestIdleCallback || (cb => setTimeout(cb, 1));
     onIdle(async () => {
-      // @ts-expect-error — no types published for @pagefind/default-ui.
+      // @ts-expect-error: no types published for @pagefind/default-ui.
       const { PagefindUI } = await import('@pagefind/default-ui');
       new PagefindUI({
         element: '#starlight__search',
