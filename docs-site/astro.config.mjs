@@ -30,10 +30,12 @@ export const starlightConfig = {
   lastUpdated: true,
   components: {
     Head: "./src/components/Head.astro",
+    SocialIcons: "./src/components/SocialIcons.astro",
   },
+  // Download is not here: it lives in the header bar (SocialIcons), one
+  // click away from every page, like tabmixplus-docs.
   sidebar: [
     { label: "Installation", link: "/installation" },
-    { label: "Download", link: "/download" },
     {
       label: "How it works",
       collapsed: false,

@@ -1,52 +1,24 @@
 ---
 title: Download
-description: The current Firefox Scripts packages, the installer binaries, and how to revert to an earlier build.
+description: The installer binaries and script packages — current and past builds.
 ---
 
 import { Aside } from '@astrojs/starlight/components'
 import ReleaseDownloads from '../../components/ReleaseDownloads.astro'
 import {
-  assetUrl,
   coreReleases,
   hashesUrl,
   INSTALLER_FILES,
   latestAssets,
-  packages,
   releases,
   SCRIPT_FILES,
   installerReleases,
 } from '../../utils/getDownloadsInfoSync.mjs'
 
-// Fallback for a missing asset entry in downloadsInfo.json: the releases page
-// rather than a dead link.
-const LATEST = 'https://github.com/onemen/firefox-scripts/releases/tag/latest'
-
-The table below is generated at build time from the **same files the updater reads**: the
-per-package dates come from the hash manifest on the Pages branch
-(`hashes.json`), and the release links come from the
-[GitHub releases](https://github.com/onemen/firefox-scripts/releases). There is nothing to
-maintain by hand.
-
 <Aside type="tip" title="First time here?">
   Follow the [Installation guide](../installation/). You want the installer
   binary, not the zips.
 </Aside>
-
-## The packages
-
-| Package          | Download                                                                                                                    | Published                             | What goes where                                                 |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
-| **Installer**    | [`latest` release](https://github.com/onemen/firefox-scripts/releases/tag/latest)                                           | —                                     | one-shot setup tool, per OS                                     |
-| **`fx-folder`**  | <a href={assetUrl('latest', 'fx-folder.zip') ?? LATEST}><code>fx-folder.zip</code></a> | {packages['fx-folder']?.date ?? '—'}  | `config.js`, `config-prefs.js` → browser installation directory |
-| **`utils`**      | <a href={assetUrl('latest', 'utils.zip') ?? LATEST}><code>utils.zip</code></a>         | {packages['utils']?.date ?? '—'}      | chrome scripts → each profile's `chrome/utils/`                 |
-
-Installer binaries in the `latest` release:
-- <a href={assetUrl('latest', 'installer_win.exe') ?? LATEST}><code>installer_win.exe</code></a> — Windows
-- <a href={assetUrl('latest', 'installer_linux') ?? LATEST}><code>installer_linux</code></a> — Linux x86_64
-- <a href={assetUrl('latest', 'installer_linux_aarch64') ?? LATEST}><code>installer_linux_aarch64</code></a> — Linux ARM64
-- <a href={assetUrl('latest', 'installer_mac') ?? LATEST}><code>installer_mac</code></a> — macOS (universal: Intel + Apple Silicon)
-
-Each binary ships with a `.sha256` sidecar, so you can verify the download before you run it.
 
 :::note[About the dates]
 Packages are **dated, not version-numbered**: every publish stamps each package with the date its
@@ -54,34 +26,21 @@ content last changed (`YYYY-MM-DD`, UTC). That is why `fx-folder` can show an ol
 `utils` — it simply has not changed since.
 :::
 
-## Finding out what you have installed
-
-Both the installer and the updater tab show the same per-package dates and status. Open the updater
-from the browser menu — next to each package's manual-download link it shows the date of the
-currently published package, and **Up to date** means your installed copy matches it. Re-running the
-installer shows the same per-package dates, plus each browser's Up to date / Update available status.
-
-## Reverting to an earlier build
-
-The `latest` release always holds the newest build of every file. Each past publish is also frozen
-in a dated release — `installer-<date>` for the installer binaries and helpers, `core-<date>`
-for the package zips. Pick a version in each dropdown to get its files: the newest entry of each
-kind links through `tag/latest` (always the current build), older entries through their own frozen
-tag.
-
-### Installer versions
+## Installer versions
 
 <ReleaseDownloads
   id="installer-versions"
+  familyLabel="installer"
   versions={installerReleases}
   files={INSTALLER_FILES}
   latestAssets={latestAssets}
 />
 
-### Script versions
+## Script versions
 
 <ReleaseDownloads
   id="script-versions"
+  familyLabel="script"
   versions={coreReleases}
   files={SCRIPT_FILES}
   latestAssets={latestAssets}

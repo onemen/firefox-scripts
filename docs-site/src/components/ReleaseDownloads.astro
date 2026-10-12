@@ -24,14 +24,31 @@ interface Version {
 }
 interface Props {
   id: string;
+  familyLabel: string;
   versions: Version[];
   files: VersionFile[];
   latestAssets: VersionAsset[];
 }
 
-const { id, versions, files, latestAssets } = Astro.props;
+const { id, familyLabel, versions, files, latestAssets } = Astro.props;
 const selectId = `${id}-select`;
+const badgeId = `${id}-badge`;
 const latestByName = new Map(latestAssets.map((a) => [a.name, a.href]));
+
+// `YYYY-MM-DD` → `September 26, 2026`. Built from parts, never parsed as a
+// date string, so no timezone can shift it a day.
+function longDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function optionLabel(version: Version, newest: boolean): string {
+  return `${familyLabel} - ${longDate(version.date)}${newest ? ' — Latest' : ''}`;
+}
 
 // File href for one version: the `latest`-tag URL for the newest version of
 // the family, that version's own frozen-tag URL otherwise. Null when the
@@ -46,21 +63,24 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
 {
   versions.length === 0 ? (
     <p>
-      No frozen releases of this kind are listed. See the{" "}
-      <a href="https://github.com/onemen/firefox-scripts/releases">releases page</a>{" "}
+      No frozen releases of this kind are listed. See the{' '}
+      <a href="https://github.com/onemen/firefox-scripts/releases">releases page</a>{' '}
       directly.
     </p>
   ) : (
-    <div data-release-downloads>
-      <p>
-        <label for={selectId}>Version </label>
+    <div class="release-downloads" data-release-downloads>
+      <p class="picker-row">
+        <label for={selectId}>Version</label>
         <select id={selectId} data-version-select>
           {versions.map((v, i) => (
             <option value={v.tag} selected={i === 0 ? true : undefined}>
-              {v.date} ({v.tag}){i === 0 ? " — Latest" : ""}
+              {optionLabel(v, i === 0)}
             </option>
           ))}
         </select>
+        <span class="latest-badge" id={badgeId}>
+          Latest
+        </span>
       </p>
       {versions.map((v, i) => {
         const newest = i === 0;
@@ -73,33 +93,32 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
           .filter((f) => f.href !== null);
         return (
           <div data-version-files data-tag={v.tag} hidden={i === 0 ? undefined : true}>
-            <p>
-              Published {v.date}
+            <p class="version-meta">
+              Published {longDate(v.date)}
               {newest ? (
                 <>
-                  {" "}· newest build, served from{" "}
+                  {' '}· newest build, served from{' '}
                   <a href="https://github.com/onemen/firefox-scripts/releases/tag/latest">
                     tag/latest
                   </a>
                 </>
               ) : (
                 <>
-                  {" "}· <a href={v.htmlUrl}>release page</a>
+                  {' '}· <a href={v.htmlUrl}>release page</a>
                 </>
               )}
             </p>
-            <ul>
+            <ul class="file-list">
               {links.map((f) => (
                 <li>
-                  <a href={f.href ?? ""}>
+                  <a href={f.href ?? ''}>
                     <code>{f.name}</code>
-                  </a>{" "}
-                  — {f.label}
+                  </a>{' '}
+                  <span class="file-label">— {f.label}</span>
                   {f.sha !== null && (
-                    <>
-                      {" "}
-                      (<a href={f.sha}>sha256</a>)
-                    </>
+                    <a class="sha-link" href={f.sha}>
+                      sha256
+                    </a>
                   )}
                 </li>
               ))}
@@ -120,19 +139,89 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
     sel.dataset.wired = '1';
     const root = sel.closest('[data-release-downloads]');
     if (!root) return;
+    const badge = root.querySelector('.latest-badge');
+    const newestTag = sel.options[0]?.value;
+    const syncBadge = () => {
+      if (badge) badge.hidden = sel.value !== newestTag;
+    };
     sel.addEventListener('change', () => {
       root.querySelectorAll('[data-version-files]').forEach((el) => {
         const div = /** @type {HTMLElement} */ (el);
         div.hidden = div.dataset.tag !== sel.value;
       });
+      syncBadge();
     });
+    syncBadge();
   });
 </script>
 
 <style>
-  [data-release-downloads] select {
-    font-size: 1rem;
-    padding: 0.25rem 0.5rem;
-    max-width: 100%;
+  .release-downloads {
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.75rem;
+    padding: 1rem 1.25rem;
+    margin-block: 1rem;
+    background: var(--sl-color-gray-7, transparent);
+  }
+  .picker-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0 0 0.75rem;
+  }
+  .picker-row label {
+    font-weight: 600;
+  }
+  .picker-row select {
+    font: inherit;
+    flex: 1;
+    min-width: 0;
+    padding: 0.45rem 0.6rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--sl-color-gray-5);
+    background: var(--sl-color-black);
+    color: var(--sl-color-white);
+  }
+  .picker-row select:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 1px;
+  }
+  .latest-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    background: var(--sl-color-green-low, #d9f99f);
+    color: var(--sl-color-green-high, #365314);
+    white-space: nowrap;
+  }
+  .version-meta {
+    margin: 0 0 0.5rem;
+    color: var(--sl-color-gray-3);
+    font-size: 0.9rem;
+  }
+  .file-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .file-list li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-top: 1px solid var(--sl-color-gray-6);
+  }
+  .file-list li:first-child {
+    border-top: 0;
+  }
+  .file-list .file-label {
+    color: var(--sl-color-gray-3);
+  }
+  .file-list .sha-link {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+    white-space: nowrap;
   }
 </style>
