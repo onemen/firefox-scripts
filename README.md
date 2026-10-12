@@ -11,6 +11,9 @@ browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Fl
 into the browser, and an in-browser updater keeps them current automatically as new versions are
 released.
 
+Full documentation (installation, download, how it works, troubleshooting):
+**<https://onemen.github.io/firefox-scripts/>**
+
 ## Supported browsers
 
 - Firefox (stable, Nightly, Developer Edition)
