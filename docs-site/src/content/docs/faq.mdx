@@ -94,17 +94,15 @@ Install add-ons and user scripts only from sources you trust.
 
 ## Can I install only the configuration files?
 
-Yes, the installer's component list is per package. But the **configuration files alone do not run
-anything**: `config.js` + `config-prefs.js` only enable AutoConfig. To run legacy add-ons or your own
-`.uc.js` scripts you also need the **utils** package (`BootstrapLoader.js`, `userChrome.js` and the
-updater). With only the configuration files installed, no legacy add-on and no `.uc.js` script will
-load.
+No. The configuration files (`config.js` and `config-prefs.js`, the `fx-folder` package) only switch
+on Firefox's AutoConfig startup hook. With nothing else installed, there is no code for that hook
+to load: no legacy add-on and no `.uc.js` script will run.
 
-So:
-
-- If you only want your own `.uc.js` scripts and no legacy add-ons, install the configuration files
-  **and** the utils, and leave TabMixPlus out.
-- If you only run add-ons and write no scripts, install the configuration files **and** the utils. The updater in `utils.zip` still keeps itself current without anything extra.
+The **utils** package (`BootstrapLoader.js`, `userChrome.js` and the updater) is what the hook loads,
+so it is required in every setup. Picking only "Configuration files" in the installer leaves a
+browser that reads `config.js` and then does nothing with it. The reverse holds too: the utils do
+nothing without the configuration files loading them. Install both packages; that is the default the
+installer offers.
 
 Installation paths per OS are in [Installation → by hand](../installation/#install-config-script).
 

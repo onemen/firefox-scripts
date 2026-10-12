@@ -69,6 +69,11 @@ Choose the components to install:
   directory.
 - **Utils** (the chrome scripts): copied to your profile's `chrome/utils/` directory.
 
+:::note
+Install both packages. The configuration files alone load nothing, and the utils alone are never
+loaded. See [Can I install only the configuration files?](../faq/#can-i-install-only-the-configuration-files).
+:::
+
 Click **Install**, wait for completion, then **Restart the browser** when prompted.
 
 The installer automates the manual steps further down this page. It fetches `fx-folder.zip` and `utils.zip` from the latest release itself and copies each package to its place: the configuration files to the browser installation directory, and the utils to `chrome/utils/` in every profile you set up. Installing by hand below does the same thing file by file.
@@ -100,6 +105,24 @@ Once installed, the scripts keep themselves current without you re-running the i
 - **Notification tab.** When an update is available, the updater opens a tab showing what would
   change. You can install the update right there, skip it for the day, or permanently ignore a
   specific update.
+- **Your choices.** **Remind me Tomorrow** closes the tab and the daily check keeps it closed
+  until tomorrow. **Don't show again for this update** (a checkbox per package) ignores that one
+  published version; it is offered again only when a newer package is published. Both are stored
+  as preferences (`extensions.firefox-scripts.skippedHash.<package>`), so clearing one in
+  `about:config` re-offers the update.
+
+<a
+  href="https://raw.githubusercontent.com/onemen/firefox-scripts/main/docs/screenshots/options.png"
+  target="_blank"
+  rel="noopener"
+  class="screenshot"
+>
+  <img
+    src="https://raw.githubusercontent.com/onemen/firefox-scripts/main/docs/screenshots/options.png"
+    width="420"
+    alt="Updater tab update choices: Remind me Tomorrow and per-package skip"
+  />
+</a>
 - **In-tab install.** Applying an update downloads the new packages and copies them into place
   inside the browser. No installer download needed. Updating the configuration files, which live
   in admin-protected folders (e.g. Program Files on Windows), triggers a single elevation prompt
@@ -263,8 +286,8 @@ ensuring **Tab Mix Plus** works seamlessly within each individual profile.
 ## Removing the scripts
 
 1. Remove `config.js` and `defaults/pref/config-prefs.js` from the Firefox root directory.
-2. Remove the `chrome` folder from each profile (or just `chrome/utils` if you only want to drop
-   the shipped scripts and keep any of your own `chrome/` files).
+2. Remove `chrome/utils` from each profile (your own `.uc.js` scripts and `userChrome.css` in
+   `chrome/` stay untouched).
 3. Restart the browser.
 
 The updater goes away with the utils, so nothing will try to re-install anything. If you still have
