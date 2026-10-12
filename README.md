@@ -19,8 +19,7 @@ released.
 - LibreWolf
 - Floorp
 
-A browser must be **running** to be detected (detection uses process scanning and lock-file
-inspection).
+Start the browser before running the installer: it can only set up browsers that are currently open.
 
 Download the installer for your OS from the
 [Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest), run it with a
