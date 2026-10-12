@@ -79,10 +79,11 @@ const newest = versions[0];
         <p class="hint">Click to select older {familyLabel} versions</p>
       )}
       <div class="combo">
-        <button
-          type="button"
+        <div
           class="combo-box"
           id={boxId}
+          role="button"
+          tabindex="0"
           aria-haspopup="listbox"
           aria-expanded="false"
           aria-controls={listId}
@@ -95,30 +96,30 @@ const newest = versions[0];
             Latest
           </span>
           <span class="chevron" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="reset-button"
-          id={resetId}
-          title=""
-          disabled
-          aria-label="Back to the latest version"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="18"
-            height="18"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
+          <button
+            type="button"
+            class="reset-button"
+            id={resetId}
+            title=""
+            disabled
+            aria-label="Back to the latest version"
           >
-            <path d="M3 12a9 9 0 1 0 3-6.7" />
-            <path d="M3 4v5h5" />
-          </svg>
-        </button>
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 12a9 9 0 1 0 3-6.7" />
+              <path d="M3 4v5h5" />
+            </svg>
+          </button>
+        </div>
         <div class="combo-list" id={listId} role="listbox" hidden>
           {versions.map((v, i) => (
             <div
@@ -193,8 +194,12 @@ const newest = versions[0];
     const root = /** @type {HTMLElement} */ (node);
     if (root.dataset.wired) return;
     root.dataset.wired = '1';
-    const box = root.querySelector('.combo-box');
-    const list = root.querySelector('.combo-list');
+    const box = /** @type {HTMLElement | null} */ (
+      root.querySelector('.combo-box')
+    );
+    const list = /** @type {HTMLElement | null} */ (
+      root.querySelector('.combo-list')
+    );
     const reset = /** @type {HTMLButtonElement | null} */ (
       root.querySelector('.reset-button')
     );
@@ -233,6 +238,13 @@ const newest = versions[0];
     }
 
     box.addEventListener('click', () => setExpanded(list.hidden));
+    box.addEventListener('keydown', (e) => {
+      const key = /** @type {KeyboardEvent} */ (e).key;
+      if (key === 'Enter' || key === ' ') {
+        e.preventDefault();
+        setExpanded(list.hidden);
+      }
+    });
     reset.addEventListener('click', (e) => {
       e.stopPropagation();
       if (newestOption) select(newestOption);
@@ -319,9 +331,9 @@ const newest = versions[0];
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2.25rem;
-    height: 2.25rem;
-    border-radius: 0.6rem;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 0.45rem;
     border: 1px solid transparent;
     background: transparent;
     color: var(--sl-color-white);
