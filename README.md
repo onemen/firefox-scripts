@@ -48,9 +48,6 @@ The installed scripts build on
 - **[Developer guide](docs/DEVELOPING.md)**: building the installer, the publish/release workflow,
   the generated files, and how the installer works under the hood.
 - **[Contributing](CONTRIBUTING.md)**: how to set up the repo, run checks, and submit changes.
-- **Roadmap**: GitHub is the single source of truth: the
-  [Post v1.0](https://github.com/onemen/firefox-scripts/milestone/2) milestone view and the
-  [Post-v1.0 roadmap](https://github.com/onemen/firefox-scripts/issues/38) umbrella issue.
 
 ### Contributing
 
