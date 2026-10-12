@@ -171,7 +171,7 @@ const newest = versions[0];
                   <a href={f.href ?? ''}>
                     <code>{f.name}</code>
                   </a>{' '}
-                  <span class="file-label">— {f.label}</span>
+                  <span class="file-label">{f.label}</span>
                   {f.sha !== null && (
                     <a class="sha-link" href={f.sha}>
                       sha256
@@ -270,6 +270,7 @@ const newest = versions[0];
     border-radius: 0.75rem;
     padding: 1rem 1.25rem;
     margin-block: 1rem;
+    max-width: 620px;
     background: var(--sl-color-gray-7, transparent);
   }
   .hint {
@@ -389,13 +390,12 @@ const newest = versions[0];
     padding: 0;
     margin: 0;
   }
-  /* One 3-column grid, IDENTICAL in both cards: the first column floor
-     (14rem) fits the longest filename (`installer_linux_aarch64`) so both
-     cards compute exactly the same tracks; the label takes the slack. */
+  /* One shared 3-column grid, identical in both cards: the 12rem floor
+     fits the longest filename, so both cards compute the same tracks. */
   .file-list li {
     display: grid;
-    grid-template-columns: minmax(14rem, auto) minmax(0, 1fr) auto;
-    column-gap: 1rem;
+    grid-template-columns: minmax(12rem, auto) minmax(0, 1fr) auto;
+    column-gap: 0.75rem;
     align-items: baseline;
     padding: 0.4rem 0;
     border-top: 1px solid var(--sl-color-gray-6);
@@ -403,7 +403,12 @@ const newest = versions[0];
   .file-list li:first-child {
     border-top: 0;
   }
+  .file-list code {
+    font-size: 0.85em;
+    white-space: nowrap;
+  }
   .file-list .file-label {
+    font-size: 0.8rem;
     color: var(--sl-color-gray-3);
   }
   .file-list .sha-link {
@@ -412,13 +417,13 @@ const newest = versions[0];
     white-space: nowrap;
     justify-self: end;
   }
-  @media (max-width: 40rem) {
+  /* Labels stay in the 2nd column except on very narrow screens. */
+  @media (max-width: 22rem) {
     .file-list li {
       grid-template-columns: minmax(0, 1fr) auto;
-      column-gap: 0.75rem;
     }
     .file-list .file-label {
-      grid-column: 1 / -1;
+      grid-column: 2;
     }
   }
 </style>

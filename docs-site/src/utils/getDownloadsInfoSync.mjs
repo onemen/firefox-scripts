@@ -71,12 +71,11 @@ const INSTALLER_FILES = [
 const SCRIPT_FILES = [
   {
     name: "utils.zip",
-    label: "chrome scripts for each profile's chrome/utils/",
+    label: "chrome scripts → profile chrome/utils/",
   },
   {
     name: "fx-folder.zip",
-    label:
-      "config.js and config-prefs.js for the browser installation directory",
+    label: "config files → browser installation directory",
   },
 ];
 
