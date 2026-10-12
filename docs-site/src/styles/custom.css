@@ -34,16 +34,17 @@
   object-fit: contain;
 }
 
-/* Installation landing: the lead paragraph under the title. Bigger type and
-   an accent edge so it reads as the page intro, not another admonition. */
+/* Installation landing: the lead paragraph under the title. Plain lede
+   typography, deliberately NOT a callout box, so it cannot be mistaken for
+   another Starlight aside. */
 .lead-note {
-  font-size: 1.05rem;
-  line-height: 1.6;
-  padding: 1rem 1.25rem;
-  margin-bottom: 1.5rem;
-  border-left: 4px solid var(--sl-color-accent);
-  background: var(--sl-color-accent-low);
-  border-radius: 0 0.5rem 0.5rem 0;
+  font-size: 1.25rem;
+  line-height: 1.65;
+  font-weight: 500;
+  margin: 0.75rem 0 2rem;
+  max-width: 42rem;
+  color: var(--sl-color-gray-1);
+  text-wrap: pretty;
 }
 
 /* Download page: the generated "latest release" line. */
