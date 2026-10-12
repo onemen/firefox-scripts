@@ -1,12 +1,17 @@
 ---
 // A version picker for one release family (installer binaries or script
-// zips): a dropdown of frozen tags, newest first, with the selected
-// version's file links below it. The newest version's files link through
-// the moving `latest` tag (tag/latest), older versions through their own
-// frozen tag — so the newest entry is always the current build even when
-// the generated release list is a fetch behind.
+// zips), after the tabmixplus-docs Download pattern: a dropdown whose
+// closed box reads "Version <tag>" with a Latest badge and a restore
+// button, opening a list of frozen tags (newest first) with the selected
+// version's file links below it.
 //
-// Everything but the dropdown switching is prerendered: with JS disabled
+// The newest version's files link through the moving `latest` tag
+// (tag/latest), older versions through their own frozen tag — so the
+// newest entry is always the current build even when the generated
+// release list is a fetch behind. The restore button is only enabled
+// while an older version is selected and jumps back to the newest.
+//
+// Everything but the version switching is prerendered: with JS disabled
 // the newest version's files are simply shown.
 interface VersionFile {
   name: string;
@@ -31,7 +36,11 @@ interface Props {
 }
 
 const { id, familyLabel, versions, files, latestAssets } = Astro.props;
-const selectId = `${id}-select`;
+const boxId = `${id}-box`;
+const listId = `${id}-list`;
+const resetId = `${id}-reset`;
+const currentId = `${id}-current`;
+const badgeId = `${id}-badge`;
 const latestByName = new Map(latestAssets.map((a) => [a.name, a.href]));
 
 // `YYYY-MM-DD` → `September 26, 2026`. Built from parts, never parsed as a
@@ -45,10 +54,6 @@ function longDate(iso: string): string {
   });
 }
 
-function optionLabel(version: Version, newest: boolean): string {
-  return `${familyLabel} - ${longDate(version.date)}${newest ? ' — Latest' : ''}`;
-}
-
 // File href for one version: the `latest`-tag URL for the newest version of
 // the family, that version's own frozen-tag URL otherwise. Null when the
 // version never shipped the file (the link is then omitted, never dead).
@@ -57,6 +62,8 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
   if (!newest) return own;
   return latestByName.get(name) ?? own;
 }
+
+const newest = versions[0];
 ---
 
 {
@@ -68,30 +75,83 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
     </p>
   ) : (
     <div class="release-downloads" data-release-downloads>
-      <p class="picker-row">
-        <label for={selectId}>Version</label>
-        <select id={selectId} data-version-select>
+      {versions.length > 1 && (
+        <p class="hint">Click to select older {familyLabel} versions</p>
+      )}
+      <div class="combo">
+        <button
+          type="button"
+          class="combo-box"
+          id={boxId}
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-controls={listId}
+        >
+          <span class="combo-title">Version</span>
+          <span class="combo-current" data-current id={currentId}>
+            {newest.tag}
+          </span>
+          <span class="latest-badge" data-badge id={badgeId}>
+            Latest
+          </span>
+          <span class="chevron" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          class="reset-button"
+          id={resetId}
+          title=""
+          disabled
+          aria-label="Back to the latest version"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 12a9 9 0 1 0 3-6.7" />
+            <path d="M3 4v5h5" />
+          </svg>
+        </button>
+        <div class="combo-list" id={listId} role="listbox" hidden>
           {versions.map((v, i) => (
-            <option value={v.tag} selected={i === 0 ? true : undefined}>
-              {optionLabel(v, i === 0)}
-            </option>
+            <div
+              class="option"
+              role="option"
+              aria-selected={i === 0 ? 'true' : 'false'}
+              tabindex="-1"
+              data-tag={v.tag}
+              data-date={longDate(v.date)}
+              data-href={v.htmlUrl}
+              data-newest={i === 0 ? 'true' : undefined}
+            >
+              <span class="option-tag">{v.tag}</span>
+              <span class="option-date">{longDate(v.date)}</span>
+              {i === 0 && <span class="latest-badge">Latest</span>}
+            </div>
           ))}
-        </select>
-      </p>
+        </div>
+      </div>
       {versions.map((v, i) => {
-        const newest = i === 0;
+        const isNewest = i === 0;
         const links = files
           .map((f) => ({
             ...f,
-            href: fileHref(v, newest, f.name),
-            sha: fileHref(v, newest, `${f.name}.sha256`),
+            href: fileHref(v, isNewest, f.name),
+            sha: fileHref(v, isNewest, `${f.name}.sha256`),
           }))
           .filter((f) => f.href !== null);
         return (
           <div data-version-files data-tag={v.tag} hidden={i === 0 ? undefined : true}>
             <p class="version-meta">
               Published {longDate(v.date)}
-              {newest ? (
+              {isNewest ? (
                 <>
                   {' '}· newest build, served from{' '}
                   <a href="https://github.com/onemen/firefox-scripts/releases/tag/latest">
@@ -128,18 +188,66 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
 
 <script>
   // One copy of this script lands per component instance; the guard keeps
-  // the second copy from double-wiring the same dropdowns.
-  document.querySelectorAll('select[data-version-select]').forEach((node) => {
-    const sel = /** @type {HTMLSelectElement} */ (node);
-    if (sel.dataset.wired) return;
-    sel.dataset.wired = '1';
-    const root = sel.closest('[data-release-downloads]');
-    if (!root) return;
-    sel.addEventListener('change', () => {
-      root.querySelectorAll('[data-version-files]').forEach((el) => {
-        const div = /** @type {HTMLElement} */ (el);
-        div.hidden = div.dataset.tag !== sel.value;
+  // a second copy from double-wiring the same dropdowns.
+  document.querySelectorAll('[data-release-downloads]').forEach((node) => {
+    const root = /** @type {HTMLElement} */ (node);
+    if (root.dataset.wired) return;
+    root.dataset.wired = '1';
+    const box = root.querySelector('.combo-box');
+    const list = root.querySelector('.combo-list');
+    const reset = /** @type {HTMLButtonElement | null} */ (
+      root.querySelector('.reset-button')
+    );
+    const current = root.querySelector('[data-current]');
+    const badge = root.querySelector('[data-badge]');
+    if (!box || !list || !reset || !current) return;
+    const options = [...root.querySelectorAll('.option')];
+    const newestOption = /** @type {HTMLElement | undefined} */ (
+      options.find((o) => /** @type {HTMLElement} */ (o).dataset.newest)
+    );
+
+    function setExpanded(open) {
+      box.setAttribute('aria-expanded', String(open));
+      list.hidden = !open;
+    }
+
+    function select(option) {
+      const el = /** @type {HTMLElement} */ (option);
+      options.forEach((o) =>
+        /** @type {HTMLElement} */ (o).setAttribute(
+          'aria-selected',
+          String(o === el)
+        )
+      );
+      current.textContent = el.dataset.tag ?? '';
+      root.querySelectorAll('[data-version-files]').forEach((node) => {
+        const div = /** @type {HTMLElement} */ (node);
+        div.hidden = div.dataset.tag !== el.dataset.tag;
       });
+      const isNewest = el === newestOption;
+      if (badge) badge.hidden = !isNewest;
+      reset.disabled = !!isNewest;
+      reset.title = isNewest ? '' : 'Back to the latest version';
+      setExpanded(false);
+      box.focus();
+    }
+
+    box.addEventListener('click', () => setExpanded(list.hidden));
+    reset.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (newestOption) select(newestOption);
+    });
+    list.addEventListener('click', (e) => {
+      const option = /** @type {HTMLElement | null} */ (
+        /** @type {HTMLElement} */ (e.target).closest('.option')
+      );
+      if (option) select(option);
+    });
+    root.addEventListener('keydown', (e) => {
+      if (/** @type {KeyboardEvent} */ (e).key === 'Escape') setExpanded(false);
+    });
+    document.addEventListener('click', (e) => {
+      if (!root.contains(/** @type {Node} */ (e.target))) setExpanded(false);
     });
   });
 </script>
@@ -152,40 +260,115 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
     margin-block: 1rem;
     background: var(--sl-color-gray-7, transparent);
   }
-  .picker-row {
+  .hint {
+    margin: 0 0 0.5rem;
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+  }
+  .combo {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .combo-box {
+    font: inherit;
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin: 0 0 0.75rem;
-    line-height: 1.4;
-  }
-  .picker-row > * {
-    margin: 0;
-  }
-  .picker-row label {
-    font-weight: 600;
-    flex: none;
-    align-self: center;
-  }
-  .picker-row select {
-    font: inherit;
-    line-height: inherit;
-    flex: 1;
-    min-width: 0;
-    align-self: center;
-    padding: 0.45rem 0.6rem;
-    border-radius: 0.5rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 0.6rem;
     border: 1px solid var(--sl-color-gray-5);
     background: var(--sl-color-black);
     color: var(--sl-color-white);
-    vertical-align: middle;
+    cursor: pointer;
   }
-  .picker-row select:focus-visible {
-    outline: 2px solid var(--sl-color-text-accent);
-    outline-offset: 1px;
+  .combo-title {
+    font-weight: 400;
+    color: var(--sl-color-gray-3);
+    flex: none;
+  }
+  .combo-current {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .latest-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    background: var(--sl-color-green-low, #d9f99f);
+    color: var(--sl-color-green-high, #365314);
+    white-space: nowrap;
+  }
+  .chevron {
+    margin-left: auto;
+    flex: none;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+  }
+  .reset-button {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.6rem;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--sl-color-white);
+    cursor: pointer;
+  }
+  .reset-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+  }
+  .reset-button:not(:disabled):hover {
+    border-color: var(--sl-color-gray-5);
+  }
+  .combo-list {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    max-height: 20rem;
+    overflow: auto;
+    border-radius: 0.6rem;
+    border: 1px solid var(--sl-color-gray-5);
+    background: var(--sl-color-black);
+    color: var(--sl-color-white);
+  }
+  .option {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    column-gap: 1rem;
+    align-items: center;
+    padding: 0.45rem 0.9rem;
+    cursor: pointer;
+  }
+  .option:hover {
+    background: var(--sl-color-gray-6);
+  }
+  .option[aria-selected='true'] {
+    font-weight: 600;
+    background: var(--sl-color-text-accent);
+    color: var(--sl-color-text-invert);
+  }
+  .option-date {
+    font-size: 0.85rem;
+    font-weight: 400;
   }
   .version-meta {
-    margin: 0 0 0.5rem;
+    margin: 0.75rem 0 0.5rem;
     color: var(--sl-color-gray-3);
     font-size: 0.9rem;
   }
@@ -194,11 +377,10 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
     padding: 0;
     margin: 0;
   }
-  /* One shared 3-column grid — identical fr widths in both cards, since
-     both lists span the same content width. */
+  /* Filename hugs its content; the label takes the slack — in both cards. */
   .file-list li {
     display: grid;
-    grid-template-columns: 1.2fr 1fr auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     column-gap: 1rem;
     align-items: baseline;
     padding: 0.4rem 0;
