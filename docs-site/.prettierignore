@@ -1,4 +1,4 @@
-# prettier runs here for .astro components, .mjs/.ts utils, CSS and JSON —
+# prettier runs here for .astro components, .mjs/.ts utils, CSS and JSON.
 # but NEVER for the page sources: prettier's MDX formatter inserts a blank line
 # after an opening `(` inside a JSX expression, which terminates the expression
 # and breaks the Astro build with a bare `Parse error @:1:1` (verified with

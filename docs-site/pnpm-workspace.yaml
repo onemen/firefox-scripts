@@ -1,12 +1,12 @@
 # The docs site is its OWN pnpm workspace root (issue #28): the repo root is a
 # root-only workspace (`packages: []`), and the Astro toolchain must not ride
-# the root install — a docs dependency bump must never touch the publish
+# the root install. A docs dependency bump must never touch the publish
 # tooling's dependency set, and `pnpm install` at the repo root must not pull
 # Astro in.
 packages:
   - "."
 
-# Same supply-chain floor as the repo root (ADR 0033 — dependency-update
+# Same supply-chain floor as the repo root (ADR 0033, dependency-update
 # policy): a package must have been published at least 7200 minutes (5 days)
 # before it can be installed. Newer releases simply wait.
 minimumReleaseAge: 7200

@@ -34,6 +34,18 @@
   object-fit: contain;
 }
 
+/* Installation landing: the lead paragraph under the title. Bigger type and
+   an accent edge so it reads as the page intro, not another admonition. */
+.lead-note {
+  font-size: 1.05rem;
+  line-height: 1.6;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  border-left: 4px solid var(--sl-color-accent);
+  background: var(--sl-color-accent-low);
+  border-radius: 0 0.5rem 0.5rem 0;
+}
+
 /* Download page: the generated "latest release" line. */
 .release-note {
   font-size: var(--sl-text-sm);

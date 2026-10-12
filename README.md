@@ -30,75 +30,29 @@ inspection).
    - `installer_linux` — Linux (x86_64) · `installer_linux_aarch64` — Linux (ARM64)
    - `installer_mac` — macOS (universal: Intel + Apple Silicon)
 
-2. **Run** the downloaded installer. The installer is currently **unsigned**, so on Windows
-   SmartScreen may show _"Windows protected your PC"_ on first run — click **More info → Run
-   anyway** to continue, and approve the single **UAC prompt** if it appears (one checksum-verified
-   elevation, for the copy step only). It then connects to a running Firefox-family browser
-   (Firefox, Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab,
-   and lets you pick which browser to set up.
-3. **Choose the components** to install:
-   - **Configuration files** (`config.js`, `config-prefs.js`) — copied to the browser's installation
-     directory
-   - **Utils** (the chrome scripts) — copied to your profile's `chrome/utils/` directory
-4. Click **Install**, wait for completion, then **Restart the browser** when prompted.
+2. **Run** it with a Firefox-family browser open. It opens an install screen in a browser tab where
+   you pick the browser and the components (configuration files, utils).
+3. Click **Install**, then **restart the browser** when prompted.
 
-> The install tab always opens. It is the piece that downloads the packages from the network; if
-> they cannot be reached, the tab shows a network-error banner instead of the install screen.
-
-The installer itself is a one-shot setup tool: it installs only the components you pick above and
-**does not** leave behind any other files, background processes, or scheduled tasks. After the
-install completes you can delete the downloaded executable — nothing else was installed besides the
-configuration files and scripts you chose.
-
-Prefer to install by hand, or want the full documentation? See the docs site at
-**<https://onemen.github.io/firefox-scripts/>** — installation (with the exact paths per OS), the
-download page, how the three scripts work, and troubleshooting.
+Full walkthrough with screenshots, per-OS paths, and hand installation:
+[Installation](https://onemen.github.io/firefox-scripts/installation/). The installer is a one-shot
+setup tool: nothing is left behind but the files you chose.
 
 ## How the updater keeps your scripts up to date
 
-Once installed, the scripts keep themselves current without you re-running the installer:
-
-- **Daily check.** The updater (a small privileged script that lives inside the browser) checks once
-  a day whether a newer version of the scripts or configuration files has been published.
-- **Notification tab.** When an update is available, the updater opens a tab showing what would
-  change. You can install the update right there, skip it for the day, or permanently ignore a
-  specific update.
-- **In-tab install.** Applying an update downloads the new packages and copies them into place
-  inside the browser — no installer download needed. Updating the configuration files, which live in
-  admin-protected folders (e.g. Program Files on Windows), triggers a single elevation prompt via a
-  small helper that ships with the update.
-- **Manual update.** You can always open the updater manually from the browser menu, or download the
-  `utils.zip` / `fx-folder.zip` packages directly from the update tab.
-
-Updater UI scripts update automatically, as a background service of Firefox. Configuration-file
-updates and browser restarts are applied only when you choose to install them, keeping the process
-predictable and under your control.
+Once installed, a small in-browser updater checks once a day for new `firefox-scripts` packages and
+offers them in a tab (install, remind tomorrow, or skip per package). No re-install needed. Details
+and the update choices:
+[Installation](https://onemen.github.io/firefox-scripts/installation/#the-updater) and
+[Installer and auto-updater](https://onemen.github.io/firefox-scripts/how-it-works/installer-updater/).
 
 ## Original Scripts and Core Folders
 
-The scripts this project installs are the long-standing ones from
-[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) — the original
-project that lets Firefox-family browsers run legacy (non-WebExtension) extensions. In this
-repository they are bundled into two packages:
-
-- **`utils.zip`** — the chrome scripts (the userChromeJS loader, the legacy-extension shim, and the
-  in-browser updater), installed to your profile's `chrome/utils/` directory.
-- **`fx-folder.zip`** — the configuration files (`config.js`, `config-prefs.js`), installed to the
-  browser's installation directory.
-
-Both packages are also available for download from the
-[Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest) — you can install or
-update them by hand. After your first install from this repository, the browser will notify you when
-a new version is available (see
-[How the updater keeps your scripts up to date](#how-the-updater-keeps-your-scripts-up-to-date)).
-
-### Finding your version and reverting
-
-The packages are dated, not version-numbered: every publish stamps each package with the date its
-content last changed (`YYYY-MM-DD`, UTC). The
-**[download page](https://onemen.github.io/firefox-scripts/download/)** lists the current
-per-package dates, the installer binaries, and the frozen past releases you can revert to — built
-from the same release data the updater itself consumes.
+The installed scripts build on
+[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) (MPL-2.0), bundled
+here as `utils.zip` (chrome scripts, per profile) and `fx-folder.zip` (configuration files, browser
+directory), plus this repository's own installer and updater (MIT). Package dates, downloads, and
+past releases: [Download](https://onemen.github.io/firefox-scripts/download/).
 
 The original scripts are governed by the
 [Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/); the in-browser updater
