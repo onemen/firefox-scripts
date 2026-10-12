@@ -92,9 +92,10 @@ from '@assets/chrome_utils.png'` + `<Image src={img} alt="…" />`). `tsconfig.j
 
 ## Dev-server lines you can ignore
 
-- `[WARN] [content] The collection "i18n" does not exist or is empty`: Starlight registers an
-  `i18n` collection for custom UI strings, and this site customizes none. Expected on any
-  single-locale Starlight site without `src/content/i18n/`. Nothing to fix.
+- `[WARN] [content] The collection "i18n" does not exist or is empty`: fixed by registering
+  Starlight's `i18nLoader()`/`i18nSchema()` in `src/content.config.ts` plus one minimal
+  `src/content/i18n/en.json`. Without it, Starlight's translation lookup hits an unregistered
+  collection and Astro warns on every page render. Do not delete those two files.
 - `[vite] Re-optimizing dependencies ... transitions-...`: Vite pre-bundling the View Transitions
   modules the client-side router imports. One-time per config change, then cached.
 - `[301] /`: the `/` redirect to `/firefox-scripts/installation/`. Normal.
