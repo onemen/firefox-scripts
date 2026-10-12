@@ -19,10 +19,10 @@ new versions are released.
 - Floorp
 
 Download the installer for your OS from the
-[Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest), run it with a
-Firefox-family browser open, pick the browser and components in the tab it opens, and restart the
-browser when prompted. The installer is a one-shot setup tool: nothing is left behind but the files
-you chose.
+[Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest), and follow the
+installation guide below: run it with a Firefox-family browser open, pick the browser and components
+in the tab it opens, and restart the browser when prompted. The installer is a one-shot setup tool:
+nothing is left behind but the files you chose.
 
 ## Documentation
 
