@@ -272,3 +272,6 @@ logic: the `generated-files` skill + `docs/DEVELOPING.md` + ADR
   rule).
 - **Text files are LF**; a local working-tree copy can linger as CRLF, so when a tool parses a
   tracked text file, normalize `\r\n` → `\n` at read (`docs/continuous-integration.md`).
+- **Prose and comments never use em dashes.** Break a sentence with commas, parentheses, or periods
+  instead. `pnpm lint` (`lint:hygiene`) judges new lines only; existing occurrences are
+  grandfathered.
