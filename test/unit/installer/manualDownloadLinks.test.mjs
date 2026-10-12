@@ -21,8 +21,8 @@ import assert from 'node:assert/strict';
 
 import {loadWebUi, jsonResponse, rawResponse} from '../../shared/webUiSandbox.mjs';
 
-const FX_ZIP = 'https://onemen.github.io/firefox-scripts/fx-folder.zip';
-const UTILS_ZIP = 'https://onemen.github.io/firefox-scripts/utils.zip';
+const FX_ZIP = 'https://github.com/onemen/firefox-scripts/releases/download/latest/fx-folder.zip';
+const UTILS_ZIP = 'https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip';
 
 function json(body) {
   return jsonResponse(body);
@@ -77,7 +77,7 @@ test('the two links never cross over: a package swap moves both hrefs and both d
   const ui = await bootTab({
     '/api/package-urls': () =>
       packageUrls({
-        utilsUrl: 'https://onemen.github.io/firefox-scripts/utils.zip?v=2',
+        utilsUrl: 'https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip?v=2',
         fxFolderDate: '2026-10-01',
         utilsDate: '2026-10-02',
       }),
@@ -85,12 +85,12 @@ test('the two links never cross over: a package swap moves both hrefs and both d
 
   assert.equal(
     ui.element('link-download-fx').href,
-    'https://onemen.github.io/firefox-scripts/fx-folder.zip',
+    'https://github.com/onemen/firefox-scripts/releases/download/latest/fx-folder.zip',
     'fx link keeps the fx zip'
   );
   assert.equal(
     ui.element('link-download-utils').href,
-    'https://onemen.github.io/firefox-scripts/utils.zip?v=2',
+    'https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip?v=2',
     'utils link picks up the new utils zip'
   );
   assert.equal(ui.element('fx-download-date').textContent, ' (last update Oct 1, 2026)');

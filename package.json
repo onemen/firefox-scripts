@@ -41,7 +41,6 @@
     "docs:downloads": "pnpm --dir docs-site downloads",
     "docs:publish": "node tools/docs/publishDocsSite.mjs",
     "docs:install": "pnpm --dir docs-site install",
->>>>>>> ce67ea57 (feat(docs): publish a user docs site at the Pages branch root)
     "check:gates": "node tools/check-gate-coverage.mjs",
     "check:core-tests": "node tools/check-core-test-change.mjs",
     "test:hash": "node installer/test/test_hash.mjs && node installer/test/test_self_update.mjs",
