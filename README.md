@@ -6,10 +6,9 @@
 Install and keep Firefox-family browser scripts up to date.
 
 **firefox-scripts** installs and keeps up to date the helper scripts that let Firefox-family
-browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Floorp) run legacy
-(non-WebExtension) extensions such as **TabMixPlus**. A small native installer copies two packages
-into the browser, and an in-browser updater keeps them current automatically as new versions are
-released.
+browsers run legacy (non-WebExtension) extensions such as **TabMixPlus**. A small native installer
+copies two packages into the browser, and an in-browser updater keeps them current automatically as
+new versions are released.
 
 ## Supported browsers
 
@@ -18,8 +17,6 @@ released.
 - Zen Browser
 - LibreWolf
 - Floorp
-
-Start the browser before running the installer: it can only set up browsers that are currently open.
 
 Download the installer for your OS from the
 [Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest), run it with a
