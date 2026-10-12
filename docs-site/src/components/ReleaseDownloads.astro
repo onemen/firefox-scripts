@@ -32,7 +32,6 @@ interface Props {
 
 const { id, familyLabel, versions, files, latestAssets } = Astro.props;
 const selectId = `${id}-select`;
-const badgeId = `${id}-badge`;
 const latestByName = new Map(latestAssets.map((a) => [a.name, a.href]));
 
 // `YYYY-MM-DD` → `September 26, 2026`. Built from parts, never parsed as a
@@ -78,9 +77,6 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
             </option>
           ))}
         </select>
-        <span class="latest-badge" id={badgeId}>
-          Latest
-        </span>
       </p>
       {versions.map((v, i) => {
         const newest = i === 0;
@@ -139,19 +135,12 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
     sel.dataset.wired = '1';
     const root = sel.closest('[data-release-downloads]');
     if (!root) return;
-    const badge = root.querySelector('.latest-badge');
-    const newestTag = sel.options[0]?.value;
-    const syncBadge = () => {
-      if (badge) badge.hidden = sel.value !== newestTag;
-    };
     sel.addEventListener('change', () => {
       root.querySelectorAll('[data-version-files]').forEach((el) => {
         const div = /** @type {HTMLElement} */ (el);
         div.hidden = div.dataset.tag !== sel.value;
       });
-      syncBadge();
     });
-    syncBadge();
   });
 </script>
 
@@ -168,32 +157,32 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
     align-items: center;
     gap: 0.75rem;
     margin: 0 0 0.75rem;
+    line-height: 1.4;
+  }
+  .picker-row > * {
+    margin: 0;
   }
   .picker-row label {
     font-weight: 600;
+    flex: none;
+    align-self: center;
   }
   .picker-row select {
     font: inherit;
+    line-height: inherit;
     flex: 1;
     min-width: 0;
+    align-self: center;
     padding: 0.45rem 0.6rem;
     border-radius: 0.5rem;
     border: 1px solid var(--sl-color-gray-5);
     background: var(--sl-color-black);
     color: var(--sl-color-white);
+    vertical-align: middle;
   }
   .picker-row select:focus-visible {
     outline: 2px solid var(--sl-color-text-accent);
     outline-offset: 1px;
-  }
-  .latest-badge {
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.15rem 0.6rem;
-    border-radius: 999px;
-    background: var(--sl-color-green-low, #d9f99f);
-    color: var(--sl-color-green-high, #365314);
-    white-space: nowrap;
   }
   .version-meta {
     margin: 0 0 0.5rem;
@@ -205,10 +194,13 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
     padding: 0;
     margin: 0;
   }
+  /* One shared 3-column grid — identical fr widths in both cards, since
+     both lists span the same content width. */
   .file-list li {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1.2fr 1fr auto;
+    column-gap: 1rem;
     align-items: baseline;
-    gap: 0.5rem;
     padding: 0.4rem 0;
     border-top: 1px solid var(--sl-color-gray-6);
   }
@@ -219,9 +211,17 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
     color: var(--sl-color-gray-3);
   }
   .file-list .sha-link {
-    margin-left: auto;
     font-size: 0.8rem;
     color: var(--sl-color-gray-3);
     white-space: nowrap;
+    justify-self: end;
+  }
+  @media (max-width: 40rem) {
+    .file-list li {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .file-list .file-label {
+      grid-column: 1 / -1;
+    }
   }
 </style>
