@@ -23,6 +23,10 @@
  * 4. Authored skills stay under SKILL_LINE_CAP lines. Third-party skills carry
  *    github-repo frontmatter and are exempt (byte-identical upstream, ADR
  *    0022).
+ * 5. New prose and comments never use the em dash character (commas, parentheses,
+ *    or periods instead). Only added lines are judged, so the existing
+ *    occurrences are grandfathered; string literals, fenced code blocks, and
+ *    inline code spans are not prose and stay out of scope.
  *
  * Comment hygiene in this file: the literal tokens are never written here —
  * fixtures in the test build them by concatenation, prose uses placeholders
@@ -99,6 +103,13 @@ export const CHAT_RE =
 
 // Code-like extensions under the strict rules. Docs (.md) get the concrete
 // path rule only — prose about the gitignore rule itself is legitimate.
+// The em dash, matched by escape so this file never carries the literal: the
+// test builds it the same way, and added-lines-only judging keeps this very// description clean.
+export const EM_DASH_RE = /\u2014/;
+const MD_FENCE_RE = /^(`{3,}|~{3,})/;
+const MD_INLINE_CODE_RE = /`[^`\n]*`/g;
+const QUOTED_SPAN_RE = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g;
+
 const CODE_EXTS = new Set(['.js', '.mjs', '.c', '.h', '.yml', '.sh', '.ps1']);
 
 /**
@@ -192,6 +203,173 @@ export function findChatRefs(files) {
 }
 
 /**
+ * Whether an added line in a code file reads as a comment. Line-local on
+ * purpose: quoted spans are stripped first (escape-aware), so a dash inside a
+ * string literal never counts. Block-comment interiors without a marker are
+ * missed; the repo's marker-led JSDoc and docblock style keeps that gap small.
+ *
+ * @param {string} line one added line
+ * @returns {boolean}
+ */
+export function isCommentLine(line) {
+  const stripped = line.replace(QUOTED_SPAN_RE, "''");
+  const trimmed = stripped.trimStart();
+  return (
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('#') ||
+    trimmed.startsWith('*') ||
+    trimmed.startsWith('<!--') ||
+    stripped.includes('//') ||
+    stripped.includes('/*') ||
+    stripped.includes('*/')
+  );
+}
+
+/**
+ * New em dashes in prose and comments. Markdown files are prose except fenced
+ * code blocks and inline code spans; code files judge comment lines only, so
+ * string literals (including user-facing UI text) stay out of scope.
+ *
+ * @param {{path: string; lines: string[]; added: Set<number>}[]} files
+ * @returns {string[]}
+ */
+export function findEmDashes(files) {
+  const violations = [];
+  for (const file of files) {
+    const ext = path.extname(file.path).toLowerCase();
+    const prose = ext === '.md';
+    if (!prose && !CODE_EXTS.has(ext)) continue;
+    let inFence = false;
+    for (let i = 0; i < file.lines.length; i++) {
+      const no = i + 1;
+      const raw = file.lines[i];
+      const fence = prose && MD_FENCE_RE.test(raw.trimStart());
+      if (!file.added.has(no)) {
+        if (fence) inFence = !inFence;
+        continue;
+      }
+      if (prose) {
+        if (fence) {
+          inFence = !inFence;
+          continue;
+        }
+        if (inFence) continue;
+        if (EM_DASH_RE.test(raw.replace(MD_INLINE_CODE_RE, '``'))) {
+          violations.push(
+            `${file.path}:${no}: new prose uses an em dash (use a comma, parens, or a period)`
+          );
+        }
+      } else if (isCommentLine(raw) && EM_DASH_RE.test(raw.replace(QUOTED_SPAN_RE, "''"))) {
+        violations.push(
+          `${file.path}:${no}: new comment uses an em dash (use a comma, parens, or a period)`
+        );
+      }
+    }
+  }
+  return violations;
+}
+
+/**
+ * New-file start line of a `--unified=0` hunk header. Manual parsing rather
+ * than a regex: the nested-quantifier shape trips
+ * security/detect-unsafe-regex.
+ *
+ * @param {string} line hunk header line
+ * @returns {number} the new-file start line, or 0 when unparseable
+ */
+export function parseHunkStart(line) {
+  const plus = line.indexOf('+', 3);
+  if (plus === -1) return 0;
+  let end = plus + 1;
+  while (end < line.length && line[end] >= '0' && line[end] <= '9') end += 1;
+  if (end === plus + 1) return 0;
+  return Number(line.slice(plus + 1, end));
+}
+
+/**
+ * Added (new-file) line numbers per path from `--unified=0` diff text. Pure;
+ * git stays in collectAddedLines so tests never shell out.
+ *
+ * @param {string} diffText raw unified diff with zero context lines
+ * @returns {Map<string, Set<number>>} repo-relative path to added 1-based lines
+ */
+export function parseAddedLines(diffText) {
+  const added = new Map();
+  let file = null;
+  let no = 0;
+  for (const line of diffText.split('\n')) {
+    if (line.startsWith('+++ ')) {
+      const match = /^\+\+\+ b\/(.+)$/.exec(line);
+      file = match ? match[1] : null;
+    } else if (line.startsWith('@@ ')) {
+      no = parseHunkStart(line);
+    } else if (file !== null && line.startsWith('+')) {
+      if (!added.has(file)) added.set(file, new Set());
+      added.get(file).add(no);
+      no += 1;
+    }
+  }
+  return added;
+}
+
+function runGit(args) {
+  return execFileSync('git', args, {cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 8 << 20});
+}
+
+function safeMergeBase(base) {
+  try {
+    const out = runGit(['merge-base', 'HEAD', base]).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Added-line sets for the em-dash guard: the working tree against HEAD (the
+ * local and pre-push input) plus the PR range off the merge base when one
+ * resolves (the CI input on a clean checkout), plus every line of covered
+ * untracked files (all of it is new). Throws when git cannot answer, so main()
+ * can stand this guard down loudly while the other guards still run.
+ *
+ * @param {{base?: string}} [opts]
+ * @returns {Map<string, Set<number>>}
+ */
+export function collectAddedLines({base} = {}) {
+  const added = new Map();
+  const merge = other => {
+    for (const [file, lines] of other) {
+      if (!added.has(file)) added.set(file, new Set());
+      for (const no of lines) added.get(file).add(no);
+    }
+  };
+  merge(parseAddedLines(runGit(['diff', 'HEAD', '--unified=0', '--no-color', '--'])));
+  const ref = base || process.env.GITHUB_BASE_REF || 'origin/main';
+  const mergeBase = safeMergeBase(ref);
+  if (mergeBase) {
+    merge(
+      parseAddedLines(runGit(['diff', '--unified=0', '--no-color', `${mergeBase}...HEAD`, '--']))
+    );
+  } else {
+    merge(parseAddedLines(runGit(['diff', '--unified=0', '--no-color', ref, 'HEAD', '--'])));
+  }
+  const others = runGit(['ls-files', '--others', '--exclude-standard'])
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+  for (const rel of others) {
+    const ext = path.extname(rel).toLowerCase();
+    if (ext !== '.md' && !CODE_EXTS.has(ext)) continue;
+    const abs = path.join(REPO_ROOT, rel);
+    if (!fs.existsSync(abs)) continue;
+    const count = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n').split('\n').length;
+    if (!added.has(rel)) added.set(rel, new Set());
+    for (let no = 1; no <= count; no++) added.get(rel).add(no);
+  }
+  return added;
+}
+
+/**
  * Authored skills over the line cap. Third-party skills (github-repo in
  * frontmatter) are exempt.
  *
@@ -250,6 +428,22 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     .map(rel => ({path: rel, lines: readLines(rel)}));
 
   const violations = [...findLocalRefs(files), ...findMarkers(files), ...findChatRefs(files)];
+
+  // Guard 5 judges added lines only, so the grandfathered tree stays clean.
+  // When git cannot answer, only this guard stands down (loudly); the rest
+  // still run.
+  try {
+    const added = collectAddedLines();
+    const fresh = [...added.keys()]
+      .filter(rel => {
+        const ext = path.extname(rel).toLowerCase();
+        return (ext === '.md' || CODE_EXTS.has(ext)) && present(rel);
+      })
+      .map(rel => ({path: rel, lines: readLines(rel), added: added.get(rel)}));
+    violations.push(...findEmDashes(fresh));
+  } catch (err) {
+    console.log(`check-hygiene: em-dash guard skipped (${String(err.message).split('\n')[0]})`);
+  }
 
   const skillFiles = tracked.filter(
     rel => /^.agents\/skills\/[^/]+\/SKILL\.md$/.test(rel) && present(rel)

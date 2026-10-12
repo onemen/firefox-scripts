@@ -1,6 +1,6 @@
 // test/unit/tools/check-hygiene.test.mjs — the leftover-reference gates.
 //
-// Three guards over tracked files (tools/check-hygiene.mjs, `lint:hygiene`
+// Guards over tracked files (tools/check-hygiene.mjs, `lint:hygiene`
 // stage): no dot-local dir references in code (and no concrete
 // dot-local/<path> references in docs), no leftover batch/audit markers in
 // code, and authored skills stay under the line cap (third-party skills carry
@@ -14,15 +14,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 import {
+  EM_DASH_RE,
   LOCAL_CONCRETE_RE,
   LOCAL_REF_RE,
   MARKER_RE,
   SKILL_LINE_CAP,
   findChatRefs,
+  findEmDashes,
   findLocalRefs,
   findMarkers,
+  isCommentLine,
   isSystemAnchored,
   overlongSkills,
+  parseAddedLines,
+  parseHunkStart,
   skillInfo,
 } from '../../../tools/check-hygiene.mjs';
 
@@ -204,4 +209,94 @@ test('overlongSkills: an authored skill at exactly the cap passes', () => {
     {path: '.agents/skills/mine/SKILL.md', frontmatter: 'name: mine\n', lines: SKILL_LINE_CAP},
   ]);
   assert.deepEqual(violations, []);
+});
+
+// ── em dash in new prose and comments ──────────────────────────────────────
+// The mark under test is built by escape, never written literally.
+const DASH = '\u2014';
+
+test('findEmDashes: an added md line with the mark is a violation; untouched lines stay clean', () => {
+  const violations = findEmDashes([
+    {
+      path: 'docs/x.md',
+      lines: ['clean', 'old ' + DASH + ' line', 'new ' + DASH + ' line'],
+      added: new Set([3]),
+    },
+  ]);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /docs\/x\.md:3/);
+});
+
+test('findEmDashes: fenced code and inline code spans are not prose', () => {
+  const violations = findEmDashes([
+    {
+      path: 'docs/x.md',
+      lines: ['```js', "const s = 'a" + DASH + "b';", '```', 'see `' + DASH + '` here'],
+      added: new Set([2, 4]),
+    },
+  ]);
+  assert.deepEqual(violations, []);
+});
+
+test('findEmDashes: comment lines flag; string literals stay clean', () => {
+  const violations = findEmDashes([
+    {
+      path: 'tools/foo.mjs',
+      lines: [
+        '// note ' + DASH + ' here',
+        "const s = 'a" + DASH + "b'; // plain comment",
+        "const t = 'a" + DASH + "b';",
+      ],
+      added: new Set([1, 2, 3]),
+    },
+  ]);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /foo\.mjs:1/);
+});
+
+test('findEmDashes: hash and marker-led lines flag; other extensions skip', () => {
+  const violations = findEmDashes([
+    {path: 'tools/x.sh', lines: ['# note ' + DASH + ' here'], added: new Set([1])},
+    {path: 'installer/src/x.c', lines: [' * note ' + DASH + ' here'], added: new Set([1])},
+    {path: 'data.json', lines: ['{"a": "x ' + DASH + ' y"}'], added: new Set([1])},
+  ]);
+  assert.equal(violations.length, 2);
+});
+
+test('isCommentLine: markers flag; quoted spans do not mislead', () => {
+  assert.equal(isCommentLine('// x'), true);
+  assert.equal(isCommentLine('  # x'), true);
+  assert.equal(isCommentLine("const s = 'a'; // x"), true);
+  assert.equal(isCommentLine("const s = 'a';"), false);
+  assert.equal(EM_DASH_RE.test('a' + DASH + 'b'), true);
+});
+
+test('parseAddedLines: new-file numbering across hunks; removals do not advance', () => {
+  const diff = [
+    'diff --git a/f.md b/f.md',
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -1,0 +2 @@ x',
+    '+added two',
+    '@@ -5,2 +6,3 @@ y',
+    '-gone',
+    '+added six',
+    '+added seven',
+  ].join('\n');
+  const added = parseAddedLines(diff);
+  assert.deepEqual(
+    [...added.get('f.md')].sort((a, b) => a - b),
+    [2, 6, 7]
+  );
+});
+
+test('parseHunkStart: reads the new-file start; garbage yields 0', () => {
+  assert.equal(parseHunkStart('@@ -1,0 +2 @@ x'), 2);
+  assert.equal(parseHunkStart('@@ -5,2 +6,3 @@ y'), 6);
+  assert.equal(parseHunkStart('@@ nonsense'), 0);
+});
+
+test('parseAddedLines: deletions to /dev/null name no file', () => {
+  const diff = ['--- a/f.md', '+++ /dev/null', '@@ -1 +0,0 @@ x', '-gone'].join('\n');
+  assert.equal(parseAddedLines(diff).size, 0);
 });
