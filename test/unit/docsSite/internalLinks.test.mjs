@@ -110,7 +110,13 @@ function linkTargets(src) {
 test('every docs page is discovered', () => {
   const files = mdxFiles();
   assert.ok(files.length >= 8, `expected the site's pages, found ${files.length}`);
-  assert.ok(files.includes('docs-site/src/content/docs/index.mdx'));
+  // The landing page is installation.mdx served via a / -> /installation/
+  // redirect — there is intentionally no index.mdx copy.
+  assert.ok(files.includes('docs-site/src/content/docs/installation.mdx'));
+  assert.ok(
+    !files.includes('docs-site/src/content/docs/index.mdx'),
+    'index.mdx must not come back as a copy of the landing page'
+  );
 });
 
 test('no root-absolute internal links in docs content', () => {

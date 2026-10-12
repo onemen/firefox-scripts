@@ -139,7 +139,9 @@ test('the live docs pages are clean', () => {
   const repoRoot = join(import.meta.dirname, '..', '..', '..');
   const dir = join(repoRoot, CONTENT_DIR);
   const pages = collectMdxFiles(dir);
-  assert.ok(pages.length >= 10, `expected the full page set, found ${pages.length}`);
+  // Nine pages: the landing page is installation.mdx (via redirect), not a
+  // separate index.mdx — see internalLinks.test.mjs.
+  assert.ok(pages.length >= 9, `expected the full page set, found ${pages.length}`);
   const findings = pages.flatMap(file =>
     findFindings(readFileSync(file, 'utf8')).map(f => ({
       file: file.split('\\').join('/'),

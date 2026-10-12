@@ -33,7 +33,6 @@ export const starlightConfig = {
   },
   sidebar: [
     { label: "Installation", link: "/installation" },
-    { label: "Introduction", link: "/introduction" },
     { label: "Download", link: "/download" },
     {
       label: "How it works",
@@ -51,6 +50,7 @@ export const starlightConfig = {
         },
       ],
     },
+    { label: "Why we need it", link: "/introduction" },
     { label: "FAQ", link: "/faq" },
     { label: "Troubleshooting", link: "/troubleshooting" },
   ],
@@ -63,5 +63,12 @@ export default defineConfig({
   base,
   compressHTML: true,
   trailingSlash: "always",
+  // The landing page IS installation.mdx: there is no index.mdx copy, so /
+  // redirects there. The static build emits this as a meta-refresh page,
+  // which GitHub Pages serves fine. The target spells out `base` because
+  // Astro does not prepend it to redirect targets (verified in dist/).
+  redirects: {
+    "/": `${base}/installation/`,
+  },
   integrations: [starlight(starlightConfig)],
 });
