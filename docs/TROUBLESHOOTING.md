@@ -1,26 +1,37 @@
-# Troubleshooting
+# Troubleshooting (developers)
 
-Symptom → fix. For the design behind these symptoms see [auto-updater.md](./auto-updater.md),
+Diagnostics for contributors and maintainers: the machinery behind the installer and updater
+symptoms, plus the publish/CI failures only developers see. If you _use_ the scripts and something
+is broken, start with the user
+[Troubleshooting page](https://onemen.github.io/firefox-scripts/troubleshooting/) instead.
+
+- [Installer internals](#installer-internals)
+- [Updater internals](#updater-internals)
+- [Publish / CI](#publish--ci)
+- [Getting more detail](#getting-more-detail)
+
+For the design behind these symptoms see [auto-updater.md](./auto-updater.md),
 [status-logic.md](./status-logic.md) and [security.md](./security.md); for CI failures see
 [continuous-integration.md](./continuous-integration.md).
 
-## The installer
+## Installer internals
 
-### The installer does nothing / no tab opens
+### Port 8777 is taken
 
-- **Port 8777 is taken.** A second installer attaches to the instance already serving the port and
-  opens its existing tab instead of starting a new server — check for a stray `installer_win.exe` in
-  Task Manager and kill it, then re-run.
-- **The tab opened but shows a network banner.** The C installer performs zero network I/O (ADR
-  [0005](./decisions/0005-installer-zero-network-io.md)): the _tab_ fetches the zips, manifest and
-  release lists from GitHub/Pages and POSTs them to the local server. A blocked or offline network
-  surfaces as a banner and a refused install — fix connectivity (or a proxy blocking
-  `api.github.com` / `onemen.github.io`) and retry.
-- **No browser detected.** The installer detects browsers from running processes and their profile
-  lock files. Start the browser once (so its lock file exists) or launch it from the installer tab's
-  instructions, then re-run.
+A second installer attaches to the instance already serving the port and opens its existing tab
+instead of starting a new server. Check for a stray `installer_win.exe` in Task Manager and kill it,
+then re-run.
 
-### Windows Defender / AV flags `installer_win.exe`
+### The tab fetches, the binary serves
+
+The C installer performs zero network I/O (ADR
+[0005](./decisions/0005-installer-zero-network-io.md)): the _tab_ fetches the zips, manifest and
+release lists from GitHub/Pages and POSTs them to the local server. A network banner in the tab
+therefore means connectivity (or a proxy blocking `api.github.com` / `onemen.github.io`), never a
+binary defect. The installer detects browsers from running processes and their profile lock files,
+so a missing browser usually means no lock file yet. Start the browser once, then re-run.
+
+### AV flags are a publish gate
 
 The binaries are unsigned, stripped, statically-linked PEs — the classic ML false-positive profile.
 Do **not** publish a flagged build; see
@@ -29,15 +40,15 @@ for the gate, the measured root causes, and the WDSI/SignPath handling. Trackers
 [#157](https://github.com/onemen/firefox-scripts/issues/157) (detection) and
 [#159](https://github.com/onemen/firefox-scripts/issues/159) (signing).
 
-### Elevation is cancelled or fails
+### Elevation cancel is a distinct exit code
 
 On Windows, installing into `Program Files` needs one UAC prompt (delivered by the freshly
 downloaded standalone helper). Cancel is a **distinct exit code**, not a crash — re-run and accept
 the prompt, or install to a per-user location that needs no elevation.
 
-## The updater
+## Updater internals
 
-### The updater tab never opens
+### The daily check runs once per day
 
 - The daily check runs **once per day** (one pref, ADR
   [0012](./decisions/0012-new-tab-daily-notification.md)). Same-day restarts intentionally do
@@ -47,14 +58,14 @@ the prompt, or install to a per-user location that needs no elevation.
 - Open the tab manually to test: `chrome://firefox-scripts/content/ui/updater.html`. If it opens,
   the engine is fine and the issue is the check/gate, not the UI.
 
-### Status shows the wrong state
+### Installed is not up to date
 
 The status words and the exact file-existence vs hash rules are defined in
 [status-logic.md](./status-logic.md). In short: **Installed ≠ Up to date** — presence is a file
 check, up-to-date is a per-package SHA-256 manifest comparison; a stale or partial install is still
 "installed".
 
-### An update is stuck / the tab shows errors
+### Reading updater errors
 
 1. Open the **Browser Console** (`Ctrl+Shift+J`) and filter for `Firefox Scripts` — updater errors
    are logged with that prefix (tab-script errors are additionally routed through the console
@@ -64,12 +75,6 @@ check, up-to-date is a per-package SHA-256 manifest comparison; a stale or parti
 3. A per-package **skip** is remembered (`extensions.firefox-scripts.skippedHash.<pkg>`): the
    package then shows _Skipped_, not _Update available_. Clear the pref to make the update
    resurface.
-
-### After a Firefox update the scripts are gone
-
-The scripts live in the browser install dir + profile and are re-copied by the updater; a
-**browser-managed update** replaces the install dir. Re-run the installer (or wait for the daily
-check) — see [auto-updater.md](./auto-updater.md).
 
 ## Publish / CI
 

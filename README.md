@@ -58,10 +58,12 @@ publish scripts under `tools/publish/`.
 
 ### Problems?
 
-Start with **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**. It maps the common symptoms
-(installer not opening, updater stuck, publish refusing) to fixes. If nothing there fits, file an
-**issue** on [the GitHub repository](https://github.com/onemen/firefox-scripts/issues). Please
-search existing issues first. Your problem may already be reported.
+Using the scripts? See [Troubleshooting](https://onemen.github.io/firefox-scripts/troubleshooting/)
+in the Documentation list above. Developing them? Start with
+**[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**: it maps contributor symptoms (publish
+refusing, CI failures, hash and gate errors) to fixes. If nothing there fits, file an **issue** on
+[the GitHub repository](https://github.com/onemen/firefox-scripts/issues). Please search existing
+issues first. Your problem may already be reported.
 
 ### License
 
