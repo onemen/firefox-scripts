@@ -7,6 +7,7 @@ import {defineHastPlugin} from 'satteri';
 // pages still use relative links (guarded by internalLinks.test.mjs); this
 // plugin is the build-time backstop for whatever slips through, plus the
 // raw HTML anchors the source gate cannot see.
+/** @param {string} baseUrl site base, e.g. `/firefox-scripts` */
 export function createExternalLinksPlugin(baseUrl) {
   return defineHastPlugin({
     name: 'external-links',

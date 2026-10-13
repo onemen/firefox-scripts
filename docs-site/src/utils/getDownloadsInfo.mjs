@@ -33,6 +33,43 @@ const PACKAGES = ['utils', 'fx-folder'];
 
 const token = process.env.GITHUB_TOKEN_VAR || process.env.GITHUB_TOKEN || '';
 
+/**
+ * @typedef {{date: string; files?: string[]; hash: string}} ManifestEntry A
+ *   single package entry in the live hashes.json manifest.
+ */
+/**
+ * @typedef {{date: string; files: string[]; hash: string}} PackageInfo A single
+ *   package row in downloadsInfo.json (also read by getDownloadsInfoSync.mjs
+ *   via `import()` below).
+ */
+/**
+ * @typedef {{
+ *   tag_name: string;
+ *   name: string;
+ *   published_at: string;
+ *   draft: boolean;
+ *   prerelease: boolean;
+ *   html_url: string;
+ *   assets: {name: string; size: number; browser_download_url: string}[];
+ * }} GhRelease
+ *   A GitHub releases API entry (only the fields this script reads).
+ */
+/**
+ * @typedef {{
+ *   tag: string;
+ *   name: string;
+ *   publishedAt: string;
+ *   date: string;
+ *   assets: {name: string; size: number; href: string}[];
+ * }} ReleaseInfo
+ *   A release row in downloadsInfo.json.
+ */
+
+/**
+ * @param {string} url
+ * @param {{headers?: Record<string, string>}} [options]
+ * @returns {Promise<any>} Decoded JSON; callers narrow it with an `@type` cast.
+ */
 async function fetchJson(url, {headers = {}} = {}) {
   const response = await fetch(url, {
     headers: {
@@ -52,11 +89,11 @@ async function fetchJson(url, {headers = {}} = {}) {
 /**
  * Per-package publish dates + file lists from the live hash manifest.
  *
- * @returns {Promise<Record<string, {date: string; files: string[]}>>}
+ * @returns {Promise<Record<string, PackageInfo>>}
  */
 async function getPackages() {
-  const manifest = await fetchJson(HASHES_URL);
-  const packages = {};
+  const manifest = /** @type {Record<string, ManifestEntry>} */ (await fetchJson(HASHES_URL));
+  const packages = /** @type {Record<string, PackageInfo>} */ ({});
   for (const name of PACKAGES) {
     const entry = manifest[name];
     if (!entry) {
@@ -87,7 +124,7 @@ async function getPackages() {
  * >}
  */
 async function getReleases() {
-  const releases = await fetchJson(`${API}/releases?per_page=100`);
+  const releases = /** @type {GhRelease[]} */ (await fetchJson(`${API}/releases?per_page=100`));
   return releases
     .filter(r => r.tag_name === 'latest' || /^(core|installer)-\d{4}-\d{2}-\d{2}$/.test(r.tag_name))
     .map(release => ({
@@ -113,19 +150,23 @@ const outputPath = path.join(process.cwd(), 'src/utils/downloadsInfo.json');
 const result = {
   generatedAt: new Date().toISOString(),
   hashesUrl: HASHES_URL,
-  packages: {},
-  releases: [],
+  packages: /** @type {Record<string, PackageInfo>} */ ({}),
+  releases: /** @type {ReleaseInfo[]} */ ([]),
 };
 
 try {
   result.packages = await getPackages();
 } catch (error) {
-  console.warn(`[docs] WARNING: package dates unavailable (${error.message})`);
+  console.warn(
+    `[docs] WARNING: package dates unavailable (${error instanceof Error ? error.message : String(error)})`
+  );
 }
 try {
   result.releases = await getReleases();
 } catch (error) {
-  console.warn(`[docs] WARNING: release list unavailable (${error.message})`);
+  console.warn(
+    `[docs] WARNING: release list unavailable (${error instanceof Error ? error.message : String(error)})`
+  );
 }
 
 await fs.writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');

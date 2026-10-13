@@ -6,12 +6,26 @@ import fs from 'node:fs';
 
 const GENERATED = 'src/utils/downloadsInfo.json';
 
-const EMPTY = {
-  generatedAt: null,
-  hashesUrl: 'https://onemen.github.io/firefox-scripts/hashes.json',
-  packages: {},
-  releases: [],
-};
+/**
+ * @typedef {import('./getDownloadsInfo.mjs').PackageInfo} PackageInfo
+ *
+ * @typedef {import('./getDownloadsInfo.mjs').ReleaseInfo} ReleaseInfo
+ */
+
+const EMPTY =
+  /**
+   * @type {{
+   *   generatedAt: null;
+   *   hashesUrl: string;
+   *   packages: Record<string, PackageInfo>;
+   *   releases: ReleaseInfo[];
+   * }}
+   */ ({
+    generatedAt: null,
+    hashesUrl: 'https://onemen.github.io/firefox-scripts/hashes.json',
+    packages: {},
+    releases: [],
+  });
 
 let downloadsInfo = EMPTY;
 try {
@@ -24,7 +38,13 @@ try {
  * The page-ready derivation of one downloadsInfo payload, pure so the
  * multi-release history is unit-testable without touching the network.
  *
- * @param {typeof EMPTY} raw parsed downloadsInfo.json (or a fixture shape)
+ * @param {{
+ *   generatedAt: string | null;
+ *   hashesUrl: string;
+ *   packages: Record<string, PackageInfo> | {};
+ *   releases: ReleaseInfo[];
+ * }} raw
+ *   parsed downloadsInfo.json (or a fixture shape)
  */
 export function deriveDownloadsInfo(raw) {
   const {generatedAt, hashesUrl, packages, releases} = {

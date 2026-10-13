@@ -21,7 +21,9 @@ export const starlightConfig = {
   },
   social: [
     {
-      icon: 'github',
+      // Literal icon name: the social entry otherwise widens to `string`,
+      // which the Starlight config type rejects.
+      icon: /** @type {const} */ ('github'),
       label: 'GitHub',
       href: 'https://github.com/onemen/firefox-scripts',
     },
@@ -70,12 +72,12 @@ export default defineConfig({
   site: process.env.CI ? 'https://onemen.github.io' : 'http://localhost:4321',
   base,
   compressHTML: true,
-  // Satteri markdown (after tabmixplus-docs): smartypants off so `--`,
-  // `...` and quotes in CLI flags and pref names stay literal, plus the
-  // external-links plugin above as the build-time backstop for hrefs.
+  // Satteri markdown (after tabmixplus-docs): smart punctuation off so
+  // `--`, `...` and quotes in CLI flags and pref names stay literal, plus
+  // the external-links plugin above as the build-time backstop for hrefs.
   markdown: {
     processor: satteri({
-      features: {smartypants: false},
+      features: {smartPunctuation: false},
       hastPlugins: [createExternalLinksPlugin(base)],
     }),
   },
