@@ -1,0 +1,138 @@
+---
+title: userChrome.js
+description: The loader that finds your .uc.js scripts in the chrome directory, reads their headers, and runs them in every window.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components'
+
+`userChrome.js` is the script loader. It scans the profile's `chrome` directory for files ending in
+`.uc.js`, reads a metadata header from each one, and executes the matching scripts in every browser
+window, including new windows opened later.
+
+## In plain language
+
+A `.uc.js` script is a small tweak to Firefox itself, written by someone in the community: an
+extra button, a different tab behavior, a menu fix. **Using** one needs no skill. Download the
+`.uc.js` file, drop it into the `chrome` folder inside your profile folder, restart Firefox,
+done. (That folder also holds `userChrome.css`, which only *restyles* the browser (scripts can
+*do* things). They are neighbors, not the same thing.) If a script stops working, the checklist
+is short: right file name, right folder, restart. See [Writing your own
+.uc.js](../writing-uc-js/#debugging-a-script). **Writing** one is programming; the rest of this
+page and the writing tutorial are for that.
+
+It is unrelated to Firefox's own `userChrome.css`. The name `.uc.js` (and the idea of dropping
+arbitrary JavaScript into the chrome window) comes from the userChromeJS project; that GitHub
+repository is dead, and the convention is now carried forward by loaders such as this one and by the
+scripts in [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts).
+Firefox itself no longer loads these files. Restoring that is this loader's whole job, and
+[Why we need it](../../introduction/#the-short-version) is the short version of why it went missing.
+
+## Where scripts are looked for
+
+The loader resolves its directory through:
+
+```js
+chromedir: Services.dirsvc.get("UChrm", Ci.nsIFile);
+```
+
+`UChrm` is the profile's `chrome` directory. Files are picked up by extension:
+
+```js
+if (/\.uc\.js$/i.test(file.leafName)) _uc.getScriptData(file);
+```
+
+Only the top level of that directory is scanned. `chrome/utils/` is the shipped scripts' own folder
+and is **not** scanned, so your scripts go in `chrome/`, next to `userChrome.css`:
+
+```text
+<profile>/
+└── chrome/
+    ├── userChrome.css
+    ├── my-script.uc.js          ← yours
+    ├── restart.uc.js            ← a worked example, see below
+    └── utils/                   ← shipped scripts (not scanned)
+```
+
+## The header
+
+Each script starts with a metadata block. Only the block matters. The rest of the file is your
+code:
+
+```js
+// ==UserScript==
+// @name            My script
+// @include         main
+// @version         1.0
+// @author          you
+// ==/UserScript==
+```
+
+Everything the loader understands is listed in
+[Writing your own .uc.js](../writing-uc-js/#the-header-keys). A script with no `@include`
+runs in the main browser window.
+
+## How a script is executed
+
+<Steps>
+
+1. **Match.** The script's `@include` / `@exclude` patterns become one regular expression, tested
+   against the window's `location.href`. `main` is shorthand for
+   `chrome://browser/content/browser.xhtml` (the browser window).
+2. **Skip check.** A script listed in the `userChromeJS.scriptsDisabled` preference is not run.
+   That is how you disable one script without deleting it.
+3. **Cache busting.** The script URL gets `?<lastModifiedTime>` appended, so editing a script takes
+   effect on restart instead of being served from the script cache.
+4. **Run.** `Services.scriptloader.loadSubScript()` runs it with the window as the target, so the
+   script has direct access to that window's DOM. This is what a user script is for.
+5. **Lifecycle hooks.** If the header defines `@startup` / `@shutdown`, that function is evaluated in
+   the script's sandbox and called after loading and before unloading. `@onlyonce` marks a script
+   that must run a single time per browser session even though windows come and go.
+
+</Steps>
+
+## The sandbox
+
+Each window gets its own sandbox, created with the system principal, the window's global as
+prototype, and **Xrays off**, so a script sees the window's own objects, not privacy-boxed
+wrappers. Sandboxes are per-window and are destroyed when the window unloads.
+
+```js
+const sb = Cu.Sandbox(Services.scriptloader.getSystemPrincipal(), {
+  sandboxPrototype: global,
+  sameZoneAs: global,
+  wantXrays: false,
+  sandboxName: "UCJS:Sandbox",
+});
+```
+
+Every chrome window is also given two helpers before any script runs:
+
+| Object | What it is                                                                            |
+| ------ | ------------------------------------------------------------------------------------- |
+| `UC`   | a per-window registry: `UC.webExts`, `UC.sidebar`, `UC.sandboxes`                     |
+| `_uc`  | the loader's own state (the script list, the preference names, the current directory) |
+
+## The two preferences
+
+Set on first run if they do not exist yet:
+
+| Preference                     | Default | Effect                                                           |
+| ------------------------------ | ------- | ---------------------------------------------------------------- |
+| `userChromeJS.enabled`         | `true`  | when `false`, only `rebuild_userChrome.uc.js` still runs         |
+| `userChromeJS.scriptsDisabled` | `''`    | comma-separated file names to skip, e.g. `noisy.uc.js,old.uc.js` |
+
+Both are plain `about:config` preferences. Set them there, no file editing needed. Turning
+`userChromeJS.enabled` off is the fastest way to tell whether a problem is caused by a user script.
+
+## The WebExtension bridge
+
+While running, `userChrome.js` also lets a `.uc.js` script find the `browser` objects of installed
+**WebExtensions**: when an extension's background page or sidebar loads, the owning browser element
+is recorded in `UC.webExts` (background pages) or `UC.sidebar`, and the observers
+`UCJS:WebExtLoaded` / `UCJS:SidebarLoaded` are notified. That is how a user script can talk to a
+modern extension.
+
+
+- [restart.uc.js](https://github.com/onemen/firefox-scripts/blob/main/core/chrome/restart.uc.js) is a worked example of a real script in this repository's `core/chrome/` tree:
+  it uses `@include main` and `@onlyonce`, adds a toolbar button, and restarts the application on
+  click. It is not necessarily shipped inside `utils.zip`, so treat the repo file as the authoritative example.

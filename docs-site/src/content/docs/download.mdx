@@ -1,0 +1,68 @@
+---
+title: Download
+description: The installer binaries and script packages (current and past builds).
+---
+
+import { Aside } from '@astrojs/starlight/components'
+import ReleaseDownloads from '../../components/ReleaseDownloads.astro'
+import {
+  coreReleases,
+  hashesUrl,
+  INSTALLER_FILES,
+  latestAssets,
+  releases,
+  SCRIPT_FILES,
+  installerReleases,
+} from '../../utils/getDownloadsInfoSync.mjs'
+
+<Aside type="tip" title="First time here?">
+  Follow the [Installation guide](../installation/). You want the installer
+  binary, not the zips.
+</Aside>
+
+:::note[About the dates]
+Packages are **dated, not version-numbered**: every publish stamps each package with the date its
+content last changed (`YYYY-MM-DD`, UTC). That is why `fx-folder` can show an older date than
+`utils` (it simply has not changed since).
+:::
+
+Download the installer for your OS to automate the installation process, or see [Script versions](#script-versions) to install `utils.zip` and `fx-folder.zip` by hand.
+
+## Installer versions
+
+<ReleaseDownloads
+  id="installer-versions"
+  familyLabel="installer"
+  versions={installerReleases}
+  files={INSTALLER_FILES}
+  latestAssets={latestAssets}
+/>
+
+## Script versions
+
+<ReleaseDownloads
+  id="script-versions"
+  familyLabel="script"
+  versions={coreReleases}
+  files={SCRIPT_FILES}
+  latestAssets={latestAssets}
+/>
+
+Download the files for the dated release you want and install them by hand (unpack a package zip
+over the existing files, or use the updater tab's manual-download link). The next daily check will
+offer the newer version again. To stay on the older build, use **Remind me Tomorrow** to skip it
+for a day, or tick **Don't show again for this update** to ignore that published version (see
+[Update choices](../how-it-works/installer-updater/#update-choices)).
+
+{releases.length === 0 && (
+  <Aside type="caution" title="Release list unavailable">
+    The release list could not be read while this page was built. Use the
+    [releases page](https://github.com/onemen/firefox-scripts/releases) directly, and check the
+    per-package dates against the <a href={hashesUrl}>hash manifest</a>.
+  </Aside>
+)}
+
+## Source code
+
+The scripts, the installer and the publish tooling are on
+[GitHub](https://github.com/onemen/firefox-scripts).

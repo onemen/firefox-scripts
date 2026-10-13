@@ -6,10 +6,9 @@
 Install and keep Firefox-family browser scripts up to date.
 
 **firefox-scripts** installs and keeps up to date the helper scripts that let Firefox-family
-browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Floorp) run legacy
-(non-WebExtension) extensions such as **TabMixPlus** — a small native installer copies two packages
-into the browser, and an in-browser updater keeps them current automatically as new versions are
-released.
+browsers run legacy (non-WebExtension) extensions such as **TabMixPlus**. A small native installer
+copies two packages into the browser, and an in-browser updater keeps them current automatically as
+new versions are released.
 
 ## Supported browsers
 
@@ -19,156 +18,58 @@ released.
 - LibreWolf
 - Floorp
 
-A browser must be **running** to be detected (detection uses process scanning and lock-file
-inspection).
+Download the installer for your OS from the
+[Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest), and follow the
+installation guide below: run it with a Firefox-family browser open, pick the browser and components
+in the tab it opens, and restart the browser when prompted. The installer is a one-shot setup tool:
+nothing is left behind but the files you chose.
 
-## How to use the installer
+## Documentation
 
-1. **Download** the installer for your OS from the
-   [Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest):
-   - `installer_win.exe` — Windows
-   - `installer_linux` — Linux (x86_64) · `installer_linux_aarch64` — Linux (ARM64)
-   - `installer_mac` — macOS (universal: Intel + Apple Silicon)
+- **[Installation](https://onemen.github.io/firefox-scripts/installation/)**: step-by-step setup
+  with screenshots, per-OS paths, the updater and its choices, and hand installation.
+- **[Download](https://onemen.github.io/firefox-scripts/download/)**: installer binaries and script
+  packages, current and past builds.
+- **[How it works](https://onemen.github.io/firefox-scripts/how-it-works/installer-updater/)**: the
+  installer and auto-updater, the configuration files, the script loaders.
+- **[Why we need it](https://onemen.github.io/firefox-scripts/introduction/)**: why legacy
+  extensions need these helper scripts.
+- **[FAQ](https://onemen.github.io/firefox-scripts/faq/)**: safe mode, profiles, forks, security.
+- **[Troubleshooting](https://onemen.github.io/firefox-scripts/troubleshooting/)**: what to check
+  when something does not load.
 
-2. **Run** the downloaded installer. The installer is currently **unsigned**, so on Windows
-   SmartScreen may show _"Windows protected your PC"_ on first run — click **More info → Run
-   anyway** to continue, and approve the single **UAC prompt** if it appears (one checksum-verified
-   elevation, for the copy step only). It then connects to a running Firefox-family browser
-   (Firefox, Waterfox, Zen Browser, LibreWolf, or Floorp), opens an install screen in a browser tab,
-   and lets you pick which browser to set up.
-3. **Choose the components** to install:
-   - **Configuration files** (`config.js`, `config-prefs.js`) — copied to the browser's installation
-     directory
-   - **Utils** (the chrome scripts) — copied to your profile's `chrome/utils/` directory
-4. Click **Install**, wait for completion, then **Restart the browser** when prompted.
-
-> The install tab always opens. It is the piece that downloads the packages from the network; if
-> they cannot be reached, the tab shows a network-error banner instead of the install screen.
-
-The installer itself is a one-shot setup tool: it installs only the components you pick above and
-**does not** leave behind any other files, background processes, or scheduled tasks. After the
-install completes you can delete the downloaded executable — nothing else was installed besides the
-configuration files and scripts you chose.
-
-Prefer to install by hand? Follow the
-[manual installation guide](https://onemen.github.io/tabmixplus-docs/other/installation/).
-
-## How the updater keeps your scripts up to date
-
-Once installed, the scripts keep themselves current without you re-running the installer:
-
-- **Daily check.** The updater (a small privileged script that lives inside the browser) checks once
-  a day whether a newer version of the scripts or configuration files has been published.
-- **Notification tab.** When an update is available, the updater opens a tab showing what would
-  change. You can install the update right there, skip it for the day, or permanently ignore a
-  specific update.
-- **In-tab install.** Applying an update downloads the new packages and copies them into place
-  inside the browser — no installer download needed. Updating the configuration files, which live in
-  admin-protected folders (e.g. Program Files on Windows), triggers a single elevation prompt via a
-  small helper that ships with the update.
-- **Manual update.** You can always open the updater manually from the browser menu, or download the
-  `utils.zip` / `fx-folder.zip` packages directly from the update tab.
-
-Updater UI scripts update automatically, as a background service of Firefox. Configuration-file
-updates and browser restarts are applied only when you choose to install them, keeping the process
-predictable and under your control.
-
-## Original Scripts and Core Folders
-
-The scripts this project installs are the long-standing ones from
-[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) — the original
-project that lets Firefox-family browsers run legacy (non-WebExtension) extensions. In this
-repository they are bundled into two packages:
-
-- **`utils.zip`** — the chrome scripts (the userChromeJS loader, the legacy-extension shim, and the
-  in-browser updater), installed to your profile's `chrome/utils/` directory.
-- **`fx-folder.zip`** — the configuration files (`config.js`, `config-prefs.js`), installed to the
-  browser's installation directory.
-
-Both packages are also available for download from the
-[Latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest) — you can install or
-update them by hand. After your first install from this repository, the browser will notify you when
-a new version is available (see
-[How the updater keeps your scripts up to date](#how-the-updater-keeps-your-scripts-up-to-date)).
-
-### Finding your version and reverting
-
-The packages are dated, not version-numbered: every publish stamps each package with the date its
-content last changed (`YYYY-MM-DD`, UTC). To find what you have:
-
-- **Updater tab** — open the updater from the browser menu. Next to each package's manual-download
-  link it shows the date of the current published package; "Up to Date" means your installed copy
-  matches it.
-- **Installer** — re-running the installer shows the same per-package dates next to the
-  manual-download links, plus each browser's Up to Date / Update Available status.
-
-To **revert** a package to an earlier build, open the
-[releases page](https://github.com/onemen/firefox-scripts/releases): the `latest` release always
-holds the newest build of every file, and the frozen `core-<date>` (package zips) and
-`installer-<date>` (installer binaries + helpers) releases hold each past publish. Download the
-package zip from the dated release you want and install it by hand (updater tab → manual download
-link, or unpack into your profile's `chrome/utils/` — see the
-[original scripts](#original-scripts-and-core-folders) section for the layout). The next daily check
-will offer the newer version again; use the tab's skip option if you want to stay on the older build
-for that update.
-
-The original scripts are governed by the
-[Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/); the in-browser updater
-(`core/chrome/utils/updater/`) is custom to this project and licensed under the
-[MIT License](LICENSE.md).
+The installed scripts build on
+[xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts)
+([MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/)); this repository's own installer and updater are
+[MIT](LICENSE.md).
 
 ## For developers
 
-- **[Developer guide](docs/DEVELOPING.md)** — building the installer, the publish/release workflow,
+- **[Developer guide](docs/DEVELOPING.md)**: building the installer, the publish/release workflow,
   the generated files, and how the installer works under the hood.
-- **[Contributing](CONTRIBUTING.md)** — how to set up the repo, run checks, and submit changes.
-- **Roadmap** — GitHub is the single source of truth: the
-  [v1.0](https://github.com/onemen/firefox-scripts/milestone/1) and
-  [Post v1.0](https://github.com/onemen/firefox-scripts/milestone/2) milestone views plus the
-  phase/umbrella issues they collect.
-
-### Documentation index
-
-| Document                                                    | What it covers                                                                |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [DEVELOPING.md](docs/DEVELOPING.md)                         | Setup, build, test, publish/release workflow, installer architecture, tooling |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)               | Symptom → fix for installer, updater and publish failures                     |
-| [auto-updater.md](docs/auto-updater.md)                     | The in-browser updater: daily check, verification, extraction, install flow   |
-| [status-logic.md](docs/status-logic.md)                     | What “Up to date / Update available / Not installed / Skipped” mean and why   |
-| [security.md](docs/security.md)                             | Threat model: session token, localhost request model, upload verification     |
-| [continuous-integration.md](docs/continuous-integration.md) | The CI jobs, path filters and gates                                           |
-| [ci-inventory.md](docs/ci-inventory.md)                     | Generated inventory of workflows, triggers, path filters and required checks  |
-| [e2e-tests.md](docs/e2e-tests.md)                           | How the installer/updater E2E suites run                                      |
-| [e2e-legs.md](docs/e2e-legs.md)                             | Generated table of E2E legs (browsers × OS)                                   |
-| [e2e-matrix-plan.md](docs/e2e-matrix-plan.md)               | The E2E matrix design/plan                                                    |
-| [unit-test-sandboxes.md](docs/unit-test-sandboxes.md)       | The vm-sandbox technique used by the unit suites                              |
-| [debugging-with-rdp.md](docs/debugging-with-rdp.md)         | Live Firefox debugging over RDP (the `debugging-firefox` skill)               |
-| [restart-ui-tab.md](docs/restart-ui-tab.md)                 | Restarting the updater UI tab during development                              |
-| [decisions/index.md](docs/decisions/index.md)               | Architecture decision records (ADR log) — read before design changes          |
-
----
+- **[Contributing](CONTRIBUTING.md)**: how to set up the repo, run checks, and submit changes.
 
 ### Contributing
 
-Contributions are welcome — bug reports, fixes, and improvements all help. Read
+Contributions are welcome. Bug reports, fixes, and improvements all help. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow guidance, then open a pull request. The
 project's source of truth for scripts is `core/`, plus the C installer under `installer/` and the
 publish scripts under `tools/publish/`.
 
 ### Problems?
 
-Start with **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — it maps the common symptoms
+Start with **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**. It maps the common symptoms
 (installer not opening, updater stuck, publish refusing) to fixes. If nothing there fits, file an
 **issue** on [the GitHub repository](https://github.com/onemen/firefox-scripts/issues). Please
-search existing issues first — your problem may already be reported.
+search existing issues first. Your problem may already be reported.
 
 ### License
 
-[MIT](LICENSE.md) © 2026 ONEMEN <tabmix.onemen@gmail.com> — `SPDX-License-Identifier: MIT`
+[MIT](LICENSE.md) © 2026 ONEMEN <tabmix.onemen@gmail.com> (`SPDX-License-Identifier: MIT`)
 
 Applies to the whole repository **except** the upstream-derived `core/` tree (files outside
 `core/chrome/utils/updater/`), which is
 [Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/) per
-[`core/LICENSE`](core/LICENSE) — `SPDX-License-Identifier: MPL-2.0`. The custom in-browser updater
+[`core/LICENSE`](core/LICENSE) (`SPDX-License-Identifier: MPL-2.0`). The custom in-browser updater
 (`core/chrome/utils/updater/`) is MIT like the rest of the repo. See
-[Original Scripts and Core Folders](#original-scripts-and-core-folders).
+[Documentation](#documentation).

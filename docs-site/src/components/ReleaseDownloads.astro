@@ -1,0 +1,512 @@
+---
+// A version picker for one release family (installer binaries or script
+// zips), after the tabmixplus-docs Download pattern: a dropdown whose
+// closed box reads "Version <tag>" with a Latest badge and a restore
+// button, opening a list of frozen tags (newest first) with the selected
+// version's file links below it.
+//
+// The newest version's files link through the moving `latest` tag
+// (tag/latest), older versions through their own frozen tag, so the
+// newest entry is always the current build even when the generated
+// release list is a fetch behind. The restore button is only enabled
+// while an older version is selected and jumps back to the newest.
+//
+// Everything but the version switching is prerendered: with JS disabled
+// the newest version's files are simply shown. A selected older version is
+// unmissable: the box badge swaps to an amber Older version pill, the card
+// gains an amber border plus a banner, and every file row gets an Old pill.
+interface VersionFile {
+  name: string;
+  label: string;
+}
+interface VersionAsset {
+  name: string;
+  href: string;
+}
+interface Version {
+  tag: string;
+  date: string;
+  htmlUrl: string;
+  assets: VersionAsset[];
+}
+interface Props {
+  id: string;
+  familyLabel: string;
+  versions: Version[];
+  files: VersionFile[];
+  latestAssets: VersionAsset[];
+}
+
+const {id, familyLabel, versions, files, latestAssets} = Astro.props;
+const boxId = `${id}-box`;
+const listId = `${id}-list`;
+const resetId = `${id}-reset`;
+const currentId = `${id}-current`;
+const badgeId = `${id}-badge`;
+const latestByName = new Map(latestAssets.map(a => [a.name, a.href]));
+
+// `YYYY-MM-DD` → `September 26, 2026`. Built from parts, never parsed as a
+// date string, so no timezone can shift it a day.
+function longDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+// File href for one version: the `latest`-tag URL for the newest version of
+// the family, that version's own frozen-tag URL otherwise. Null when the
+// version never shipped the file (the link is then omitted, never dead).
+function fileHref(version: Version, newest: boolean, name: string): string | null {
+  const own = version.assets.find(a => a.name === name)?.href ?? null;
+  if (!newest) return own;
+  return latestByName.get(name) ?? own;
+}
+
+const newest = versions[0];
+---
+
+{versions.length === 0 ?
+  <p>
+    No frozen releases of this kind are listed. See the{' '}
+    <a href="https://github.com/onemen/firefox-scripts/releases">releases page</a> directly.
+  </p>
+: <div class="release-downloads" data-release-downloads>
+    {versions.length > 1 && <p class="hint">Click to select older {familyLabel} versions</p>}
+    <div class="combo">
+      <div
+        class="combo-box"
+        id={boxId}
+        role="button"
+        tabindex="0"
+        aria-haspopup="listbox"
+        aria-expanded="false"
+        aria-controls={listId}
+      >
+        <span class="combo-title">Version</span>
+        <span class="combo-current" data-current id={currentId}>
+          {newest.tag}
+        </span>
+        <span class="latest-badge" data-badge id={badgeId}>
+          Latest
+        </span>
+        <span class="chevron" aria-hidden="true" />
+        <button
+          type="button"
+          class="reset-button"
+          id={resetId}
+          title=""
+          disabled
+          aria-label="Back to the latest version"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 12a9 9 0 1 0 3-6.7" />
+            <path d="M3 4v5h5" />
+          </svg>
+        </button>
+      </div>
+      <div class="combo-list" id={listId} role="listbox" hidden>
+        {versions.map((v, i) => (
+          <div
+            class="option"
+            role="option"
+            aria-selected={i === 0 ? 'true' : 'false'}
+            tabindex="-1"
+            data-tag={v.tag}
+            data-date={longDate(v.date)}
+            data-href={v.htmlUrl}
+            data-newest={i === 0 ? 'true' : undefined}
+          >
+            <span class="option-tag">{v.tag}</span>
+            <span class="option-date">{longDate(v.date)}</span>
+            {i === 0 && <span class="latest-badge">Latest</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+    {versions.map((v, i) => {
+      const isNewest = i === 0;
+      const links = files
+        .map(f => ({
+          ...f,
+          href: fileHref(v, isNewest, f.name),
+          sha: fileHref(v, isNewest, `${f.name}.sha256`),
+        }))
+        .filter(f => f.href !== null);
+      return (
+        <div data-version-files data-tag={v.tag} hidden={i === 0 ? undefined : true}>
+          {!isNewest && <p class="older-banner">Older version — not the latest build.</p>}
+          <p class="version-meta">
+            Published {longDate(v.date)}
+            {isNewest ?
+              <>
+                {' '}
+                · newest build, served from{' '}
+                <a href="https://github.com/onemen/firefox-scripts/releases/tag/latest">
+                  tag/latest
+                </a>
+              </>
+            : <>
+                {' '}
+                · Older build, files served from the frozen tag ·{' '}
+                <a href={v.htmlUrl}>release page</a>
+              </>
+            }
+          </p>
+          <ul class="file-list">
+            {links.map(f => (
+              <li>
+                <a href={f.href ?? ''}>
+                  <code>{f.name}</code>
+                </a>{' '}
+                <span class="file-label">
+                  {f.label}
+                  {!isNewest && <span class="row-old-badge">Old</span>}
+                </span>
+                {f.sha !== null && (
+                  <a class="sha-link" href={f.sha}>
+                    sha256
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    })}
+  </div>
+}
+
+<!-- Picker wiring, after the tabmixplus-docs Download pattern: real
+  TypeScript directly in the script tag (annotations, `as` casts), which
+  Astro strips at bundle time. Astro re-executes the bundle after each
+  client-side navigation, and the data-wired guard keeps that idempotent. -->
+<script>
+  function ensureDismissListener(): void {
+    if (document.documentElement.hasAttribute('data-release-downloads-dismiss')) return;
+    document.documentElement.setAttribute('data-release-downloads-dismiss', '');
+    // A click outside an open list collapses it. Document-level and installed
+    // once (see the flag above): a per-picker listener would pile up stale
+    // closures over swapped-out roots on every navigation.
+    document.addEventListener('click', event => {
+      const target = event.target instanceof Node ? event.target : null;
+      document.querySelectorAll('[data-release-downloads]').forEach(picker => {
+        if (!(picker instanceof HTMLElement)) return;
+        if (target && picker.contains(target)) return;
+        const box = picker.querySelector('.combo-box');
+        const list = picker.querySelector('.combo-list');
+        if (box) box.setAttribute('aria-expanded', 'false');
+        if (list instanceof HTMLElement) list.hidden = true;
+      });
+    });
+  }
+
+  function wire(root: HTMLElement): void {
+    if (root.dataset.wired) return;
+    root.dataset.wired = '1';
+    const box = root.querySelector('.combo-box');
+    const list = root.querySelector('.combo-list');
+    const reset = root.querySelector('.reset-button');
+    const current = root.querySelector('[data-current]');
+    const badge = root.querySelector('[data-badge]');
+    if (!box || !list || !reset || !current) return;
+    // Exact element types, declared rather than narrowed: the guard above
+    // proves these at runtime, but its narrowing does not reach the nested
+    // closures below, so each element gets a type of its own.
+    const boxEl = box as HTMLElement;
+    const listEl = list as HTMLElement;
+    const resetEl = reset as HTMLButtonElement;
+    const currentEl = current as HTMLElement;
+    const options = [...root.querySelectorAll('.option')];
+    const newestOption = options.find(
+      (option): option is HTMLElement =>
+        option instanceof HTMLElement && option.dataset.newest !== undefined
+    );
+
+    function setExpanded(open: boolean): void {
+      boxEl.setAttribute('aria-expanded', String(open));
+      listEl.hidden = !open;
+    }
+
+    function select(option: HTMLElement): void {
+      options.forEach(candidate => {
+        if (candidate instanceof HTMLElement) {
+          candidate.setAttribute('aria-selected', String(candidate === option));
+        }
+      });
+      currentEl.textContent = option.dataset.tag ?? '';
+      root.querySelectorAll('[data-version-files]').forEach(node => {
+        if (!(node instanceof HTMLElement)) return;
+        node.hidden = node.dataset.tag !== option.dataset.tag;
+      });
+      const isNewest = option === newestOption;
+      root.setAttribute('data-showing', isNewest ? 'latest' : 'older');
+      if (badge instanceof HTMLElement) {
+        badge.hidden = false;
+        badge.textContent = isNewest ? 'Latest' : 'Older version';
+        badge.classList.toggle('latest-badge', isNewest);
+        badge.classList.toggle('older-badge', !isNewest);
+      }
+      resetEl.disabled = !!isNewest;
+      resetEl.title = isNewest ? '' : 'Back to the latest version';
+      setExpanded(false);
+      boxEl.focus();
+    }
+
+    // `.hidden` reads as `string | boolean` in this toolchain (TS 6 DOM
+    // types); Boolean() coerces it to the toggle `setExpanded` takes without
+    // flipping it (negating here would freeze the picker shut: hidden starts
+    // true, and setExpanded(true) is what opens it).
+    boxEl.addEventListener('click', () => setExpanded(Boolean(listEl.hidden)));
+    boxEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        setExpanded(Boolean(listEl.hidden));
+      }
+    });
+    resetEl.addEventListener('click', e => {
+      e.stopPropagation();
+      if (newestOption) select(newestOption);
+    });
+    listEl.addEventListener('click', e => {
+      const {target} = e;
+      if (!(target instanceof HTMLElement)) return;
+      const option = target.closest('.option');
+      if (option instanceof HTMLElement) select(option);
+    });
+    root.addEventListener('keydown', e => {
+      if (e.key === 'Escape') setExpanded(false);
+    });
+  }
+
+  function wireAll(): void {
+    ensureDismissListener();
+    document.querySelectorAll('[data-release-downloads]').forEach(node => {
+      if (node instanceof HTMLElement) wire(node);
+    });
+  }
+
+  wireAll();
+  // Client-side navigation swaps the picker DOM without a full page load:
+  // re-wire the fresh nodes.
+  document.addEventListener('astro:page-load', wireAll);
+</script>
+
+<style>
+  .release-downloads {
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.75rem;
+    padding: 1rem 1.25rem;
+    margin-block: 1rem;
+    max-width: 620px;
+    background: var(--sl-color-gray-7, transparent);
+  }
+  .hint {
+    margin: 0 0 0.5rem;
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+  }
+  .combo {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .combo-box {
+    font: inherit;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 0.6rem;
+    border: 1px solid var(--sl-color-gray-5);
+    background: var(--sl-color-black);
+    color: var(--sl-color-white);
+    cursor: pointer;
+  }
+  .combo-title {
+    font-weight: 400;
+    color: var(--sl-color-gray-3);
+    flex: none;
+  }
+  .combo-current {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .latest-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    background: var(--sl-color-green-low, #d9f99f);
+    color: var(--sl-color-green-high, #365314);
+    white-space: nowrap;
+  }
+  .older-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    background: #fff3cd;
+    color: #7a5b00;
+    border: 1px solid #e0b800;
+    white-space: nowrap;
+  }
+  .older-banner {
+    margin: 0.75rem 0 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background: #fff3cd;
+    border: 1px solid #e0b800;
+    color: #7a5b00;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .release-downloads[data-showing='older'] {
+    border-color: #e0b800;
+  }
+  .row-old-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    background: #fff3cd;
+    color: #7a5b00;
+    border: 1px solid #e0b800;
+    white-space: nowrap;
+    margin-left: 0.35rem;
+  }
+  .chevron {
+    margin-left: auto;
+    flex: none;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+  }
+  .reset-button {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 0.45rem;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--sl-color-white);
+    cursor: pointer;
+  }
+  .reset-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+  }
+  .reset-button:not(:disabled):hover {
+    border-color: var(--sl-color-gray-5);
+  }
+  /* The open list overlays the card content below instead of pushing it
+     down: solid background plus shadow so it reads as a floating panel
+     even with a single option, on both the short script card and the
+     taller installer card. */
+  .combo-list {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    right: 0;
+    z-index: 10;
+    /* Three-row floor: a single-option list still covers the card content
+       below it instead of wrapping tight around the one row. One row is
+       one line plus 0.9rem of vertical padding. */
+    min-height: calc(3lh + 2.7rem);
+    max-height: 20rem;
+    overflow: auto;
+    border-radius: 0.6rem;
+    border: 1px solid var(--sl-color-gray-5);
+    background: var(--sl-color-black);
+    color: var(--sl-color-white);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+  .option {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    column-gap: 1rem;
+    align-items: center;
+    padding: 0.45rem 0.9rem;
+    cursor: pointer;
+  }
+  .option:hover {
+    background: var(--sl-color-gray-6);
+  }
+  .option[aria-selected='true'] {
+    font-weight: 600;
+    background: var(--sl-color-text-accent);
+    color: var(--sl-color-text-invert);
+  }
+  .option-date {
+    font-size: 0.85rem;
+    font-weight: 400;
+  }
+  .version-meta {
+    margin: 0.75rem 0 0.5rem;
+    color: var(--sl-color-gray-3);
+    font-size: 0.9rem;
+  }
+  .file-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  /* One shared 3-column grid, identical in both cards: the 12rem floor
+     fits the longest filename, so both cards compute the same tracks. */
+  .file-list li {
+    display: grid;
+    grid-template-columns: minmax(12rem, auto) minmax(0, 1fr) auto;
+    column-gap: 0.75rem;
+    align-items: baseline;
+    padding: 0.4rem 0;
+    border-top: 1px solid var(--sl-color-gray-6);
+  }
+  .file-list li:first-child {
+    border-top: 0;
+  }
+  .file-list code {
+    font-size: 0.85em;
+    white-space: nowrap;
+  }
+  .file-list .file-label {
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+  }
+  .file-list .sha-link {
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+    white-space: nowrap;
+    justify-self: end;
+  }
+  /* Labels stay in the 2nd column except on very narrow screens. */
+  @media (max-width: 22rem) {
+    .file-list li {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .file-list .file-label {
+      grid-column: 2;
+    }
+  }
+</style>

@@ -110,12 +110,7 @@ import {
   REPO_ROOT,
 } from './publishCommon.mjs';
 import {buildDates} from './generateBuildDates.mjs';
-import {
-  branchExistsOnPages,
-  pagesIndex,
-  readPagesFile,
-  uploadFilesToPages,
-} from './uploadToPages.mjs';
+import {branchExistsOnPages, readPagesFile, uploadFilesToPages} from './uploadToPages.mjs';
 import {devBranchReadme, devIndexHtml, ghPagesReadme} from './branchReadmes.mjs';
 import {
   commitDateUtc,
@@ -790,13 +785,12 @@ async function publishToGitHub({
   // each blob, so unchanged files are skipped and an idle run creates no
   // commit at all.
   const pagesFiles = {};
-  // Landing page: the repo's README, rendered by GitHub and served as
-  // index.html (see pagesIndex). Content-addressed downstream: skipped when
-  // unchanged.
-  // Landing page: prod renders the repo README (links the latest release);
-  // dev gets a dedicated warning page with RAW download links, generated
-  // after the payload below is complete (branchReadmes.mjs).
-  if (PUBLISH_MODE !== 'dev') pagesFiles['index.html'] = await pagesIndex(octokit);
+  // Landing page: the prod branch's index.html belongs to the docs site
+  // (ADR 0046: the Astro site at onemen.github.io/firefox-scripts/ is the
+  // site root, published by .github/workflows/docs-deploy.yml); publish
+  // writes only artifacts + the branch README there. Dev keeps its dedicated
+  // warning page with RAW download links, generated after the payload below
+  // is complete (branchReadmes.mjs).
 
   if (PUBLISH_MODE === 'dev') {
     for (const name of builtZips) pagesFiles[zipFileName(name)] = fs.readFileSync(zipPath(name));

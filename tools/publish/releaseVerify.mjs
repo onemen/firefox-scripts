@@ -10,7 +10,7 @@
 //   1. `latest` release carries the full asset set (2 zips + 4 installers;
 //      extra assets are tolerated — e.g. the installer .sha256 sidecars — only
 //      a MISSING expected asset fails)
-//   2. gh-pages serves the machine surface: hashes.json, helper_win.exe, index.html
+//   2. gh-pages serves the machine surface: hashes.json, helper_win.exe
 //   3. the `latest` tag points at main HEAD (or --sha <commit>)
 //   4. an installer-<date> component release exists
 //   5. published-binary AV verdicts are clean (delegates to
@@ -171,7 +171,7 @@ export function main(argv = process.argv.slice(2)) {
   // emits a bare unquoted string and ghJson would throw on it (#359 root
   // cause). The output is validated as a blob SHA instead, and a gh failure
   // names its cause instead of a bare FAIL.
-  for (const file of ['hashes.json', 'helper_win.exe', 'index.html']) {
+  for (const file of ['hashes.json', 'helper_win.exe']) {
     let ok;
     let detail = '';
     try {

@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 
 // uploadToPages.mjs pulls in paths.js → publishMode.mjs, which reads --mode
 // from argv at load time, so the test pushes --mode=prod into process.argv
-// before the dynamic import (same pattern as pagesIndex.test.mjs).
+// before the dynamic import (the module reads the publish mode at load).
 process.argv.push('--mode=prod');
 
 const {uploadFilesToPages, readPagesFile} =
@@ -201,4 +201,97 @@ test('readPagesFile: decodes the branch file; missing branch/file → null', asy
   // Missing branch (headSha null): null without a getContent call.
   const {api: missing} = fakeOctokit({headSha: null});
   assert.equal(await readPagesFile(missing, 'self-update.json'), null);
+});
+
+// ── deletePaths (ADR 0046) ────────────────────────────────────────────────
+// The docs deploy replaces the paths it owns in one commit, so a page that no
+// longer exists must be removed rather than left behind as a stale file.
+test('deletePaths removes present paths in the same commit (null sha entries)', async t => {
+  t.mock.method(console, 'log', () => {});
+  const {api, calls} = fakeOctokit({
+    tracked: {
+      '.nojekyll': gitBlobSha(Buffer.alloc(0)),
+      'index.html': gitBlobSha(Buffer.from('old')),
+      'old-page/index.html': gitBlobSha(Buffer.from('gone')),
+      'utils.zip': gitBlobSha(Buffer.from('zip')),
+    },
+  });
+  await uploadFilesToPages(
+    api,
+    {'index.html': Buffer.from('new')},
+    {
+      deletePaths: ['old-page/index.html', 'never-existed/index.html'],
+    }
+  );
+
+  const tree = calls.find(([name]) => name === 'createTree');
+  assert.ok(tree, 'a tree is created');
+  const entries = tree[2];
+  const deleted = entries.filter(e => e.path === 'old-page/index.html');
+  assert.equal(deleted.length, 1);
+  assert.equal(deleted[0].sha, null, 'a null sha removes the path');
+  // A path that is not on the branch is skipped (idempotent full-list passes).
+  assert.equal(
+    entries.some(e => e.path === 'never-existed/index.html'),
+    false
+  );
+  // The artifact path is untouched by a docs-side deletion list.
+  assert.equal(
+    entries.some(e => e.path === 'utils.zip'),
+    false
+  );
+  assert.equal(
+    calls.some(([name]) => name === 'updateRef'),
+    true
+  );
+});
+
+test('deletePaths listing only absent paths creates no commit', async t => {
+  // The docs deploy passes its whole previous file list every run, so the
+  // already-gone paths must be no-ops rather than empty commits.
+  t.mock.method(console, 'log', () => {});
+  const {api, calls} = fakeOctokit({
+    tracked: {'.nojekyll': gitBlobSha(Buffer.alloc(0)), 'index.html': gitBlobSha(Buffer.from('x'))},
+  });
+  const uploaded = await uploadFilesToPages(api, {}, {deletePaths: ['gone/index.html']});
+  assert.deepEqual(uploaded, []);
+  assert.equal(
+    calls.some(([name]) => name === 'createCommit'),
+    false
+  );
+  assert.equal(
+    calls.some(([name]) => name === 'updateRef'),
+    false
+  );
+});
+
+test('a deletion alone still commits (the stale page must actually disappear)', async t => {
+  t.mock.method(console, 'log', () => {});
+  const {api, calls} = fakeOctokit({
+    tracked: {
+      '.nojekyll': gitBlobSha(Buffer.alloc(0)),
+      'gone/index.html': gitBlobSha(Buffer.from('x')),
+    },
+  });
+  await uploadFilesToPages(api, {}, {deletePaths: ['gone/index.html']});
+  assert.equal(
+    calls.some(([name]) => name === 'createCommit'),
+    true
+  );
+});
+
+test('a path that is both written and deleted is a hard error', async t => {
+  t.mock.method(console, 'log', () => {});
+  const {api} = fakeOctokit({tracked: {'index.html': gitBlobSha(Buffer.from('old'))}});
+  await assert.rejects(
+    () =>
+      uploadFilesToPages(
+        api,
+        {'index.html': Buffer.from('new')},
+        {
+          deletePaths: ['index.html'],
+        }
+      ),
+    /also being written/
+  );
 });

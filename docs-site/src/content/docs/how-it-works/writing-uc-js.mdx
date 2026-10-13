@@ -1,0 +1,190 @@
+---
+title: Writing your own .uc.js
+description: "A tutorial for writing userChrome (.uc.js) scripts: the header format, the available globals, a first script, and debugging."
+---
+
+import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components'
+
+A `.uc.js` script is ordinary JavaScript that runs inside a Firefox **chrome** window (the window
+that holds the tab strip, the toolbar and the menus). That is the whole idea: script the browser's
+own interface.
+
+## Who is this page for
+
+Two kinds of readers land here. **If you just want to use someone else's script**, you need
+three steps and no programming: save the `.uc.js` file into the `chrome` folder in your profile
+folder, restart Firefox, done. What that folder is lives on the [userChrome.js
+page](../userchrome-js/#in-plain-language). **If you want to write your own**, read on: a few
+lines of JavaScript plus a small header block are the whole skill, and the tutorial below builds
+it up piece by piece.
+
+## Your first script
+
+<Steps>
+
+1. **Find the profile.** Open `about:support` and read **Profile Folder**.
+2. **Open the `chrome` directory** inside it, creating it if it does not exist.
+3. **Create `hello.uc.js`** next to your `userChrome.css`. The loader only scans the top level of
+   `chrome/`, not subfolders.
+4. **Write the script below**, then restart the browser.
+
+</Steps>
+
+```js title="hello.uc.js"
+// ==UserScript==
+// @name        Hello from a user script
+// @include     main
+// ==/UserScript==
+
+Services.obs.addObserver((doc) => {
+  const button = doc.createXULElement("toolbarbutton");
+  button.setAttribute("label", "Hello");
+  button.setAttribute("tooltiptext", "Hello from hello.uc.js");
+  button.addEventListener("command", () => alert("It works."));
+  doc.getElementById("nav-bar")?.appendChild(button);
+}, "chrome-document-loaded");
+```
+
+:::tip[Clear the startup cache]
+Firefox caches the startup bundle. In `about:support`, click **Clear startup cache…** so an edited
+script is picked up on the next start.
+:::
+
+## The header keys
+
+Everything is read from the `// ==UserScript==` block. Unknown keys are ignored, so extra metadata
+is harmless.
+
+| Key                                          | Meaning                                                                                |
+| -------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `@name`                                      | display name (also used as the default id)                                             |
+| `@include`                                   | windows to run in; repeatable. `main` = the browser window. No `@include` means `main` |
+| `@exclude`                                   | windows to skip; repeatable                                                            |
+| `@version`, `@description`, `@author`        | metadata, shown by scripts that list user scripts                                      |
+| `@id`                                        | stable identifier; defaults to the file name and author, e.g. `my-script.uc.js@me`     |
+| `@homepageURL`, `@downloadURL`, `@updateURL` | where the script came from (a checker script can use them)                             |
+| `@optionsURL`                                | an options page for the script                                                         |
+| `@onlyonce`                                  | run a single time per session, even though windows come and go                         |
+| `@startup` / `@shutdown`                     | functions called after load / before unload                                            |
+
+`@include` and `@exclude` are matched against the window's URL as a regular expression, where `*`
+is a wildcard and `main` expands to `chrome://browser/content/browser.xhtml`:
+
+```js
+// @include     *://*.example.com/*     ← every window whose URL matches
+// @include     main                    ← the browser window
+// @exclude     about:privatebrowsing
+```
+
+## Globals available in a script
+
+Chrome code runs with the full [XPCOM](https://developer.mozilla.org/docs/Glossary/XPCOM) API.
+This is privileged context, not a web page:
+
+| Global                     | What it gives you                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `Services`                 | prefs, observers, the directory service, startup (everything in XUL)                              |
+| `Components` / `Cc` / `Ci` | component creation and the interface constants                                                    |
+| `ChromeUtils`              | `importESModule`, `defineESModuleGetters`, `defineLazyGetter`                                     |
+| `Cu`                       | `Cu.Sandbox` / `Cu.evalInSandbox` (see [userChrome.js](../userchrome-js/#the-sandbox)) |
+| `gBrowser`                 | the browser's tab strip: `addTab`, `selectedTab`, `selectedTabs`                                  |
+| `document`, `window`       | the current chrome document and window                                                            |
+| `UC`, `_uc`                | the loader's registry and state                                                                   |
+
+The [restart.uc.js](https://github.com/onemen/firefox-scripts/blob/main/core/chrome/restart.uc.js)
+script is a good reference. It lives in the repository's `core/chrome/` tree and adds a toolbar
+button through `CustomizableUI.createWidget()`, registers a `chrome-document-loaded` observer, and
+restarts the application with `Services.startup.quit(...)`. It is not necessarily shipped inside
+`utils.zip`, so treat the repo file, not the installed copy, as the authoritative example.
+
+## Adding a button to the toolbar
+
+Two approaches. The modern one registers a real toolbar widget:
+
+```js
+const { CustomizableUI } = ChromeUtils.importESModule(
+  "resource:///modules/CustomizableUI.sys.mjs",
+);
+
+CustomizableUI.createWidget({
+  id: "my-widget",
+  type: "custom",
+  defaultArea: CustomizableUI.AREA_NAVBAR,
+  onBuild(doc) {
+    const button = doc.createXULElement("toolbarbutton");
+    button.setAttribute("label", "Do it");
+    button.addEventListener("command", () => doSomething());
+    return button;
+  },
+});
+```
+
+The classic one appends to an existing element:
+
+```js
+Services.obs.addObserver((doc) => {
+  if (doc.documentURI !== "chrome://browser/content/browser.xhtml") return;
+  doc.getElementById("nav-bar")?.appendChild(button);
+}, "chrome-document-loaded");
+```
+
+:::caution[Boolean attributes changed]
+Firefox 149+ evaluates XUL boolean attributes by presence, not by value.
+`setAttribute('hidden', 'false')` now means _hidden_. Use `toggleAttribute('hidden', true)` /
+`removeAttribute` instead.
+:::
+
+## Disabling a script without deleting it
+
+Add its file name to the `userChromeJS.scriptsDisabled` preference in `about:config` (comma
+separated), or set `userChromeJS.enabled` to `false` to suspend all of them at once. The file stays
+on disk, ready to re-enable.
+
+## Debugging a script
+
+Errors in a `.uc.js` land in the **Browser Console**.
+
+1. Enable it: `about:debugging#/runtime/this-firefox` → **Inspect**, or `devtools.console.stdout.content` in
+   `about:config` for the remote console.
+2. Restart the browser; the console shows the loader's output and any error, including a one-line
+   stack pointing at your file.
+
+<Tabs syncKey="debug">
+  <TabItem label="Quick checks">
+
+  - File extension exactly `.uc.js` (case-insensitive match, but keep it lowercase).
+  - The file is in `chrome/`, **not** in `chrome/utils/`.
+  - The `// ==UserScript==` header is complete (`// ==/UserScript==` closes it).
+  - `@include` matches the window you are testing in. No `@include` means `main`.
+  - Startup cache cleared after every edit.
+
+  </TabItem>
+<TabItem label="In the console">
+
+```js
+// what does the loader think it found?
+ChromeUtils.reportError(JSON.stringify(_uc.scripts, null, 2));
+```
+
+`_uc.scripts` holds every discovered script with its parsed metadata, so a missing `@include` or a
+mis-parsed header shows up immediately. The loader's own object is also exposed as `UC` on every
+chrome window.
+
+  </TabItem>
+</Tabs>
+
+## Before you publish a script
+
+- **Keep the source somewhere.** The profile folder is not a good place to keep the only copy.
+- **Say where it came from.** `@homepageURL` / `@updateURL` let other people's scripts find your
+  releases.
+- **Version it.** `@version` plus a `@downloadURL` pointing at the file is what a checker script
+  compares against.
+
+<Aside type="caution" title="These scripts are privileged">
+  A `.uc.js` script runs with the browser's full privileges, the same level as
+  Firefox's own code. Only run scripts you have read and trust. The same is true of any legacy
+  add-on a script exists to load: both run with the browser's full privileges, and both are limited
+  by the trust you place in their source. See
+  [Why we need it](../../introduction/#what-firefox-removed-and-why).
+</Aside>

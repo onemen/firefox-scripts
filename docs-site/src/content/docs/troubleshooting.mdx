@@ -1,0 +1,132 @@
+---
+title: Troubleshooting
+description: What to check when the scripts do not load, an add-on is reported as corrupt, or a .uc.js script does not run.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components'
+
+Work top to bottom. The order is cheapest check first.
+
+## The add-on is reported as corrupt
+
+"Corrupt" from the legacy add-on path almost always means **the loader never ran**, not a broken
+XPI. The fastest fix is to let the installer put the files in the right place; if you prefer to do it
+by hand, follow the manual path below.
+
+### Use the installer
+
+1. Open the browser with the "corrupt" add-on.
+2. Download and run the installer for your OS from the
+   [latest release](https://github.com/onemen/firefox-scripts/releases/tag/latest).
+3. In the tab it opens, pick the browser and the components to install (configuration files and/or
+   utils), and complete the install.
+4. Restart the browser.
+
+### Install by hand
+
+<Steps>
+
+1. Check `about:config` for `xpinstall.signatures.required`. It must exist and be **locked** (bold,
+   with a lock icon). If it is not locked, `config.js` is not being read.
+2. Check the file locations against [Installation → by hand](../installation/#install-config-script):
+   `config.js` next to the browser binary, `config-prefs.js` in `defaults/pref/`, and the utils
+   unpacked **directly into** `<profile>/chrome/utils/`.
+3. Restart the browser fully (quit it, do not just close the window).
+
+</Steps>
+
+## The preferences are not locked
+
+`config.js` is loaded by Firefox's AutoConfig mechanism, which only runs when the enabling
+preferences are in `defaults/pref/`. Check, in order:
+
+1. `config-prefs.js` is in `<FIREFOX ROOT>/defaults/pref/`: the file name and the `.js` extension
+   matter, and this directory is the one Firefox itself reads preferences from.
+2. The contents are exactly:
+
+   ```js
+   pref("general.config.obscure_value", 0);
+   pref("general.config.filename", "config.js");
+   pref("general.config.sandbox_enabled", false);
+   ```
+
+3. `config.js` is next to the browser binary, and **starts with the `// skip 1st line` comment** (AutoConfig ignores the first line, so the preferences on the second line are the first statements
+   that execute).
+
+Details: [Configuration files (config.js)](../how-it-works/config-js/).
+
+## The scripts were working and now they are not
+
+A browser update is the usual cause: either it broke a legacy add-on, or it invalidated the
+startup cache.
+
+<Steps>
+
+1. Open the updater from the browser menu and install any available update.
+2. In `about:support`, click **Clear startup cache…**.
+3. Restart the browser.
+
+</Steps>
+
+If the updater tab itself will not open, install by hand from the [Download](../download/) page.
+
+## My .uc.js script does not run
+
+1. Is the file in the **profile's** `chrome/` directory (not `chrome/utils/`, and not in a
+   subfolder)? The loader scans the top level only.
+2. Does the extension end in `.uc.js`?
+3. Is the header block complete (`// ==UserScript==` … `// ==/UserScript==`)?
+4. Does `@include` match the window you are testing in? With no `@include`, the script runs only in
+   the browser window.
+5. Is the file listed in the `userChromeJS.scriptsDisabled` preference?
+6. Clear the startup cache (`about:support` → **Clear startup cache…**) after every edit.
+
+For a working example, read `restart.uc.js` in the
+[repository](https://github.com/onemen/firefox-scripts/blob/main/core/chrome/restart.uc.js), and see
+[Writing your own .uc.js](../how-it-works/writing-uc-js/#debugging-a-script) for how to read the
+loader's own state from the Browser Console.
+
+## An update is offered every day and I want to stay on the current version
+
+Use the updater tab's own choices, explained in [Installer and auto-updater](../how-it-works/installer-updater/#update-choices):
+**Remind me Tomorrow** to skip that day, or **Don't show again for this update** to permanently
+skip that package.
+Both are per-package, and can be reverted by clearing the skip preference in `about:config`
+(`extensions.firefox-scripts.skippedHash.<package>`).
+
+## The installer does not see my browser
+
+Detection needs a **running** browser: it inspects running processes and lock files. Start the
+browser first, then run the installer.
+
+If the browser runs from an unusual location (a portable build, an extracted archive), install by
+hand instead. [Installation → by hand](../installation/#install-config-script) uses the paths from `about:support`,
+so it works regardless of where the browser lives.
+
+## The installer tab shows a network error
+
+The installer performs no network I/O of its own. The tab it opens is the component that downloads
+the packages. A network error banner means that tab could not reach the release host. Check for a
+proxy, an extension blocking requests, or a firewall rule for the browser, and try again.
+
+## Windows: the installer will not start
+
+- SmartScreen shows _"Windows protected your PC"_ → **More info → Run anyway**.
+- A UAC prompt appears → approve it: it is one elevation for the copy into the installation
+  directory, performed by a checksum-verified helper.
+- The file may have been blocked after download → right-click → **Properties** → **Unblock**.
+
+## Getting help
+
+Collect this before opening an [issue](https://github.com/onemen/firefox-scripts/issues):
+
+- browser name and version (`about:support` → **Application Basics**),
+- the **Profile Folder** and **Application Binary** paths,
+- whether the preferences in `about:config` are locked,
+- any error text from the Browser Console.
+
+<Aside type="tip" title="A quick diagnostic">
+  `about:support` → **Extensions** lists the legacy add-ons the loader found. If
+  TabMixPlus is not listed there, the loader did not run. Go back to the first
+  two sections.
+</Aside>

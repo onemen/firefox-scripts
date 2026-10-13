@@ -1,8 +1,8 @@
 //
 // Landing pages for the artifact-only publish branches (ADR 0031).
 //
-// - gh-pages (prod): the rendered repo README (pagesIndex in uploadToPages.mjs)
-//   already points at the `latest` release — that behavior is unchanged.
+// - gh-pages (prod): just the branch-listing README below. The prod site's
+//   landing page is the docs site (ADR 0046), published by docs-deploy.yml.
 // - dev-build-<id> (dev): a dedicated WARNING page. These branches hold
 //   developer-test artifacts with dev-channel URLs baked in; a human landing
 //   here must not mistake them for the supported release channel. The page
@@ -77,22 +77,25 @@ export function devBranchReadme({branch, files, note}) {
 
 /**
  * Build the gh-pages branch README.md — rendered on the branch listing page.
- * The artifact branch itself holds no human docs today; the README points the
- * visitor at the `latest` release (the supported download surface) instead of
- * letting them grab per-commit artifacts from the listing.
+ * The branch carries the release artifacts AND the docs site (ADR 0046); the
+ * README points a visitor at the site for humans and at the `latest` release
+ * (the supported download surface) for artifacts, instead of letting them grab
+ * per-commit artifacts from the listing.
  *
  * @returns {Buffer} the README.md payload
  */
 export function ghPagesReadme() {
   return Buffer.from(
     [
-      `# ${ZIP_PAGES_REPO} — release artifacts`,
+      `# ${ZIP_PAGES_REPO} — release artifacts and docs site`,
       '',
       'This branch holds the published packages (zips, hashes, binaries) served to the',
-      'installer and the in-browser updater. **Do not download files from this listing** —',
-      'per-commit artifacts are not a supported download surface.',
+      'installer and the in-browser updater, plus the built documentation site.',
+      '**Do not download files from this listing** — per-commit artifacts are not a',
+      'supported download surface.',
       '',
-      `**Download the [latest release](https://github.com/${REPO_OWNER}/${ZIP_PAGES_REPO}/releases/latest)**`,
+      '- **Documentation:** https://onemen.github.io/' + ZIP_PAGES_REPO + '/',
+      `- **Download the [latest release](https://github.com/${REPO_OWNER}/${ZIP_PAGES_REPO}/releases/latest)**`,
       '— it bundles the same packages with release notes and install instructions.',
       '',
     ].join('\n'),

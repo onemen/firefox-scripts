@@ -1,0 +1,89 @@
+# Docs site (ADR 0046): builds docs-site/ and publishes it to the ROOT of the
+# gh-pages branch, the same branch that serves the release artifacts the
+# installer and the in-browser updater fetch (ADR 0003, ADR 0031).
+#
+# Pages serving stays "Deploy from a branch: gh-pages / (root)"; this workflow
+# pushes to that branch; it is not the actions-pages deployment method.
+#
+# Two writers, one branch:
+#   - pages.yml (publish) owns the ARTIFACT paths (zips, binaries, hashes.json,
+#     self-update.json, the branch README).
+#   - this workflow owns the SITE paths (index.html, 404.html, _astro/,
+#     pagefind/, the page directories, and the .docs-site-files.json manifest
+#     that records which paths those are).
+# The paths are disjoint and the shared concurrency group `gh-pages-write`
+# serializes the two workflows, so their read-head-then-commit cycles can never
+# interleave and lose an update. Changing the group in one place without the
+# other is the one way to break that, so grep for `gh-pages-write` before editing.
+#
+# The deploy is a FULL REPLACE of the paths this workflow owns: a page that was
+# deleted or renamed is removed in the same commit (publishDocsSite.mjs), so a
+# stale page can never survive. Artifacts are never touched.
+
+name: Docs site
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'docs-site/**'
+      - 'tools/docs/**'
+      - 'tools/publish/**'
+      - '.github/workflows/docs-deploy.yml'
+  # Rebuild after every successful artifact publish: publishes move the
+  # `latest` release and mint dated tags, while asset updates on an existing
+  # release fire no `release` event, so only the publish workflow completing
+  # reliably marks fresh download data. A publish that changed nothing the
+  # page consumes still commits (the manifest carries a timestamp).
+  workflow_run:
+    workflows: ['Pages publish']
+    types: [completed]
+    # Head branch of the triggering run: a manual dev publish from any branch
+    # completes the workflow too, but only main publishes carry download data
+    # the live page should pick up (a dev run would commit a timestamp-only
+    # churn of the default-branch build).
+    branches: ['main']
+  # Manual re-run: rebuilds and republishes unchanged sources (useful after a
+  # failed deploy, or to force a refresh of the generated download data).
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # commit the built site to gh-pages
+
+concurrency:
+  # SHARED with pages.yml (see the note above). cancel-in-progress must stay
+  # false: a cancelled deploy that already pushed half a site is worse than a
+  # queued one.
+  group: gh-pages-write
+  cancel-in-progress: false
+
+env:
+  # uploadToPages reads its token from this fixed variable name.
+  GITHUB_TOKEN_VAR: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build:
+    name: build and publish docs site
+    # A failed or cancelled publish has no fresh data to show.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # install: 'false' because the repo's own dependencies are not needed to build
+      # the site; the docs-site workspace installs on its own below.
+      - uses: $/.github/actions/setup-repo
+        with:
+          install: 'false'
+      - name: Install docs-site dependencies
+        run: pnpm --dir docs-site install --frozen-lockfile
+      - name: Fetch release data for the download page
+        # Per-package dates from the live hash manifest + the release list the
+        # download page links to (issue #202). Never fails the build: a network
+        # problem leaves the page on its static fallback links.
+        run: pnpm --dir docs-site downloads
+      - name: Build the site
+        run: pnpm --dir docs-site build
+      - name: What this deploy would publish
+        run: node tools/docs/publishDocsSite.mjs --dry-run
+      - name: Publish to the Pages branch
+        run: node tools/docs/publishDocsSite.mjs

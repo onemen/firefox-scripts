@@ -1,0 +1,86 @@
+---
+title: Why we need it
+description: Why legacy extensions and userChrome scripts need third-party helper scripts in modern Firefox.
+---
+
+import { Aside, Card, CardGrid } from '@astrojs/starlight/components'
+
+## The short version
+
+Modern Firefox cannot load **legacy add-ons** (extensions built on `install.rdf` and `bootstrap.js`),
+and it no longer loads `userChrome.js` scripts. Extensions like
+[TabMixPlus](https://github.com/onemen/TabMixPlus) and many popular user scripts depend on exactly
+those two mechanisms.
+
+Firefox Scripts restores both, using Firefox's own **AutoConfig** startup hook, and adds the piece
+Mozilla will never ship: an **updater**, so what you install today keeps working after the next
+browser update.
+
+## What Firefox removed, and why
+
+Firefox 55 ESR disabled legacy add-ons by default and **Firefox 57 dropped them entirely**. The
+reasons were structural rather than a rejection of the feature:
+
+- Legacy add-ons ran with the **full privileges of the browser process**, the same trust level as
+  Firefox's own code. A `bootstrap.js` had no permission model at all.
+- They were **not signed**, so a compromised add-on could not be distinguished from a legitimate
+  one. WebExtensions (MV2, then MV3) introduced signing and a permission model to close that hole.
+
+Nothing about the feature was ever declared fixed for good. But restoring it means re-introducing
+the same trust hole, deliberately, per browser installation. That is the trade-off every tool in
+this space makes, and it is worth making explicitly.
+
+## What Firefox Scripts actually installs
+
+Nothing is injected into the browser binary, and no extension is installed. Two packages of plain
+files are copied into places Firefox already looks:
+
+| Package         | Goes where                                                    | What it contains                                                  |
+| --------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **`fx-folder`** | the browser's **installation directory** (next to the binary) | `config.js`, `defaults/pref/config-prefs.js`                      |
+| **`utils`**     | **each profile's** `chrome/utils/` directory                  | `BootstrapLoader.js`, `userChrome.js`, and the in-browser updater |
+
+The first file is picked up by Firefox's [AutoConfig](https://support.mozilla.org/kb/customizing-firefox-using-autoconfig)
+mechanism, which runs once at startup, before the browser window exists. That one file registers the
+second package and loads the rest. The full chain is explained in
+[How it works](../how-it-works/config-js/).
+
+<CardGrid>
+  <Card title="config.js" icon="seti:config">
+    The entry point. See [Configuration files](../how-it-works/config-js/).
+  </Card>
+  <Card title="BootstrapLoader.js" icon="seti:config">
+    Brings legacy add-ons back. See
+    [BootstrapLoader.js](../how-it-works/bootstrap-loader/).
+  </Card>
+  <Card title="userChrome.js" icon="seti:config">
+    Runs your own `.uc.js`. See [userChrome.js](../how-it-works/userchrome-js/).
+  </Card>
+</CardGrid>
+
+## Provenance
+
+The scripts come from [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts),
+the original project that made this possible, published under the MPL-2.0. This repository
+packages them, keeps them working on current Firefox versions, and adds the installer and the
+updater. Waterfox ships its own variant of the loader; where a fork already provides one, ours
+stays out of the way.
+
+<Aside type="caution">
+  The original scripts were created by [@xiaoxiaoflood](https://github.com/xiaoxiaoflood), but the
+  [xiaoxiaoflood/firefox-scripts](https://github.com/xiaoxiaoflood/firefox-scripts) repository is no
+  longer maintained, and the code there may be outdated. Always get the scripts from the
+  [Download](../download/) page.
+</Aside>
+
+:::note[License]
+The original scripts are under the Mozilla Public License 2.0; the installer and the in-browser
+updater in this repository are MIT.
+:::
+
+## Where to go next
+
+- **[Installation](../installation/)**: install with the installer, or by hand.
+- **[Download](../download/)**: the current packages, and how to revert to an earlier build.
+- **[FAQ](../faq/)**: safe mode, multiple profiles, security, forks.
+- **[How it works](../how-it-works/config-js/)**: config.js, BootstrapLoader.js, userChrome.js.

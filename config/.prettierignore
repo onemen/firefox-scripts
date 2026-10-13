@@ -11,6 +11,8 @@ logs
 pnpm-lock.yaml
 # build outputs (installer Makefile + publish scripts dump into dist/)
 dist
+# lavish review mocks (gitignored interactive HTML, iterated by hand)
+.lavish
 review-history
 # analyze-c.mjs result cache (hash-named JSON files, gitignored like .eslintcache)
 .analyzer-cache
@@ -32,3 +34,16 @@ review-history
 # into the single served script.js — not parseable standalone (see embed.mjs
 # buildScriptJs, which syntax-checks the exact concatenation on every build).
 **/installer/web/script/
+
+# The docs site is a NESTED pnpm workspace, but it is formatted by the root
+# prettier in the same pass (ADR 0046): prettier-plugin-astro handles the
+# components. Only the page sources stay out: prettier's MDX formatter
+# inserts a blank line after an opening `(` inside a JSX expression, which
+# terminates the expression and breaks the Astro build with a bare
+# `Parse error @:1:1` (verified with prettier 3.9.9 on astro 7.3.5).
+# (moved from docs-site/.prettierignore, which no longer exists). The **/
+# prefix is load-bearing: a custom --ignore-path anchors slash patterns at
+# config/, so a bare `docs-site/...` pattern would silently match nothing.
+**/docs-site/**/*.mdx
+**/docs-site/dist/
+**/docs-site/.astro/

@@ -1,0 +1,80 @@
+---
+// Overrides Starlight's <Head /> to opt the site into Astro's client-side
+// router, so navigating between pages is a client-side swap animated by the
+// browser's View Transition API instead of a full page load (issue #28).
+//
+// Starlight's own <Head /> is kept and wrapped. Re-implementing it would
+// mean duplicating `Astro.locals.starlightRoute.head` handling here.
+import Default from '@astrojs/starlight/components/Head.astro';
+import {ClientRouter} from 'astro:transitions';
+---
+
+<Default>
+  <slot />
+</Default>
+<ClientRouter />
+
+<script>
+  // Turn off the router's default cross-fade.
+  //
+  // Without this Astro animates every navigation with its built-in fade, which
+  // on a documentation site is mostly noise: the sidebar, header and search box
+  // are identical on both sides of the swap, so only the article area changes
+  // and a full-viewport fade draws the eye to something that did not move.
+  // Setting the attribute on <html> also means it survives each swap, because
+  // ClientRouter copies the current <html> onto the incoming page, hence
+  // re-applying it on astro:after-swap as well as once up front.
+  const ANIMATE = 'transition:animate';
+
+  function disableTransitionAnimate() {
+    const html = document.querySelector('html');
+    if (html?.nodeName.toLowerCase() === 'html' && html.getAttribute(ANIMATE) !== 'none') {
+      html.setAttribute(ANIMATE, 'none');
+    }
+  }
+
+  document.addEventListener('astro:after-swap', disableTransitionAnimate);
+  disableTransitionAnimate();
+
+  // Starlight builds its Pagefind UI inside the <site-search> custom element.
+  // <ClientRouter /> re-creates the header (and that element) on every in-site
+  // navigation, so the UI has to be rebuilt after each swap or the search
+  // dialog opens empty.
+  //
+  // Two guards keep this to exactly one UI per page:
+  //   - the first astro:page-load is the initial document load, where
+  //     Starlight's own Search.astro has already scheduled its init;
+  //   - if a search input is already present, a UI exists and we stop. Checking
+  //     the input (rather than a wrapper class) is what distinguishes "already
+  //     initialised" from "container present but empty".
+  //
+  // Without the second guard a UI is stacked into the same container on every
+  // navigation, measured 1 -> 2 -> 3 -> 4 over four navigations.
+  let initialLoad = true;
+
+  document.addEventListener('astro:page-load', () => {
+    if (initialLoad) {
+      initialLoad = false;
+      return;
+    }
+
+    // Pagefind is not built for `astro dev`; Starlight shows a notice instead.
+    if (import.meta.env.DEV) return;
+
+    if (document.querySelector('.pagefind-ui__search-input')) return;
+
+    const onIdle = window.requestIdleCallback || (cb => setTimeout(cb, 1));
+    onIdle(async () => {
+      // @ts-expect-error: no types published for @pagefind/default-ui.
+      const {PagefindUI} = await import('@pagefind/default-ui');
+      new PagefindUI({
+        element: '#starlight__search',
+        baseUrl: import.meta.env.BASE_URL,
+        bundlePath: import.meta.env.BASE_URL.replace(/\/$/, '') + '/pagefind/',
+        showImages: false,
+        translations: {},
+        showSubResults: true,
+      });
+    });
+  });
+</script>
