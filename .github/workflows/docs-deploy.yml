@@ -1,4 +1,4 @@
-# Docs site (ADR 0038) — builds docs-site/ and publishes it to the ROOT of the
+# Docs site (ADR 0046): builds docs-site/ and publishes it to the ROOT of the
 # gh-pages branch, the same branch that serves the release artifacts the
 # installer and the in-browser updater fetch (ADR 0003, ADR 0031).
 #
@@ -29,6 +29,14 @@ on:
       - 'docs-site/**'
       - 'tools/docs/**'
       - '.github/workflows/docs-deploy.yml'
+  # Rebuild after every successful artifact publish: publishes move the
+  # `latest` release and mint dated tags, while asset updates on an existing
+  # release fire no `release` event, so only the publish workflow completing
+  # reliably marks fresh download data. A publish that changed nothing the
+  # page consumes still commits (the manifest carries a timestamp).
+  workflow_run:
+    workflows: ['Pages publish']
+    types: [completed]
   # Manual re-run: rebuilds and republishes unchanged sources (useful after a
   # failed deploy, or to force a refresh of the generated download data).
   workflow_dispatch: {}
@@ -50,6 +58,8 @@ env:
 jobs:
   build:
     name: build and publish docs site
+    # A failed or cancelled publish has no fresh data to show.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // Publishes the built docs site (docs-site/dist) to the root of the Pages
-// branch — the same branch that serves the release artifacts the installer and
-// the in-browser updater fetch (ADR 0003, ADR 0031, ADR 0038).
+// branch, the same branch that serves the release artifacts the installer and
+// the in-browser updater fetch (ADR 0003, ADR 0031, ADR 0046).
 //
 // The two writers are path-disjoint: publish (pages.yml) owns the artifact
 // files, this script owns the site files (index.html, 404.html, _astro/,
@@ -16,7 +16,7 @@
 // the new build no longer produces is deleted in the same commit.
 //
 // Usage: node tools/docs/publishDocsSite.mjs [--dist docs-site/dist] [--dry-run]
-// Env:   GITHUB_TOKEN_VAR — the repo-wide fixed token variable name the publish
+// Env:   GITHUB_TOKEN_VAR, the repo-wide fixed token variable name the publish
 //        tooling also reads (required; no local fallback, this always pushes).
 
 import fs from 'node:fs';
@@ -41,7 +41,7 @@ function parseArgs(argv) {
 
 /**
  * Every file under the built site, as branch-relative paths mapped to bytes.
- * Paths are POSIX-separated — the branch is a git tree, not a Windows path.
+ * Paths are POSIX-separated: the branch is a git tree, not a Windows path.
  *
  * @param {string} distDir
  * @returns {Map<string, Buffer>}
@@ -91,7 +91,7 @@ async function readPreviousDocsFiles(octokit) {
 
 const {dist, dryRun} = parseArgs(process.argv.slice(2));
 
-// The docs site always lands on the PROD artifact branch — a dev-mode module
+// The docs site always lands on the PROD artifact branch; a dev-mode module
 // import would otherwise aim it at a disposable dev-build-<id> branch.
 if (ZIP_PAGES_BRANCH !== 'gh-pages') {
   throw new Error(
@@ -130,7 +130,7 @@ const octokit = createOctokit(token);
 const repo = {owner: REPO_OWNER, repo: ZIP_PAGES_REPO};
 
 const previous = await readPreviousDocsFiles(octokit);
-// Only ever delete paths this script wrote — an artifact path can never appear
+// Only ever delete paths this script wrote; an artifact path can never appear
 // in the manifest, and the intersection guards a hand-edited manifest.
 const deletePaths = previous.filter(p => !files.has(p)).sort();
 
@@ -148,7 +148,7 @@ if (!previous.length) {
   // created as an orphan holding only the site).
   try {
     const {data: probe} = await octokit.repos.getContent({...repo, path: 'hashes.json'});
-    if (probe.type !== 'file') throw new Error('hashes.json is not a file');
+    if (Array.isArray(probe) || probe.type !== 'file') throw new Error('hashes.json is not a file');
   } catch (error) {
     throw new Error(
       `The Pages branch has no hashes.json (${error.message}) — refusing to write the docs ` +
