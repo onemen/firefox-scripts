@@ -51,14 +51,15 @@ From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`,
 - Public assets in `public/` are the one exception: they are addressed from the site **root**, so
   their `src` must be base-prefixed (`/firefox-scripts/installer.png`).
 - **Logos and screenshots in `public/` are referenced by URL** (`/firefox-scripts/installer.png`).
-  Nothing is imported through `astro:assets` for those.- **Content images live in `src/assets/` and
-  are imported through the `@assets` alias** (`import img from '@assets/chrome_utils.png'` +
-  `<Image src={img} alt="…" />`). `tsconfig.json` maps `@assets/*`, `@components/*` and `@utils/*`
-  to `src/*`; Astro resolves those in the Vite build as well as in `astro check`, so never spell a
-  specifier relative to the `.mdx` file or to the project root. A specifier that exists on disk but
-  is not an alias fails the build with `UNRESOLVED_IMPORT`. A markdown image whose destination is a
-  JSX expression is _not_ parsed, so `<Image>` (an element) is the only form. Astro emits these to
-  `/_astro/<name>.<hash>.webp` **with** the base prefix, so they survive the Pages root.
+  Nothing is imported through `astro:assets` for those.
+- **Content images live in `src/assets/` and are imported through the `@assets` alias**
+  (`import img from '@assets/chrome_utils.png'` + `<Image src={img} alt="…" />`). `tsconfig.json`
+  maps `@assets/*`, `@components/*` and `@utils/*` to `src/*`; Astro resolves those in the Vite
+  build as well as in `astro check`, so never spell a specifier relative to the `.mdx` file or to
+  the project root. A specifier that exists on disk but is not an alias fails the build with
+  `UNRESOLVED_IMPORT`. A markdown image whose destination is a JSX expression is _not_ parsed, so
+  `<Image>` (an element) is the only form. Astro emits these to `/_astro/<name>.<hash>.webp`
+  **with** the base prefix, so they survive the Pages root.
 - **The node_modules layout is hoisted** on purpose (`nodeLinker: hoisted` in
   `pnpm-workspace.yaml`). This is a nested project inside a repository with its own pnpm install;
   with the default isolated layout on Windows, Node's ESM resolver walks past this tree into the
@@ -70,10 +71,10 @@ From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`,
   expression, `Parse error @:1:1`). Root `pnpm format` therefore covers `.astro`, `.mjs`, `.ts`,
   `.css` and `.json` only. The pages are validated by `pnpm build` → `astro check`, which is the
   gate that understands MDX.
-- **Navigation is client-side.** t with the browser's View Transition API instead of reloading the
-  document. Verify changes with `pnpm build && pnpm preview`. **`pnpm dev` is not representative**:
-  Pagefind is not built for dev (Starlight shows a “search is only available in production builds”
-  notice), and the router's search re-init is skipped there by design.
+- **Navigation is client-side.** Pages swap with the browser's View Transition API instead of
+  reloading the document. Verify changes with `pnpm build && pnpm preview`. **`pnpm dev` is not
+  representative**: Pagefind is not built for dev (Starlight shows a “search is only available in
+  production builds” notice), and the router's search re-init is skipped there by design.
 - **The router re-creates Starlight's search, so that component re-initialises Pagefind after each
   swap.** Starlight builds its Pagefind UI from a `DOMContentLoaded` listener, which never fires
   again for the swapped-in `<site-search>`. The re-init in `Head.astro` is guarded twice: skip the

@@ -192,75 +192,102 @@ const newest = versions[0];
 <script>
   // One copy of this script lands per component instance; the guard keeps
   // a second copy from double-wiring the same dropdowns.
-  document.querySelectorAll('[data-release-downloads]').forEach(node => {
-    const root = /** @type {HTMLElement} */ (node);
-    if (root.dataset.wired) return;
-    root.dataset.wired = '1';
-    const box = /** @type {HTMLElement | null} */ (root.querySelector('.combo-box'));
-    const list = /** @type {HTMLElement | null} */ (root.querySelector('.combo-list'));
-    const reset = /** @type {HTMLButtonElement | null} */ (root.querySelector('.reset-button'));
-    const current = root.querySelector('[data-current]');
-    const badge = root.querySelector('[data-badge]');
-    if (!box || !list || !reset || !current) return;
-    const options = [...root.querySelectorAll('.option')];
-    const newestOption = /** @type {HTMLElement | undefined} */ (
-      options.find(o => /** @type {HTMLElement} */ (o).dataset.newest)
-    );
-
-    function setExpanded(open) {
-      box.setAttribute('aria-expanded', String(open));
-      list.hidden = !open;
-    }
-
-    function select(option) {
-      const el = /** @type {HTMLElement} */ (option);
-      options.forEach(o =>
-        /** @type {HTMLElement} */ (o).setAttribute('aria-selected', String(o === el))
-      );
-      current.textContent = el.dataset.tag ?? '';
-      root.querySelectorAll('[data-version-files]').forEach(node => {
-        const div = /** @type {HTMLElement} */ (node);
-        div.hidden = div.dataset.tag !== el.dataset.tag;
-      });
-      const isNewest = el === newestOption;
-      root.setAttribute('data-showing', isNewest ? 'latest' : 'older');
-      if (badge) {
-        badge.hidden = false;
-        badge.textContent = isNewest ? 'Latest' : 'Older version';
-        badge.classList.toggle('latest-badge', isNewest);
-        badge.classList.toggle('older-badge', !isNewest);
-      }
-      reset.disabled = !!isNewest;
-      reset.title = isNewest ? '' : 'Back to the latest version';
-      setExpanded(false);
-      box.focus();
-    }
-
-    box.addEventListener('click', () => setExpanded(list.hidden));
-    box.addEventListener('keydown', e => {
-      const key = /** @type {KeyboardEvent} */ (e).key;
-      if (key === 'Enter' || key === ' ') {
-        e.preventDefault();
-        setExpanded(list.hidden);
-      }
-    });
-    reset.addEventListener('click', e => {
-      e.stopPropagation();
-      if (newestOption) select(newestOption);
-    });
-    list.addEventListener('click', e => {
-      const option = /** @type {HTMLElement | null} */ (
-        /** @type {HTMLElement} */ (e.target).closest('.option')
-      );
-      if (option) select(option);
-    });
-    root.addEventListener('keydown', e => {
-      if (/** @type {KeyboardEvent} */ (e).key === 'Escape') setExpanded(false);
-    });
+  // A single document-level closer for every picker on the page: a click
+  // outside an open list collapses it. The document-level flag keeps it a
+  // singleton when this module script re-executes after a client-side
+  // navigation; a per-picker listener would pile up stale closures over
+  // swapped-out roots.
+  function ensureDismissListener() {
+    if (document.documentElement.hasAttribute('data-release-downloads-dismiss')) return;
+    document.documentElement.setAttribute('data-release-downloads-dismiss', '');
     document.addEventListener('click', e => {
-      if (!root.contains(/** @type {Node} */ (e.target))) setExpanded(false);
+      const target = e.target instanceof Node ? e.target : null;
+      document.querySelectorAll('[data-release-downloads]').forEach(picker => {
+        const root = /** @type {HTMLElement} */ (picker);
+        if (target && root.contains(target)) return;
+        const box = /** @type {HTMLElement | null} */ (root.querySelector('.combo-box'));
+        const list = /** @type {HTMLElement | null} */ (root.querySelector('.combo-list'));
+        if (box) box.setAttribute('aria-expanded', 'false');
+        if (list) list.hidden = true;
+      });
     });
-  });
+  }
+
+  function wireAll() {
+    ensureDismissListener();
+    document.querySelectorAll('[data-release-downloads]').forEach(node => {
+      const root = /** @type {HTMLElement} */ (node);
+      if (root.dataset.wired) return;
+      root.dataset.wired = '1';
+      const box = /** @type {HTMLElement | null} */ (root.querySelector('.combo-box'));
+      const list = /** @type {HTMLElement | null} */ (root.querySelector('.combo-list'));
+      const reset = /** @type {HTMLButtonElement | null} */ (root.querySelector('.reset-button'));
+      const current = root.querySelector('[data-current]');
+      const badge = root.querySelector('[data-badge]');
+      if (!box || !list || !reset || !current) return;
+      const options = [...root.querySelectorAll('.option')];
+      const newestOption = /** @type {HTMLElement | undefined} */ (
+        options.find(o => /** @type {HTMLElement} */ (o).dataset.newest)
+      );
+
+      function setExpanded(open) {
+        box.setAttribute('aria-expanded', String(open));
+        list.hidden = !open;
+      }
+
+      function select(option) {
+        const el = /** @type {HTMLElement} */ (option);
+        options.forEach(o =>
+          /** @type {HTMLElement} */ (o).setAttribute('aria-selected', String(o === el))
+        );
+        current.textContent = el.dataset.tag ?? '';
+        root.querySelectorAll('[data-version-files]').forEach(node => {
+          const div = /** @type {HTMLElement} */ (node);
+          div.hidden = div.dataset.tag !== el.dataset.tag;
+        });
+        const isNewest = el === newestOption;
+        root.setAttribute('data-showing', isNewest ? 'latest' : 'older');
+        if (badge) {
+          badge.hidden = false;
+          badge.textContent = isNewest ? 'Latest' : 'Older version';
+          badge.classList.toggle('latest-badge', isNewest);
+          badge.classList.toggle('older-badge', !isNewest);
+        }
+        reset.disabled = !!isNewest;
+        reset.title = isNewest ? '' : 'Back to the latest version';
+        setExpanded(false);
+        box.focus();
+      }
+
+      box.addEventListener('click', () => setExpanded(list.hidden));
+      box.addEventListener('keydown', e => {
+        const key = /** @type {KeyboardEvent} */ (e).key;
+        if (key === 'Enter' || key === ' ') {
+          e.preventDefault();
+          setExpanded(list.hidden);
+        }
+      });
+      reset.addEventListener('click', e => {
+        e.stopPropagation();
+        if (newestOption) select(newestOption);
+      });
+      list.addEventListener('click', e => {
+        const option = /** @type {HTMLElement | null} */ (
+          /** @type {HTMLElement} */ (e.target).closest('.option')
+        );
+        if (option) select(option);
+      });
+      root.addEventListener('keydown', e => {
+        if (/** @type {KeyboardEvent} */ (e).key === 'Escape') setExpanded(false);
+      });
+    });
+  }
+
+  wireAll();
+  // Client-side navigation swaps the picker DOM without a full page load:
+  // re-wire the fresh nodes. The data-wired guard keeps this idempotent
+  // when the module script itself re-executes after a swap.
+  document.addEventListener('astro:page-load', wireAll);
 </script>
 
 <style>

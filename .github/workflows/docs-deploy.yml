@@ -28,6 +28,7 @@ on:
     paths:
       - 'docs-site/**'
       - 'tools/docs/**'
+      - 'tools/publish/**'
       - '.github/workflows/docs-deploy.yml'
   # Rebuild after every successful artifact publish: publishes move the
   # `latest` release and mint dated tags, while asset updates on an existing

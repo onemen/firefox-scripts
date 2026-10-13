@@ -38,7 +38,7 @@ chromedir: Services.dirsvc.get("UChrm", Ci.nsIFile);
 `UChrm` is the profile's `chrome` directory. Files are picked up by extension:
 
 ```js
-if (/\\.uc\\.js$/i.test(file.leafName)) _uc.getScriptData(file);
+if (/\.uc\.js$/i.test(file.leafName)) _uc.getScriptData(file);
 ```
 
 Only the top level of that directory is scanned. `chrome/utils/` is the shipped scripts' own folder

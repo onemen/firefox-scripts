@@ -26,10 +26,13 @@ export function createExternalLinksPlugin(baseUrl) {
           return;
         }
 
-        if (!href.startsWith('#')) {
-          const prefix = href.startsWith('/') ? '' : '/';
-          ctx.setProperty(node, 'href', normalizedBase + prefix + href);
-        }
+        // Only root-absolute paths take the base prefix: protocol-relative
+        // URLs, relative links, fragments, scheme links, and paths already
+        // under the base pass through unchanged.
+        if (!href.startsWith('/')) return;
+        if (href.startsWith('//')) return;
+        if (href === normalizedBase || href.startsWith(`${normalizedBase}/`)) return;
+        ctx.setProperty(node, 'href', normalizedBase + href);
       },
     },
   });

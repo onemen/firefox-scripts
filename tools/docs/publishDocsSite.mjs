@@ -22,13 +22,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import {REPO_OWNER, ZIP_PAGES_BRANCH, ZIP_PAGES_REPO} from '../publish/paths.js';
+import {REPO_OWNER, SELF_UPDATE_FILE, ZIP_PAGES_BRANCH, ZIP_PAGES_REPO} from '../publish/paths.js';
 import {createOctokit, getGitHubToken} from '../publish/publishCommon.mjs';
 import {readPagesFile, uploadFilesToPages} from '../publish/uploadToPages.mjs';
 import {bold, dim, green, yellow} from '../publish/log.mjs';
 
 /** The list of branch paths the docs deploy owns, committed with the site. */
 const DOCS_MANIFEST = '.docs-site-files.json';
+
+// Artifact paths owned by pages.yml (the owner list in the docs-deploy.yml
+// header): the docs deploy must never write or delete them. A site build can
+// never legitimately contain one, and a hand-edited manifest must not be able
+// to smuggle one into the deletion list.
+const RESERVED_PAGES_PATHS = new Set(['hashes.json', SELF_UPDATE_FILE, 'README.md']);
+const isReservedPagesPath = name =>
+  RESERVED_PAGES_PATHS.has(name) ||
+  name.endsWith('.zip') ||
+  name.endsWith('.exe') ||
+  name.endsWith('.sha256');
 
 function parseArgs(argv) {
   const args = {dist: 'docs-site/dist', dryRun: false};
@@ -56,7 +67,11 @@ function collectDist(distDir) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else {
-        files.set(path.relative(distDir, full).split(path.sep).join('/'), fs.readFileSync(full));
+        const rel = path.relative(distDir, full).split(path.sep).join('/');
+        if (isReservedPagesPath(rel)) {
+          throw new Error(`Refusing to publish reserved artifact path '${rel}' from ${distDir}.`);
+        }
+        files.set(rel, fs.readFileSync(full));
       }
     }
   };
@@ -130,9 +145,18 @@ const octokit = createOctokit(token);
 const repo = {owner: REPO_OWNER, repo: ZIP_PAGES_REPO};
 
 const previous = await readPreviousDocsFiles(octokit);
-// Only ever delete paths this script wrote; an artifact path can never appear
-// in the manifest, and the intersection guards a hand-edited manifest.
-const deletePaths = previous.filter(p => !files.has(p)).sort();
+// Only ever delete paths this script wrote; reserved artifact paths are
+// refused even when a hand-edited manifest lists them.
+const deletePaths = previous
+  .filter(p => {
+    if (files.has(p)) return false;
+    if (isReservedPagesPath(p)) {
+      console.log(yellow(`  ! ${p}  reserved artifact path, not deleting`));
+      return false;
+    }
+    return true;
+  })
+  .sort();
 
 console.log(
   bold(

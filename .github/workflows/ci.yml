@@ -137,6 +137,7 @@ jobs:
             docs:
               - 'docs-site/**'
               - 'tools/docs/**'
+              - 'tools/publish/**'
               - '.github/workflows/docs-deploy.yml'
               - '.github/workflows/ci.yml'
       - name: Skip — no docs-site changes

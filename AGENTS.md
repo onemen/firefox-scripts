@@ -160,7 +160,8 @@ Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**
   `verify` (Windows: MSYS2 UCRT64 `mingw32-make`).
 - **Docs site:** `pnpm docs:install|docs:dev|docs:downloads|docs:build` (`docs:publish` only when
   explicitly asked). It is a **nested** project: its own lockfile, its own `pnpm --dir` install,
-  ignored by the root lint/format gates, and validated by the advisory CI `docs site build` job.
+  covered by the root lint/format gates (only `.mdx` stays out of Prettier, ADR 0046), and validated
+  by the advisory CI `docs site build` job.
 
 ## Testing & QA
 
