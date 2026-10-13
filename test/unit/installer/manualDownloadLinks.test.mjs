@@ -77,7 +77,8 @@ test('the two links never cross over: a package swap moves both hrefs and both d
   const ui = await bootTab({
     '/api/package-urls': () =>
       packageUrls({
-        utilsUrl: 'https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip?v=2',
+        utilsUrl:
+          'https://github.com/onemen/firefox-scripts/releases/download/latest/utils.zip?v=2',
         fxFolderDate: '2026-10-01',
         utilsDate: '2026-10-02',
       }),

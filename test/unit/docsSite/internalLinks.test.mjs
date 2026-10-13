@@ -5,8 +5,8 @@
 // Contract under test: every internal link in the docs content resolves
 // correctly under the site's configured `base`.
 //
-// Why (issue #28, docs-site): the site is served from a subpath —
-// `base: '/firefox-scripts'` in docs-site/astro.config.mjs — because the
+// Why (issue #28, docs-site): the site is served from a subpath:
+// `base: '/firefox-scripts'` in docs-site/astro.config.mjs, because the
 // release artifacts live at the gh-pages branch root beside the site output.
 // Astro does NOT rewrite root-absolute links found in Markdown/MDX content
 // (upstream withastro/astro#5680): only links Starlight generates itself (the
@@ -16,7 +16,7 @@
 // browse base-prefixed URLs. Every such link broke at once when the landing
 // page was first built.
 //
-// The fix is relative links, which are base-agnostic — `../installation/` from
+// The fix is relative links, which are base-agnostic, `../installation/` from
 // the FAQ page resolves correctly whatever `base` is, and keeps working if the
 // project path ever changes.
 //
@@ -34,7 +34,7 @@
 //
 // Deliberately NOT treated as internal links: `https:`/`http:`/`mailto:`
 // targets, pure fragments (`#section`), and protocol-relative `//host/path`.
-// `src="/firefox-scripts/..."` is checked separately, by the opposite rule —
+// `src="/firefox-scripts/..."` is checked separately, by the opposite rule:
 // public/ assets are served from the site root and MUST be base-prefixed.
 
 import {test} from 'node:test';
@@ -82,10 +82,7 @@ const lineAt = (src, index) => src.slice(0, index).split('\n').length;
 
 const EXTERNAL = /^(?:https?:|mailto:|tel:|\/\/|#)/;
 
-/**
- * An MDX expression link, e.g. `{assetUrl('latest', ...)}` — not a literal
- * path.
- */
+/** An MDX expression link, e.g. `{assetUrl('latest', ...)}`, not a literal path. */
 const isExpression = target => target.includes('{');
 
 /**
@@ -111,7 +108,7 @@ test('every docs page is discovered', () => {
   const files = mdxFiles();
   assert.ok(files.length >= 8, `expected the site's pages, found ${files.length}`);
   // The landing page is installation.mdx served via a / -> /installation/
-  // redirect — there is intentionally no index.mdx copy.
+  // redirect: there is intentionally no index.mdx copy.
   assert.ok(files.includes('docs-site/src/content/docs/installation.mdx'));
   assert.ok(
     !files.includes('docs-site/src/content/docs/index.mdx'),
@@ -143,7 +140,7 @@ test('no root-absolute internal links in docs content', () => {
 test('every internal link resolves to a page that exists', () => {
   // The subtle half of the contract: a relative link is only correct if it
   // climbs exactly the right number of levels. Resolve each one the way a
-  // browser would — against the linking page's own URL — then require the
+  // browser would (against the linking page's own URL) then require the
   // result to land on a real page inside the site.
   const base = configuredBase();
   const pages = knownPages();
@@ -160,10 +157,10 @@ test('every internal link resolves to a page that exists', () => {
       if (!pathOnly) continue; // fragment-only link
 
       // A browser resolves a relative link against the page's FULL url, base
-      // included — the FAQ page sits at `${base}/faq/`, not at `/faq/`.
+      // included: the FAQ page sits at `${base}/faq/`, not at `/faq/`.
       const absolute = posix.resolve('/', `${base}/${ownDir}`, pathOnly);
       if (absolute !== base && !absolute.startsWith(`${base}/`)) {
-        // Climbed above the site root — the link cannot be right.
+        // Climbed above the site root: the link cannot be right.
         offenders.push(
           `${file}:${line}  ${kind} -> "${target}"\n` +
             `    resolves to ${absolute}, which is OUTSIDE the site (${base}/…). Too many "../".`
@@ -202,7 +199,7 @@ test('every internal link resolves to a page that exists', () => {
 });
 
 test('no markdown link with an expression destination', () => {
-  // MDX does not parse `[text]({expression})` — there is no link there to
+  // MDX does not parse `[text]({expression})`, leaving no link there to
   // parse, so the raw text `[text]({expression})` is rendered literally and
   // the page shows unclickable markup. Use a JSX anchor instead:
   // `<a href={expression}><code>text</code></a>`.
@@ -230,7 +227,7 @@ test('no markdown link with an expression destination', () => {
 test('public asset references carry the base prefix', () => {
   // The counterpart invariant: images live in public/ and are addressed from
   // the site root, so they need `base` spelled out. An unprefixed src fails in
-  // production while working in dev — the same failure mode, opposite fix.
+  // production while working in dev; the same failure mode, opposite fix.
   const base = configuredBase();
   const offenders = [];
   for (const file of mdxFiles()) {

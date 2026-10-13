@@ -3,22 +3,22 @@
 // test/unit/docsSite/mdxResidue.test.mjs
 //
 // Contract under test: no docs page carries editor residue that would render
-// to a reader — an HTML comment, or a bare TODO/FIXME/XXX/HACK marker in prose.
+// to a reader: an HTML comment, or a bare TODO/FIXME/XXX/HACK marker in prose.
 //
 // Why (issue #28, docs-site): the pages are reviewed by reading the RENDERED
 // site, and residue is invisible exactly where it does damage. `{/* … *}` and
 // `<!-- … -->` both vanish from the rendered page, so a note-to-self left in the
-// prose is something nobody can see in review — and the reader does not need to
+// prose is something nobody can see in review, and the reader does not need to
 // see either. tools/check-docs-mdx.mjs is the gate; these tests are its
 // regression guard, and they also pin the two blind spots it must keep, since a
 // gate that cries wolf over legitimate prose gets switched off.
 //
 // Pinned as NOT findings, deliberately:
-//   - `{/* TODO: … *}` annotations — the sanctioned review channel. The marker
+//   - `{/* TODO: … *}` annotations, the sanctioned review channel. The marker
 //     moved into the source instead of leaking into the text a reader sees;
 //     MDX strips it at build time. This is what the maintainer uses to leave
 //     review notes, so flagging it would break the review workflow itself.
-//   - a marker inside backticks or a fenced block — a page documenting the token
+//   - a marker inside backticks or a fenced block: a page documenting the token
 //     quotes it; quoting the mistake is not making it.
 //
 // The masking must also preserve LINE NUMBERS: a blanked region is replaced by
@@ -140,7 +140,7 @@ test('the live docs pages are clean', () => {
   const dir = join(repoRoot, CONTENT_DIR);
   const pages = collectMdxFiles(dir);
   // Nine pages: the landing page is installation.mdx (via redirect), not a
-  // separate index.mdx — see internalLinks.test.mjs.
+  // separate index.mdx, see internalLinks.test.mjs.
   assert.ok(pages.length >= 9, `expected the full page set, found ${pages.length}`);
   const findings = pages.flatMap(file =>
     findFindings(readFileSync(file, 'utf8')).map(f => ({

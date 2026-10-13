@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 
 /**
- * tools/check-docs-mdx.mjs — flag editor residue that would ship to a reader
+ * tools/check-docs-mdx.mjs flags editor residue that would ship to a reader
  * (docs site, #28).
  *
  * The failure shape: a docs page renders a TODO, a stray note to the next
- * author, or an HTML comment nobody can see. MDX gives no mechanical warning —
+ * author, or an HTML comment nobody can see. MDX gives no mechanical warning:
  * `{/* … *}/` and `<!-- … -->` both vanish from the rendered page, so the
  * marker is invisible exactly where it does damage: nobody can see it in the
  * preview, and the reader does not need to. The gate exists because the docs
  * pages are reviewed by reading the _rendered_ site, and rendered output is the
  * one place a residue marker is guaranteed not to appear.
  *
- * Scope: every `.mdx` under `docs-site/src/content/docs/`, repo-wide — NOT the
+ * Scope: every `.mdx` under `docs-site/src/content/docs/`, repo-wide: not the
  * changed-lines scope of `tools/check-md-list-markers.mjs`. That gate scans all
  * repository prose, where a repo-wide pass would drown in pre-existing text;
  * this set is ten self-authored pages whose current content is clean, so the
@@ -22,19 +22,19 @@
  *
  * Two findings, both scanned outside code and outside annotations:
  *
- * - `html-comment` — `<!--` anywhere. MDX has no HTML comments; the correct form
+ * - `html-comment`: `<!--` anywhere. MDX has no HTML comments; the correct form
  *   is a JSX expression comment, and an HTML one is at best dead weight.
- * - `marker` — a bare `TODO` / `FIXME` / `XXX` / `HACK` (or `@todo`) in prose.
+ * - `marker`: a bare `TODO` / `FIXME` / `XXX` / `HACK` (or `@todo`) in prose.
  *   Case-sensitive on purpose: a lowercase "todo" in an FAQ sentence is
  *   English, not residue, and a gate that cries wolf over prose gets switched
  *   off.
  *
  * Deliberately NOT findings:
  *
- * - fenced code blocks and inline code spans — a page that documents an HTML
+ * - fenced code blocks and inline code spans: a page that documents an HTML
  *   comment or a `TODO` token shows it in backticks, and quoting the mistake is
  *   not making it;
- * - `{/* … *}` annotations — these are the sanctioned review channel: the
+ * - `{/* … *}` annotations, these are the sanctioned review channel: the
  *   maintainer marks up a page with `{/* TODO: … *}/`, and MDX strips them, so
  *   they never reach a reader. They are the marker _moving to the source_
  *   rather than leaking into the prose. Remove the annotation when the fix
@@ -63,7 +63,7 @@ export const HTML_COMMENT_RE = /<!--/g;
 /** A residue marker in prose. Case-sensitive, as documented above. */
 export const MARKER_RE = /(?:\b(?:TODO|FIXME|XXX|HACK)\b|@todo\b)/g;
 
-/** A JSX annotation comment — the sanctioned review channel, never a finding. */
+/** A JSX annotation comment (the sanctioned review channel), never a finding. */
 const ANNOTATION_RE = /\{\/\*[\s\S]*?\*\//g;
 
 /** An inline code span. */
@@ -74,7 +74,7 @@ const FENCE_RE = /^\s*(?:```|~~~)/;
 
 /**
  * Replace a matched region with spaces, keeping its newlines so every following
- * offset — and therefore every line number — stays valid.
+ * offset, and therefore every line number, stays valid.
  *
  * @param {string} text
  * @returns {string}
@@ -91,7 +91,7 @@ function blank(text) {
  * delimiter as an empty code span, so masking spans first would erase the very
  * delimiters that establish the fence state, and every line inside the block
  * would then be scanned as prose. The delimiter lines themselves are left
- * intact — they are what the state machine reads.
+ * intact: they are what the state machine reads.
  *
  * @param {string} text raw file contents; CRLF is normalized by the caller
  * @returns {string} same length and line structure, non-prose blanked out
@@ -122,10 +122,10 @@ export function findFindings(text) {
   const lines = maskNonProse(original.join('\n')).split('\n');
   const findings = [];
   for (const [index, masked] of lines.entries()) {
-    for (const [kind, re] of [
+    for (const [kind, re] of /** @type {[string, RegExp][]} */ ([
       ['html-comment', HTML_COMMENT_RE],
       ['marker', MARKER_RE],
-    ]) {
+    ])) {
       re.lastIndex = 0;
       let match;
       while ((match = re.exec(masked)) !== null) {
