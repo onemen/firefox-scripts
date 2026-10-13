@@ -201,6 +201,20 @@ test('readPagesFile: decodes the branch file; missing branch/file → null', asy
   // Missing branch (headSha null): null without a getContent call.
   const {api: missing} = fakeOctokit({headSha: null});
   assert.equal(await readPagesFile(missing, 'self-update.json'), null);
+  // First deploy: the file itself 404s (present branch, absent path).
+  const notFound = new Error('Not Found - get-repository-content');
+  notFound.status = 404;
+  api.repos.getContent = async () => {
+    throw notFound;
+  };
+  assert.equal(await readPagesFile(api, '.docs-site-files.json'), null);
+  // Anything other than absence still throws (network, permissions).
+  const forbidden = new Error('API rate limit exceeded');
+  forbidden.status = 403;
+  api.repos.getContent = async () => {
+    throw forbidden;
+  };
+  await assert.rejects(readPagesFile(api, '.docs-site-files.json'), /rate limit/);
 });
 
 // ── deletePaths (ADR 0046) ────────────────────────────────────────────────
