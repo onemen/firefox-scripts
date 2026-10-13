@@ -38,6 +38,11 @@ on:
   workflow_run:
     workflows: ['Pages publish']
     types: [completed]
+    # Head branch of the triggering run: a manual dev publish from any branch
+    # completes the workflow too, but only main publishes carry download data
+    # the live page should pick up (a dev run would commit a timestamp-only
+    # churn of the default-branch build).
+    branches: ['main']
   # Manual re-run: rebuilds and republishes unchanged sources (useful after a
   # failed deploy, or to force a refresh of the generated download data).
   workflow_dispatch: {}
