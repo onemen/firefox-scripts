@@ -2,7 +2,7 @@
 // Header links, after the tabmixplus-docs pattern: Download lives in the
 // top bar (next to the social icons), not in the sidebar. It is the one
 // page every visitor needs within one click.
-import { Icon } from '@astrojs/starlight/components';
+import {Icon} from '@astrojs/starlight/components';
 import config from 'virtual:starlight/user-config';
 
 const links = config.social || [];
@@ -14,18 +14,16 @@ const links = config.social || [];
   </a>
 </div>
 
-{
-  links.length > 0 && (
-    <>
-      {links.map(({ label, href, icon }) => (
-        <a {href} rel="me" class="sl-flex">
-          <span class="sr-only">{label}</span>
-          <Icon name={icon} />
-        </a>
-      ))}
-    </>
-  )
-}
+{links.length > 0 && (
+  <>
+    {links.map(({label, href, icon}) => (
+      <a {href} rel="me" class="sl-flex">
+        <span class="sr-only">{label}</span>
+        <Icon name={icon} />
+      </a>
+    ))}
+  </>
+)}
 
 <style>
   @layer starlight.core {

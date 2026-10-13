@@ -53,12 +53,22 @@ through the same git-data API path the publish tooling uses (`uploadToPages.mjs`
   record does **not** adopt the actions-pages deployment model. Full-site replacement via
   `deploy-pages` stays available as a follow-up if the two-writer arrangement proves fragile: the
   branch shape would not change, only who assembles it.
-- **The docs source is in-repo and validated in CI.** `docs-site/` is its own pnpm workspace, so the
-  Astro toolchain never enters the root install; root eslint lints the site's plain scripts,
-  `pnpm format` delegates to the site's own `format:check` (both need `pnpm docs:install` first),
-  and an advisory (never required) `docs` job in `ci.yml` builds it on docs-only changes (the only
-  cover for `.astro`/`.mdx`/`.ts`, which root eslint cannot parse), so a broken page fails on the PR
-  rather than in the deploy workflow.
+- **The docs source is in-repo and validated in CI.** `docs-site/` is its own pnpm workspace for
+  installs, but ALL of its lint and formatting runs from the root toolchain in one pass: root eslint
+  covers plain scripts, `.md`, `.mdx` pages and `.astro` components (the Astro compiler enters the
+  root install as a lint dependency), and root prettier formats the tree with
+  `prettier-plugin-astro` (`.mdx` pages stay excluded: prettier's MDX formatter breaks the Astro
+  build). An advisory (never required) `docs` job in `ci.yml` builds the site on docs-only changes
+  (the only cover for `.ts` types, via `astro check`), so a broken page fails on the PR rather than
+  in the deploy workflow.
+
+  Amended 2026-10-13: the original "Astro toolchain never enters the root install" rule is replaced
+  by the merged toolchain above. Rationale: one `pnpm lint` and one `pnpm format` cover the whole
+  repo with no delegation, no second eslint process, and no nested prettier install. Costs accepted:
+  the root `typescript` is aliased to the 6.x line (`typescript-eslint` refuses TS 7), the root
+  `prettier-plugin-astro` version must track the site's Astro by hand across two lockfiles, and
+  `--ignore-path` patterns anchor at `config/`, so nested-tree ignores need the `**/` prefix (a bare
+  `docs-site/...` pattern silently matches nothing).
 
 ## Consequences
 

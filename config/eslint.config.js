@@ -4,6 +4,11 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 import js from '@eslint/js';
 import markdown from '@eslint/markdown';
+import tsParser from '@typescript-eslint/parser';
+import * as eslintMdx from 'eslint-mdx';
+import astroPlugin from 'eslint-plugin-astro';
+import * as mdx from 'eslint-plugin-mdx';
+import jsxA11YPlugin from 'eslint-plugin-jsx-a11y';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import sdl from '@microsoft/eslint-plugin-sdl';
 import security from 'eslint-plugin-security';
@@ -166,11 +171,12 @@ export default defineConfig([
       '**/@types/**',
       'docs-site/dist/',
       'docs-site/.astro/',
-      // The docs site is a nested project, but its plain scripts ARE covered
-      // by root eslint (ADR 0046): .astro/.mdx/.ts match no block below, so
-      // only docs-site **/*.{js,mjs,cjs} (and .md, like every README) are
-      // linted. Build output needs its own ignores: the 'dist/' entry above
-      // is root-anchored and does not reach the nested workspace.
+      // The docs site is a nested pnpm workspace, but ALL of its linting
+      // runs from this root config in one pass (ADR 0046): plain scripts,
+      // .md (like every README), .mdx pages (remark-based MDX parsing below)
+      // and .astro components (eslint-plugin-astro, compiler included).
+      // Build output needs its own ignores: the 'dist/' entry above is
+      // root-anchored and does not reach the nested workspace.
     ],
   },
   {
@@ -198,6 +204,71 @@ export default defineConfig([
     name: 'markdown-code-blocks',
     files: ['**/*.md/**/*.{js,mjs,cjs}'],
     ...jsBase,
+  },
+
+  // MDX pages (docs-site only): remark-based parsing plus the Astro plugin's
+  // MDX exclusion below keeps Markdown files with the markdown processor
+  // above (the plugin's own patterns also match .md, so scope to .mdx or its
+  // rules never misfire there). Fenced code blocks lint as real code; JSX
+  // gets the a11y rules. No React plugin: Astro components are not React.
+  {
+    ...mdx.flat,
+    files: ['**/*.mdx'],
+    processor: mdx.createRemarkProcessor({
+      lintCodeBlocks: true,
+      languageMapper: {},
+    }),
+  },
+  {
+    ...mdx.flatCodeBlocks,
+    files: ['**/*.mdx/**'],
+    rules: {
+      ...mdx.flatCodeBlocks.rules,
+      'no-var': 'error',
+      'prefer-const': 'error',
+      // Snippets illustrate one expression at a time (`chromedir: ...` labels
+      // a resolved value); unused labels are prose style here, not defects.
+      'no-unused-labels': 'off',
+    },
+  },
+  {
+    name: 'mdx-a11y',
+    files: ['**/*.mdx'],
+    plugins: {
+      'jsx-a11y': jsxA11YPlugin,
+    },
+    languageOptions: {
+      parser: eslintMdx,
+      parserOptions: {ecmaFeatures: {jsx: true}},
+    },
+    rules: {
+      ...jsxA11YPlugin.configs.recommended.rules,
+      'no-unused-expressions': 'off',
+    },
+  },
+
+  // Astro components (docs-site only): recommended rules, TS parser for
+  // TypeScript frontmatter (`interface Props`). .md/.mdx stay excluded so
+  // the markdown/MDX blocks above remain the single owner of page content.
+  ...astroPlugin.configs.recommended.map(cfg => ({
+    ...cfg,
+    ignores: ['**/*.{md,mdx}', ...(cfg.ignores ?? [])],
+  })),
+  {
+    name: 'astro-ts-frontmatter',
+    files: ['**/*.astro/*.ts'],
+    languageOptions: {
+      parser: tsParser,
+    },
+  },
+  // The site's lone .ts module: parsed (not type-checked) so syntax errors
+  // fail the gate; types remain covered by the site's `astro check`.
+  {
+    name: 'docs-site-ts',
+    files: ['docs-site/**/*.ts'],
+    languageOptions: {
+      parser: tsParser,
+    },
   },
 
   // core/fx-folder is Firefox config/pref-scripts distributed as-is: variable

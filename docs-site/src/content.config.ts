@@ -1,6 +1,6 @@
-import { docsLoader, i18nLoader } from "@astrojs/starlight/loaders";
-import { docsSchema, i18nSchema } from "@astrojs/starlight/schema";
-import { defineCollection } from "astro:content";
+import {docsLoader, i18nLoader} from '@astrojs/starlight/loaders';
+import {docsSchema, i18nSchema} from '@astrojs/starlight/schema';
+import {defineCollection} from 'astro:content';
 
 export const collections = {
   docs: defineCollection({
@@ -8,7 +8,7 @@ export const collections = {
       importPreferences: false,
     }),
     schema: docsSchema({
-      labels: { singular: "doc" },
+      labels: {singular: 'doc'},
     }),
   }),
   // Single-locale site: one minimal file (en.json) keeps the collection

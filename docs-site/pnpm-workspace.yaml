@@ -4,7 +4,7 @@
 # tooling's dependency set, and `pnpm install` at the repo root must not pull
 # Astro in.
 packages:
-  - "."
+  - '.'
 
 # Same supply-chain floor as the repo root (ADR 0033, dependency-update
 # policy): a package must have been published at least 7200 minutes (5 days)

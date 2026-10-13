@@ -10,22 +10,18 @@
     "preview": "astro preview",
     "astro": "astro",
     "downloads": "node src/utils/getDownloadsInfo.mjs",
-    "check": "astro check",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "check": "astro check"
   },
   "author": "tabmix.onemen@gmail.com",
   "license": "MIT",
   "dependencies": {
     "@astrojs/check": "^0.9.10",
-    "@pagefind/default-ui": "1.5.2",
     "@astrojs/starlight": "0.42.4",
+    "@pagefind/default-ui": "1.5.2",
     "astro": "^7.3.5",
     "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "prettier": "^3.9.9",
-    "prettier-plugin-astro": "^1.1.0",
     "typescript": "^5.9.0"
   }
 }

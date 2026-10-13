@@ -1,6 +1,7 @@
 # docs-site: the Firefox Scripts documentation site
 
-The user-facing documentation, published to **<https://onemen.github.io/firefox-scripts/>**, the root of the `gh-pages` branch, the same branch that serves the release artifacts (ADR 0046).
+The user-facing documentation, published to **<https://onemen.github.io/firefox-scripts/>**, the
+root of the `gh-pages` branch, the same branch that serves the release artifacts (ADR 0046).
 
 Astro + [Starlight](https://starlight.astro.build/), MDX pages, Pagefind search.
 
@@ -11,8 +12,10 @@ pnpm install    # this workspace's own install (own lockfile)
 pnpm dev        # local dev server
 pnpm downloads  # refresh src/utils/downloadsInfo.json (release data for /download)
 pnpm build      # astro check + astro build → dist/
-pnpm format     # prettier (with prettier-plugin-astro)
 ```
+
+Lint and format run from the repo root in one pass (ADR 0046): `pnpm lint` covers the `.mdx` pages
+and `.astro` components, `pnpm format` formats the tree (`.mdx` pages stay excluded).
 
 From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`, `pnpm docs:build`,
 `pnpm docs:publish` (commits `dist/` to the Pages branch, needs `GITHUB_TOKEN_VAR`).
@@ -28,16 +31,16 @@ From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`,
 ## Rules that are not obvious
 
 - **`base` is `/firefox-scripts`** (the Pages project path) and the site is served from the branch
-  **root**, because the artifact URLs (`hashes.json`, the zips) are root paths. Do not move the
-  site under a subpath, and do not expect the artifact files to be part of `dist/`.
+  **root**, because the artifact URLs (`hashes.json`, the zips) are root paths. Do not move the site
+  under a subpath, and do not expect the artifact files to be part of `dist/`.
 - **Internal links are RELATIVE, never root-absolute.** Write `../installation/`, not
   `/installation/`. Astro does **not** add `base` to links it finds in Markdown/MDX content
   (upstream [withastro/astro#5680][1]). Only the links Starlight generates itself (sidebar,
-  prev/next) get the prefix. A root-absolute link renders as `/installation/` and 404s on the
-  live site, while looking fine in `astro dev` if you only browse base-prefixed URLs.
-  Two details that bite:
-  - the number of `../` must match the page's depth in `src/content/docs/` (`index.mdx` needs
-    none, a root-level page one, `how-it-works/*.mdx` one for a sibling and two for a root page);
+  prev/next) get the prefix. A root-absolute link renders as `/installation/` and 404s on the live
+  site, while looking fine in `astro dev` if you only browse base-prefixed URLs. Two details that
+  bite:
+  - the number of `../` must match the page's depth in `src/content/docs/` (`index.mdx` needs none,
+    a root-level page one, `how-it-works/*.mdx` one for a sibling and two for a root page);
   - a link to a page **needs its trailing slash**. Routes are built as `<route>/index.html`, so
     `../config-js` 404s where `../config-js/` resolves.
 
@@ -48,29 +51,29 @@ From the repo root: `pnpm docs:install`, `pnpm docs:dev`, `pnpm docs:downloads`,
 - Public assets in `public/` are the one exception: they are addressed from the site **root**, so
   their `src` must be base-prefixed (`/firefox-scripts/installer.png`).
 - **Logos and screenshots in `public/` are referenced by URL** (`/firefox-scripts/installer.png`).
-  Nothing is imported through `astro:assets` for those.- **Content images live in `src/assets/` and are imported through the `@assets` alias** (`import img
-from '@assets/chrome_utils.png'` + `<Image src={img} alt="…" />`). `tsconfig.json` maps
-  `@assets/*`, `@components/*` and `@utils/*` to `src/*`; Astro resolves those in the Vite build
-  as well as in `astro check`, so never spell a specifier relative to the `.mdx` file or to the
-  project root. A specifier that exists on disk but is not an alias fails the build with
-  `UNRESOLVED_IMPORT`. A markdown image whose destination is a JSX expression is _not_ parsed, so
-  `<Image>` (an element) is the only form. Astro emits these to `/_astro/<name>.<hash>.webp`
-  **with** the base prefix, so they survive the Pages root.
+  Nothing is imported through `astro:assets` for those.- **Content images live in `src/assets/` and
+  are imported through the `@assets` alias** (`import img from '@assets/chrome_utils.png'` +
+  `<Image src={img} alt="…" />`). `tsconfig.json` maps `@assets/*`, `@components/*` and `@utils/*`
+  to `src/*`; Astro resolves those in the Vite build as well as in `astro check`, so never spell a
+  specifier relative to the `.mdx` file or to the project root. A specifier that exists on disk but
+  is not an alias fails the build with `UNRESOLVED_IMPORT`. A markdown image whose destination is a
+  JSX expression is _not_ parsed, so `<Image>` (an element) is the only form. Astro emits these to
+  `/_astro/<name>.<hash>.webp` **with** the base prefix, so they survive the Pages root.
 - **The node_modules layout is hoisted** on purpose (`nodeLinker: hoisted` in
   `pnpm-workspace.yaml`). This is a nested project inside a repository with its own pnpm install;
   with the default isolated layout on Windows, Node's ESM resolver walks past this tree into the
   parent checkout and picks up a different version of a package.
 - **Do not import anything from the repo root** (`tools/`, `config/`). The site builds in CI with
   only this workspace installed. Anything shared belongs in `docs-site/src/utils/`.
-- **`.mdx` is excluded from prettier** (`.prettierignore`): prettier's MDX formatter rewrites the
-  pages in ways the Astro build rejects (a blank line inside a JSX expression, `Parse error @:1:1`).
-  `pnpm format` therefore covers `.astro`, `.mjs`, `.ts`, `.css` and `.json` only. The pages are
-  validated by `pnpm build` → `astro check`, which is the gate that understands MDX.
-- **Navigation is client-side.** t
-  with the browser's View Transition API instead of reloading the document. Verify changes with
-  `pnpm build && pnpm preview`. **`pnpm dev` is not representative**: Pagefind is not built for dev
-  (Starlight shows a “search is only available in production builds” notice), and the router's search
-  re-init is skipped there by design.
+- **`.mdx` is excluded from prettier** (`config/.prettierignore` in the repo root): prettier's MDX
+  formatter rewrites the pages in ways the Astro build rejects (a blank line inside a JSX
+  expression, `Parse error @:1:1`). Root `pnpm format` therefore covers `.astro`, `.mjs`, `.ts`,
+  `.css` and `.json` only. The pages are validated by `pnpm build` → `astro check`, which is the
+  gate that understands MDX.
+- **Navigation is client-side.** t with the browser's View Transition API instead of reloading the
+  document. Verify changes with `pnpm build && pnpm preview`. **`pnpm dev` is not representative**:
+  Pagefind is not built for dev (Starlight shows a “search is only available in production builds”
+  notice), and the router's search re-init is skipped there by design.
 - **The router re-creates Starlight's search, so that component re-initialises Pagefind after each
   swap.** Starlight builds its Pagefind UI from a `DOMContentLoaded` listener, which never fires
   again for the swapped-in `<site-search>`. The re-init in `Head.astro` is guarded twice: skip the
@@ -81,14 +84,14 @@ from '@assets/chrome_utils.png'` + `<Image src={img} alt="…" />`). `tsconfig.j
   four tabs (`tab-0-0` … `tab-0-3`) in the prerendered output. An earlier note here claimed a
   three-item group lost its tab. That did not reproduce.
 - **Review annotations are `{/* … *}` MDX comments, and `pnpm lint:mdx` keeps the two apart.** The
-  maintainer marks a page up with `{/* TODO: … *}`; MDX strips it, so a note never reaches a
-  reader. `tools/check-docs-mdx.mjs` (stage `lint:mdx`) fails a page that renders residue instead:
-  an HTML comment, or a bare `TODO` / `FIXME` / `XXX` / `HACK` in prose. Code spans and fenced
-  blocks are exempt, so a page documenting the token can quote it; prose that merely _mentions_ it
-  is flagged, and the fix is backticks.
+  maintainer marks a page up with `{/* TODO: … *}`; MDX strips it, so a note never reaches a reader.
+  `tools/check-docs-mdx.mjs` (stage `lint:mdx`) fails a page that renders residue instead: an HTML
+  comment, or a bare `TODO` / `FIXME` / `XXX` / `HACK` in prose. Code spans and fenced blocks are
+  exempt, so a page documenting the token can quote it; prose that merely _mentions_ it is flagged,
+  and the fix is backticks.
 - `src/utils/downloadsInfo.json` is **generated** (gitignored, like every other generated file):
-  `pnpm downloads` writes it from the live `hashes.json` manifest and the releases API. A missing
-  or failed fetch only downgrades the `/download` page to static links; it never fails the build.
+  `pnpm downloads` writes it from the live `hashes.json` manifest and the releases API. A missing or
+  failed fetch only downgrades the `/download` page to static links; it never fails the build.
 
 ## Dev-server lines you can ignore
 

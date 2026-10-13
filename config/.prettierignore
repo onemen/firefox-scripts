@@ -33,9 +33,15 @@ review-history
 # buildScriptJs, which syntax-checks the exact concatenation on every build).
 **/installer/web/script/
 
-# The docs site is a NESTED project with its own prettier install and style
-# (docs-site/package.json `format:check`, prettier defaults — not the repo
-# config: root prettier would reformat .mdx/.astro sources with the repo's
-# JS-oriented config and break the Astro build). `pnpm format` delegates to
-# the site's own gate instead of scanning this tree (see the `format` script).
-docs-site/
+# The docs site is a NESTED pnpm workspace, but it is formatted by the root
+# prettier in the same pass (ADR 0046): prettier-plugin-astro handles the
+# components. Only the page sources stay out: prettier's MDX formatter
+# inserts a blank line after an opening `(` inside a JSX expression, which
+# terminates the expression and breaks the Astro build with a bare
+# `Parse error @:1:1` (verified with prettier 3.9.9 on astro 7.3.5).
+# (moved from docs-site/.prettierignore, which no longer exists). The **/
+# prefix is load-bearing: a custom --ignore-path anchors slash patterns at
+# config/, so a bare `docs-site/...` pattern would silently match nothing.
+**/docs-site/**/*.mdx
+**/docs-site/dist/
+**/docs-site/.astro/

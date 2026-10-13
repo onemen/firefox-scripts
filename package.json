@@ -31,7 +31,7 @@
     "lint:hygiene": "node tools/check-hygiene.mjs",
     "lint:all": "run-s --continue-on-error --print-label lint:js lint:ncpy lint:apt lint:types lint:c lint:analyze lint:md lint:md-markers lint:mdx lint:yaml lint:skills lint:skill-cmds lint:hygiene",
     "hooks:install": "node tools/install-githooks.mjs",
-    "format": "node tools/sync-skill-gates.mjs && node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check && pnpm --dir docs-site format:check",
+    "format": "node tools/sync-skill-gates.mjs && node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
     "format:fix": "node tools/sync-skill-gates.mjs --fix && node tools/format-c.mjs --write && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --write",
     "test": "node --test \"test/unit/**/*.test.mjs\"",
     "check:decisions": "node tools/check-decisions.mjs",
@@ -82,10 +82,15 @@
     "@microsoft/eslint-plugin-sdl": "1.1.0",
     "@octokit/rest": "22.0.1",
     "@types/node": "26.6.4",
+    "@typescript-eslint/parser": "8.71.0",
     "archiver": "8.0.0",
     "clang-format": "1.8.0",
     "eslint": "10.12.0",
     "eslint-config-prettier": "10.1.8",
+    "eslint-mdx": "3.8.1",
+    "eslint-plugin-astro": "3.2.1",
+    "eslint-plugin-jsx-a11y": "6.10.2",
+    "eslint-plugin-mdx": "3.8.1",
     "eslint-plugin-mozilla": "5.0.1",
     "eslint-plugin-security": "4.2.0",
     "globals": "17.13.0",
@@ -94,8 +99,9 @@
     "minimatch": "10.2.6",
     "npm-run-all2": "9.0.3",
     "prettier": "3.9.9",
+    "prettier-plugin-astro": "1.1.0",
     "prettier-plugin-jsdoc": "1.8.1",
     "puppeteer-core": "25.12.0",
-    "typescript": "7.0.2"
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }

@@ -20,27 +20,26 @@
 //        repo-wide fixed name the publish tooling also reads (optional: the
 //        unauthenticated API allows 60 requests/hour, enough for a build).
 
-import fs from "node:fs/promises";
-import path from "node:path";
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
-const OWNER = "onemen";
-const REPO = "firefox-scripts";
-const HASHES_URL =
-  process.env.HASHES_URL || `https://onemen.github.io/${REPO}/hashes.json`;
+const OWNER = 'onemen';
+const REPO = 'firefox-scripts';
+const HASHES_URL = process.env.HASHES_URL || `https://onemen.github.io/${REPO}/hashes.json`;
 const API = `https://api.github.com/repos/${OWNER}/${REPO}`;
 
 /** The packages the Download page shows. Keep in sync with download.mdx. */
-const PACKAGES = ["utils", "fx-folder"];
+const PACKAGES = ['utils', 'fx-folder'];
 
-const token = process.env.GITHUB_TOKEN_VAR || process.env.GITHUB_TOKEN || "";
+const token = process.env.GITHUB_TOKEN_VAR || process.env.GITHUB_TOKEN || '';
 
-async function fetchJson(url, { headers = {} } = {}) {
+async function fetchJson(url, {headers = {}} = {}) {
   const response = await fetch(url, {
     headers: {
-      accept: "application/vnd.github+json",
-      "user-agent": `${REPO}-docs-site`,
-      "x-github-api-version": "2022-11-28",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      'accept': 'application/vnd.github+json',
+      'user-agent': `${REPO}-docs-site`,
+      'x-github-api-version': '2022-11-28',
+      ...(token ? {authorization: `Bearer ${token}`} : {}),
       ...headers,
     },
   });
@@ -53,7 +52,7 @@ async function fetchJson(url, { headers = {} } = {}) {
 /**
  * Per-package publish dates + file lists from the live hash manifest.
  *
- * @returns {Promise<Record<string, {date: string, files: string[]}>>}
+ * @returns {Promise<Record<string, {date: string; files: string[]}>>}
  */
 async function getPackages() {
   const manifest = await fetchJson(HASHES_URL);
@@ -77,28 +76,31 @@ async function getPackages() {
 /**
  * The release list the download page links to.
  *
- * @returns {Promise<Array<{tag: string, name: string, publishedAt: string,
- *   date: string, assets: Array<{name: string, size: number, href: string}>}>>}
+ * @returns {Promise<
+ *   {
+ *     tag: string;
+ *     name: string;
+ *     publishedAt: string;
+ *     date: string;
+ *     assets: {name: string; size: number; href: string}[];
+ *   }[]
+ * >}
  */
 async function getReleases() {
   const releases = await fetchJson(`${API}/releases?per_page=100`);
   return releases
-    .filter(
-      (r) =>
-        r.tag_name === "latest" ||
-        /^(core|installer)-\d{4}-\d{2}-\d{2}$/.test(r.tag_name),
-    )
-    .map((release) => ({
+    .filter(r => r.tag_name === 'latest' || /^(core|installer)-\d{4}-\d{2}-\d{2}$/.test(r.tag_name))
+    .map(release => ({
       tag: release.tag_name,
       name: release.name || release.tag_name,
       publishedAt: release.published_at,
       // The tag carries the package date; `latest` does not, so its own date
       // is read from the manifest by the page instead.
-      date: release.tag_name.replace(/^[^-]+-/, ""),
+      date: release.tag_name.replace(/^[^-]+-/, ''),
       draft: release.draft,
       prerelease: release.prerelease,
       htmlUrl: release.html_url,
-      assets: release.assets.map((asset) => ({
+      assets: release.assets.map(asset => ({
         name: asset.name,
         size: asset.size,
         href: asset.browser_download_url,
@@ -106,7 +108,7 @@ async function getReleases() {
     }));
 }
 
-const outputPath = path.join(process.cwd(), "src/utils/downloadsInfo.json");
+const outputPath = path.join(process.cwd(), 'src/utils/downloadsInfo.json');
 
 const result = {
   generatedAt: new Date().toISOString(),
@@ -126,8 +128,8 @@ try {
   console.warn(`[docs] WARNING: release list unavailable (${error.message})`);
 }
 
-await fs.writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+await fs.writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
 console.log(
   `[docs] downloadsInfo.json written (${Object.keys(result.packages).length} packages, ` +
-    `${result.releases.length} releases)`,
+    `${result.releases.length} releases)`
 );

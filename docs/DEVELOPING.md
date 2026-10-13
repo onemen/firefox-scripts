@@ -555,12 +555,13 @@ pnpm docs:build      # astro check + astro build → docs-site/dist/
 pnpm docs:publish    # commit docs-site/dist to gh-pages (needs GITHUB_TOKEN_VAR)
 ```
 
-- **Own toolchain, own lockfile.** The Astro stack never enters the root install. Root eslint lints
-  the site's plain scripts (`docs-site/**/*.mjs`, plus its READMEs) directly; root prettier stays
-  out (its JS-oriented config would reformat `.mdx`/`.astro` sources, which breaks the build), so
-  `pnpm format` delegates to the site's own `format:check` instead. Both need `pnpm docs:install`
-  first. The site installs a **hoisted** `node_modules` (see `docs-site/pnpm-workspace.yaml`)
-  because it is nested inside another pnpm project.
+- **Own lockfile, shared toolchain.** `docs-site/` keeps its own pnpm workspace and lockfile for
+  installs, but lint and format both run from root in one pass (ADR 0046): root eslint covers the
+  site's plain scripts, READMEs, `.mdx` pages (fenced code blocks, JSX a11y) and `.astro`
+  components, and root prettier formats the tree with `prettier-plugin-astro` (`.mdx` pages stay
+  excluded: prettier's MDX formatter breaks the Astro build). The site installs a **hoisted**
+  `node_modules` (see `docs-site/pnpm-workspace.yaml`) because it is nested inside another pnpm
+  project.
 - **CI**: the advisory `docs site build` job builds it on docs-only changes; a `main` push that
   touches the site runs `docs-deploy.yml`, which publishes it. `pages.yml` (the release publish) and
   `docs-deploy.yml` share the repo-wide concurrency group `gh-pages-write` and write disjoint path

@@ -35,13 +35,13 @@ interface Props {
   latestAssets: VersionAsset[];
 }
 
-const { id, familyLabel, versions, files, latestAssets } = Astro.props;
+const {id, familyLabel, versions, files, latestAssets} = Astro.props;
 const boxId = `${id}-box`;
 const listId = `${id}-list`;
 const resetId = `${id}-reset`;
 const currentId = `${id}-current`;
 const badgeId = `${id}-badge`;
-const latestByName = new Map(latestAssets.map((a) => [a.name, a.href]));
+const latestByName = new Map(latestAssets.map(a => [a.name, a.href]));
 
 // `YYYY-MM-DD` → `September 26, 2026`. Built from parts, never parsed as a
 // date string, so no timezone can shift it a day.
@@ -58,7 +58,7 @@ function longDate(iso: string): string {
 // the family, that version's own frozen-tag URL otherwise. Null when the
 // version never shipped the file (the link is then omitted, never dead).
 function fileHref(version: Version, newest: boolean, name: string): string | null {
-  const own = version.assets.find((a) => a.name === name)?.href ?? null;
+  const own = version.assets.find(a => a.name === name)?.href ?? null;
   if (!newest) return own;
   return latestByName.get(name) ?? own;
 }
@@ -66,149 +66,138 @@ function fileHref(version: Version, newest: boolean, name: string): string | nul
 const newest = versions[0];
 ---
 
-{
-  versions.length === 0 ? (
-    <p>
-      No frozen releases of this kind are listed. See the{' '}
-      <a href="https://github.com/onemen/firefox-scripts/releases">releases page</a>{' '}
-      directly.
-    </p>
-  ) : (
-    <div class="release-downloads" data-release-downloads>
-      {versions.length > 1 && (
-        <p class="hint">Click to select older {familyLabel} versions</p>
-      )}
-      <div class="combo">
-        <div
-          class="combo-box"
-          id={boxId}
-          role="button"
-          tabindex="0"
-          aria-haspopup="listbox"
-          aria-expanded="false"
-          aria-controls={listId}
+{versions.length === 0 ?
+  <p>
+    No frozen releases of this kind are listed. See the{' '}
+    <a href="https://github.com/onemen/firefox-scripts/releases">releases page</a> directly.
+  </p>
+: <div class="release-downloads" data-release-downloads>
+    {versions.length > 1 && <p class="hint">Click to select older {familyLabel} versions</p>}
+    <div class="combo">
+      <div
+        class="combo-box"
+        id={boxId}
+        role="button"
+        tabindex="0"
+        aria-haspopup="listbox"
+        aria-expanded="false"
+        aria-controls={listId}
+      >
+        <span class="combo-title">Version</span>
+        <span class="combo-current" data-current id={currentId}>
+          {newest.tag}
+        </span>
+        <span class="latest-badge" data-badge id={badgeId}>
+          Latest
+        </span>
+        <span class="chevron" aria-hidden="true" />
+        <button
+          type="button"
+          class="reset-button"
+          id={resetId}
+          title=""
+          disabled
+          aria-label="Back to the latest version"
         >
-          <span class="combo-title">Version</span>
-          <span class="combo-current" data-current id={currentId}>
-            {newest.tag}
-          </span>
-          <span class="latest-badge" data-badge id={badgeId}>
-            Latest
-          </span>
-          <span class="chevron" aria-hidden="true" />
-          <button
-            type="button"
-            class="reset-button"
-            id={resetId}
-            title=""
-            disabled
-            aria-label="Back to the latest version"
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
           >
-            <svg
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 12a9 9 0 1 0 3-6.7" />
-              <path d="M3 4v5h5" />
-            </svg>
-          </button>
-        </div>
-        <div class="combo-list" id={listId} role="listbox" hidden>
-          {versions.map((v, i) => (
-            <div
-              class="option"
-              role="option"
-              aria-selected={i === 0 ? 'true' : 'false'}
-              tabindex="-1"
-              data-tag={v.tag}
-              data-date={longDate(v.date)}
-              data-href={v.htmlUrl}
-              data-newest={i === 0 ? 'true' : undefined}
-            >
-              <span class="option-tag">{v.tag}</span>
-              <span class="option-date">{longDate(v.date)}</span>
-              {i === 0 && <span class="latest-badge">Latest</span>}
-            </div>
-          ))}
-        </div>
+            <path d="M3 12a9 9 0 1 0 3-6.7" />
+            <path d="M3 4v5h5" />
+          </svg>
+        </button>
       </div>
-      {versions.map((v, i) => {
-        const isNewest = i === 0;
-        const links = files
-          .map((f) => ({
-            ...f,
-            href: fileHref(v, isNewest, f.name),
-            sha: fileHref(v, isNewest, `${f.name}.sha256`),
-          }))
-          .filter((f) => f.href !== null);
-        return (
-          <div data-version-files data-tag={v.tag} hidden={i === 0 ? undefined : true}>
-            <p class="version-meta">
-              Published {longDate(v.date)}
-              {isNewest ? (
-                <>
-                  {' '}· newest build, served from{' '}
-                  <a href="https://github.com/onemen/firefox-scripts/releases/tag/latest">
-                    tag/latest
-                  </a>
-                </>
-              ) : (
-                <>
-                  {' '}· <a href={v.htmlUrl}>release page</a>
-                </>
-              )}
-            </p>
-            <ul class="file-list">
-              {links.map((f) => (
-                <li>
-                  <a href={f.href ?? ''}>
-                    <code>{f.name}</code>
-                  </a>{' '}
-                  <span class="file-label">{f.label}</span>
-                  {f.sha !== null && (
-                    <a class="sha-link" href={f.sha}>
-                      sha256
-                    </a>
-                  )}
-                </li>
-              ))}
-            </ul>
+      <div class="combo-list" id={listId} role="listbox" hidden>
+        {versions.map((v, i) => (
+          <div
+            class="option"
+            role="option"
+            aria-selected={i === 0 ? 'true' : 'false'}
+            tabindex="-1"
+            data-tag={v.tag}
+            data-date={longDate(v.date)}
+            data-href={v.htmlUrl}
+            data-newest={i === 0 ? 'true' : undefined}
+          >
+            <span class="option-tag">{v.tag}</span>
+            <span class="option-date">{longDate(v.date)}</span>
+            {i === 0 && <span class="latest-badge">Latest</span>}
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
-  )
+    {versions.map((v, i) => {
+      const isNewest = i === 0;
+      const links = files
+        .map(f => ({
+          ...f,
+          href: fileHref(v, isNewest, f.name),
+          sha: fileHref(v, isNewest, `${f.name}.sha256`),
+        }))
+        .filter(f => f.href !== null);
+      return (
+        <div data-version-files data-tag={v.tag} hidden={i === 0 ? undefined : true}>
+          <p class="version-meta">
+            Published {longDate(v.date)}
+            {isNewest ?
+              <>
+                {' '}
+                · newest build, served from{' '}
+                <a href="https://github.com/onemen/firefox-scripts/releases/tag/latest">
+                  tag/latest
+                </a>
+              </>
+            : <>
+                {' '}
+                · <a href={v.htmlUrl}>release page</a>
+              </>
+            }
+          </p>
+          <ul class="file-list">
+            {links.map(f => (
+              <li>
+                <a href={f.href ?? ''}>
+                  <code>{f.name}</code>
+                </a>{' '}
+                <span class="file-label">{f.label}</span>
+                {f.sha !== null && (
+                  <a class="sha-link" href={f.sha}>
+                    sha256
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    })}
+  </div>
 }
 
 <script>
   // One copy of this script lands per component instance; the guard keeps
   // a second copy from double-wiring the same dropdowns.
-  document.querySelectorAll('[data-release-downloads]').forEach((node) => {
+  document.querySelectorAll('[data-release-downloads]').forEach(node => {
     const root = /** @type {HTMLElement} */ (node);
     if (root.dataset.wired) return;
     root.dataset.wired = '1';
-    const box = /** @type {HTMLElement | null} */ (
-      root.querySelector('.combo-box')
-    );
-    const list = /** @type {HTMLElement | null} */ (
-      root.querySelector('.combo-list')
-    );
-    const reset = /** @type {HTMLButtonElement | null} */ (
-      root.querySelector('.reset-button')
-    );
+    const box = /** @type {HTMLElement | null} */ (root.querySelector('.combo-box'));
+    const list = /** @type {HTMLElement | null} */ (root.querySelector('.combo-list'));
+    const reset = /** @type {HTMLButtonElement | null} */ (root.querySelector('.reset-button'));
     const current = root.querySelector('[data-current]');
     const badge = root.querySelector('[data-badge]');
     if (!box || !list || !reset || !current) return;
     const options = [...root.querySelectorAll('.option')];
     const newestOption = /** @type {HTMLElement | undefined} */ (
-      options.find((o) => /** @type {HTMLElement} */ (o).dataset.newest)
+      options.find(o => /** @type {HTMLElement} */ (o).dataset.newest)
     );
 
     function setExpanded(open) {
@@ -218,14 +207,11 @@ const newest = versions[0];
 
     function select(option) {
       const el = /** @type {HTMLElement} */ (option);
-      options.forEach((o) =>
-        /** @type {HTMLElement} */ (o).setAttribute(
-          'aria-selected',
-          String(o === el)
-        )
+      options.forEach(o =>
+        /** @type {HTMLElement} */ (o).setAttribute('aria-selected', String(o === el))
       );
       current.textContent = el.dataset.tag ?? '';
-      root.querySelectorAll('[data-version-files]').forEach((node) => {
+      root.querySelectorAll('[data-version-files]').forEach(node => {
         const div = /** @type {HTMLElement} */ (node);
         div.hidden = div.dataset.tag !== el.dataset.tag;
       });
@@ -238,27 +224,27 @@ const newest = versions[0];
     }
 
     box.addEventListener('click', () => setExpanded(list.hidden));
-    box.addEventListener('keydown', (e) => {
+    box.addEventListener('keydown', e => {
       const key = /** @type {KeyboardEvent} */ (e).key;
       if (key === 'Enter' || key === ' ') {
         e.preventDefault();
         setExpanded(list.hidden);
       }
     });
-    reset.addEventListener('click', (e) => {
+    reset.addEventListener('click', e => {
       e.stopPropagation();
       if (newestOption) select(newestOption);
     });
-    list.addEventListener('click', (e) => {
+    list.addEventListener('click', e => {
       const option = /** @type {HTMLElement | null} */ (
         /** @type {HTMLElement} */ (e.target).closest('.option')
       );
       if (option) select(option);
     });
-    root.addEventListener('keydown', (e) => {
+    root.addEventListener('keydown', e => {
       if (/** @type {KeyboardEvent} */ (e).key === 'Escape') setExpanded(false);
     });
-    document.addEventListener('click', (e) => {
+    document.addEventListener('click', e => {
       if (!root.contains(/** @type {Node} */ (e.target))) setExpanded(false);
     });
   });

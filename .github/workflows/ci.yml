@@ -71,10 +71,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: $/.github/actions/setup-repo
-      # The docs-site prettier gate runs from the site's own install
-      # (delegation in the `format` script), so the nested workspace must be
-      # installed before the root gates run.
-      - run: pnpm docs:install
+      # Lint and format both run from the root install in one pass (ADR 0046),
+      # so the checks job needs no nested workspace install (the advisory
+      # docs build job installs it for `astro check` + `astro build`).
       - run: pnpm lint
       - run: pnpm format
       # Coverage rides the same run: the report goes to the

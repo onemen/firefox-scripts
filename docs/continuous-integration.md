@@ -17,10 +17,10 @@ stay SHA-pinned (`.github/dependabot.yml`).
 
 `.github/workflows/ci.yml` runs on every PR and on `main` pushes:
 
-- **checks** (Linux) — `pnpm lint` (ESLint incl. `eslint-plugin-security`, markdownlint — MD056
-  table-column-count catches merged table rows that prettier cannot see (#147) — the fused-list
-  marker gate on changed markdown (#307), the docs-page residue gate on the MDX pages
-  (`pnpm lint:mdx`, which fails an HTML comment or a bare TODO marker left in prose), the
+- **checks** (Linux): `pnpm lint` (ESLint incl. `eslint-plugin-security`, the docs-site MDX/`.astro`
+  blocks, markdownlint (MD056 table-column-count catches merged table rows that prettier cannot see
+  (#147)), the fused-list marker gate on changed markdown (#307), the docs-page residue gate on the
+  MDX pages (`pnpm lint:mdx`, which fails an HTML comment or a bare TODO marker left in prose), the
   YAML/frontmatter parse gate on the YAML a change touches (#413), clang-format, `gcc -fanalyzer`),
   `pnpm format`, `pnpm test`, and a separate
   `node --test --experimental-test-coverage "test/unit/**/*.test.mjs"` pass whose report goes to the

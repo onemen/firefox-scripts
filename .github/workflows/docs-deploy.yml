@@ -2,19 +2,19 @@
 # gh-pages branch, the same branch that serves the release artifacts the
 # installer and the in-browser updater fetch (ADR 0003, ADR 0031).
 #
-# Pages serving stays "Deploy from a branch: gh-pages / (root)" — this workflow
+# Pages serving stays "Deploy from a branch: gh-pages / (root)"; this workflow
 # pushes to that branch; it is not the actions-pages deployment method.
 #
 # Two writers, one branch:
-#   - pages.yml (publish) owns the ARTIFACT paths — zips, binaries, hashes.json,
-#     self-update.json, the branch README.
-#   - this workflow owns the SITE paths — index.html, 404.html, _astro/,
+#   - pages.yml (publish) owns the ARTIFACT paths (zips, binaries, hashes.json,
+#     self-update.json, the branch README).
+#   - this workflow owns the SITE paths (index.html, 404.html, _astro/,
 #     pagefind/, the page directories, and the .docs-site-files.json manifest
-#     that records which paths those are.
+#     that records which paths those are).
 # The paths are disjoint and the shared concurrency group `gh-pages-write`
 # serializes the two workflows, so their read-head-then-commit cycles can never
 # interleave and lose an update. Changing the group in one place without the
-# other is the one way to break that — grep for `gh-pages-write` before editing.
+# other is the one way to break that, so grep for `gh-pages-write` before editing.
 #
 # The deploy is a FULL REPLACE of the paths this workflow owns: a page that was
 # deleted or renamed is removed in the same commit (publishDocsSite.mjs), so a
@@ -45,7 +45,7 @@ permissions:
   contents: write # commit the built site to gh-pages
 
 concurrency:
-  # SHARED with pages.yml — see the note above. cancel-in-progress must stay
+  # SHARED with pages.yml (see the note above). cancel-in-progress must stay
   # false: a cancelled deploy that already pushed half a site is worse than a
   # queued one.
   group: gh-pages-write
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      # install: 'false' — the repo's own dependencies are not needed to build
+      # install: 'false' because the repo's own dependencies are not needed to build
       # the site; the docs-site workspace installs on its own below.
       - uses: $/.github/actions/setup-repo
         with:
