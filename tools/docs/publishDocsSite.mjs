@@ -145,7 +145,6 @@ if (!token) {
   throw new Error('No GitHub token: set GITHUB_TOKEN_VAR (the repo-wide fixed variable name).');
 }
 const octokit = createOctokit(token);
-const repo = {owner: REPO_OWNER, repo: ZIP_PAGES_REPO};
 
 const previous = await readPreviousDocsFiles(octokit);
 // Only ever delete paths this script wrote; reserved artifact paths are
@@ -172,15 +171,14 @@ for (const path of deletePaths) console.log(`  ${yellow('-')} ${path}  deleted`)
 if (!previous.length) {
   // First docs deploy on this branch: make sure it really is the artifact
   // branch before writing a site into it (a fresh branch would otherwise be
-  // created as an orphan holding only the site).
-  try {
-    const {data: probe} = await octokit.repos.getContent({...repo, path: 'hashes.json'});
-    if (Array.isArray(probe) || probe.type !== 'file') throw new Error('hashes.json is not a file');
-  } catch (error) {
+  // created as an orphan holding only the site). Read through readPagesFile
+  // so the probe hits the Pages branch head: a bare getContent reads the
+  // default branch, where hashes.json never exists.
+  const probe = await readPagesFile(octokit, 'hashes.json');
+  if (!probe) {
     throw new Error(
-      `The Pages branch has no hashes.json (${error.message}) — refusing to write the docs ` +
-        'site into it. Publish the artifacts first.',
-      {cause: error}
+      'The Pages branch has no hashes.json — refusing to write the docs ' +
+        'site into it. Publish the artifacts first.'
     );
   }
   console.log(dim('First docs deploy on this branch — hashes.json found, proceeding.'));
