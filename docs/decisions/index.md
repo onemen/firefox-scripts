@@ -141,6 +141,9 @@ Open these before proposing a new primitive, surface, or storage home.
 - [0045](./0045-cache-key-names-the-browser.md) — One cache key shape,
   `<name>-<type>-<os>-<hash>-<layout>`: the name is the browser, so no namespace is shared between
   browsers and keep-one is per browser payload (amends [0034]/[0037], #462)
+- [0046](./0046-docs-site-on-the-pages-branch.md): The docs site is published to the Pages branch
+  root beside the artifacts: path-disjoint writers serialized on one concurrency group (amends
+  [0031], #28)
 
 ## Historical
 

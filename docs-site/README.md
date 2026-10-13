@@ -1,6 +1,6 @@
 # docs-site: the Firefox Scripts documentation site
 
-The user-facing documentation, published to **<https://onemen.github.io/firefox-scripts/>**, the root of the `gh-pages` branch, the same branch that serves the release artifacts (ADR 0038).
+The user-facing documentation, published to **<https://onemen.github.io/firefox-scripts/>**, the root of the `gh-pages` branch, the same branch that serves the release artifacts (ADR 0046).
 
 Astro + [Starlight](https://starlight.astro.build/), MDX pages, Pagefind search.
 

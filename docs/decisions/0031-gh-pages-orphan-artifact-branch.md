@@ -2,11 +2,11 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-20
-- **Amended:** 2026-10-04 — the branch is no longer artifact-only: its root also carries the built
+- **Amended:** 2026-10-04: the branch is no longer artifact-only: its root also carries the built
   docs site, published by `docs-deploy.yml` through path-disjoint writers serialized on the shared
   `gh-pages-write` concurrency group. The orphan shape, the files-only root commit and the
   never-seed-from-default-branch rule are unchanged. See
-  [0038](./0038-docs-site-on-the-pages-branch.md).
+  [0046](./0046-docs-site-on-the-pages-branch.md).
 - **Amends:** [0003](./0003-hash-manifest-on-gh-pages.md) — the branch hosting the manifest gets a
   defined history shape: publish commits only, artifacts at the root, never seeded from the default
   branch

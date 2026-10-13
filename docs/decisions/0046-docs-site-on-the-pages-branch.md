@@ -1,8 +1,8 @@
-# 0038: The docs site is published to the Pages branch root, beside the artifacts
+# 0046: The docs site is published to the Pages branch root, beside the artifacts
 
 - **Status:** accepted
 - **Date:** 2026-10-04
-- **Amends:** [0031](./0031-gh-pages-orphan-artifact-branch.md) — the branch is no longer
+- **Amends:** [0031](./0031-gh-pages-orphan-artifact-branch.md): the branch is no longer
   artifact-only: its root also carries the built docs site (`index.html`, `404.html`, `_astro/`,
   `pagefind/`, the page directories). Everything else in 0031 stands: still a true orphan, still
   never seeded from the default branch, still publish commits only.
@@ -11,7 +11,7 @@
 
 ## Context
 
-`onemen.github.io/firefox-scripts/` is not a documentation site today — it is the **live artifact
+`onemen.github.io/firefox-scripts/` is not a documentation site today, it is the **live artifact
 CDN**: `config/installer.conf` points `HASHES_URL`, `ZIP_BASE_URL`, `HELPER_BASE_URL` and
 `SELF_UPDATE_URL` at that host, and every installed browser's daily updater fetches `hashes.json`
 and the package zips from it (0003). Its root `index.html` was the repo README rendered by GitHub,
@@ -23,12 +23,12 @@ README, and the TabMixPlus docs site's installation page
 project. Issue #28 asks for a real docs site for this repository; #202 asks for the download page in
 particular. The site must therefore coexist with the artifacts on the same host, and the landing
 page question ("docs at `/`, or docs under a subpath?") has a hard answer: **the root**, because the
-artifact URLs are the root's paths — any subpath scheme would have put the docs one click away from
-the files the updater fetches, for no benefit.
+artifact URLs are the root's paths, so any subpath scheme would have put the docs one click away
+from the files the updater fetches, for no benefit.
 
 Two writers on one branch is the real cost. `pages.yml` is a deliberate **single-writer** design
 (pass-2 stage/publish architecture, #353); a second workflow committing to the same branch would put
-a lost update — a silently reverted release, or a stale site — on the table.
+a lost update (a silently reverted release, or a stale site) on the table.
 
 ## Decision
 
@@ -45,27 +45,29 @@ through the same git-data API path the publish tooling uses (`uploadToPages.mjs`
   replaces pages.yml's former `pages-publish` group; the group name appears in exactly two files and
   changing one without the other breaks the invariant.
 - **Full replace, not an overlay.** The docs deploy deletes anything its previous manifest listed
-  and the new build no longer produces, in the same commit — a deleted or renamed page cannot
-  survive as a stale file. Deleting a path that is also being written is a hard error.
+  and the new build no longer produces, in the same commit: a deleted or renamed page cannot survive
+  as a stale file. Deleting a path that is also being written is a hard error.
 - **The root `index.html` is the docs landing page.** `pagesIndex()` and its unit test are gone;
   publish no longer writes `index.html`, and `release:verify` no longer expects it.
 - **Pages serving is unchanged**: "Deploy from a branch: `gh-pages` / (root)" with `.nojekyll`. This
   record does **not** adopt the actions-pages deployment model. Full-site replacement via
-  `deploy-pages` stays available as a follow-up if the two-writer arrangement proves fragile — the
+  `deploy-pages` stays available as a follow-up if the two-writer arrangement proves fragile: the
   branch shape would not change, only who assembles it.
 - **The docs source is in-repo and validated in CI.** `docs-site/` is its own pnpm workspace, so the
-  Astro toolchain never enters the root install; the root gates ignore the tree, and an advisory
-  (never required) `docs` job in `ci.yml` builds it on docs-only changes, so a broken MDX page fails
-  on the PR rather than in the deploy workflow.
+  Astro toolchain never enters the root install; root eslint lints the site's plain scripts,
+  `pnpm format` delegates to the site's own `format:check` (both need `pnpm docs:install` first),
+  and an advisory (never required) `docs` job in `ci.yml` builds it on docs-only changes (the only
+  cover for `.astro`/`.mdx`/`.ts`, which root eslint cannot parse), so a broken page fails on the PR
+  rather than in the deploy workflow.
 
 ## Consequences
 
-Users get one URL — <https://onemen.github.io/firefox-scripts/> — that is both the documentation and
+Users get one URL (<https://onemen.github.io/firefox-scripts/>) that is both the documentation and
 the artifact host, and the README can shrink to links. Two workflows, two path sets, one serialized
 branch: a docs deploy cannot break a release, and a publish cannot break the docs, because each
-writes only what it built. The cost is the coordination itself — the shared concurrency group and
-the manifest are load-bearing, so 0031's "append-only, artifacts at the root" reading has to be
-amended rather than assumed, and `pnpm release:verify` no longer proves the site root renders.
-Revisit-if: the artifact URLs ever move off this host (then the docs take the root by default and
-this record's path split disappears), or the docs site outgrows a branch commit per deploy (then
-move to `deploy-pages` and assemble the whole site in one workflow).
+writes only what it built. The cost is the coordination itself: the shared concurrency group and the
+manifest are load-bearing, so 0031's "append-only, artifacts at the root" reading has to be amended
+rather than assumed, and `pnpm release:verify` no longer proves the site root renders. Revisit-if:
+the artifact URLs ever move off this host (then the docs take the root by default and this record's
+path split disappears), or the docs site outgrows a branch commit per deploy (then move to
+`deploy-pages` and assemble the whole site in one workflow).

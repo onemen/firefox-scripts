@@ -13,8 +13,8 @@ browsers (Firefox stable/Nightly/Developer Edition, Waterfox, Zen, LibreWolf, Fl
    and opens the updater tab (chrome-privileged page shipped in `updater-ui.zip`).
 3. **Updater tab UI** (`tools/publish/remote-ui/` → `updater-ui.zip`) — the tab's HTML/JS/CSS and
    logos; `scriptsUpdater.sys.mjs` (utils.zip) keeps it current before opening the tab.
-4. **Docs site** (`docs-site/`, Astro + Starlight) — the user-facing documentation, published to the
-   **root** of the same `gh-pages` branch beside the artifacts (ADR 0038). `docs-deploy.yml` builds
+4. **Docs site** (`docs-site/`, Astro + Starlight), the user-facing documentation, published to the
+   **root** of the same `gh-pages` branch beside the artifacts (ADR 0046). `docs-deploy.yml` builds
    and commits it; it writes only site paths, `pages.yml` only artifact paths, and both share the
    `gh-pages-write` concurrency group.
 

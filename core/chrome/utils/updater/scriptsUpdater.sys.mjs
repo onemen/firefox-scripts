@@ -1024,7 +1024,7 @@ export async function ensureUpdaterUi(info) {
   // startup call can all overlap), so a shared dir would let one check delete
   // another check's staging tree mid-extract. The unique name costs nothing —
   // the `finally` below removes it, and the startup sweep reclaims whatever a
-  // killed browser strands (ADR 0038's reclaim layer).
+  // killed browser strands.
   const tmpDir = PathUtils.join(PathUtils.tempDir, uiTempDirName());
   try {
     const zipUrl = `${getUiBaseUrl()}/updater-ui${getAssetSuffix()}.zip`;

@@ -16,7 +16,7 @@
 // so existing files are replaced atomically and unchanged files are skipped.
 //
 // The prod branch also carries the docs site at its root (index.html,
-// 404.html, _astro/, pagefind/ — ADR 0038); those paths are written by
+// 404.html, _astro/, pagefind/ (ADR 0046); those paths are written by
 // .github/workflows/docs-deploy.yml, never from here. This module owns only
 // the artifact paths, which is what keeps the two writers disjoint.
 
@@ -105,7 +105,7 @@ export async function branchExistsOnPages(octokit) {
  * file content. Callers pass only the files that changed, so a stale dist/ copy
  * can never overwrite a live artifact on Pages.
  *
- * `deletePaths` removes branch paths in the SAME commit (ADR 0038: the docs
+ * `deletePaths` removes branch paths in the SAME commit (ADR 0046: the docs
  * deploy owns a full replace of its own files, so a page that no longer exists
  * must not survive). A path that is not on the branch is skipped, so passing
  * the full previous list every run is safe.

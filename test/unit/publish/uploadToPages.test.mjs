@@ -203,7 +203,7 @@ test('readPagesFile: decodes the branch file; missing branch/file → null', asy
   assert.equal(await readPagesFile(missing, 'self-update.json'), null);
 });
 
-// ── deletePaths (ADR 0038) ────────────────────────────────────────────────
+// ── deletePaths (ADR 0046) ────────────────────────────────────────────────
 // The docs deploy replaces the paths it owns in one commit, so a page that no
 // longer exists must be removed rather than left behind as a stale file.
 test('deletePaths removes present paths in the same commit (null sha entries)', async t => {

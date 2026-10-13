@@ -786,7 +786,7 @@ async function publishToGitHub({
   // commit at all.
   const pagesFiles = {};
   // Landing page: the prod branch's index.html belongs to the docs site
-  // (ADR 0038 — the Astro site at onemen.github.io/firefox-scripts/ is the
+  // (ADR 0046: the Astro site at onemen.github.io/firefox-scripts/ is the
   // site root, published by .github/workflows/docs-deploy.yml); publish
   // writes only artifacts + the branch README there. Dev keeps its dedicated
   // warning page with RAW download links, generated after the payload below

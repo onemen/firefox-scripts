@@ -2,7 +2,7 @@ import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 
 // The site is served from the repo's own GitHub Pages project site, at the
-// artifact branch's ROOT (ADR 0038): https://onemen.github.io/firefox-scripts/.
+// artifact branch's ROOT (ADR 0046): https://onemen.github.io/firefox-scripts/.
 // The release artifacts (utils.zip, hashes.json, the installer binaries) live
 // as siblings of this build output on the gh-pages branch, so `base` is the
 // project path, never `/firefox-scripts/docs`.

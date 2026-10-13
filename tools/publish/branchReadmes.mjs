@@ -2,7 +2,7 @@
 // Landing pages for the artifact-only publish branches (ADR 0031).
 //
 // - gh-pages (prod): just the branch-listing README below. The prod site's
-//   landing page is the docs site (ADR 0038), published by docs-deploy.yml.
+//   landing page is the docs site (ADR 0046), published by docs-deploy.yml.
 // - dev-build-<id> (dev): a dedicated WARNING page. These branches hold
 //   developer-test artifacts with dev-channel URLs baked in; a human landing
 //   here must not mistake them for the supported release channel. The page
@@ -77,7 +77,7 @@ export function devBranchReadme({branch, files, note}) {
 
 /**
  * Build the gh-pages branch README.md — rendered on the branch listing page.
- * The branch carries the release artifacts AND the docs site (ADR 0038); the
+ * The branch carries the release artifacts AND the docs site (ADR 0046); the
  * README points a visitor at the site for humans and at the `latest` release
  * (the supported download surface) for artifacts, instead of letting them grab
  * per-commit artifacts from the listing.
