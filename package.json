@@ -31,7 +31,7 @@
     "lint:hygiene": "node tools/check-hygiene.mjs",
     "lint:all": "run-s --continue-on-error --print-label lint:js lint:ncpy lint:apt lint:types lint:c lint:analyze lint:md lint:md-markers lint:mdx lint:yaml lint:skills lint:skill-cmds lint:hygiene",
     "hooks:install": "node tools/install-githooks.mjs",
-    "format": "node tools/sync-skill-gates.mjs && node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check",
+    "format": "node tools/sync-skill-gates.mjs && node tools/format-c.mjs --check && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --check && pnpm --dir docs-site format:check",
     "format:fix": "node tools/sync-skill-gates.mjs --fix && node tools/format-c.mjs --write && prettier --config ./config/prettier.config.js --ignore-path ./config/.prettierignore . --write",
     "test": "node --test \"test/unit/**/*.test.mjs\"",
     "check:decisions": "node tools/check-decisions.mjs",

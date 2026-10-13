@@ -71,6 +71,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: $/.github/actions/setup-repo
+      # The docs-site prettier gate runs from the site's own install
+      # (delegation in the `format` script), so the nested workspace must be
+      # installed before the root gates run.
+      - run: pnpm docs:install
       - run: pnpm lint
       - run: pnpm format
       # Coverage rides the same run: the report goes to the
@@ -111,10 +115,11 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json body --jq .body > "$PR_BODY_FILE"
           pnpm check:core-tests
 
-  # Docs site gate (ADR 0038): `docs-site/` is a NESTED project with its own
-  # lockfile and toolchain, so the root `checks` job cannot cover it — a broken
-  # MDX page or a failed astro build would otherwise only surface in the deploy
-  # workflow, i.e. after merge. Path-filtered (its own paths-filter step, so the
+  # Docs site gate (ADR 0046): `docs-site/` is a NESTED project with its own
+  # lockfile and toolchain. The root `checks` job lints its plain scripts and
+  # runs its prettier gate by delegation, but only a full build renders every
+  # page: a broken MDX page or a failed astro build would otherwise only surface
+  # in the deploy workflow, i.e. after merge. Path-filtered (its own paths-filter step, so the
   # job stays self-contained), and ADVISORY in the gate: a docs build failure
   # must not block an installer PR, so the job has no job-level `if:` and always
   # reports success when nothing docs-related changed.

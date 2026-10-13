@@ -164,10 +164,13 @@ export default defineConfig([
       ...thirdPartySkills,
       '**/*.d.ts',
       '**/@types/**',
-      // The docs site is a nested project with its own toolchain (Astro +
-      // MDX + TS, linted by `astro check` in its own build): root eslint has no
-      // MDX/Astro config and must not lint it (ADR 0038).
-      'docs-site/',
+      'docs-site/dist/',
+      'docs-site/.astro/',
+      // The docs site is a nested project, but its plain scripts ARE covered
+      // by root eslint (ADR 0046): .astro/.mdx/.ts match no block below, so
+      // only docs-site **/*.{js,mjs,cjs} (and .md, like every README) are
+      // linted. Build output needs its own ignores: the 'dist/' entry above
+      // is root-anchored and does not reach the nested workspace.
     ],
   },
   {
@@ -225,6 +228,8 @@ export default defineConfig([
       'test/**/*.{js,mjs,cjs}',
       'installer/**/*.{js,mjs,cjs}',
       'config/**/*.{js,mjs,cjs}',
+      // The docs-site scripts run under node (astro.config.mjs, src/utils/).
+      'docs-site/**/*.{js,mjs,cjs}',
     ],
     languageOptions: {
       globals: globals.node,

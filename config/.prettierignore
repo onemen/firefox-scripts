@@ -33,7 +33,9 @@ review-history
 # buildScriptJs, which syntax-checks the exact concatenation on every build).
 **/installer/web/script/
 
-# The docs site is a NESTED project with its own prettier install and config
-# (docs-site/package.json `format`). The root gate must not reformat .mdx /
-# .astro sources with the repo's JS-oriented config.
+# The docs site is a NESTED project with its own prettier install and style
+# (docs-site/package.json `format:check`, prettier defaults — not the repo
+# config: root prettier would reformat .mdx/.astro sources with the repo's
+# JS-oriented config and break the Astro build). `pnpm format` delegates to
+# the site's own gate instead of scanning this tree (see the `format` script).
 docs-site/
