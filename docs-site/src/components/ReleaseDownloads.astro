@@ -390,6 +390,10 @@ const newest = versions[0];
     left: 0;
     right: 0;
     z-index: 10;
+    /* Three-row floor: a single-option list still covers the card content
+       below it instead of wrapping tight around the one row. One row is
+       one line plus 0.9rem of vertical padding. */
+    min-height: calc(3lh + 2.7rem);
     max-height: 20rem;
     overflow: auto;
     border-radius: 0.6rem;
