@@ -69,11 +69,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      # install: 'false' because the repo's own dependencies are not needed to build
-      # the site; the docs-site workspace installs on its own below.
+      # Full install: the site itself builds from the docs-site workspace
+      # below, but the final publish step runs tools/docs/publishDocsSite.mjs
+      # against the live branch, whose octokit client lives in the root
+      # dependencies. Skipping it fails only at publish time (dry runs stay
+      # offline by design and never touch it).
       - uses: $/.github/actions/setup-repo
-        with:
-          install: 'false'
       - name: Install docs-site dependencies
         run: pnpm --dir docs-site install --frozen-lockfile
       - name: Fetch release data for the download page
