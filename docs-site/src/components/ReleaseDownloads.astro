@@ -12,7 +12,9 @@
 // while an older version is selected and jumps back to the newest.
 //
 // Everything but the version switching is prerendered: with JS disabled
-// the newest version's files are simply shown.
+// the newest version's files are simply shown. A selected older version is
+// unmissable: the box badge swaps to an amber Older version pill, the card
+// gains an amber border plus a banner, and every file row gets an Old pill.
 interface VersionFile {
   name: string;
   label: string;
@@ -145,6 +147,7 @@ const newest = versions[0];
         .filter(f => f.href !== null);
       return (
         <div data-version-files data-tag={v.tag} hidden={i === 0 ? undefined : true}>
+          {!isNewest && <p class="older-banner">Older version — not the latest build.</p>}
           <p class="version-meta">
             Published {longDate(v.date)}
             {isNewest ?
@@ -157,7 +160,8 @@ const newest = versions[0];
               </>
             : <>
                 {' '}
-                · <a href={v.htmlUrl}>release page</a>
+                · Older build, files served from the frozen tag ·{' '}
+                <a href={v.htmlUrl}>release page</a>
               </>
             }
           </p>
@@ -167,7 +171,10 @@ const newest = versions[0];
                 <a href={f.href ?? ''}>
                   <code>{f.name}</code>
                 </a>{' '}
-                <span class="file-label">{f.label}</span>
+                <span class="file-label">
+                  {f.label}
+                  {!isNewest && <span class="row-old-badge">Old</span>}
+                </span>
                 {f.sha !== null && (
                   <a class="sha-link" href={f.sha}>
                     sha256
@@ -216,7 +223,13 @@ const newest = versions[0];
         div.hidden = div.dataset.tag !== el.dataset.tag;
       });
       const isNewest = el === newestOption;
-      if (badge) badge.hidden = !isNewest;
+      root.setAttribute('data-showing', isNewest ? 'latest' : 'older');
+      if (badge) {
+        badge.hidden = false;
+        badge.textContent = isNewest ? 'Latest' : 'Older version';
+        badge.classList.toggle('latest-badge', isNewest);
+        badge.classList.toggle('older-badge', !isNewest);
+      }
       reset.disabled = !!isNewest;
       reset.title = isNewest ? '' : 'Back to the latest version';
       setExpanded(false);
@@ -304,6 +317,40 @@ const newest = versions[0];
     color: var(--sl-color-green-high, #365314);
     white-space: nowrap;
   }
+  .older-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    background: #fff3cd;
+    color: #7a5b00;
+    border: 1px solid #e0b800;
+    white-space: nowrap;
+  }
+  .older-banner {
+    margin: 0.75rem 0 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background: #fff3cd;
+    border: 1px solid #e0b800;
+    color: #7a5b00;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .release-downloads[data-showing='older'] {
+    border-color: #e0b800;
+  }
+  .row-old-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    background: #fff3cd;
+    color: #7a5b00;
+    border: 1px solid #e0b800;
+    white-space: nowrap;
+    margin-left: 0.35rem;
+  }
   .chevron {
     margin-left: auto;
     flex: none;
@@ -333,18 +380,23 @@ const newest = versions[0];
   .reset-button:not(:disabled):hover {
     border-color: var(--sl-color-gray-5);
   }
+  /* The open list overlays the card content below instead of pushing it
+     down: solid background plus shadow so it reads as a floating panel
+     even with a single option, on both the short script card and the
+     taller installer card. */
   .combo-list {
     position: absolute;
     top: calc(100% + 0.25rem);
     left: 0;
     right: 0;
-    z-index: 5;
+    z-index: 10;
     max-height: 20rem;
     overflow: auto;
     border-radius: 0.6rem;
     border: 1px solid var(--sl-color-gray-5);
     background: var(--sl-color-black);
     color: var(--sl-color-white);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
   }
   .option {
     display: grid;
