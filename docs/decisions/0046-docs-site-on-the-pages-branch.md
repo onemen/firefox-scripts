@@ -55,20 +55,16 @@ through the same git-data API path the publish tooling uses (`uploadToPages.mjs`
   branch shape would not change, only who assembles it.
 - **The docs source is in-repo and validated in CI.** `docs-site/` is its own pnpm workspace for
   installs, but ALL of its lint and formatting runs from the root toolchain in one pass: root eslint
-  covers plain scripts, `.md`, `.mdx` pages and `.astro` components (the Astro compiler enters the
-  root install as a lint dependency), and root prettier formats the tree with
-  `prettier-plugin-astro` (`.mdx` pages stay excluded: prettier's MDX formatter breaks the Astro
-  build). An advisory (never required) `docs` job in `ci.yml` builds the site on docs-only changes
-  (the only cover for `.ts` types, via `astro check`), so a broken page fails on the PR rather than
-  in the deploy workflow.
-
-  Amended 2026-10-13: the original "Astro toolchain never enters the root install" rule is replaced
-  by the merged toolchain above. Rationale: one `pnpm lint` and one `pnpm format` cover the whole
-  repo with no delegation, no second eslint process, and no nested prettier install. Costs accepted:
-  the root `typescript` is aliased to the 6.x line (`typescript-eslint` refuses TS 7), the root
-  `prettier-plugin-astro` version must track the site's Astro by hand across two lockfiles, and
-  `--ignore-path` patterns anchor at `config/`, so nested-tree ignores need the `**/` prefix (a bare
-  `docs-site/...` pattern silently matches nothing).
+  covers plain scripts, `.md`, `.mdx` pages and `.astro` components, and root prettier formats the
+  tree with `prettier-plugin-astro` (`.mdx` pages stay excluded: prettier's MDX formatter breaks the
+  Astro build). An advisory (never required) `docs` job in `ci.yml` builds the site on docs-only
+  changes (the only cover for `.ts` types, via `astro check`), so a broken page fails on the PR
+  rather than in the deploy workflow. The merged toolchain costs three things: the Astro compiler
+  enters the root install as a lint dependency, both `typescript` installs ride the 6.x line
+  (`typescript-eslint` refuses TS 7, so the repo's `tsc` is the stable 6.0.2, not the 7 preview),
+  and the root `prettier-plugin-astro` version must track the site's Astro by hand across two
+  lockfiles. Nested-tree `--ignore-path` patterns need the `**/` prefix: a custom ignore path
+  anchors slash patterns at `config/`, so a bare `docs-site/...` pattern silently matches nothing.
 
 ## Consequences
 

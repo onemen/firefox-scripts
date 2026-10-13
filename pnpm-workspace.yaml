@@ -7,6 +7,7 @@ minimumReleaseAge: 7200
 minimumReleaseAgeExclude:
   - eslint
   - 'typescript'
+  - '@typescript/typescript6'
   - 'typescript-eslint'
   - '@typescript-eslint/*'
   - '@typescript/native-preview*'
@@ -14,6 +15,10 @@ minimumReleaseAgeExclude:
   - shell-quote@1.12.0
 
 overrides:
+  # Surgical TS 6 for the eslint TS parser only (ADR 0046): typescript-eslint
+  # refuses TS 7, but the repo's tsc stays on 7.0.2. Scoped with the `>`
+  # selector so only typescript resolved under @typescript-eslint/parser is
+  # aliased, never the direct devDependency tsc uses.
   brace-expansion: '>=1.1.20'
   js-yaml: '>=5.4.1'
   katex: '>=0.18.2'
