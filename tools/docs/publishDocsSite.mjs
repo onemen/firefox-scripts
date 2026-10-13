@@ -23,7 +23,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {REPO_OWNER, SELF_UPDATE_FILE, ZIP_PAGES_BRANCH, ZIP_PAGES_REPO} from '../publish/paths.js';
-import {createOctokit, getGitHubToken} from '../publish/publishCommon.mjs';
 import {readPagesFile, uploadFilesToPages} from '../publish/uploadToPages.mjs';
 import {bold, dim, green, yellow} from '../publish/log.mjs';
 
@@ -137,6 +136,10 @@ if (dryRun) {
   process.exit(0);
 }
 
+// The octokit client loads lazily, after the dry-run exit above: a dry run
+// is genuinely offline (no root install needed), while publish always runs
+// where the root dependencies are installed.
+const {createOctokit, getGitHubToken} = await import('../publish/publishCommon.mjs');
 const token = getGitHubToken();
 if (!token) {
   throw new Error('No GitHub token: set GITHUB_TOKEN_VAR (the repo-wide fixed variable name).');

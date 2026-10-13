@@ -28,3 +28,9 @@ trustPolicy: no-downgrade
 
 trustPolicyExclude:
   - semver@6.3.1
+  # undici-types@6.21.0 ships without provenance (nodejs/undici#4666), which
+  # no-downgrade reads as a takeover; the locked bytes match the registry
+  # (verified dist.integrity), and it arrives via @types/node@22, which the
+  # docs-site toolchain pins (ADR 0046). Same class of pnpm false positive
+  # as semver@6.3.1 above (pnpm/pnpm#10202).
+  - undici-types@6.21.0
