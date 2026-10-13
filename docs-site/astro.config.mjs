@@ -1,5 +1,7 @@
+import {satteri} from '@astrojs/markdown-satteri';
 import starlight from '@astrojs/starlight';
 import {defineConfig} from 'astro/config';
+import {createExternalLinksPlugin} from './src/utils/satteriExternalLinks.mjs';
 
 // The site is served from the repo's own GitHub Pages project site, at the
 // artifact branch's ROOT (ADR 0046): https://onemen.github.io/firefox-scripts/.
@@ -68,6 +70,15 @@ export default defineConfig({
   site: process.env.CI ? 'https://onemen.github.io' : 'http://localhost:4321',
   base,
   compressHTML: true,
+  // Satteri markdown (after tabmixplus-docs): smartypants off so `--`,
+  // `...` and quotes in CLI flags and pref names stay literal, plus the
+  // external-links plugin above as the build-time backstop for hrefs.
+  markdown: {
+    processor: satteri({
+      features: {smartypants: false},
+      hastPlugins: [createExternalLinksPlugin(base)],
+    }),
+  },
   trailingSlash: 'always',
   // The landing page IS installation.mdx: there is no index.mdx copy, so /
   // redirects there. The static build emits this as a meta-refresh page,

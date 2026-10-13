@@ -11,6 +11,9 @@ importers:
       '@astrojs/check':
         specifier: ^0.9.10
         version: 0.9.10(@emnapi/runtime@1.11.3)(@typescript/typescript6@6.0.2)(prettier-plugin-astro@1.1.0(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(prettier@3.9.9))(prettier@3.9.9)
+      '@astrojs/markdown-satteri':
+        specifier: 0.4.2
+        version: 0.4.2
       '@astrojs/starlight':
         specifier: 0.42.4
         version: 0.42.4(@typescript/typescript6@6.0.2)(astro@7.3.5(@types/node@24.19.0)(yaml@2.9.1))
@@ -20,9 +23,18 @@ importers:
       astro:
         specifier: ^7.3.5
         version: 7.3.5(@types/node@24.19.0)(yaml@2.9.1)
+      hast-util-is-element:
+        specifier: 3.0.0
+        version: 3.0.0
+      satteri:
+        specifier: 0.10.5
+        version: 0.10.5
       sharp:
         specifier: ^0.35.5
         version: 0.35.5(@types/node@24.19.0)
+      unist-util-visit:
+        specifier: 5.1.0
+        version: 5.1.0
     devDependencies:
       typescript:
         specifier: npm:@typescript/typescript6@^6.0.2
