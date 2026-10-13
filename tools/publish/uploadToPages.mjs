@@ -69,12 +69,20 @@ async function pagesBranchHead(octokit) {
 export async function readPagesFile(octokit, path) {
   const headSha = await pagesBranchHead(octokit);
   if (!headSha) return null;
-  const {data} = await octokit.repos.getContent({
-    owner: REPO_OWNER,
-    repo: ZIP_PAGES_REPO,
-    path,
-    ref: headSha,
-  });
+  let data;
+  try {
+    ({data} = await octokit.repos.getContent({
+      owner: REPO_OWNER,
+      repo: ZIP_PAGES_REPO,
+      path,
+      ref: headSha,
+    }));
+  } catch (error) {
+    // First deploy: the manifest is not on the branch yet. Absence is a
+    // normal null, anything else (network, permissions) still throws.
+    if (error?.status === 404) return null;
+    throw error;
+  }
   if (Array.isArray(data) || data.type !== 'file') return null;
   return Buffer.from(data.content, 'base64');
 }
