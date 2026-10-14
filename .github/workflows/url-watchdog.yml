@@ -147,8 +147,20 @@ jobs:
       # Report-only refreshes (manual or the post-E2E job below) never
       # dispatch: they wrote no plan, so there is nothing to replay — and a
       # refresh must not fan out into another E2E run.
+      #
+      # `!cancelled()` rather than the implicit success(): the check step now
+      # writes the plan BEFORE its fail-closed exit, so a run whose vendor probe
+      # failed for ONE browser still dispatches the E2E for every version it did
+      # verify (issue #136: a librewolf transfer timeout had been cancelling the
+      # whole night's dispatch, leaving a just-recorded new version untested).
+      # The baseline save above runs on always(), so this run's cache entry (the
+      # baseline plus the plan) exists before the dispatched runs restore the
+      # newest one. A run with no plan file (a crash before planning) replays
+      # nothing, because --dispatch is a no-op then; a cancelled run dispatches
+      # nothing at all.
       - name: Dispatch nightly revalidation
-        if: inputs.report-only != true && github.event_name != 'workflow_run'
+        if: >-
+          !cancelled() && inputs.report-only != true && github.event_name != 'workflow_run'
         run: node tools/check-browser-downloads.mjs --dispatch
         env:
           GITHUB_TOKEN: ${{ github.token }}

@@ -41,7 +41,9 @@
  *   6. E2E DISPATCH — a new release triggers the browser E2E: fork browsers get a
  *        single-browser dispatch (the ADR 0021 manual escape), the hard-gate
  *        browsers share one full dispatch whose record-validation refreshes the
- *        validated-versions record. Non-fatal on failure.
+ *        validated-versions record. The plan is written before the fail-closed
+ *        exit and replayed even when this run failed closed, so one browser's
+ *        rot cannot cost the others their E2E (#136). Non-fatal on failure.
  * - Local PR probe (--pr, no CI caller since #499): the same stateless vendor
  *   check the removed url-watchdog pr-check job ran — findings surface as
  *   ::warning:: / ::notice:: annotations, always green. Kept for debugging the
@@ -839,6 +841,16 @@ export async function main() {
     process.exit(0);
   }
 
+  // A plan restored with the baseline cache belongs to an OLDER run: the run
+  // that wrote it consumed it in its own replay step, and a plan is replayed at
+  // most once by construction. Drop it before this run can fail out of the
+  // check step (an unhandled error leaves the file on disk for the workflow's
+  // replay step, which now runs after a failed check step too) so a broken
+  // night can never replay yesterday's dispatches.
+  if (!prMode && !dryRun && !reportOnly) {
+    fs.rmSync(path.join(baselineDir, DISPATCH_PLAN_FILE), {force: true});
+  }
+
   // Baseline record: per-browser entries plus the ledger extras (`esr`
   // state machine, `history`) — all optional on a cache miss / first run.
   /** @type {{esr?: any; history?: any; [browser: string]: any}} */
@@ -1138,6 +1150,32 @@ export async function main() {
     }
   }
 
+  // Plan the dispatch instead of performing it, and write it FIRST: the findings
+  // are final here, and this is the one output that has to survive everything
+  // below it (the fail-closed exit, and the GitHub API writes in between, either
+  // of which can end the run). A verified new version is evidence whatever a
+  // DIFFERENT browser's rot did; only the baseline has to stay whole (ADR 0021).
+  //
+  // The workflow's step dispatches AFTER the baseline save, because the
+  // dispatched runs read that baseline (esr-matrix consumes it, record-validation's
+  // pre-flight compares against it). Planning without advancing the baseline
+  // means a browser held down by an outage is re-planned on each failed night
+  // until one run goes green; a FAILED dispatch is not retried by a later
+  // healthy run, and surfaces as a run warning plus a deduped per-browser issue.
+  if (!prMode && !dryRun && !reportOnly && token && repo) {
+    const plan = buildDispatchPlan(findings);
+    fs.mkdirSync(baselineDir, {recursive: true});
+    fs.writeFileSync(
+      path.join(baselineDir, DISPATCH_PLAN_FILE),
+      JSON.stringify(plan, null, 2) + '\n'
+    );
+    console.log(
+      `\nDispatch plan: ${plan.plans.length} workflow run(s)` +
+        (plan.nightly ? ' (nightly revalidation)' : '') +
+        ` -> ${path.join(baselineDir, DISPATCH_PLAN_FILE)}`
+    );
+  }
+
   // ── GitHub surface (schedule mode only) ─────────────────────────────────
   // Error issues first, then auto-close resolved failures, then the meta
   // issue — all BEFORE the fail-closed exit so a failed run still updates
@@ -1251,7 +1289,9 @@ export async function main() {
   // Fail-closed (ADR 0021): a browser whose lookup or endpoint check failed
   // this run must NOT let a partial baseline be saved — the Sep 2026 incident
   // (watchdog green with a stale LibreWolf entry) made the drift gate lie. The
-  // error issues + meta update above already surfaced the failure to GitHub.
+  // error issues + meta update above already surfaced the failure to GitHub,
+  // and the dispatch plan is already on disk (above), so failing here costs the
+  // baseline only.
   const failedBrowsers = findings.filter(f => f.kind === 'rot').map(f => f.browser);
   if (failedBrowsers.length > 0 && !prMode && !dryRun) {
     for (const f of findings.filter(f => f.kind === 'rot')) {
@@ -1267,30 +1307,6 @@ export async function main() {
   if (!prMode && !dryRun && !reportOnly) {
     fs.mkdirSync(baselineDir, {recursive: true});
     fs.writeFileSync(baselineFile, JSON.stringify(next, null, 2) + '\n');
-  }
-
-  // Plan the dispatch instead of performing it. The decision lives here
-  // — where the findings are — and the dispatch moved to the workflow's step
-  // AFTER the baseline save: the dispatched runs read that baseline (esr-matrix
-  // consumes it, record-validation's pre-flight compares against it), so
-  // dispatching before the save would validate the previous baseline. Runs only after
-  // the baseline persisted (the fail-closed exit above already returned
-  // otherwise), so a browser is planned at most once per recorded version —
-  // which also means a FAILED dispatch is never retried by later runs (the
-  // version is no longer new): it surfaces as a run warning plus a deduped
-  // per-browser issue, from the replay step.
-  if (!prMode && !dryRun && !reportOnly && token && repo) {
-    const plan = buildDispatchPlan(findings);
-    fs.mkdirSync(baselineDir, {recursive: true});
-    fs.writeFileSync(
-      path.join(baselineDir, DISPATCH_PLAN_FILE),
-      JSON.stringify(plan, null, 2) + '\n'
-    );
-    console.log(
-      `\nDispatch plan: ${plan.plans.length} workflow run(s)` +
-        (plan.nightly ? ' (nightly revalidation)' : '') +
-        ` -> ${path.join(baselineDir, DISPATCH_PLAN_FILE)}`
-    );
   }
 
   console.log(
