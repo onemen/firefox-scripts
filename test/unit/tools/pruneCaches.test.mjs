@@ -280,6 +280,54 @@ test('pnpm entries across a lockfile bump keep the newest state only', () => {
   );
 });
 
+test('pnpm lockfile-verification stamps retire the superseded hash', () => {
+  // pnpm/setup memoizes its supply-chain verification per OS/arch and lockfile
+  // hash (`pnpm-lockfile-verified-<os>-<arch>-<hash>`, observed live
+  // 2026-10-14), so every lockfile change mints one zero-byte stamp per OS/arch.
+  // A stamp certifies the hash it was saved for, so the superseded generation is
+  // dead weight the prune should retire. It used to sit under the operator's
+  // --keep count and therefore survive a lockfile bump on every OS/arch.
+  const old =
+    'pnpm-lockfile-verified-Linux-x64-20ce8d7dfd024210b082badb4895e0eff9757973f4f86766f181feab1ab50903';
+  const fresh =
+    'pnpm-lockfile-verified-Linux-x64-e5c5ee69307cec02d55dd9c340fa170716a076a860b9502feb92b02046e8d2f7';
+  assert.equal(stem(old), stem(fresh), 'one lockfile hash per generation, one family');
+  assert.equal(groupOf(fresh), 'pnpm-lockfile-verified-Linux-x64 :: plain');
+  assert.equal(keepFor(groupOf(fresh), 3), 1);
+  // One OS/arch is one slot, so the older hash goes.
+  assert.deepEqual(
+    planDeletes([entry(old, '2026-10-08T01:00:00Z'), entry(fresh, '2026-10-13T01:00:00Z')], 3).map(
+      c => c.key
+    ),
+    [old]
+  );
+  // A PR-scoped twin still loses to the default branch's copy, even when the twin
+  // is the newer entry: caches are ref-scoped, so only main's copy is restorable
+  // everywhere.
+  assert.deepEqual(
+    planDeletes(
+      [
+        entry(fresh, '2026-10-13T01:00:00Z', 'refs/heads/main'),
+        entry(old, '2026-10-13T02:00:00Z', 'refs/pull/542/merge'),
+      ],
+      3
+    ).map(c => c.key),
+    [old]
+  );
+  // The footer's pnpm row flags the leftover generation until the prune runs.
+  const {families} = summarizeInventory(
+    [
+      {key: fresh, size: 1_000},
+      {key: old, size: 1_000},
+      {key: 'pnpm-cache-Linux-X64-abc', size: 89_000_000},
+    ],
+    3
+  );
+  assert.equal(families.pnpm.entries, 3);
+  assert.equal(families.pnpm.groups, 2);
+  assert.equal(families.pnpm.over, true);
+});
+
 // ── The keep policy: one entry per release-keyed family/layout ────────────
 //
 // A vendor bump mints a brand-new key, so the superseded entry is dead weight

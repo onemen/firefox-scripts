@@ -906,9 +906,9 @@ export function formatKB(bytes) {
  * footer is then omitted, never guessed). One row per family so every entry is
  * visible: payloads and pnpm in MB, the JSON records in KB, each mark set
  * against that row's own target (payload groups are keep-one — see keepFor — so
- * entries > groups is exactly "a payload group over target"; pnpm's cache and
- * lockfile groups carry different keeps, so its row counts groups and its mark
- * follows the `over` list like every other row).
+ * entries > groups is exactly "a payload group over target"; pnpm's store and
+ * its lockfile-verification stamps are keep-one groups too, so its row counts
+ * groups and its mark follows the `over` list like every other row).
  */
 export function cacheUsageFooter(summary) {
   if (!summary) return '';
