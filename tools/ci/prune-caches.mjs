@@ -233,9 +233,14 @@ function parseGroup(group) {
  *   newest is ever restored. Old lockfile states only served restore-keys
  *   warm-fill; a cold store after a bump costs one ~1 min re-download, not 5.26
  *   GB of eviction pressure.
+ * - `pnpm-lockfile-verified-*`: pnpm/setup memoizes its lockfile supply-chain
+ *   verification per OS/arch and lockfile hash, so every lockfile change mints
+ *   one stamp per OS/arch. A stamp certifies the hash it was saved for and
+ *   nothing else, which makes the superseded generation dead weight: keep-one
+ *   retires it at the next prune instead of stacking a generation per bump.
  */
 const KEEP_ONE =
-  /^(firefox-dl|firefox-portable|browser-dl|esr-portable|snap-firefox|pnpm-cache)(?:-|$)/;
+  /^(firefox-dl|firefox-portable|browser-dl|esr-portable|snap-firefox|pnpm-cache|pnpm-lockfile-verified)(?:-|$)/;
 
 /** The ref whose copies every branch can restore (caches are ref-scoped). */
 const MAIN = 'refs/heads/main';
@@ -416,13 +421,12 @@ export function summarizeInventory(caches, keep) {
 }
 
 /**
- * Versions to keep for a group: one for the keep-one families (browser releases
- *
- * - pnpm store duplicates), the caller's `keep` for everything else — toolchain
- *   caches rotate on the lockfile/config hash and the watchdog/validated
- *   records are sub-kilobyte history the publish pre-flight reads (an evicted
- *   copy is indistinguishable from "never validated", so those keep whatever
- *   the operator asks for).
+ * Versions to keep for a group: one for the keep-one families (browser
+ * releases, and the pnpm store plus its lockfile-verification stamps), the
+ * caller's `keep` for everything else. Toolchain caches rotate on the
+ * lockfile/config hash, and the watchdog/validated records are sub-kilobyte
+ * history the publish pre-flight reads, so those keep whatever the operator
+ * asks for: an evicted copy is indistinguishable from "never validated".
  *
  * @param {string} group a group id from {@link groupOf}
  * @param {number} keep the default count for non-release-keyed groups
@@ -504,7 +508,8 @@ async function main() {
   console.log(
     `repo ${repo}: ${caches.length} caches, ${inScope.length} in scope ` +
       `(${(totalSize / 1e6).toFixed(1)} MB), keeping ${KEEP} per family ` +
-      `(1 per browser payload + keep-one family/layout: releases + pnpm store), ` +
+      `(1 per browser payload + keep-one family/layout: releases + pnpm store + ` +
+      `pnpm verification stamps), ` +
       `${byGroup.size} groups`
   );
   for (const [s, group] of [...byGroup.entries()].sort(
