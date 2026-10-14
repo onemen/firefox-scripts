@@ -1330,9 +1330,13 @@ export function watchdogDispatchResilienceViolations(
   // The plan must reach disk before anything else can end the run: before the
   // fail-closed exit, and before the GitHub API writes that precede it (a throw
   // in one of those would otherwise cost a verified release its dispatch).
-  // `const plan = ...` anchors the call site, never the function definition
-  // (which sits far above both markers).
-  const planIdx = tool.indexOf('const plan = buildDispatchPlan(findings);');
+  // Anchored on the plan FILE WRITE, never on the `buildDispatchPlan` call: only
+  // the write is what the replay step reads, so a call-site anchor stays green
+  // when just the write moves below the exit (#548 review).
+  const planWrite = tool.match(
+    /fs\.writeFileSync\([\s\S]{0,40}?path\.join\(baselineDir, DISPATCH_PLAN_FILE\)/
+  );
+  const planIdx = planWrite?.index ?? -1;
   const failClosedIdx = tool.indexOf('could not be resolved');
   if (planIdx === -1 || failClosedIdx === -1 || planIdx > failClosedIdx) {
     violations.push(
@@ -1376,16 +1380,12 @@ test('watchdog dispatch resilience: each half catches its own regression', () =>
   // run. Both other anchors are present in the fixtures, so these check ORDER;
   // a missing anchor is itself a violation (a renamed marker must not silently
   // retire the check).
-  const planFirst = [
-    'const plan = buildDispatchPlan(findings);',
-    'await syncMetaIssue(token, repo, metaBody);',
-    'console.error("x could not be resolved");',
-  ].join('\n');
-  const planLast = [
-    'await syncMetaIssue(token, repo, metaBody);',
-    'console.error("x could not be resolved");',
-    'const plan = buildDispatchPlan(findings);',
-  ].join('\n');
+  const planWrite =
+    '    fs.writeFileSync(path.join(baselineDir, DISPATCH_PLAN_FILE), JSON.stringify(plan, null, 2));';
+  const metaWrite = 'await syncMetaIssue(token, repo, metaBody);';
+  const failClosed = 'console.error("x could not be resolved");';
+  const planFirst = [planWrite, metaWrite, failClosed].join('\n');
+  const planLast = [metaWrite, failClosed, planWrite].join('\n');
   assert.deepEqual(
     watchdogDispatchResilienceViolations('url-watchdog.yml', {watchdog, tool: planFirst}),
     []
@@ -1402,6 +1402,25 @@ test('watchdog dispatch resilience: each half catches its own regression', () =>
   assert.ok(
     orderViolations.some(v => /before the meta-issue write/.test(v)),
     `expected the GitHub-write ordering check; got ${JSON.stringify(orderViolations)}`
+  );
+
+  // Half 2b: the builder call stays put and ONLY the write moves below the exit,
+  // the hole a call-site anchor leaves (#548 review). A builder-anchored check
+  // reads planIdx 0 here and reports nothing.
+  const writeMoved = [
+    'const plan = buildDispatchPlan(findings);',
+    metaWrite,
+    failClosed,
+    planWrite,
+  ].join('\n');
+  const movedViolations = watchdogDispatchResilienceViolations('url-watchdog.yml', {
+    watchdog,
+    tool: writeMoved,
+  });
+  assert.equal(movedViolations.length, 2);
+  assert.ok(
+    movedViolations.some(v => /before the fail-closed exit/.test(v)),
+    `expected the write-moved order check; got ${JSON.stringify(movedViolations)}`
   );
 });
 

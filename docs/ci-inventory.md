@@ -151,8 +151,10 @@ dispatch is also the only path that advances their pin: a green `browser-matrix`
 release it validated (`record-fork-validation`), and every later run — PR legs included — installs
 exactly that release (ADR 0034), which is what keeps a fork release from turning every open PR into
 a cold ~160 MB download. Waterfox is a hard gate, so its dispatch feeds the publish drift check
-rather than a pin. Dispatch happens only after the baseline persisted (a fail-closed run dispatches
-nothing) and a failed dispatch is a run warning, not a failure.
+rather than a pin. The replay step runs on a failed check step as well (`!cancelled()`), and the
+plan it replays was written before that step's fail-closed exit, so a browser whose probe failed no
+longer cancels the other new versions' E2E; the baseline itself still fails closed and is not
+advanced on such a night (#136). A failed dispatch is a run warning, not a failure.
 
 The nightly watchdog is the only scheduled refresh of the browser baseline, so a browser released
 between the last watchdog run and a publish would ship unvalidated. The Pages publish workflow runs
