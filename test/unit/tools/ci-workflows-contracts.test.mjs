@@ -49,6 +49,15 @@
 //                            --platform list equals the build matrix's
 //                            platform set; a platform added to one side only
 //                            publishes stale (or missing) staged bytes.
+//
+//   url-watchdog.yml
+//   - dispatch-survives-fail-closed
+//                            the check step writes the nightly dispatch plan
+//                            before its fail-closed exit, and the workflow's
+//                            replay step runs after a FAILED check step
+//                            (!cancelled(), not the implicit success()). Either
+//                            half alone silently stops E2E for a release the
+//                            same run just recorded under "new version" (#136).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -1260,6 +1269,159 @@ test('staged-set-parity: a platform staged but not published is a violation', ()
 test('the real drift-gate + drift-check + publish consumers satisfy the no-baseline chain contract', () => {
   const failures = [...noBaselineChainViolations('drift-check.yml')];
   assert.deepEqual(failures, [], failures.join('\n'));
+});
+
+// ── the watchdog dispatch survives a fail-closed check step (#136) ────────
+// One browser's rot used to cancel the whole night's E2E: the check step
+// exited on fail-closed BEFORE writing the dispatch plan, and the workflow's
+// replay step only ran on an implicit success(), so a release the same run had
+// just recorded as "new version" got no E2E run at all (firefox-esr-153 showed
+// "new version" next to an E2E column stuck on "none"). Two couplings hold the
+// fix, and either one silently reverts it.
+
+/** Read a repo tool file with LF normalized (a local copy can linger as CRLF). */
+function readTool(file) {
+  return fs.readFileSync(path.join(REPO_ROOT, 'tools', file), 'utf8').replace(/\r\n/g, '\n');
+}
+
+/**
+ * The watchdog dispatch-resilience coupling. `watchdog` and `tool` are
+ * injectable for the canary tests, so a mutation is exercised as text and never
+ * written to the real files (node --test runs files in processes; a
+ * write-then-restore window is a race another file can read).
+ *
+ * @param {string} file file containing the coupling, for messages
+ * @param {{watchdog?: string; tool?: string}} [texts] defaults read the real
+ *   files
+ * @returns {string[]}
+ */
+export function watchdogDispatchResilienceViolations(
+  file,
+  {watchdog = readWorkflow('url-watchdog.yml'), tool = readTool('check-browser-downloads.mjs')} = {}
+) {
+  const violations = [];
+
+  const check = workflowJobs(watchdog).find(job => job.name === 'check');
+  if (!check) {
+    violations.push(`${file}: url-watchdog.yml has no 'check' job to dispatch from`);
+  } else {
+    const dispatch = jobSteps(check.body).find(
+      stepText => (stepName(stepText) || '') === 'Dispatch nightly revalidation'
+    );
+    if (!dispatch) {
+      violations.push(
+        `${file}: no 'Dispatch nightly revalidation' step, so a written plan is never replayed`
+      );
+    } else {
+      const text = stripComments(dispatch);
+      // Only always() / !cancelled() can run after a failed check step; a step
+      // with no status function carries GitHub's implicit success().
+      if (!/always\(\)/.test(text) && !/!\s*cancelled\(\)/.test(text)) {
+        violations.push(
+          `${file}: the dispatch step is still success()-gated, so a fail-closed check step cancels every new version's E2E`
+        );
+      }
+      if (!/--dispatch/.test(stepRun(dispatch))) {
+        violations.push(`${file}: the dispatch step does not invoke the tool's --dispatch mode`);
+      }
+    }
+  }
+
+  // The plan must reach disk before anything else can end the run: before the
+  // fail-closed exit, and before the GitHub API writes that precede it (a throw
+  // in one of those would otherwise cost a verified release its dispatch).
+  // Anchored on the plan FILE WRITE, never on the `buildDispatchPlan` call: only
+  // the write is what the replay step reads, so a call-site anchor stays green
+  // when just the write moves below the exit (#548 review).
+  const planWrite = tool.match(
+    /fs\.writeFileSync\([\s\S]{0,40}?path\.join\(baselineDir, DISPATCH_PLAN_FILE\)/
+  );
+  const planIdx = planWrite?.index ?? -1;
+  const failClosedIdx = tool.indexOf('could not be resolved');
+  if (planIdx === -1 || failClosedIdx === -1 || planIdx > failClosedIdx) {
+    violations.push(
+      `${file}: the dispatch plan is not written before the fail-closed exit, so one browser's rot still suppresses every new version's E2E`
+    );
+  }
+  const metaWriteIdx = tool.indexOf('await syncMetaIssue(token, repo, metaBody)');
+  if (planIdx === -1 || metaWriteIdx === -1 || planIdx > metaWriteIdx) {
+    violations.push(
+      `${file}: the dispatch plan is not written before the meta-issue write, so a GitHub API failure there suppresses every new version's E2E`
+    );
+  }
+
+  return violations;
+}
+
+test('the real watchdog dispatch survives a fail-closed check step (#136)', () => {
+  const failures = watchdogDispatchResilienceViolations('url-watchdog.yml');
+  assert.deepEqual(failures, [], failures.join('\n'));
+});
+
+test('watchdog dispatch resilience: each half catches its own regression', () => {
+  const watchdog = readWorkflow('url-watchdog.yml');
+
+  // Half 1: dropping !cancelled() puts the step back on the implicit success(),
+  // so the replay never happens after the check step fails closed.
+  const successGated = watchdog.replace(
+    '!cancelled() && inputs.report-only != true',
+    'inputs.report-only != true'
+  );
+  assert.notEqual(successGated, watchdog, 'the fixture must actually change the step condition');
+  const gateViolations = watchdogDispatchResilienceViolations('url-watchdog.yml', {
+    watchdog: successGated,
+  });
+  assert.ok(
+    gateViolations.some(v => /success\(\)-gated/.test(v)),
+    `expected the condition half to fail; got ${JSON.stringify(gateViolations)}`
+  );
+
+  // Half 2: the pre-#136 order, the plan written after whatever can end the
+  // run. Both other anchors are present in the fixtures, so these check ORDER;
+  // a missing anchor is itself a violation (a renamed marker must not silently
+  // retire the check).
+  const planWrite =
+    '    fs.writeFileSync(path.join(baselineDir, DISPATCH_PLAN_FILE), JSON.stringify(plan, null, 2));';
+  const metaWrite = 'await syncMetaIssue(token, repo, metaBody);';
+  const failClosed = 'console.error("x could not be resolved");';
+  const planFirst = [planWrite, metaWrite, failClosed].join('\n');
+  const planLast = [metaWrite, failClosed, planWrite].join('\n');
+  assert.deepEqual(
+    watchdogDispatchResilienceViolations('url-watchdog.yml', {watchdog, tool: planFirst}),
+    []
+  );
+  const orderViolations = watchdogDispatchResilienceViolations('url-watchdog.yml', {
+    watchdog,
+    tool: planLast,
+  });
+  assert.equal(orderViolations.length, 2);
+  assert.ok(
+    orderViolations.some(v => /before the fail-closed exit/.test(v)),
+    `expected the fail-closed ordering check; got ${JSON.stringify(orderViolations)}`
+  );
+  assert.ok(
+    orderViolations.some(v => /before the meta-issue write/.test(v)),
+    `expected the GitHub-write ordering check; got ${JSON.stringify(orderViolations)}`
+  );
+
+  // Half 2b: the builder call stays put and ONLY the write moves below the exit,
+  // the hole a call-site anchor leaves (#548 review). A builder-anchored check
+  // reads planIdx 0 here and reports nothing.
+  const writeMoved = [
+    'const plan = buildDispatchPlan(findings);',
+    metaWrite,
+    failClosed,
+    planWrite,
+  ].join('\n');
+  const movedViolations = watchdogDispatchResilienceViolations('url-watchdog.yml', {
+    watchdog,
+    tool: writeMoved,
+  });
+  assert.equal(movedViolations.length, 2);
+  assert.ok(
+    movedViolations.some(v => /before the fail-closed exit/.test(v)),
+    `expected the write-moved order check; got ${JSON.stringify(movedViolations)}`
+  );
 });
 
 test('no-baseline chain: each link catches its own regression', () => {

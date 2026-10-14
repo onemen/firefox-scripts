@@ -64,7 +64,11 @@ stay SHA-pinned (`.github/dependabot.yml`).
   marker skips nights without a new build). The dispatch moved after the baseline save deliberately:
   the dispatched runs read that baseline. e2e.yml has NO `push: [main]` and NO `schedule:` of its
   own any more — the nightly is the only E2E run `main` gets — and its `e2e-triage` job files a
-  deduped failure issue (hash of the sorted failed-leg names) closed again on a green night.
+  deduped failure issue (hash of the sorted failed-leg names) closed again on a green night. The
+  plan file is written BEFORE the check step's fail-closed exit, and the replay step runs on a
+  failed check step as well (`!cancelled()`, not the implicit `success()`), so one browser's vendor
+  rot can no longer cancel the whole night's E2E: a release the same run recorded under "new
+  version" still gets its dispatch (#136).
 
 - **Skills watchdog** (`.github/workflows/skills-watchdog.yml`, weekly + on PRs touching the
   watchdog) — detects drift in the five third-party skills in `.agents/skills/` (ADR 0022): the
