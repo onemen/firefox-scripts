@@ -91,6 +91,25 @@ This is privileged context, not a web page:
 | `document`, `window`       | the current chrome document and window                                                            |
 | `UC`, `_uc`                | the loader's registry and state                                                                   |
 
+:::note[Not everything in this table is ready when your script runs]
+A script loads early, while the window is still building itself, so a global existing is not the
+same as a global being usable: the browser creates each one at its own point in the window's
+startup. Reach for one from the notification that fires after it exists, not from the top level of
+your script.
+
+`gBrowser` is the clearest example. It is created later in the window's own startup, so at load
+time it is not usable: reaching into it fails. Register a `chrome-document-loaded` observer and use
+`gBrowser` from there, since that fires once the window's chrome document is loaded. If you also
+need the window fully settled, with session restore finished, wait for its `delayedStartupPromise`
+first. The `restart.uc.js` example below follows that shape.
+
+This applies to every Firefox internal, not only the ones listed here: when one exists, and which
+notification announces it, is for the browser to say. This page documents the loader and the script
+format, not Firefox's APIs. It is **not a replacement for Firefox's own documentation**; see
+[Firefox Source Docs](https://firefox-source-docs.mozilla.org/) and
+[MDN](https://developer.mozilla.org/) for that.
+:::
+
 The [restart.uc.js](https://github.com/onemen/firefox-scripts/blob/main/core/chrome/restart.uc.js)
 script is a good reference. It lives in the repository's `core/chrome/` tree and adds a toolbar
 button through `CustomizableUI.createWidget()`, registers a `chrome-document-loaded` observer, and
