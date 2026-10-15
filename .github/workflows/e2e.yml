@@ -232,7 +232,7 @@ jobs:
         run: pnpm snapshot:dev
 
       - name: Upload dev snapshot
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dev-snapshot
           path: dist/
@@ -424,7 +424,7 @@ jobs:
             > "e2e-version-${{ matrix.browser }}-${{ matrix.os }}.json"
 
       - name: Upload ${{ matrix.browser }} version artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-version-${{ matrix.browser }}-${{ matrix.os }}
           path: e2e-version-${{ matrix.browser }}-${{ matrix.os }}.json
@@ -433,7 +433,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-diagnostics-${{ matrix.browser }}-${{ matrix.os }}
           path: |
@@ -574,7 +574,7 @@ jobs:
       # harness leaves failure screenshots in dist/ for artifact upload.
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-diagnostics-portable-firefox-${{ matrix.os }}
           path: |
@@ -640,7 +640,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-diagnostics-core-lifecycle-${{ matrix.os }}
           path: |
@@ -1017,7 +1017,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-diagnostics-snap-firefox
           path: |
@@ -1170,7 +1170,7 @@ jobs:
 
       - name: Upload ${{ matrix.browser }} version artifact
         if: ${{ contains(fromJSON('["librewolf","floorp","zen"]'), matrix.browser) }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-version-${{ matrix.browser }}-${{ matrix.os || 'windows-latest' }}
           path: e2e-version-${{ matrix.browser }}-${{ matrix.os || 'windows-latest' }}.json
@@ -1179,7 +1179,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-diagnostics-${{ matrix.browser }}
           path: dist/updater-e2e-*.png
@@ -1274,7 +1274,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-diagnostics-fork-portable-${{ matrix.browser }}
           path: dist/updater-e2e-*.png
@@ -1462,7 +1462,7 @@ jobs:
             > "e2e-version-${{ matrix.browser }}-windows-latest.json"
 
       - name: Upload ${{ matrix.browser }} version artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-version-${{ matrix.browser }}-windows-latest
           path: e2e-version-${{ matrix.browser }}-windows-latest.json
@@ -1471,7 +1471,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-diagnostics-esr-portable-${{ matrix.browser }}
           path: dist/updater-e2e-*.png
@@ -1538,7 +1538,7 @@ jobs:
             > "e2e-version-waterfox-windows-latest.json"
 
       - name: Upload waterfox version artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-version-waterfox-windows-latest
           path: e2e-version-waterfox-windows-latest.json
@@ -1547,7 +1547,7 @@ jobs:
 
       - name: Upload diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-diagnostics-waterfox
           path: dist/updater-e2e-*.png
