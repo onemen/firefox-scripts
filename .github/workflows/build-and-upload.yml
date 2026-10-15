@@ -155,7 +155,7 @@ jobs:
             echo "no hashes.json on gh-pages yet — first publish starts fresh"
             echo '{}' > baseline/hashes.json
           fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: baseline-hashes
           path: baseline/hashes.json
@@ -248,7 +248,7 @@ jobs:
           mv dist/.build/build-manifest.json "dist/.build/build-manifest.${{ matrix.platform
           }}.json"
       - name: Upload staged binaries
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: staged-${{ matrix.platform }}
           path: dist/.build/
