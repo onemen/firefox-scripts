@@ -13,6 +13,9 @@
          - cdn.jsdelivr.net   dev channel: zips (dev-build-* via jsDelivr)
          - raw.githubusercontent.com  dev channel: helper binary
          - hg.mozilla.org     Firefox beta/devedition hg tags ingest
+         - hg-edge.mozilla.org  hg.mozilla.org 302s its json-rev endpoints
+           there; CSP checks redirect targets too, so the fetch is blocked
+           without it
          connect-src 'self' only would silently break every remote ingest on
          CI builds. test/unit/publish/cspMeta.test.mjs pins this list
          against the hosts /api/package-urls can actually emit — add the host
@@ -20,7 +23,7 @@
          frame-ancestors is meta-ignored by spec; a header would need a C-server change. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' https://onemen.github.io https://api.github.com https://cdn.jsdelivr.net https://raw.githubusercontent.com https://hg.mozilla.org; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' https://onemen.github.io https://api.github.com https://cdn.jsdelivr.net https://raw.githubusercontent.com https://hg.mozilla.org https://hg-edge.mozilla.org; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Firefox Scripts Installer &amp; Updater</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -151,7 +154,10 @@
            uploaded zips there is nothing to install or update.  A missing
            hash manifest is non-blocking (installs fall back to file
            presence) and does not show this banner. -->
-      <div id="network-error-banner" class="network-error-banner" style="display: none">
+      <!-- Hidden by default in style.css: style-src 'self' blocks the inline
+           style attribute, and the console logged a style-src-attr violation
+           for it. showNetworkError()/hideNetworkError() toggle it via CSSOM. -->
+      <div id="network-error-banner" class="network-error-banner">
         <div class="network-error-content">
           <svg
             width="18"

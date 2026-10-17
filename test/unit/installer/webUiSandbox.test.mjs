@@ -24,8 +24,12 @@ test('ids ship with the classes and attributes the markup gives them', () => {
   // The download anchors ship with the placeholder href, which is what
   // wireDownloadLink's dead-link guard reads back.
   assert.equal(ui.element('link-download-utils').getAttribute('href'), '#');
-  // Inline style comes from the markup, not from a fresh object.
-  assert.equal(ui.element('network-error-banner').style.display, 'none');
+  // The banner used to ship `style="display: none"` inline; style-src 'self'
+  // blocks that attribute (the console logged a style-src-attr violation for
+  // it, #555), so the markup now carries no inline style at all and the
+  // hidden default lives in style.css (.network-error-banner). The sandbox
+  // parses markup only, hence the empty attribute rather than 'none'.
+  assert.equal(ui.element('network-error-banner').getAttribute('style'), null);
 });
 
 test('`hidden` is read from the markup, not assumed', () => {
