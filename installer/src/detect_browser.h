@@ -176,6 +176,13 @@ int test_hash_from_manifest(const char *type, const char *dir_path,
                             const char *manifest_path);
 
 /**
+ * --test-profile-argv support: resolve the profile a command line names
+ * (`--profile <dir>` verbatim, `-P <name>` via <base_dir>/profiles.ini), print
+ * it and return 1; return 0 when the command line names no resolvable profile.
+ */
+int dump_test_profile_argv(const char *base_dir, const char *cmdline);
+
+/**
  * Compute the SHA256 hash over the package's canonical file list.
  * For each file (sorted by relative path):
  *   hash.update(relative_path + "\n")
