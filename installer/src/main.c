@@ -2105,6 +2105,20 @@ static int main_impl(int argc, char *argv[]) {
             free(out);
             return 0;
         }
+        if (strcmp(argv[1], "--test-profiles-ini") == 0) {
+            /* Unit-test harness for the profiles.ini walker: print the
+             * resolved candidate paths so a test can pin IsRelative=0
+             * handling without a locked profile. */
+            if (argc < 3) {
+                fprintf(stderr, "Usage: %s --test-profiles-ini <base-dir>\n", argv[0]);
+                return 2;
+            }
+            if (dump_test_profile_paths(argv[2]) < 0) {
+                fprintf(stderr, "No readable profiles.ini in %s\n", argv[2]);
+                return 2;
+            }
+            return 0;
+        }
         if (strcmp(argv[1], "--test-admin-copy") == 0) {
             /* Unit-test harness for the install status terminal states:
              * exercise the same JSON the /api/status handler emits for a
