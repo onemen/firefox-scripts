@@ -176,6 +176,14 @@ int test_hash_from_manifest(const char *type, const char *dir_path,
                             const char *manifest_path);
 
 /**
+ * --test-profiles-ini support: resolve every profile path in
+ * <base_dir>/profiles.ini the way the detection loops do (IsRelative=0 kept
+ * as written) and print one path per line.
+ * Returns the number of paths printed, -1 when profiles.ini is unreadable.
+ */
+int dump_test_profile_paths(const char *base_dir);
+
+/**
  * Compute the SHA256 hash over the package's canonical file list.
  * For each file (sorted by relative path):
  *   hash.update(relative_path + "\n")

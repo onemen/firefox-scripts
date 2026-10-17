@@ -7,7 +7,7 @@ The repo splits tests by dependency class:
 | `test/unit/`                 | `pnpm test`      | No — pure Node                    | Publish helpers, hashing (JS), updater logic, tooling contracts |
 | `installer/test/` (this dir) | `pnpm test:hash` | Yes — a compiled installer binary | The C installer's behavior                                      |
 
-The two tests here are **binary-in-the-loop**:
+The tests here are **binary-in-the-loop**:
 
 - **`test_hash.mjs`** — hash parity: cross-checks the C installer's `compute_directory_sha256` (in
   `installer/src/detect_browser.c`) against the JS reference (`tools/publish/hashUtils.mjs`). It
@@ -17,6 +17,11 @@ The two tests here are **binary-in-the-loop**:
 - **`test_self_update.mjs`** — drives the C `check_self_update()` self-update logic
   (`installer/src/self_update.c`) through the installer's hidden `--test-self-update` CLI mode, with
   fixture JSON files. Also needs the built binary.
+- **`test_profiles_ini.mjs`**: pins the profiles.ini path resolution the Windows/POSIX detection
+  loops share (`resolve_profile_path()` / `profiles_ini_foreach()` in
+  `installer/src/detect_browser.c`) through the hidden `--test-profiles-ini` CLI mode, notably the
+  `IsRelative=0` absolute-path entries that #555 regressed on. Fixture-only, no locked profile
+  needed; also needs the built binary.
 
 Where they run:
 
