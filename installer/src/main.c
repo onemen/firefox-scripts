@@ -2119,6 +2119,17 @@ static int main_impl(int argc, char *argv[]) {
             }
             return 0;
         }
+        if (strcmp(argv[1], "--test-profile-argv") == 0) {
+            /* Unit-test harness for the profile-argument resolution: resolve a
+             * synthetic command line against a fixture profiles.ini and print
+             * the profile path, so `-P <name>` (and its profiles.ini lookup)
+             * is pinnable without a running browser. */
+            if (argc < 4) {
+                fprintf(stderr, "Usage: %s --test-profile-argv <base-dir> <cmdline>\n", argv[0]);
+                return 2;
+            }
+            return dump_test_profile_argv(argv[2], argv[3]) ? 0 : 1;
+        }
         if (strcmp(argv[1], "--test-admin-copy") == 0) {
             /* Unit-test harness for the install status terminal states:
              * exercise the same JSON the /api/status handler emits for a

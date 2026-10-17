@@ -43,7 +43,7 @@
     "docs:install": "pnpm --dir docs-site install",
     "check:gates": "node tools/check-gate-coverage.mjs",
     "check:core-tests": "node tools/check-core-test-change.mjs",
-    "test:hash": "node installer/test/test_hash.mjs && node installer/test/test_self_update.mjs && node installer/test/test_profiles_ini.mjs",
+    "test:hash": "node installer/test/test_hash.mjs && node installer/test/test_self_update.mjs && node installer/test/test_profiles_ini.mjs && node installer/test/test_profile_argv.mjs",
     "toolchain:check": "node tools/ci/msys2Toolchain.mjs --check",
     "toolchain:local": "node tools/ci/msys2Toolchain.mjs --prefix",
     "scan:av": "node tools/scan-av.mjs",

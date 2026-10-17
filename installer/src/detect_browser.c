@@ -45,12 +45,13 @@
 
 /* Forward declarations */
 static void find_active_profile_readonly(const char *binary_path, char *out_profile_path);
+/* Defined below with the argv helpers: shared by the macOS/Linux argv scan,
+ * the Windows `-P <name>` resolution and the --test-profile-argv harness. */
+static int lookup_profile_by_name(const char *base_dir, const char *profile_name,
+                                  char *out_path, size_t out_size);
 #if defined(__APPLE__)
 static void find_profile_from_macos_argv(pid_t pid, const char *binary_path,
                                          char *out, size_t out_size);
-/* Defined below with the Linux helpers; shared by the macOS argv scan. */
-static int lookup_profile_by_name(const char *base_dir, const char *profile_name,
-                                  char *out_path, size_t out_size);
 #endif
 
 void read_application_version(const char *binary_path,
@@ -478,69 +479,144 @@ static void find_profile_from_macos_argv(pid_t pid, const char *binary_path,
 }
 #endif
 
-#if defined(__linux__) || defined(__APPLE__)
-/**
- * Look up a profile name in profiles.ini and return its full path.
- * Returns 0 on success, -1 if not found.
- */
+/* Defined with the profiles.ini walker below; `-P <name>` resolution needs it
+ * on every platform, including Windows. */
 static int lookup_profile_by_name(const char *base_dir, const char *profile_name,
-                                  char *out_path, size_t out_size) {
-    char profiles_ini[MAX_PATH_LEN];
-    snprintf(profiles_ini, sizeof(profiles_ini), "%s/profiles.ini", base_dir);
+                                  char *out_path, size_t out_size);
 
-    FILE *f = fopen(profiles_ini, "r");
-    if (!f) return -1;
-
-    char line[512];
-    int in_target = 0;
-    int is_relative = 1;  // default
-    char rel_path[MAX_PATH_LEN] = { 0 };
-
-    while (fgets(line, sizeof(line), f)) {
-        line[strcspn(line, "\r\n")] = 0;
-
-        if (line[0] == '[') {
-            if (in_target && strlen(rel_path) > 0) {
-                // Found Path= in the target section
-                break;
-            }
-            in_target = 0;
-        } else if (strncasecmp(line, "Name=", 5) == 0) {
-            in_target = (strcmp(line + 5, profile_name) == 0);
-            if (!in_target) {
-                rel_path[0] = '\0';
-                is_relative = 1;
-            }
-        } else if (in_target && strncasecmp(line, "Path=", 5) == 0) {
-            /* strlen-bounded copy: strncpy would read the whole 1023-byte
-             * range of the 512-byte source buffer (gcc -fanalyzer
-             * out-of-bounds read). */
-            size_t p_len = strlen(line + 5);
-            if (p_len >= sizeof(rel_path)) p_len = sizeof(rel_path) - 1;
-            memcpy(rel_path, line + 5, p_len);
-            rel_path[p_len] = '\0';
-        } else if (in_target && strncasecmp(line, "IsRelative=", 11) == 0) {
-            is_relative = atoi(line + 11);
+/**
+ * Extract the profile path argument ("--profile <path>" / "-profile <path>")
+ * from a process command line.  Returns 1 with the path in out, 0 otherwise.
+ */
+static int extract_profile_from_cmdline(const char *cmdline, char *out, size_t out_size) {
+    out[0] = '\0';
+    if (!cmdline) return 0;
+    const char *p = cmdline;
+    while ((p = strstr(p, "profile")) != NULL) {
+        const char *after = p + 7; /* strlen("profile") */
+        /* The token must start with "-" or "--" preceded by a space (or string start). */
+        const char *t = p;
+        int dashes = 0;
+        while (t > cmdline && t[-1] == '-') {
+            t--;
+            dashes++;
         }
+        if (dashes < 1 || dashes > 2 || (t > cmdline && t[-1] != ' ')) {
+            p = after;
+            continue;
+        }
+        /* Reject lookalikes such as -profilemanager. */
+        if (*after != ' ' && *after != '\t' && *after != '=' && *after != '\0') {
+            p = after;
+            continue;
+        }
+        const char *v = after;
+        while (*v == ' ' || *v == '\t') v++;
+        if (*v == '\0') return 0;
+        const char *start = v, *end;
+        if (*v == '"') {
+            start = ++v;
+            end = strchr(v, '"');
+            if (!end) return 0;
+        } else {
+            end = v;
+            while (*end && *end != ' ') end++;
+        }
+        size_t len = (size_t)(end - start);
+        if (len == 0 || len >= out_size) return 0;
+        memcpy(out, start, len);
+        out[len] = '\0';
+        return 1;
     }
-    fclose(f);
-
-    if (strlen(rel_path) == 0) return -1;
-
-    if (is_relative) {
-        snprintf(out_path, out_size, "%s/%s", base_dir, rel_path);
-    } else {
-        snprintf(out_path, out_size, "%s", rel_path);
-    }
-
-    // Normalize separators
-    for (char *p = out_path; *p; p++) {
-        if (*p == '\\') *p = '/';
-    }
-
     return 0;
 }
-#endif /* __linux__ || __APPLE__ */
+
+/**
+ * Copy the next whitespace-separated token of a command line into `tok`,
+ * honoring double quotes, and return the position after it (NULL at the end).
+ */
+static const char *next_cmdline_token(const char *p, char *tok, size_t tok_size) {
+    while (*p == ' ' || *p == '\t') p++;
+    if (!*p) return NULL;
+
+    const char *start;
+    size_t len;
+    if (*p == '"') {
+        start = ++p;
+        const char *close = strchr(start, '"');
+        len = close ? (size_t)(close - start) : strlen(start);
+        p = close ? close + 1 : start + len;
+    } else {
+        start = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        len = (size_t)(p - start);
+    }
+    if (len >= tok_size) len = tok_size - 1;
+    memcpy(tok, start, len);
+    tok[len] = '\0';
+    return p;
+}
+
+/**
+ * Extract the `-P <name>` argument from a process command line. That flag names
+ * a profiles.ini profile, not a directory, so it needs the name lookup that
+ * --profile does not. Returns 1 when the name is present.
+ */
+static int extract_profile_name_from_cmdline(const char *cmdline, char *out, size_t out_size) {
+    out[0] = '\0';
+    if (!cmdline) return 0;
+
+    char tok[512];
+    const char *p = cmdline;
+    int want_value = 0;
+    while ((p = next_cmdline_token(p, tok, sizeof(tok))) != NULL) {
+        if (want_value) {
+            snprintf(out, out_size, "%s", tok);
+            return out[0] != '\0';
+        }
+        /* Exact token only: -private-window, -purgecaches and the
+         * -profile/--profile flag all start with "-p" and must not match. */
+        if (tok[0] == '-' && (tok[1] == 'P' || tok[1] == 'p') && tok[2] == '\0') {
+            want_value = 1;
+        }
+    }
+    return 0;
+}
+
+/**
+ * Resolve the profile a process was launched with: `--profile <path>` is used
+ * verbatim (a temp or puppeteer profile need not be in profiles.ini), while
+ * `-P <name>` is looked up in <base_dir>/profiles.ini. Returns 1 when a path
+ * was produced.
+ */
+static int resolve_profile_from_cmdline(const char *cmdline, const char *base_dir,
+                                        char *out_path, size_t out_size) {
+    out_path[0] = '\0';
+    if (extract_profile_from_cmdline(cmdline, out_path, out_size) && out_path[0]) return 1;
+
+    out_path[0] = '\0';
+    char name[512];
+    if (!base_dir || !base_dir[0]) return 0;
+    if (!extract_profile_name_from_cmdline(cmdline, name, sizeof(name))) return 0;
+    if (lookup_profile_by_name(base_dir, name, out_path, out_size) != 0) {
+        out_path[0] = '\0';
+        return 0;
+    }
+    return out_path[0] != '\0';
+}
+
+/**
+ * --test-profile-argv harness: resolve the profile a synthetic command line
+ * names exactly the way the Windows scan does, and print it. Pins the
+ * `-P <name>` path (profiles.ini name lookup) without a running browser.
+ * Returns 1 when a path was printed, 0 when nothing resolved.
+ */
+int dump_test_profile_argv(const char *base_dir, const char *cmdline) {
+    char path[MAX_PATH_LEN];
+    if (!resolve_profile_from_cmdline(cmdline, base_dir, path, sizeof(path))) return 0;
+    printf("%s\n", path);
+    return 1;
+}
 
 #if defined(__linux__)
 /**
@@ -735,14 +811,17 @@ static void resolve_profile_path(const char *base_dir, const char *path_value,
     }
 }
 
-typedef int (*profiles_ini_visitor)(const char *resolved_path, void *userdata);
+typedef int (*profiles_ini_visitor)(const char *resolved_path, const char *section_name,
+                                    void *userdata);
 
 /**
  * Walk every Path= section of profiles.ini and hand `visit` one resolved
- * profile path. A section stays buffered until its `[` boundary closes it, so
- * key order inside a section never matters (real files list IsRelative=
- * before Path=). `visit` returns 0 to keep scanning, nonzero to stop.
- * Returns 1 when the ini was read, 0 when it could not be opened.
+ * profile path plus the section's `Name=` (empty when the section carries
+ * none), which is what `-P <name>` resolution matches on. A section stays
+ * buffered until its `[` boundary closes it, so key order inside a section
+ * never matters (real files list IsRelative= before Path=). `visit` returns 0
+ * to keep scanning, nonzero to stop. Returns 1 when the ini was read, 0 when it
+ * could not be opened.
  */
 static int profiles_ini_foreach(const char *base_dir, const char *profiles_ini_path,
                                 profiles_ini_visitor visit, void *userdata) {
@@ -750,6 +829,7 @@ static int profiles_ini_foreach(const char *base_dir, const char *profiles_ini_p
     if (!f) return 0;
 
     char line[512];
+    char section_name[512] = { 0 };
     char section_path[MAX_PATH_LEN] = { 0 };
     char resolved[MAX_PATH_LEN];
     int section_is_relative = 1;
@@ -771,6 +851,8 @@ static int profiles_ini_foreach(const char *base_dir, const char *profiles_ini_p
             line[strcspn(line, "\r\n")] = 0;
             if (line[0] == '[') {
                 at_boundary = 1;
+            } else if (strncasecmp(line, "Name=", 5) == 0) {
+                snprintf(section_name, sizeof(section_name), "%s", line + 5);
             } else if (strncasecmp(line, "Path=", 5) == 0) {
                 snprintf(section_path, sizeof(section_path), "%s", line + 5);
             } else if (strncasecmp(line, "IsRelative=", 11) == 0) {
@@ -782,8 +864,9 @@ static int profiles_ini_foreach(const char *base_dir, const char *profiles_ini_p
             if (section_path[0]) {
                 resolve_profile_path(base_dir, section_path, section_is_relative,
                                      resolved, sizeof(resolved));
-                if (visit && visit(resolved, userdata)) break;
+                if (visit && visit(resolved, section_name, userdata)) break;
             }
+            section_name[0] = '\0';
             section_path[0] = '\0';
             section_is_relative = 1;
             if (!have_line) break;
@@ -791,6 +874,42 @@ static int profiles_ini_foreach(const char *base_dir, const char *profiles_ini_p
     }
     fclose(f);
     return 1;
+}
+
+/**
+ * State + visitor for lookup_profile_by_name(): stop at the section whose
+ * `Name=` matches, keeping the path the walker already resolved.
+ */
+typedef struct {
+    const char *name;
+    char path[MAX_PATH_LEN];
+} NamedProfileState;
+
+static int visit_named_profile(const char *path, const char *section_name, void *userdata) {
+    NamedProfileState *st = userdata;
+    if (!section_name[0] || strcmp(section_name, st->name) != 0) return 0;
+    snprintf(st->path, sizeof(st->path), "%s", path);
+    return 1;
+}
+
+/**
+ * Look up a profile NAME (the `-P <name>` argument, not a directory) in
+ * profiles.ini and return its full path, resolved through the walker above so
+ * `Name=`/`Path=`/`IsRelative=` order and `IsRelative=0` behave exactly as in
+ * the detection loops. Returns 0 on success, -1 if not found.
+ */
+static int lookup_profile_by_name(const char *base_dir, const char *profile_name,
+                                  char *out_path, size_t out_size) {
+    char profiles_ini[MAX_PATH_LEN];
+    snprintf(profiles_ini, sizeof(profiles_ini), "%s%cprofiles.ini", base_dir, PATH_SEPARATOR);
+
+    NamedProfileState st = { 0 };
+    st.name = profile_name;
+    profiles_ini_foreach(base_dir, profiles_ini, visit_named_profile, &st);
+    if (!st.path[0]) return -1;
+
+    snprintf(out_path, out_size, "%s", st.path);
+    return 0;
 }
 
 /**
@@ -805,7 +924,8 @@ typedef struct {
     char match[MAX_PATH_LEN];
 } ActiveProfileState;
 
-static int visit_active_profile(const char *path, void *userdata) {
+static int visit_active_profile(const char *path, const char *section_name, void *userdata) {
+    (void)section_name;
     ActiveProfileState *st = userdata;
     char lock_file[MAX_PATH_LEN];
     snprintf(lock_file, sizeof(lock_file), "%s%c%s", path, PATH_SEPARATOR, LOCK_FILE);
@@ -821,38 +941,49 @@ static int visit_active_profile(const char *path, void *userdata) {
     return 0;
 }
 
+#if defined(_WIN32)
+/**
+ * Directory holding a variant's profiles.ini on Windows (%APPDATA%\[vendor]).
+ * Empty when APPDATA is unset.
+ */
+static void windows_profiles_base_dir(const char *binary_path, char *out, size_t out_size) {
+    out[0] = '\0';
+    const char *appdata = getenv("APPDATA");
+    if (!appdata) return;
+
+    switch (identify_variant_from_path(binary_path)) {
+        case BROWSER_ZEN:
+        case BROWSER_ZEN_TWILIGHT:
+            snprintf(out, out_size, "%s\\zen", appdata);
+            break;
+        case BROWSER_WATERFOX:
+        case BROWSER_WATERFOX_BETA:
+            snprintf(out, out_size, "%s\\Waterfox", appdata);
+            break;
+        case BROWSER_LIBREWOLF:
+            snprintf(out, out_size, "%s\\LibreWolf", appdata);
+            break;
+        case BROWSER_FLOORP:
+            snprintf(out, out_size, "%s\\Floorp", appdata);
+            break;
+        default:
+            snprintf(out, out_size, "%s\\Mozilla\\Firefox", appdata);
+            break;
+    }
+}
+#endif
+
 static void find_active_profile_readonly(const char *binary_path, char *out_profile_path) {
     out_profile_path[0] = '\0';
     char base_dir[MAX_PATH_LEN] = { 0 };
     char profiles_ini_path[MAX_PATH_LEN] = { 0 };
 
-    enum BrowserVariant variant = identify_variant_from_path(binary_path);
-
 #if defined(_WIN32)
-    const char *appdata = getenv("APPDATA");
-    if (!appdata) return;
-
-    switch (variant) {
-        case BROWSER_ZEN:
-        case BROWSER_ZEN_TWILIGHT:
-            snprintf(base_dir, sizeof(base_dir), "%s\\zen", appdata);
-            break;
-        case BROWSER_WATERFOX:
-        case BROWSER_WATERFOX_BETA:
-            snprintf(base_dir, sizeof(base_dir), "%s\\Waterfox", appdata);
-            break;
-        case BROWSER_LIBREWOLF:
-            snprintf(base_dir, sizeof(base_dir), "%s\\LibreWolf", appdata);
-            break;
-        case BROWSER_FLOORP:
-            snprintf(base_dir, sizeof(base_dir), "%s\\Floorp", appdata);
-            break;
-        default:
-            snprintf(base_dir, sizeof(base_dir), "%s\\Mozilla\\Firefox", appdata);
-            break;
-    }
+    windows_profiles_base_dir(binary_path, base_dir, sizeof(base_dir));
+    if (!base_dir[0]) return;
     snprintf(profiles_ini_path, sizeof(profiles_ini_path), "%s\\profiles.ini", base_dir);
 #else
+    enum BrowserVariant variant = identify_variant_from_path(binary_path);
     const char *home = getenv("HOME");
     if (!home) {
         struct passwd *pw = getpwuid(getuid());
@@ -945,7 +1076,8 @@ typedef struct {
     int count;
 } LockedProfileState;
 
-static int visit_locked_profile(const char *path, void *userdata) {
+static int visit_locked_profile(const char *path, const char *section_name, void *userdata) {
+    (void)section_name;
     LockedProfileState *st = userdata;
     char lock_file[MAX_PATH_LEN];
     snprintf(lock_file, sizeof(lock_file), "%s%c%s", path, PATH_SEPARATOR, LOCK_FILE);
@@ -1004,7 +1136,8 @@ static int collect_locked_profiles(const char *binary_path, char (*out_profiles)
 }
 #endif
 
-static int visit_print_profile(const char *path, void *userdata) {
+static int visit_print_profile(const char *path, const char *section_name, void *userdata) {
+    (void)section_name;
     int *count = userdata;
     printf("%s\n", path);
     (*count)++;
@@ -1104,52 +1237,6 @@ static int get_process_command_line(unsigned long pid, char *out, size_t out_siz
     return ret;
 }
 
-/**
- * Extract the profile path argument ("--profile <path>" / "-profile <path>")
- * from a process command line.  Returns 1 with the path in out, 0 otherwise.
- */
-static int extract_profile_from_cmdline(const char *cmdline, char *out, size_t out_size) {
-    out[0] = '\0';
-    if (!cmdline) return 0;
-    const char *p = cmdline;
-    while ((p = strstr(p, "profile")) != NULL) {
-        const char *after = p + 7; /* strlen("profile") */
-        /* The token must start with "-" or "--" preceded by a space (or string start). */
-        const char *t = p;
-        int dashes = 0;
-        while (t > cmdline && t[-1] == '-') {
-            t--;
-            dashes++;
-        }
-        if (dashes < 1 || dashes > 2 || (t > cmdline && t[-1] != ' ')) {
-            p = after;
-            continue;
-        }
-        /* Reject lookalikes such as -profilemanager. */
-        if (*after != ' ' && *after != '\t' && *after != '=' && *after != '\0') {
-            p = after;
-            continue;
-        }
-        const char *v = after;
-        while (*v == ' ' || *v == '\t') v++;
-        if (*v == '\0') return 0;
-        const char *start = v, *end;
-        if (*v == '"') {
-            start = ++v;
-            end = strchr(v, '"');
-            if (!end) return 0;
-        } else {
-            end = v;
-            while (*end && *end != ' ') end++;
-        }
-        size_t len = (size_t)(end - start);
-        if (len == 0 || len >= out_size) return 0;
-        memcpy(out, start, len);
-        out[len] = '\0';
-        return 1;
-    }
-    return 0;
-}
 #endif /* _WIN32 */
 
 /**
@@ -1295,9 +1382,14 @@ int scan_and_filter_browsers(RunningBrowser *results, int max_results) {
     }
 
     // Pass 2: extract the real profile from each main process's command line.
+    // --profile carries a directory, -P carries a profiles.ini name; both are
+    // resolved here so a `-P <name>` launch is a strong match instead of a
+    // round-robin guess (the flag was ignored before, #555).
     for (int p = 0; p < proc_count; p++) {
         char profile[MAX_PATH_LEN];
-        if (extract_profile_from_cmdline(proc_list[p].cmdline, profile, sizeof(profile)) &&
+        char base_dir[MAX_PATH_LEN] = { 0 };
+        windows_profiles_base_dir(proc_list[p].binary_path, base_dir, sizeof(base_dir));
+        if (resolve_profile_from_cmdline(proc_list[p].cmdline, base_dir, profile, sizeof(profile)) &&
             path_is_dir(profile)) {
             snprintf(proc_list[p].cmdline_profile, MAX_PATH_LEN, "%s", profile);
         }
