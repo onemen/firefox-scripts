@@ -19,7 +19,7 @@
 // or drops the meta — i.e. when the page's load surface drifts away from the
 // policy written here.
 
-import {readFileSync} from 'node:fs';
+import {readFileSync, readdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
@@ -133,16 +133,10 @@ test('both pages stay free of inline handlers and inline scripts the CSP would b
     // blocked at runtime (style-src-attr falls back to style-src). The
     // progress-bar fill carried one since the initial native-installer commit;
     // #228's CSP made Firefox log a style-src-attr violation for it. The
-    // stylesheet default (.card-progress-bar-fill { width: 0% }, style.css)
-    // covers the initial state, and the JS drives width via el.style.width
-    // (CSSOM — allowed by CSP).
-    // Scoped to the updater tab: the installer page still has two (index.html
-    // network-error banner "display: none", 30-render.js progress fill) — both
-    // embedded in installer_win.exe, so they wait for the post-release CSP
-    // cleanup.
-    if (label === 'updater tab') {
-      assert.ok(!/\sstyle="[^"]*"/.test(html), `${label}: no inline style attributes`);
-    }
+    // stylesheet defaults (.card-progress-bar-fill { width: 0% },
+    // .network-error-banner { display: none }) cover the initial state, and
+    // the JS drives display/width via el.style (CSSOM, allowed by CSP).
+    assert.ok(!/\sstyle="[^"]*"/.test(html), `${label}: no inline style attributes`);
   }
 });
 
@@ -262,6 +256,9 @@ test('installer CSP connect-src covers every host /api/package-urls can emit (pr
     hostOf(prod.HASHES_URL),
     'api.github.com', // self-update releases + Waterfox releases
     'hg.mozilla.org', // beta/devedition hg tags ingest
+    // hg.mozilla.org 302s its json-rev endpoints to hg-edge.mozilla.org and
+    // CSP checks redirect targets, so the ingest dies without it (#555).
+    'hg-edge.mozilla.org',
     hostOf(dev.ZIP_BASE_URL),
     hostOf(dev.HELPER_BASE_URL),
   ]);
@@ -279,11 +276,33 @@ test('installer CSP connect-src covers every host /api/package-urls can emit (pr
     'cdn.jsdelivr.net',
     'raw.githubusercontent.com',
     'hg.mozilla.org',
+    'hg-edge.mozilla.org',
   ]);
   for (const host of allowedHosts) {
     assert.ok(
       known.has(host),
       `unexpected connect-src host ${host} — if a new remote host is genuinely needed, add it to this test's known set too`
+    );
+  }
+});
+
+test('installer page script sources never build markup with inline style attributes', () => {
+  // The HTML check above only sees index.html, but the installer page also
+  // builds markup from installer/web/script/*.js (concatenated into the
+  // embedded script.js). style-src 'self' blocks a parsed style attribute
+  // anywhere in that markup too (the #228 violation was a 30-render.js
+  // progress fill inside an innerHTML string). Drive display/width through
+  // CSSOM (el.style.x = ...) instead.
+  const dir = join(ROOT, 'installer/web/script');
+  for (const file of readdirSync(dir)) {
+    const src = readFileSync(join(dir, file), 'utf8');
+    assert.ok(
+      !/<[a-z][^>]*\sstyle=\\?["']/i.test(src),
+      `${file}: inline style attributes in generated markup are blocked by style-src 'self'`
+    );
+    assert.ok(
+      !/setAttribute\(\s*['"]style['"]/.test(src),
+      `${file}: setAttribute('style', ...) is a style attribute too; use el.style.x`
     );
   }
 });

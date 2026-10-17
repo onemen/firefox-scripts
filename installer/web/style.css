@@ -796,6 +796,9 @@ body {
    Network Error Banner (install packages could not be fetched by the tab)
    ========================================================================== */
 .network-error-banner {
+  /* Hidden until showNetworkError(): style-src 'self' blocks the inline
+     style attribute the markup used to carry, JS reveals via CSSOM. */
+  display: none;
   background: var(--warning-bg);
   border: 1px solid var(--warning-border);
   border-radius: var(--radius-lg);
