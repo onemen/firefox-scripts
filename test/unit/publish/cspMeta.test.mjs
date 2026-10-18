@@ -140,6 +140,33 @@ test('both pages stay free of inline handlers and inline scripts the CSP would b
   }
 });
 
+test('style.css carries the initial state the removed inline styles declared', () => {
+  // The two attributes above used to be inline (banner display:none, progress
+  // fill width:0%). Removing them is only safe while the stylesheet keeps that
+  // initial state: without it the error banner shows on every load, and the
+  // progress fill renders full-width. The markup test cannot see CSS, so pin
+  // the declarations here, since they are the other half of the same fix.
+  const css = readFileSync(join(ROOT, 'installer/web/style.css'), 'utf8');
+  const rule = selector => {
+    const start = css.indexOf(`\n${selector} {`);
+    assert.notEqual(start, -1, `${selector} rule exists in installer/web/style.css`);
+    const end = css.indexOf('}', start);
+    assert.notEqual(end, -1, `${selector} rule is closed`);
+    return css.slice(start, end);
+  };
+
+  assert.match(
+    rule('.network-error-banner'),
+    /display:\s*none/,
+    'the banner stays hidden until showNetworkError() sets el.style.display'
+  );
+  assert.match(
+    rule('.card-progress-bar-fill'),
+    /width:\s*0%/,
+    'the progress fill starts empty until the card sets el.style.width'
+  );
+});
+
 test('updater.js helper checksum uses the portable nsICryptoHash hex conversion', () => {
   const src = readFileSync(join(ROOT, 'tools/publish/remote-ui/updater.js'), 'utf8');
 
