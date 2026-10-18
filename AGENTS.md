@@ -148,6 +148,9 @@ Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**
 - **Gates:** `pnpm lint` (strict fail-fast aggregate = what CI + the pre-push hook enforce),
   `pnpm format`, `pnpm test`, `pnpm test:installer`. Granular stages: see package.json (`pnpm lint`
   composes them); `pnpm lint:all` is the dev-only report-all view.
+- **Script reference:** every script with the command it runs is generated into
+  `docs/script-reference.md` from `package.json` (`node tools/script-reference.mjs --write`);
+  `pnpm check:script-reference` fails it when the page is stale.
 - **Core-test gate:** `pnpm check:core-tests` — fails when `core/**` changed with no `test/**`
   change (runs in the `checks` CI job on PRs). Waive with `#no-core-test-gate` in the PR body.
 - **Publish (only when the user explicitly asks):** `pnpm publish:all`, `pnpm publish:packages`,

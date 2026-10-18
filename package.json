@@ -43,6 +43,7 @@
     "test:e2e:portable": "node tools/e2e-portable.mjs",
     "check:decisions": "node tools/check-decisions.mjs",
     "check:gates": "node tools/check-gate-coverage.mjs",
+    "check:script-reference": "node tools/script-reference.mjs --check",
     "check:core-tests": "node tools/check-core-test-change.mjs",
     "check:skills-watchdog": "node tools/skills-watchdog.mjs",
     "check:skills-drift": "pnpm check:skills-watchdog --dry-run",
