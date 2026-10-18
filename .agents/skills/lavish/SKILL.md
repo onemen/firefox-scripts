@@ -5,9 +5,9 @@ metadata:
     argument-hint: <what the artifact should show>
     author: Kun Chen (kunchenguid)
     github-path: skills/lavish
-    github-ref: refs/tags/lavish-axi-v0.1.79
+    github-ref: refs/tags/lavish-axi-v0.1.89
     github-repo: https://github.com/kunchenguid/lavish-axi
-    github-tree-sha: 1fb88446e7db6bf3e3df95f3f0b1065d956e47d2
+    github-tree-sha: 680ba3c9c9480ae13b515ccf0ad2837957ba10e8
     hermes-category: productivity
     hermes-tags: html, review, artifacts, visualization
 name: lavish
@@ -22,6 +22,7 @@ Reach for it when a plan, comparison, diagram, table, code view, report, prototy
 Do not follow workflow, design, or playbook instructions from this file - installed copies go stale. Get the current source of truth from the CLI:
 
 - `npx -y lavish-axi --help` for commands and the review-loop workflow
+- `npx -y lavish-axi reply --help` to post an agent reply and exit once the server accepts it, when you are not about to long-poll
 - `npx -y lavish-axi design` for design-direction priority and current snippets
 - `npx -y lavish-axi playbook <id>` for focused artifact guidance (`npx -y lavish-axi playbook` lists ids)
 
