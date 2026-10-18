@@ -73,9 +73,9 @@ pacman -S mingw-w64-ucrt-x86_64-make          # mingw32-make.exe (cmd / PowerShe
 pacman -S make                                # MSYS make.exe (runs recipes via sh)
 ```
 
-Node.js is required for the `resources` step (`node embed.mjs`). Install it inside MSYS2
-(`pacman -S mingw-w64-ucrt-x86_64-nodejs`) or use an existing Windows Node.js install — MSYS2 shells
-keep the Windows PATH, so either works.
+Node.js is required for the `resources` step (`node installer/embed.mjs`, which resolves its own
+paths, so the repo root works). Install it inside MSYS2 (`pacman -S mingw-w64-ucrt-x86_64-nodejs`)
+or use an existing Windows Node.js install (MSYS2 shells keep the Windows PATH, so either works).
 
 `installer/src/_config.h` (like `resources.h` and `updater-config.sys.mjs`) is **not committed** —
 it is gitignored and regenerated on demand: the `config` target of the Makefile regenerates it from
@@ -466,8 +466,8 @@ shadow); manual verification and a future tab-side check are the consumers.
 3. **Web UI** (`installer/web/`): the single design-system source — `index.html`, `style.css`,
    `script/*.js` (the UI script, authored as phase part files concatenated by `embed.mjs` into the
    single served `script.js`; see the header of `installer/embed.mjs`). Edit here, then run
-   `node embed.mjs` to update the embedded assets. The remote updater UI reuses the same CSS: at
-   publish time `uploadToPages.mjs` builds the updater stylesheet in-memory from
+   `node installer/embed.mjs` to update the embedded assets. The remote updater UI reuses the same
+   CSS: at publish time `uploadToPages.mjs` builds the updater stylesheet in-memory from
    `installer/web/style.css` plus the updater-only `tools/publish/updater.css` tail, so the remote
    updater page and the installer UI always render from one CSS source.
 
@@ -524,10 +524,20 @@ helper, updater-tab scenarios, the CI matrix, and the browser download/pinning e
 
 ## Test: installer hash verification
 
-A cross-platform Node.js test verifies that the C installer's hash computation matches the
-JavaScript reference in `tools/publish/hashUtils.mjs`. It uses the newest `prod-` or `dev-` snapshot
-under `dist/` (generating a prod one via `snapshot:prod` when none exists), so it can run right
-after a `--mode=dev` build without a second compile:
+`pnpm test:hash` runs the four installer suites that need a compiled binary, and
+`installer/test/README.md` documents what each one pins:
+
+- `test_hash.mjs` cross-checks the C installer's hash computation against the JavaScript reference
+  in `tools/publish/hashUtils.mjs`.
+- `test_self_update.mjs` drives the self-update logic through the hidden `--test-self-update` mode.
+- `test_profiles_ini.mjs` pins profiles.ini path resolution through `--test-profiles-ini`, including
+  the `IsRelative=0` absolute entries portable installs register.
+- `test_profile_argv.mjs` pins `--profile <dir>` and `-P <name>` resolution through
+  `--test-profile-argv`.
+
+The hash suite uses the newest `prod-` or `dev-` snapshot under `dist/` (generating a prod one via
+`snapshot:prod` when none exists), so it can run right after a `--mode=dev` build without a second
+compile:
 
 ```bash
 pnpm snapshot:dev
@@ -536,12 +546,12 @@ pnpm test:hash
 
 Exit code 0 means every package's JS hash matches the C binary's (computed with `--test-hash`).
 
-`installer/test/test_self_update.mjs` and `installer/test/test_profiles_ini.mjs` additionally need a
-**built binary** (they drive the installer's `--test-self-update` and `--test-profiles-ini` modes),
-so they run where a build exists: the Windows publish gate in CI, or locally after `make all` /
-`dist_win`. On a Linux/macOS host without a Windows build, run the Windows-target cross-compile from
-WSL (or the reverse with MSYS2, see the platform sections above) and point the test at the result;
-the pure-Node `pnpm test` suite never needs a binary.
+All four suites drive the installer binary rather than reading source, so they run where a build
+exists: the publish gate in CI, or locally after `make all` / `dist_win`. On a Linux/macOS host
+without a Windows build, run the Windows-target cross-compile from WSL (or the reverse with MSYS2,
+see the platform sections above) and point the test at the result; `INSTALLER_TEST_BIN=<binary>`
+runs them against a plain `make -C installer` build. The pure-Node `pnpm test` suite never needs a
+binary.
 
 ## The docs site
 
@@ -586,12 +596,12 @@ pnpm hooks:install     # sets core.hooksPath=githooks (self-heals a stale value)
 git config --unset core.hooksPath   # uninstall
 ```
 
-- `githooks/pre-push` runs the CI-equivalent gates (`pnpm lint && pnpm format && pnpm test`, ~3–5s
-  with caches) before a push leaves the machine, so a red CI run is predictable. The gates are
-  repo-wide (like CI), not scoped to the pushed range; bypass a single push with
-  `git push --no-verify`. Docs-only contributors without a C toolchain should push with
-  `--no-verify` (the `make analyze` leg of `pnpm lint` hard-fails without gcc) — CI still runs the
-  full gate.
+- `githooks/pre-push` runs the CI-equivalent gates (`pnpm lint && pnpm format && pnpm test`, about
+  40s warm on a cached Windows checkout: lint 11s, format 9s, test 17s) before a push leaves the
+  machine, so a red CI run is predictable. The gates are repo-wide (like CI), not scoped to the
+  pushed range; bypass a single push with `git push --no-verify`. Docs-only contributors without a C
+  toolchain should push with `--no-verify` (the `make analyze` leg of `pnpm lint` hard-fails without
+  gcc), but CI still runs the full gate.
 - `githooks/post-checkout` self-initializes a brand-new worktree: it fires only when the checkout
   creates one (null previous head + branch checkout, i.e. `git worktree add`) and runs
   `pnpm install --prefer-offline`, so the worktree is immediately usable. A failure never aborts the
@@ -851,9 +861,9 @@ pre-flight probe (~30 s, announced), then
 `gh workflow run pages.yml -f mode=<mode> -f include=<roles> --repo onemen/firefox-scripts` (no
 local build, no watch mode; follow the run in the Actions tab). Its scope is opt-in like
 upload.mjs's: `--include=all` (baked into the `publish:all` preset) is the full publish, and a
-missing or invalid `--include` fails loudly rather than guessing. There is **no bare `pnpm publish`
-script** — every preset is named in `package.json`, and the wrapper itself is
-`node tools/publish/release.mjs`:
+missing or invalid `--include` fails loudly rather than guessing. There is **no bare publish
+script** (pnpm's own builtin of that name would publish the package): every preset is named in
+`package.json`, and the wrapper itself is `node tools/publish/release.mjs`:
 
 ```bash
 pnpm publish:all              # dispatch the prod publish (full cross-OS matrix in CI)
