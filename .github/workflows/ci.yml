@@ -78,7 +78,7 @@ jobs:
       - run: pnpm format
       # Coverage rides the same run: the report goes to the
       # log only — no threshold gate, so this can never fail a PR.
-      - run: node --test --experimental-test-coverage "test/unit/**/*.test.mjs"
+      - run: pnpm test:coverage
       # Supply-chain gate: fails the PR on any known high
       # or critical vulnerability in the dependency tree. Dev-only tree, so
       # only new advisories should ever trip it; Dependabot's weekly pnpm
@@ -161,7 +161,7 @@ jobs:
       # changed signature fails here instead of in docs-deploy.yml after merge.
       - name: Publish dry run (offline, no token)
         if: steps.filter.outputs.docs == 'true'
-        run: node tools/docs/publishDocsSite.mjs --dry-run
+        run: pnpm docs:publish --dry-run
 
   # Publish-path gate: `snapshot:dev` rebuilds the zips and the
   # native binaries for the runner's OS.  This is what catches regressions in

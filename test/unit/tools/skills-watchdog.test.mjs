@@ -556,7 +556,7 @@ test('ISSUE_TITLE: stable dedup key', () => {
   assert.equal(ISSUE_TITLE, '[skills-watchdog] third-party skill drift');
 });
 
-test('the PR leg fires on skill edits, and check:skills-drift is wired locally', () => {
+test('the PR leg fires on skill edits, and the watchdog has one owner', () => {
   const workflow = fs.readFileSync(
     path.join(REPO_ROOT, '.github', 'workflows', 'skills-watchdog.yml'),
     'utf8'
@@ -564,6 +564,18 @@ test('the PR leg fires on skill edits, and check:skills-drift is wired locally',
   const prSection = workflow.split('pull_request:')[1].split('merge_group:')[0];
   assert.match(prSection, /- '\.agents\/skills\/\*\*'/);
 
+  // One owner for the command: the tool path lives in exactly one script body,
+  // and the workflow plus the read-only local form go through the alias. A leg
+  // that spells `node tools/skills-watchdog.mjs` again would be free to drift
+  // from the flags the alias owns.
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
-  assert.equal(pkg.scripts['check:skills-drift'], 'node tools/skills-watchdog.mjs --dry-run');
+  assert.equal(pkg.scripts['check:skills-watchdog'], 'node tools/skills-watchdog.mjs');
+  assert.equal(pkg.scripts['check:skills-drift'], 'pnpm check:skills-watchdog --dry-run');
+
+  assert.deepEqual(
+    [...workflow.matchAll(/^\s*run: (pnpm check:skills-watchdog.*)$/gm)].map(m => m[1]),
+    ['pnpm check:skills-watchdog', 'pnpm check:skills-watchdog --pr'],
+    'the two watchdog legs no longer call the alias in their own mode'
+  );
+  assert.doesNotMatch(workflow, /node tools\/skills-watchdog\.mjs/);
 });

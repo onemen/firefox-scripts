@@ -85,6 +85,6 @@ jobs:
       - name: Build the site
         run: pnpm --dir docs-site build
       - name: What this deploy would publish
-        run: node tools/docs/publishDocsSite.mjs --dry-run
+        run: pnpm docs:publish --dry-run
       - name: Publish to the Pages branch
-        run: node tools/docs/publishDocsSite.mjs
+        run: pnpm docs:publish

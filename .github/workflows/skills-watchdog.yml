@@ -60,12 +60,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      # pnpm/setup (the setup-repo prologue's step, with no dependency install:
+      # the watchdog only uses node builtins) so the alias below resolves the
+      # same way it does locally.
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
         with:
-          node-version: 24
+          runtime: node@24
+          cache: false
+          install: false
 
       - name: Check third-party skill drift
-        run: node tools/skills-watchdog.mjs
+        run: pnpm check:skills-watchdog
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -86,12 +91,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      # pnpm/setup (the setup-repo prologue's step, with no dependency install:
+      # the watchdog only uses node builtins) so the alias below resolves the
+      # same way it does locally.
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
         with:
-          node-version: 24
+          runtime: node@24
+          cache: false
+          install: false
 
       - name: Check third-party skill drift
-        run: node tools/skills-watchdog.mjs --pr
+        run: pnpm check:skills-watchdog --pr
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
