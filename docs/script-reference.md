@@ -52,7 +52,7 @@ pnpm format:fix  # node tools/sync-skill-gates.mjs --fix && node tools/format-c.
 
 ```text
 pnpm test                # node --test "test/unit/**/*.test.mjs"
-pnpm test:coverage       # pnpm test --experimental-test-coverage
+pnpm test:coverage       # node --experimental-test-coverage --test "test/unit/**/*.test.mjs"
 pnpm test:installer      # node installer/test/test_hash.mjs && node installer/test/test_self_update.mjs && node installer/test/test_profiles_ini.mjs && node installer/test/test_profile_argv.mjs
 pnpm test:e2e            # node test/e2e/shared/run.mjs
 pnpm test:e2e:installer  # node test/e2e/shared/run.mjs --installer
