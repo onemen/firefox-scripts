@@ -16,7 +16,7 @@
  * character is `#` are never scanned, so prose mentions (issue text,
  * backtick-quoted examples, trailing `#` notes) stay out of scope.
  *
- * Exit code 0 = no raw call sites. Run via `pnpm lint` (lint:apt stage).
+ * Exit code 0 = no raw call sites. Run via `pnpm lint` (lint:apt-get stage).
  */
 
 import fs from 'node:fs';

@@ -29,6 +29,9 @@ pnpm install
 - **Web UI** (`installer/web/`): `index.html`, `style.css`, `script.js` are the single design
   source. Run `node installer/embed.mjs` to update the embedded installer assets. The updater tab
   reuses the same CSS (see the developer guide on generated files).
+- **Scripts** (`package.json`): grouped in the order the developer docs walk through the work (lint,
+  format, test, check, hooks, docs, toolchain, scan, snapshot, publish, release, review, ci). Add a
+  script inside its family, not at the end of the block; `pnpm test` fails when a family is split.
 
 ### Docs
 

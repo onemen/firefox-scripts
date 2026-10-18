@@ -21,7 +21,7 @@
  * but skips vendor/ — vendored third-party code (miniz) is pristine per
  * AGENTS.md.
  *
- * Exit code 0 = no call sites. Run via `pnpm lint` (lint:ncpy stage).
+ * Exit code 0 = no call sites. Run via `pnpm lint` (lint:strncpy stage).
  */
 
 import fs from 'fs';
