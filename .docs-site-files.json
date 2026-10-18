@@ -1,6 +1,6 @@
 {
   "comment": "Paths owned by tools/docs/publishDocsSite.mjs (docs-deploy.yml). Anything listed here and absent from the next build is deleted. Do not hand-edit.",
-  "generatedAt": "2026-10-15T10:22:34.102Z",
+  "generatedAt": "2026-10-18T09:34:04.434Z",
   "files": [
     "404.html",
     "_astro/ClientRouter.astro_astro_type_script_index_0_lang.DkaRGNyj.js",
