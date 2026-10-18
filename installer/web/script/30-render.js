@@ -243,9 +243,12 @@
     const cardProgress = document.createElement('div');
     cardProgress.className = 'card-progress';
     cardProgress.style.display = 'none';
+    // No style="..." attribute in this markup: style-src 'self' blocks it
+    // (style-src-attr violation in the console) and the stylesheet already
+    // defaults .card-progress-bar-fill to width: 0%.
     cardProgress.innerHTML = [
       '<div class="card-progress-bar-container">',
-      '  <div class="card-progress-bar-fill" style="width:0%"></div>',
+      '  <div class="card-progress-bar-fill"></div>',
       '</div>',
       '<div class="card-progress-status">',
       '  <span class="card-progress-step">Preparing...</span>',
