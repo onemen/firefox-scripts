@@ -711,6 +711,116 @@ static bool check_compatibility_ini(const char *profile_dir, const char *binary_
     return false;
 }
 
+/**
+ * Resolve one profiles.ini `Path=` value against the directory the ini lives
+ * in. `is_relative` is the section's `IsRelative=` key (relative when the key
+ * is absent, the way Firefox writes it). IsRelative=0 carries an absolute
+ * path: portable installs register their profile that way (#555). Prefixing
+ * base_dir onto it produced a `...\Mozilla\Firefox\E:\...` candidate that is
+ * not a directory, so the profile could never be detected.
+ */
+static void resolve_profile_path(const char *base_dir, const char *path_value,
+                                 int is_relative, char *out, size_t out_size) {
+    if (is_relative) {
+        snprintf(out, out_size, "%s%c%s", base_dir, PATH_SEPARATOR, path_value);
+    } else {
+        snprintf(out, out_size, "%s", path_value);
+    }
+    for (char *p = out; *p; p++) {
+#if defined(_WIN32)
+        if (*p == '/') *p = '\\';
+#else
+        if (*p == '\\') *p = '/';
+#endif
+    }
+}
+
+typedef int (*profiles_ini_visitor)(const char *resolved_path, void *userdata);
+
+/**
+ * Walk every Path= section of profiles.ini and hand `visit` one resolved
+ * profile path. A section stays buffered until its `[` boundary closes it, so
+ * key order inside a section never matters (real files list IsRelative=
+ * before Path=). `visit` returns 0 to keep scanning, nonzero to stop.
+ * Returns 1 when the ini was read, 0 when it could not be opened.
+ */
+static int profiles_ini_foreach(const char *base_dir, const char *profiles_ini_path,
+                                profiles_ini_visitor visit, void *userdata) {
+    FILE *f = fopen(profiles_ini_path, "r");
+    if (!f) return 0;
+
+    char line[512];
+    char section_path[MAX_PATH_LEN] = { 0 };
+    char resolved[MAX_PATH_LEN];
+    int section_is_relative = 1;
+
+    while (1) {
+        int have_line = (fgets(line, sizeof(line), f) != NULL);
+        int at_boundary = 0;
+
+        if (!have_line) {
+            at_boundary = 1;  // EOF closes the last section
+        } else if (!strchr(line, '\n') && !feof(f)) {
+            /* A line longer than the buffer: drop the rest and ignore it. A
+             * truncated Path= resolves to a directory that does not exist, and
+             * the remainder would be parsed as a fresh key. */
+            int ch;
+            while ((ch = fgetc(f)) != EOF && ch != '\n') {}
+            continue;
+        } else {
+            line[strcspn(line, "\r\n")] = 0;
+            if (line[0] == '[') {
+                at_boundary = 1;
+            } else if (strncasecmp(line, "Path=", 5) == 0) {
+                snprintf(section_path, sizeof(section_path), "%s", line + 5);
+            } else if (strncasecmp(line, "IsRelative=", 11) == 0) {
+                section_is_relative = atoi(line + 11) != 0;
+            }
+        }
+
+        if (at_boundary) {
+            if (section_path[0]) {
+                resolve_profile_path(base_dir, section_path, section_is_relative,
+                                     resolved, sizeof(resolved));
+                if (visit && visit(resolved, userdata)) break;
+            }
+            section_path[0] = '\0';
+            section_is_relative = 1;
+            if (!have_line) break;
+        }
+    }
+    fclose(f);
+    return 1;
+}
+
+/**
+ * State + visitor for find_active_profile_readonly(): prefer the locked
+ * profile compatibility.ini attributes to this binary, keep the first locked
+ * one as the fallback (a profile without compatibility.ini must still be
+ * detected, and an empty result only regresses to "not detected").
+ */
+typedef struct {
+    const char *binary_path;
+    char first_locked[MAX_PATH_LEN];
+    char match[MAX_PATH_LEN];
+} ActiveProfileState;
+
+static int visit_active_profile(const char *path, void *userdata) {
+    ActiveProfileState *st = userdata;
+    char lock_file[MAX_PATH_LEN];
+    snprintf(lock_file, sizeof(lock_file), "%s%c%s", path, PATH_SEPARATOR, LOCK_FILE);
+
+    if (!is_file_locked(lock_file)) return 0;
+    if (!st->first_locked[0]) {
+        snprintf(st->first_locked, sizeof(st->first_locked), "%s", path);
+    }
+    if (check_compatibility_ini(path, st->binary_path)) {
+        snprintf(st->match, sizeof(st->match), "%s", path);
+        return 1;
+    }
+    return 0;
+}
+
 static void find_active_profile_readonly(const char *binary_path, char *out_profile_path) {
     out_profile_path[0] = '\0';
     char base_dir[MAX_PATH_LEN] = { 0 };
@@ -794,38 +904,11 @@ static void find_active_profile_readonly(const char *binary_path, char *out_prof
     snprintf(profiles_ini_path, sizeof(profiles_ini_path), "%s/profiles.ini", base_dir);
 #endif
 
-    FILE *f = fopen(profiles_ini_path, "r");
-    if (!f) return;
-
-    char line[512];
-    char candidate_path[MAX_PATH_LEN] = { 0 };
-
-    while (fgets(line, sizeof(line), f)) {
-        line[strcspn(line, "\r\n")] = 0;
-
-        if (strncasecmp(line, "Path=", 5) == 0) {
-            char *rel_path = line + 5;
-
-            snprintf(candidate_path, sizeof(candidate_path), "%s%c%s", base_dir, PATH_SEPARATOR, rel_path);
-
-            for (char *p = candidate_path; *p; p++) {
-#if defined(_WIN32)
-                if (*p == '/') *p = '\\';
-#else
-                if (*p == '\\') *p = '/';
-#endif
-            }
-
-            char lock_file[MAX_PATH_LEN];
-            snprintf(lock_file, sizeof(lock_file), "%s%c%s", candidate_path, PATH_SEPARATOR, LOCK_FILE);
-
-            if (is_file_locked(lock_file)) {
-                snprintf(out_profile_path, MAX_PATH_LEN, "%s", candidate_path);
-                break;
-            }
-        }
-    }
-    fclose(f);
+    ActiveProfileState st = { 0 };
+    st.binary_path = binary_path;
+    profiles_ini_foreach(base_dir, profiles_ini_path, visit_active_profile, &st);
+    snprintf(out_profile_path, MAX_PATH_LEN, "%s",
+             st.match[0] ? st.match : st.first_locked);
 }
 
 int check_config_status(const char *binary_path) {
@@ -848,12 +931,41 @@ int check_utils_status(const char *profile_path) {
 
 #if defined(_WIN32)
 /**
+ * State + visitor for collect_locked_profiles(): locked, compatible, and
+ * never a duplicate of an entry already collected. A hand-edited profiles.ini
+ * can name one folder twice ([ProfileN] relative, an absolute path elsewhere),
+ * and a doubled pool entry lets the round-robin hand the same profile to two
+ * running instances. Case-insensitive: on Windows two spellings of one folder
+ * are one folder.
+ */
+typedef struct {
+    const char *binary_path;
+    char (*out_profiles)[MAX_PATH_LEN];
+    int max_profiles;
+    int count;
+} LockedProfileState;
+
+static int visit_locked_profile(const char *path, void *userdata) {
+    LockedProfileState *st = userdata;
+    char lock_file[MAX_PATH_LEN];
+    snprintf(lock_file, sizeof(lock_file), "%s%c%s", path, PATH_SEPARATOR, LOCK_FILE);
+
+    if (!is_file_locked(lock_file)) return 0;
+    if (!check_compatibility_ini(path, st->binary_path)) return 0;
+    for (int i = 0; i < st->count; i++) {
+        if (_stricmp(st->out_profiles[i], path) == 0) return 0;
+    }
+    snprintf(st->out_profiles[st->count], MAX_PATH_LEN, "%s", path);
+    st->count++;
+    return st->count >= st->max_profiles;
+}
+
+/**
  * Collect all locked+compatible profile paths from profiles.ini for a given binary.
  * This is used on Windows where we need to assign unique profiles to multiple
  * Firefox instances that share the same binary.
  */
 static int collect_locked_profiles(const char *binary_path, char (*out_profiles)[MAX_PATH_LEN], int max_profiles) {
-    int count = 0;
     char base_dir[MAX_PATH_LEN] = { 0 };
     char profiles_ini_path[MAX_PATH_LEN] = { 0 };
 
@@ -883,40 +995,37 @@ static int collect_locked_profiles(const char *binary_path, char (*out_profiles)
     }
     snprintf(profiles_ini_path, sizeof(profiles_ini_path), "%s\\profiles.ini", base_dir);
 
-    FILE *f = fopen(profiles_ini_path, "r");
-    if (!f) return 0;
-
-    char line[512];
-    char candidate_path[MAX_PATH_LEN] = { 0 };
-
-    while (fgets(line, sizeof(line), f) && count < max_profiles) {
-        line[strcspn(line, "\r\n")] = 0;
-
-        if (strncasecmp(line, "Path=", 5) == 0) {
-            char *rel_path = line + 5;
-
-            snprintf(candidate_path, sizeof(candidate_path), "%s\\%s", base_dir, rel_path);
-
-            for (char *p = candidate_path; *p; p++) {
-                if (*p == '/') *p = '\\';
-            }
-
-            char lock_file[MAX_PATH_LEN];
-            snprintf(lock_file, sizeof(lock_file), "%s\\%s", candidate_path, LOCK_FILE);
-
-            if (is_file_locked(lock_file)) {
-                if (check_compatibility_ini(candidate_path, binary_path)) {
-                    snprintf(out_profiles[count], MAX_PATH_LEN, "%s", candidate_path);
-                    count++;
-                }
-            }
-        }
-    }
-    fclose(f);
-
-    return count;
+    LockedProfileState st = { 0 };
+    st.binary_path = binary_path;
+    st.out_profiles = out_profiles;
+    st.max_profiles = max_profiles;
+    profiles_ini_foreach(base_dir, profiles_ini_path, visit_locked_profile, &st);
+    return st.count;
 }
 #endif
+
+static int visit_print_profile(const char *path, void *userdata) {
+    int *count = userdata;
+    printf("%s\n", path);
+    (*count)++;
+    return 0;
+}
+
+/**
+ * --test-profiles-ini harness: resolve every candidate in
+ * <base_dir>/profiles.ini exactly the way the detection loops do and print
+ * one path per line. That pins path resolution (notably IsRelative=0) without
+ * a running browser holding the lock. Returns the number of paths printed,
+ * or -1 when profiles.ini cannot be opened.
+ */
+int dump_test_profile_paths(const char *base_dir) {
+    char profiles_ini_path[MAX_PATH_LEN] = { 0 };
+    snprintf(profiles_ini_path, sizeof(profiles_ini_path), "%s%cprofiles.ini", base_dir, PATH_SEPARATOR);
+
+    int count = 0;
+    if (!profiles_ini_foreach(base_dir, profiles_ini_path, visit_print_profile, &count)) return -1;
+    return count;
+}
 
 #if defined(_WIN32)
 typedef struct {

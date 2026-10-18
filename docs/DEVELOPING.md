@@ -536,11 +536,12 @@ pnpm test:hash
 
 Exit code 0 means every package's JS hash matches the C binary's (computed with `--test-hash`).
 
-`installer/test/test_self_update.mjs` additionally needs a **built binary** (it drives the
-installer's `--test-self-update` mode), so it runs where a build exists: the Windows publish gate in
-CI, or locally after `make all` / `dist_win`. On a Linux/macOS host without a Windows build, run the
-Windows-target cross-compile from WSL (or the reverse with MSYS2 — see the platform sections above)
-and point the test at the result; the pure-Node `pnpm test` suite never needs a binary.
+`installer/test/test_self_update.mjs` and `installer/test/test_profiles_ini.mjs` additionally need a
+**built binary** (they drive the installer's `--test-self-update` and `--test-profiles-ini` modes),
+so they run where a build exists: the Windows publish gate in CI, or locally after `make all` /
+`dist_win`. On a Linux/macOS host without a Windows build, run the Windows-target cross-compile from
+WSL (or the reverse with MSYS2, see the platform sections above) and point the test at the result;
+the pure-Node `pnpm test` suite never needs a binary.
 
 ## The docs site
 
