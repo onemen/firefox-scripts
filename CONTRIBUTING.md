@@ -27,8 +27,8 @@ pnpm install
 - **Installer** (`installer/src/`): C code; regenerate `resources.h` with `make resources` when web
   assets change.
 - **Web UI** (`installer/web/`): `index.html`, `style.css`, `script.js` are the single design
-  source. Run `node embed.mjs` to update the embedded installer assets. The updater tab reuses the
-  same CSS (see the developer guide on generated files).
+  source. Run `node installer/embed.mjs` to update the embedded installer assets. The updater tab
+  reuses the same CSS (see the developer guide on generated files).
 
 ### Docs
 
@@ -52,15 +52,18 @@ and ADR `docs/decisions/0008-generated-files-untracked.md`). Edit the sources
 Before opening a PR, run the local checks:
 
 ```bash
-pnpm lint          # the full gate (10 stages, fail-fast): eslint, check-strncpy, tsc,
-                   # C format check, gcc -fanalyzer, markdownlint, md-list markers,
-                   # YAML frontmatter, check-skills, skill commands/links (needs the
-                   # C toolchain — see docs/DEVELOPING.md → Prerequisites)
-pnpm format        # prettier + C format check (read-only)
+pnpm lint          # the full gate (13 stages, fail-fast): eslint, check-strncpy,
+                   # check-apt-get, tsc, C format check, gcc -fanalyzer, markdownlint,
+                   # md-list markers, check-docs-mdx, YAML frontmatter, check-skills,
+                   # skill commands/links, hygiene (needs the C toolchain, see
+                   # docs/DEVELOPING.md → Prerequisites)
+pnpm format        # sync-skill-gates + prettier + C format check (read-only)
 pnpm test          # unit tests (pure Node, no build needed)
-pnpm test:hash     # C vs JS hash parity (see installer/test/README.md) — needs a
-                   # built snapshot; auto-generates a prod one via snapshot:prod when
-                   # none exists, and hard-fails on a stale snapshot
+pnpm test:hash     # the four binary-in-the-loop installer suites: hash parity,
+                   # self-update, profiles.ini, profile argv (installer/test/README.md).
+                   # Needs a compiled installer, so it uses the newest dist/ snapshot,
+                   # generating a prod one via snapshot:prod when none exists; a stale
+                   # snapshot is a hard fail rather than a misreported regression
 pnpm snapshot:dev                 # build a dev snapshot
 pnpm test:e2e      # installer HTTP + updater scenarios (needs that snapshot)
 ```

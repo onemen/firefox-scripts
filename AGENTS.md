@@ -150,12 +150,12 @@ Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**
   composes them); `pnpm lint:all` is the dev-only report-all view.
 - **Core-test gate:** `pnpm check:core-tests` — fails when `core/**` changed with no `test/**`
   change (runs in the `checks` CI job on PRs). Waive with `#no-core-test-gate` in the PR body.
-- **Publish (only when the user explicitly asks):**
-  `pnpm publish:all|packages|updater-ui|installer|helper`, `pnpm release:stage`,
-  `pnpm release:verify`, `pnpm fetch:release`; offline: `pnpm snapshot:prod|dev`. Scope
-  (`--include=…`, ADR 0030) and `--mode=prod|dev` semantics: `docs/DEVELOPING.md` → §Publish (the
-  preset list and the flag table). There is no bare `pnpm publish` script; the wrapper itself is
-  `node tools/publish/release.mjs`.
+- **Publish (only when the user explicitly asks):** `pnpm publish:all`, `pnpm publish:packages`,
+  `pnpm publish:updater-ui`, `pnpm publish:installer`, `pnpm publish:helper`, `pnpm release:stage`,
+  `pnpm release:verify`, `pnpm fetch:release`; offline: `pnpm snapshot:prod` and
+  `pnpm snapshot:dev`. Scope (`--include=…`, ADR 0030) and `--mode=prod|dev` semantics:
+  `docs/DEVELOPING.md` → §Publish (the preset list and the flag table). There is no bare publish
+  script; the wrapper itself is `node tools/publish/release.mjs`.
 - **Installer build:** `make dist_win|dist_linux|dist_mac`, `helper_*`, `resources`, `config`,
   `verify` (Windows: MSYS2 UCRT64 `mingw32-make`).
 - **Docs site:** `pnpm docs:install|docs:dev|docs:downloads|docs:build` (`docs:publish` only when
