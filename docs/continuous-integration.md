@@ -22,9 +22,8 @@ stay SHA-pinned (`.github/dependabot.yml`).
   (#147)), the fused-list marker gate on changed markdown (#307), the docs-page residue gate on the
   MDX pages (`pnpm lint:mdx`, which fails an HTML comment or a bare TODO marker left in prose), the
   YAML/frontmatter parse gate on the YAML a change touches (#413), clang-format, `gcc -fanalyzer`),
-  `pnpm format`, `pnpm test`, and a separate
-  `node --test --experimental-test-coverage "test/unit/**/*.test.mjs"` pass whose report goes to the
-  log — informational only, no threshold gate.
+  `pnpm format`, and `pnpm test:coverage` (the `pnpm test` glob plus a coverage report whose output
+  goes to the log, informational only, with no threshold gate).
 - **lint stages** (#230) — `pnpm lint` is a strict fail-fast `&&` chain composed from granular
   `pnpm lint:*` scripts (`lint:js`, `lint:strncpy`, `lint:apt-get`, `lint:types`, `lint:c-format`,
   `lint:analyze`, `lint:md`, `lint:md-markers`, `lint:mdx`, `lint:yaml`, `lint:skills`,
@@ -83,8 +82,9 @@ stay SHA-pinned (`.github/dependabot.yml`).
   tracking issue (`label:skills-watchdog`) with the exact update command per skill, closed
   automatically when a later run finds everything current. Updates land as human-reviewed PRs —
   never pushed: upstream skill text is a prompt-injection surface. PR mode (`--pr`) is stateless,
-  always green, and surfaces findings as annotations. Local run:
-  `node tools/skills-watchdog.mjs --dry-run`.
+  always green, and surfaces findings as annotations. The tool has one owner,
+  `pnpm check:skills-watchdog`: the workflow calls it bare (filing mode) and with `--pr`, and the
+  read-only local form is `pnpm check:skills-drift` (the same alias with `--dry-run`).
 
 - **Skills checker** (`tools/check-skills.mjs`, wired into `pnpm lint`; static-only alias
   `pnpm check:skills-frontmatter`): gates on SKILL.md frontmatter validity (name/description

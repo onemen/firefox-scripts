@@ -80,6 +80,17 @@ test('pnpm lint and pnpm lint:all compose the same stages', () => {
   assert.deepEqual([...all].sort(), [...fast].sort(), 'lint:all and lint disagree');
 });
 
+test('test:coverage runs the same glob as pnpm test, with the flag in front of it', () => {
+  // Node only honors --experimental-test-coverage when it precedes the test
+  // files: after the glob it runs the suites and prints no report at all, exit
+  // code 0, which is a coverage gate that looks green and reports nothing. The
+  // flag has to lead, which is why this body repeats the glob instead of
+  // wrapping `pnpm test` (and why the repetition is pinned here).
+  const glob = body => body.match(/"(test\/[^"]+)"/)?.[1];
+  assert.equal(glob(pkg.scripts['test:coverage']), glob(pkg.scripts.test));
+  assert.match(pkg.scripts['test:coverage'], /^node --experimental-test-coverage --test /);
+});
+
 test('every lint:* stage is composed into pnpm lint, and every stage it names exists', () => {
   const composed = composedStages(pkg.scripts.lint);
   const declared = Object.keys(pkg.scripts).filter(
