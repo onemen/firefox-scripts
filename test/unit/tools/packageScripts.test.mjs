@@ -5,38 +5,22 @@
 // pre-push hook, after the change is already written). Both directions are
 // pinned here, so adding a stage to one list and forgetting the other fails a
 // test rather than surviving to CI.
+//
+// The `scripts` block order is pinned here too: `pnpm lint` composes its stages
+// by name, so a family split across the block still runs, it just stops being
+// readable, and the block drifts back into append order one script at a time.
+// The section list itself lives in tools/scriptSections.mjs because the
+// generated docs/script-reference.md groups the same way.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import path from 'node:path';
 
+import {SCRIPT_SECTIONS, sectionOf} from '../../../tools/scriptSections.mjs';
+
 const pkg = JSON.parse(
   readFileSync(path.join(import.meta.dirname, '..', '..', '..', 'package.json'), 'utf8')
 );
-
-/**
- * The `scripts` block is grouped in the order the developer docs walk through
- * the work, which is what makes 56 entries findable. Nothing enforces that at
- * runtime: `pnpm lint` composes its stages by name, so a family split across
- * the block still runs, it just stops being readable. The order is pinned here
- * so a new script appended at the end (the way the block drifted before)
- * fails.
- */
-const SCRIPT_SECTIONS = [
-  ['lint', /^lint(:|$)/],
-  ['format', /^format(:|$)/],
-  ['test', /^(test(:|$)|e2e:)/],
-  ['check', /^check:/],
-  ['hooks', /^hooks:/],
-  ['docs', /^docs:/],
-  ['toolchain', /^toolchain:/],
-  ['scan', /^scan:/],
-  ['snapshot', /^snapshot:/],
-  ['publish', /^publish:/],
-  ['release', /^(release:|fetch:|release:dev-clean$)/],
-  ['review', /^review:/],
-  ['ci', /^ci:/],
-];
 
 /**
  * The `lint:*` stage names an aggregate command composes, in order.
@@ -57,7 +41,7 @@ test('composedStages reads the stages out of an aggregate command', () => {
 test('scripts stay grouped in their documented sections, in the documented order', () => {
   const sections = [];
   for (const name of Object.keys(pkg.scripts)) {
-    const section = SCRIPT_SECTIONS.find(([, matches]) => matches.test(name))?.[0];
+    const section = sectionOf(name);
     assert.ok(section, `\`${name}\` falls in no documented section`);
     const previous = sections.at(-1);
     assert.ok(

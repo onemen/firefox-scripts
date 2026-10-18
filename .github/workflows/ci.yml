@@ -86,6 +86,9 @@ jobs:
       - run: pnpm audit --audit-level=high
       - run: pnpm check:decisions
       - run: pnpm check:gates
+      # The generated script reference (docs/script-reference.md) must match
+      # package.json: a rename or a new flag that skips regeneration fails here.
+      - run: pnpm check:script-reference
       # Issue #30's mechanical gate: a change under core/** must land with a
       # test change. core/** fails SILENTLY — config.js wraps everything in
       # `catch (ex) {}` so a broken autoconfig cannot stop the browser starting,

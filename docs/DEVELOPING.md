@@ -1173,6 +1173,7 @@ maintainers.
 | [security.md](security.md)                             | Threat model: session token, localhost request model, upload verification    |
 | [continuous-integration.md](continuous-integration.md) | The CI jobs, path filters and gates                                          |
 | [ci-inventory.md](ci-inventory.md)                     | Generated inventory of workflows, triggers, path filters and required checks |
+| [script-reference.md](script-reference.md)             | Generated list of every `pnpm` script with the command it runs               |
 | [e2e-tests.md](e2e-tests.md)                           | How the installer/updater E2E suites run                                     |
 | [e2e-legs.md](e2e-legs.md)                             | Generated table of E2E legs (browsers × OS)                                  |
 | [e2e-matrix-plan.md](e2e-matrix-plan.md)               | The E2E matrix design/plan                                                   |
