@@ -15,6 +15,30 @@ const pkg = JSON.parse(
 );
 
 /**
+ * The `scripts` block is grouped in the order the developer docs walk through
+ * the work, which is what makes 56 entries findable. Nothing enforces that at
+ * runtime: `pnpm lint` composes its stages by name, so a family split across
+ * the block still runs, it just stops being readable. The order is pinned here
+ * so a new script appended at the end (the way the block drifted before)
+ * fails.
+ */
+const SCRIPT_SECTIONS = [
+  ['lint', /^lint(:|$)/],
+  ['format', /^format(:|$)/],
+  ['test', /^(test(:|$)|e2e:)/],
+  ['check', /^check:/],
+  ['hooks', /^hooks:/],
+  ['docs', /^docs:/],
+  ['toolchain', /^toolchain:/],
+  ['scan', /^scan:/],
+  ['snapshot', /^snapshot:/],
+  ['publish', /^publish:/],
+  ['release', /^(release:|fetch:|dev-clean$)/],
+  ['review', /^review:/],
+  ['ci', /^ci:/],
+];
+
+/**
  * The `lint:*` stage names an aggregate command composes, in order.
  *
  * @param {string | undefined} command the aggregate script body
@@ -28,6 +52,25 @@ test('composedStages reads the stages out of an aggregate command', () => {
   assert.deepEqual(composedStages('pnpm run lint:js && pnpm run lint:md'), ['lint:js', 'lint:md']);
   assert.deepEqual(composedStages('node tools/whatever.mjs'), []);
   assert.deepEqual(composedStages(undefined), []);
+});
+
+test('scripts stay grouped in their documented sections, in the documented order', () => {
+  const sections = [];
+  for (const name of Object.keys(pkg.scripts)) {
+    const section = SCRIPT_SECTIONS.find(([, matches]) => matches.test(name))?.[0];
+    assert.ok(section, `\`${name}\` falls in no documented section`);
+    const previous = sections.at(-1);
+    assert.ok(
+      !previous || previous.index <= SCRIPT_SECTIONS.findIndex(([s]) => s === section),
+      `\`${name}\` (${section}) sits after a ${previous?.section} script (\`${previous?.name}\`)`
+    );
+    sections.push({name, section, index: SCRIPT_SECTIONS.findIndex(([s]) => s === section)});
+  }
+  assert.deepEqual(
+    SCRIPT_SECTIONS.filter(([section]) => !sections.some(s => s.section === section)),
+    [],
+    'a documented section has no scripts left'
+  );
 });
 
 test('pnpm lint and pnpm lint:all compose the same stages', () => {
