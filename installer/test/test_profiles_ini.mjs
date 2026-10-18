@@ -13,11 +13,12 @@
  * the round-robin handed a card another install's profile.
  *
  * The walker cannot be unit-tested without a locked profile, so the fixture
- * only pins path resolution: absolute (IsRelative=0) versus relative joins,
- * section-buffered key order, and the [Install...] section's Path= (no
- * IsRelative key) still resolving as relative. The lock + compatibility.ini
- * filtering on top of those paths is exercised by the detection code and the
- * installer E2E.
+ * only pins path resolution: absolute (IsRelative=0) versus relative joins, a
+ * default relative join when the section has no IsRelative key, section-
+ * buffered key order, and an [Install...] section being ignored (Firefox
+ * records only Default= and Locked= there; neither is a profile path). The lock
+ * and compatibility.ini filtering on top of those paths is exercised by the
+ * detection code and the installer E2E.
  *
  * Runs as part of `pnpm test:hash` (needs a built binary, exactly like
  * test_hash.mjs).
@@ -122,6 +123,7 @@ function main() {
   // Firefox writes forward slashes in profiles.ini on every platform; the
   // C side normalizes them to the platform separator when joining.
   const relativeJoined = path.join(tmpDir, 'Profiles', 'aaa.default-release');
+  const devJoined = path.join(tmpDir, 'Profiles', 'bbb.dev-edition');
 
   const ini = [
     '[General]',
@@ -139,11 +141,18 @@ function main() {
     `Path=${absProfile}`,
     'IsRelative=0',
     '',
-    // Firefox repeats the profile path in an [Install...] section with no
-    // IsRelative key: relative by default, and it must keep resolving.
+    '[Profile2]',
+    'Name=dev-edition-default',
+    // No IsRelative key: Firefox omits it for relative entries, so the path
+    // must still join onto the profiles.ini directory.
+    'Path=Profiles/bbb.dev-edition',
+    '',
+    // Firefox records the default profile per install with Default= (a path)
+    // and Locked=, never Path=; a parser that reads any *path* key would emit
+    // a second, colliding entry for the default profile here.
     '[Install9C7F3C4ED82D4C5A9B0C]',
     'Default=Profiles/aaa.default-release',
-    'Path=Profiles/aaa.default-release',
+    'Locked=1',
     '',
   ].join('\r\n');
   fs.writeFileSync(path.join(tmpDir, 'profiles.ini'), ini);
@@ -162,11 +171,15 @@ function main() {
     `got=${paths[1]} want=${absProfile}`
   );
   check(
-    'an [Install...] Path= without IsRelative resolves as relative',
-    paths[2] === relativeJoined,
-    `got=${paths[2]} want=${relativeJoined}`
+    'a section without IsRelative joins onto the profiles.ini directory',
+    paths[2] === devJoined,
+    `got=${paths[2]} want=${devJoined}`
   );
-  check('exactly the three Path= sections resolve', paths.length === 3, `got ${paths.length}`);
+  check(
+    'an [Install...] Default= is not a profile path and is ignored',
+    !paths.includes(relativeJoined, 1) && paths.length === 3,
+    `got ${paths.length} paths: ${paths.join(', ')}`
+  );
 
   // Missing ini: fail with the documented exit code instead of a bare 0
   // (an empty result would read as "no profiles, detection is fine").
@@ -175,6 +188,32 @@ function main() {
     'a missing profiles.ini exits 2',
     missing.status === 2,
     `status=${missing.status} stderr=${missing.stderr.trim()}`
+  );
+
+  // A Path= longer than the line buffer is dropped, not resolved truncated: a
+  // cut value names a directory that does not exist, and its tail must not be
+  // parsed as a fresh key either. The section after it still resolves.
+  const longDir = path.join(tmpDir, 'long');
+  fs.mkdirSync(longDir, {recursive: true});
+  fs.writeFileSync(
+    path.join(longDir, 'profiles.ini'),
+    [
+      '[Profile0]',
+      'Name=long',
+      `Path=Profiles/${'a'.repeat(600)}`,
+      '',
+      '[Profile1]',
+      'Name=after',
+      'Path=Profiles/ccc.dev-edition',
+      '',
+    ].join('\r\n')
+  );
+  const longResult = runProfilesIni(installer, longDir);
+  const afterLong = path.join(longDir, 'Profiles', 'ccc.dev-edition');
+  check(
+    'an over-long Path= is dropped and the next section still resolves',
+    longResult.paths.length === 1 && longResult.paths[0] === afterLong,
+    `got ${longResult.paths.length} paths: ${longResult.paths.join(', ')}`
   );
 
   fs.rmSync(tmpDir, {recursive: true, force: true});

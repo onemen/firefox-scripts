@@ -760,6 +760,13 @@ static int profiles_ini_foreach(const char *base_dir, const char *profiles_ini_p
 
         if (!have_line) {
             at_boundary = 1;  // EOF closes the last section
+        } else if (!strchr(line, '\n') && !feof(f)) {
+            /* A line longer than the buffer: drop the rest and ignore it. A
+             * truncated Path= resolves to a directory that does not exist, and
+             * the remainder would be parsed as a fresh key. */
+            int ch;
+            while ((ch = fgetc(f)) != EOF && ch != '\n') {}
+            continue;
         } else {
             line[strcspn(line, "\r\n")] = 0;
             if (line[0] == '[') {
@@ -925,9 +932,11 @@ int check_utils_status(const char *profile_path) {
 #if defined(_WIN32)
 /**
  * State + visitor for collect_locked_profiles(): locked, compatible, and
- * never a duplicate of an entry already collected (profiles.ini repeats the
- * profile path in its [Install...] section, and a doubled pool entry lets the
- * round-robin hand the same profile to two running instances).
+ * never a duplicate of an entry already collected. A hand-edited profiles.ini
+ * can name one folder twice ([ProfileN] relative, an absolute path elsewhere),
+ * and a doubled pool entry lets the round-robin hand the same profile to two
+ * running instances. Case-insensitive: on Windows two spellings of one folder
+ * are one folder.
  */
 typedef struct {
     const char *binary_path;
@@ -944,7 +953,7 @@ static int visit_locked_profile(const char *path, void *userdata) {
     if (!is_file_locked(lock_file)) return 0;
     if (!check_compatibility_ini(path, st->binary_path)) return 0;
     for (int i = 0; i < st->count; i++) {
-        if (strcmp(st->out_profiles[i], path) == 0) return 0;
+        if (_stricmp(st->out_profiles[i], path) == 0) return 0;
     }
     snprintf(st->out_profiles[st->count], MAX_PATH_LEN, "%s", path);
     st->count++;
