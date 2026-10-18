@@ -10,8 +10,8 @@
  * tools/publish/componentReleases.mjs) is parsed, the date compared with the
  * binary's baked build date (YYYY-MM-DD — lexicographic == chronological), and
  * the platform's download URL extracted. The harness writes fixture JSON files
- * and asserts the parsed output. Runs as part of `pnpm test:hash` (after the
- * publish gate builds the installer binary, exactly like test_hash.mjs).
+ * and asserts the parsed output. Runs as part of `pnpm test:installer` (after
+ * the publish gate builds the installer binary, exactly like test_hash.mjs).
  *
  * Exit code: 0 if all tests pass, 1 if any fail.
  */

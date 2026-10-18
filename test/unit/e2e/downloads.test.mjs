@@ -846,7 +846,7 @@ test('isMozillaPortableInstall: ESR extracts like an official build, not /D=', (
   // version-embedded index); the mozillaPortable marker routes it to the 7z
   // extract-only path. The forks' /D= mechanism must not claim it — the
   // Mozilla installer ignores /D= and left an empty directory behind (the
-  // `pnpm e2e:portable firefox-esr-140` bug this guards).
+  // `pnpm test:e2e:portable firefox-esr-140` bug this guards).
   for (const browser of ['firefox-esr-140', 'firefox-esr-153', 'firefox-esr']) {
     const recipe = downloadsEntry(browser)?.install?.win;
     assert.equal(recipe?.portable, undefined, `${browser} must not ride /D=`);

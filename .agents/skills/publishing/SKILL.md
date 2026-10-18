@@ -21,7 +21,7 @@ Publishing requires **explicit user permission** — when in doubt, stop at the 
 
 Prod publishes to the **live** `latest` release and gh-pages site. Dev lands on a per-run disposable
 branch; dev URLs are baked into the regenerated generated files **on purpose**. Delete the dev
-branch after testing (`pnpm dev-clean` automates it).
+branch after testing (`pnpm release:dev-clean` automates it).
 
 A **partial publish** (`--include=<roles>`, ADR
 [0030](../../../docs/decisions/0030-partial-publishes.md)) publishes exactly the named roles —
@@ -80,11 +80,11 @@ Test a feature in a real browser:
 pnpm snapshot:dev                   # optional offline check first
 pnpm publish:dev                    # publish the dev build (explicit permission!)
 # … install/test via the printed dev URLs …
-pnpm dev-clean                      # delete dev-build-<id> branch + release when done
+pnpm release:dev-clean                      # delete dev-build-<id> branch + release when done
 ```
 
 Production release (from `main`, gates green: `pnpm lint`, `pnpm format`, `pnpm test`,
-`pnpm test:hash` (needs a built snapshot — auto-generates one, hard-fails on stale), then
+`pnpm test:installer` (needs a built snapshot; auto-generates one, hard-fails on stale), then
 `pnpm snapshot:prod`):
 
 ```bash

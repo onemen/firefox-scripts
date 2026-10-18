@@ -524,7 +524,7 @@ helper, updater-tab scenarios, the CI matrix, and the browser download/pinning e
 
 ## Test: installer hash verification
 
-`pnpm test:hash` runs the four installer suites that need a compiled binary, and
+`pnpm test:installer` runs the four installer suites that need a compiled binary, and
 `installer/test/README.md` documents what each one pins:
 
 - `test_hash.mjs` cross-checks the C installer's hash computation against the JavaScript reference
@@ -541,7 +541,7 @@ compile:
 
 ```bash
 pnpm snapshot:dev
-pnpm test:hash
+pnpm test:installer
 ```
 
 Exit code 0 means every package's JS hash matches the C binary's (computed with `--test-hash`).
@@ -760,8 +760,8 @@ browser-facing pieces (installer web UI, remote updater UI) and `raw.githubuserc
 privileged engine fetches (chrome:// context has no CORS). Delete the dev branch only after its
 users have received the fallback logic (ADR 0026 — republish into the same `DEV_BUILD_ID` first so
 installed test builds auto-update while the branch lives): `git push origin --delete dev-build-<id>`
-(CI test runs delete it automatically in a `finally`; `pnpm dev-clean` removes branches and their
-tags).
+(CI test runs delete it automatically in a `finally`; `pnpm release:dev-clean` removes branches and
+their tags).
 
 ### Staging guard and `FIREFOX_SCRIPTS_ALLOW_STAGING`
 
@@ -1126,9 +1126,9 @@ The tight loop for a change to `core/`, `installer/`, or the publish tooling:
 
 1. **Edit** the source (`core/chrome/utils/` JS, `installer/src/` C, `installer/web/` UI — see
    [Making changes](#making-changes)).
-2. **Gates:** `pnpm lint && pnpm format && pnpm test` (add `pnpm test:hash` when `installer/src/**`
-   or the hash inputs changed; `pnpm check:core-tests` enforces a `test/**` change alongside any
-   `core/**` change).
+2. **Gates:** `pnpm lint && pnpm format && pnpm test` (add `pnpm test:installer` when
+   `installer/src/**` or the hash inputs changed; `pnpm check:core-tests` enforces a `test/**`
+   change alongside any `core/**` change).
 3. **Rebuild** when C changed: `mingw32-make -C installer dist_win helper_win` (Windows; see
    [Prerequisites](#windows)) — a commit touching `installer/**` must rebuild at the new HEAD so the
    build-date provenance (ADR [0036](./decisions/0036-git-derived-build-dates.md)) stays consistent.

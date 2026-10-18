@@ -115,10 +115,10 @@ same content costs a review pass.
   `gh skill install` / `gh skill update`; kept byte-identical to upstream — never linted or
   formatted (excluded from the gates; see `eslint.config.js` / `.prettierignore`). Drift is surfaced
   by the weekly watchdog as a tracking issue; updates land as reviewed PRs. `pnpm lint` gates on
-  frontmatter validity and runs the vendored skills' own tests; `pnpm test:skills` performs static
-  frontmatter validation only. Vendor text stays pristine (ADR 0022: "gates that validate apply to
-  everything"). Vendored skills are host-dependent: their commands assume this repo's toolchain
-  (pnpm, the C toolchain, `gh`) and may not translate to other projects.
+  frontmatter validity and runs the vendored skills' own tests; `pnpm check:skills-frontmatter`
+  performs static frontmatter validation only. Vendor text stays pristine (ADR 0022: "gates that
+  validate apply to everything"). Vendored skills are host-dependent: their commands assume this
+  repo's toolchain (pnpm, the C toolchain, `gh`) and may not translate to other projects.
 - **Authored here**: fully covered by the lint/format gates; updates are normal PRs.
 
 | Skill               | Class       | Load when the task involves                                             |
@@ -146,7 +146,7 @@ files are produced on demand by the build/publish tooling.
 Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**. The checklist:
 
 - **Gates:** `pnpm lint` (strict fail-fast aggregate = what CI + the pre-push hook enforce),
-  `pnpm format`, `pnpm test`, `pnpm test:hash`. Granular stages: see package.json (`pnpm lint`
+  `pnpm format`, `pnpm test`, `pnpm test:installer`. Granular stages: see package.json (`pnpm lint`
   composes them); `pnpm lint:all` is the dev-only report-all view.
 - **Core-test gate:** `pnpm check:core-tests` — fails when `core/**` changed with no `test/**`
   change (runs in the `checks` CI job on PRs). Waive with `#no-core-test-gate` in the PR body.
@@ -168,7 +168,7 @@ Full command reference with flags and examples: **`docs/DEVELOPING.md` → Run**
 Match the change to its validation — the per-subsystem matrix lives in the `change-workflow` skill
 (that table, not this file, owns the change→command mapping); the rules:
 
-- Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test (`pnpm test:hash`).
+- Pre-PR gates: `pnpm lint`, `pnpm format`, `pnpm test`, and the hash test (`pnpm test:installer`).
 - **Do not claim tests passed if the required toolchain or environment was unavailable.**
 - PRs that modify `core/**` must add or extend a test where feasible; if not, the PR description
   must explain why. This is enforced mechanically: `pnpm check:core-tests` fails a PR that changes

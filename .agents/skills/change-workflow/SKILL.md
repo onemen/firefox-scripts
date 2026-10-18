@@ -113,14 +113,14 @@ submit for PR creation and stack linking.
 
 ## Validate
 
-| Change                           | Validate with                                                                         |
-| -------------------------------- | ------------------------------------------------------------------------------------- |
-| C (`installer/src/`)             | build the affected target (`make dist_win` / `dist_linux` / `dist_mac`)               |
-| Hash / file list                 | `pnpm test:hash` (needs a built snapshot; auto-generates one and hard-fails on stale) |
-| Publish helpers / hashing        | `pnpm test` (unit tests in `test/unit/`)                                              |
-| Decision log (`docs/decisions/`) | `pnpm check:decisions` (duplicates, stale links, `Amends:`/`Amended:` reciprocity)    |
-| Generated-file sources           | `node tools/publish/syncGeneratedFiles.mjs`                                           |
-| Packaging / publish scripts      | `pnpm snapshot:prod`                                                                  |
+| Change                           | Validate with                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------ |
+| C (`installer/src/`)             | build the affected target (`make dist_win` / `dist_linux` / `dist_mac`)                    |
+| Hash / file list                 | `pnpm test:installer` (needs a built snapshot; auto-generates one and hard-fails on stale) |
+| Publish helpers / hashing        | `pnpm test` (unit tests in `test/unit/`)                                                   |
+| Decision log (`docs/decisions/`) | `pnpm check:decisions` (duplicates, stale links, `Amends:`/`Amended:` reciprocity)         |
+| Generated-file sources           | `node tools/publish/syncGeneratedFiles.mjs`                                                |
+| Packaging / publish scripts      | `pnpm snapshot:prod`                                                                       |
 
 This table is the source of truth for the change→command mapping; AGENTS.md → "Testing & QA" owns
 the pre-PR gate rules. If a gate rule changes there, fold the delta into this table — the two must

@@ -13,8 +13,8 @@
  *
  * The harness runs the same resolver (`resolve_profile_from_cmdline()`) the
  * scan's pass 2 calls, against a fixture profiles.ini: no running browser, no
- * locked profile, no Windows-only API. Runs as part of `pnpm test:hash` (after
- * the publish gate builds the installer binary, like test_hash.mjs).
+ * locked profile, no Windows-only API. Runs as part of `pnpm test:installer`
+ * (after the publish gate builds the installer binary, like test_hash.mjs).
  */
 
 import {spawnSync} from 'child_process';

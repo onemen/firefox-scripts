@@ -21,7 +21,7 @@
 // The tab's JS only runs inside the shipped IIFE, so the cases drive the real
 // fragments through the shared harness (test/shared/webUiSandbox.mjs).  Pure
 // Node — no compiler, no built binary (this belongs to `pnpm test`, not
-// `pnpm test:hash`; see installer/test/README.md for the split).
+// `pnpm test:installer`; see installer/test/README.md for the split).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

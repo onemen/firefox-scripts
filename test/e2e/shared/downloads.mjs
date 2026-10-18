@@ -237,10 +237,11 @@ const ESR_BROWSER_REGEXP = /^firefox-esr(?:-(\d+))?$/;
  *
  * The Mozilla installer does NOT honor `/D=`, so ESR must NOT ride the forks'
  * fork-portable mechanism: that route left an empty directory behind and then
- * threw "no binary at … — does this installer honor /D=?" (`pnpm e2e:portable
- * firefox-esr-140`). `mozillaPortable` is the marker that routes it to the
- * extraction path instead. Windows-only: the ESR legs are advisory and Windows
- * is the platform the installer/updater actually admin-copies on.
+ * threw "no binary at … — does this installer honor /D=?" (`pnpm
+ * test:e2e:portable firefox-esr-140`). `mozillaPortable` is the marker that
+ * routes it to the extraction path instead. Windows-only: the ESR legs are
+ * advisory and Windows is the platform the installer/updater actually
+ * admin-copies on.
  *
  * @param {string} browser
  * @returns {{
@@ -1132,8 +1133,8 @@ function runSilentInstaller(exe, args) {
  *
  * The local updater E2E seeds `config.js` into the browser's install dir, so it
  * needs a GreD this account can write: CI's runners are admins and can use an
- * installed browser, a normal account cannot (`pnpm e2e:portable` installs a
- * user-owned copy). Same official artifacts either way — the Windows setup exe
+ * installed browser, a normal account cannot (`pnpm test:e2e:portable` installs
+ * a user-owned copy). Same official artifacts either way; the Windows setup exe
  * is only unpacked (7z; running it would register the install), the tarball on
  * Linux, the DMG on macOS. `snap` and the forks' own `portable: true` recipe
  * opt out (they have their own paths).

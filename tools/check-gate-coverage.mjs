@@ -538,8 +538,10 @@ export const CONTRACTS = [
 export const MANUAL_TEST_SCRIPTS = new Map([
   // test:e2e / :installer / :updater wrap the same scripts CI runs directly
   // (e2e.yml invokes installer-e2e.mjs / updater-e2e.mjs itself); run.mjs is
-  // the local orchestrator. test:skills is the --skip-tests variant of the
-  // check-skills stage that pnpm lint runs in full.
+  // the local orchestrator. test:e2e:portable downloads a browser build into a
+  // portable directory for reproducing a bug by hand, and the e2e legs pin
+  // their own browsers instead. check:skills-frontmatter is the --skip-tests
+  // variant of the check-skills stage that pnpm lint runs in full.
   ['test:e2e', 'local orchestrator — CI runs installer-e2e/updater-e2e directly'],
   ['test:e2e:installer', 'local convenience — e2e.yml runs installer-e2e.mjs directly'],
   ['test:e2e:updater', 'local convenience — e2e.yml runs updater-e2e.mjs directly'],
@@ -547,7 +549,11 @@ export const MANUAL_TEST_SCRIPTS = new Map([
     'test:e2e:prepush',
     'pre-push local gate (DEVELOPING.md) — one Nightly updater leg before pushing; deliberately NOT in CI, whose full matrix stays authoritative',
   ],
-  ['test:skills', 'frontmatter-only variant of the lint pipeline stage'],
+  [
+    'test:e2e:portable',
+    'manual browser-download helper: reproduces a browser-specific bug in a portable dir; CI legs pin their own browsers',
+  ],
+  ['check:skills-frontmatter', 'frontmatter-only variant of the lint pipeline stage'],
 ]);
 
 /**

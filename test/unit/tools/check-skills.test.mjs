@@ -1,6 +1,6 @@
 // test/unit/tools/check-skills.test.mjs — unit tests for the skills checker
 // (tools/check-skills.mjs). The real `.agents/skills/` tree is validated by
-// `pnpm test:skills` / the lint gate itself; these tests pin the frontmatter
+// `pnpm check:skills-frontmatter` / the lint gate itself; these tests pin the frontmatter
 // rules with fixture directories.
 
 import {test, after} from 'node:test';

@@ -10,7 +10,7 @@
  * external tool and costing a process spawn per package per browser on the
  * single-threaded serve loop.  Parity with the JS reference
  * (tools/publish/hashUtils.mjs) is enforced by installer/test/test_hash.mjs
- * (pnpm test:hash) — the C and JS digests must agree byte-for-byte.
+ * (pnpm test:installer); the C and JS digests must agree byte-for-byte.
  */
 
 #define SHA256_DIGEST_SIZE 32 /* bytes; 64 lowercase hex chars + NUL when formatted */

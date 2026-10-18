@@ -16,8 +16,8 @@
  *
  * Usage (see the README section in docs/DEVELOPING.md for the full recipe):
  *
- * pnpm e2e:portable pnpm e2e:portable firefox-dev pnpm e2e:portable nightly
- * --dir /c/tmp/portable-nightly
+ * pnpm test:e2e:portable pnpm test:e2e:portable firefox-dev pnpm
+ * test:e2e:portable nightly --dir /c/tmp/portable-nightly
  *
  * It prints the `FIREFOX_BINARY` value to export before the E2E run.
  *
@@ -39,7 +39,7 @@ import path from 'node:path';
 
 import {installBrowser} from '../test/e2e/shared/downloads.mjs';
 
-const USAGE = `Usage: pnpm e2e:portable [browser] [--dir <path>]
+const USAGE = `Usage: pnpm test:e2e:portable [browser] [--dir <path>]
 
   browser        downloads.mjs key — firefox, firefox-dev, nightly, a fork,
                  firefox-esr-<major> (default: nightly)

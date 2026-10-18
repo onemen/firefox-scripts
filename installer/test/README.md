@@ -2,10 +2,10 @@
 
 The repo splits tests by dependency class:
 
-| Location                     | Runs via         | Needs a build?                    | Scope                                                           |
-| ---------------------------- | ---------------- | --------------------------------- | --------------------------------------------------------------- |
-| `test/unit/`                 | `pnpm test`      | No — pure Node                    | Publish helpers, hashing (JS), updater logic, tooling contracts |
-| `installer/test/` (this dir) | `pnpm test:hash` | Yes — a compiled installer binary | The C installer's behavior                                      |
+| Location                     | Runs via              | Needs a build?                   | Scope                                                           |
+| ---------------------------- | --------------------- | -------------------------------- | --------------------------------------------------------------- |
+| `test/unit/`                 | `pnpm test`           | No, pure Node                    | Publish helpers, hashing (JS), updater logic, tooling contracts |
+| `installer/test/` (this dir) | `pnpm test:installer` | Yes, a compiled installer binary | The C installer's behavior                                      |
 
 The tests here are **binary-in-the-loop**:
 
@@ -31,10 +31,11 @@ The tests here are **binary-in-the-loop**:
 
 Where they run:
 
-- **CI**: `ci.yml`'s publish job runs `pnpm test:hash` on Windows, right after `pnpm snapshot:dev`
-  has built the binaries.
-- **Locally**: `pnpm test:hash` (hash / file-list changes — see the Testing & QA matrix in
+- **CI**: `ci.yml`'s publish job runs `pnpm test:installer` on Windows, right after
+  `pnpm snapshot:dev` has built the binaries.
+- **Locally**: `pnpm test:installer` (hash / file-list changes; see the Testing & QA matrix in
   `AGENTS.md`).
 
-If you add a test that needs the compiled installer, put it here and wire it into `pnpm test:hash`.
-If it runs on plain Node against source files only, it belongs in `test/unit/`.
+If you add a test that needs the compiled installer, put it here and wire it into
+`pnpm test:installer`. If it runs on plain Node against source files only, it belongs in
+`test/unit/`.

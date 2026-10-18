@@ -20,7 +20,7 @@
  * and compatibility.ini filtering on top of those paths is exercised by the
  * detection code and the installer E2E.
  *
- * Runs as part of `pnpm test:hash` (needs a built binary, exactly like
+ * Runs as part of `pnpm test:installer` (needs a built binary, exactly like
  * test_hash.mjs).
  *
  * Exit code: 0 if all checks pass, 1 if any fail.
