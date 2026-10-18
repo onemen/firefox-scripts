@@ -71,7 +71,7 @@ check, up-to-date is a per-package SHA-256 manifest comparison; a stale or parti
    are logged with that prefix (tab-script errors are additionally routed through the console
    service so they survive ConsoleAPI limits, issue #292).
 2. Check the packaged hashes match what is published:
-   [`pnpm test:hash`](./DEVELOPING.md#test-installer-hash-verification).
+   [`pnpm test:installer`](./DEVELOPING.md#test-installer-hash-verification).
 3. A per-package **skip** is remembered (`extensions.firefox-scripts.skippedHash.<pkg>`): the
    package then shows _Skipped_, not _Update available_. Clear the pref to make the update
    resurface.
@@ -103,9 +103,9 @@ For test/CLI repro, match the Node version (≥ 24) and run `pnpm lint && pnpm t
 
 ### Generated-file or hash-test failures
 
-`pnpm test:hash` refuses to run against a snapshot whose installer was built from different sources
-— regenerate with `pnpm snapshot:prod` on a clean tree. Never hand-edit the six generated files; see
-[DEVELOPING.md → Generated files](./DEVELOPING.md#generated-files) and ADR
+`pnpm test:installer` refuses to run against a snapshot whose installer was built from different
+sources; regenerate with `pnpm snapshot:prod` on a clean tree. Never hand-edit the six generated
+files; see [DEVELOPING.md → Generated files](./DEVELOPING.md#generated-files) and ADR
 [0008](./decisions/0008-generated-files-untracked.md).
 
 ## Getting more detail

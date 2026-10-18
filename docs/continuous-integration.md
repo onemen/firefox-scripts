@@ -38,8 +38,8 @@ stay SHA-pinned (`.github/dependabot.yml`).
 - **Security smoke test** (Windows) — `test/e2e/installer/smoke-security.mjs` launches the built
   installer headless and verifies every state-changing `/api` route rejects a missing/wrong session
   token, valid tokens pass the gate, and no response carries `Access-Control-Allow-Origin`.
-- **Hash parity** (Windows) — `pnpm test:hash` verifies the JS and C installer hashes match, using
-  the dev snapshot built by the publish gate (no second build).
+- **Hash parity** (Windows): `pnpm test:installer` verifies the JS and C installer hashes match,
+  using the dev snapshot built by the publish gate (no second build).
 - **URL watchdog** (`.github/workflows/url-watchdog.yml`, daily 22:00 UTC — the repo's ONLY cron,
   plus PRs touching the download map) — re-resolves the latest version of every browser the E2E map
   installs (Firefox, Dev Edition, LibreWolf, Floorp, Zen; Waterfox tracked by version only) from its
@@ -87,9 +87,10 @@ stay SHA-pinned (`.github/dependabot.yml`).
   `node tools/skills-watchdog.mjs --dry-run`.
 
 - **Skills checker** (`tools/check-skills.mjs`, wired into `pnpm lint`; static-only alias
-  `pnpm test:skills`) — gates on SKILL.md frontmatter validity (name/description presence, name =
-  directory, full or absent gh metadata) and runs the vendored skills' own `*.test.mjs` files with
-  `node --test`. Validation only: per ADR 0022 vendor text is never linted or formatted.
+  `pnpm check:skills-frontmatter`): gates on SKILL.md frontmatter validity (name/description
+  presence, name = directory, full or absent gh metadata) and runs the vendored skills' own
+  `*.test.mjs` files with `node --test`. Validation only: per ADR 0022 vendor text is never linted
+  or formatted.
 
 **PR path filtering** — every E2E job (`.github/workflows/e2e.yml`: the `snapshot` build, the
 installer/updater matrices, the `helper` elevated-copy test, and the `browser-matrix` fork legs) and
@@ -131,10 +132,10 @@ QA matrix:
 | `**/*.md`, `**/*.{js,mjs,cjs}` | `prettier --check <file>`                                                                            | ~0.5s |
 | `docs/decisions/**`            | `pnpm check:decisions` (duplicate numbers, stale links, `Amends:`/`Amended:` reciprocity — ADR 0029) | <1s   |
 
-Skip in hooks: `pnpm test:hash` (may build a full snapshot), full `pnpm lint` (needs a C toolchain
-for `make analyze`), `syncGeneratedFiles.mjs` (on-demand only), anything that writes. Formatting
-drift in agent-edited files is the failure this catches: editor on-save tooling only helps when the
-editor is open — agents edit files on disk directly.
+Skip in hooks: `pnpm test:installer` (may build a full snapshot), full `pnpm lint` (needs a C
+toolchain for `make analyze`), `syncGeneratedFiles.mjs` (on-demand only), anything that writes.
+Formatting drift in agent-edited files is the failure this catches: editor on-save tooling only
+helps when the editor is open, because agents edit files on disk directly.
 
 **LF, CRLF and `pnpm check:gates`** — the tree is normalized to LF (`.gitattributes` has
 `* text=auto eol=lf`), so a CRLF file saved by a Windows editor is committed as LF and CI always

@@ -2164,7 +2164,7 @@ static int main_impl(int argc, char *argv[]) {
             /* Unit-test harness for the self-update logic: ingest a release
              * JSON file, then run check_self_update and print the outcome as
              * parseable lines.  Used by installer/test/test_self_update.mjs
-             * (pnpm test:hash).  current_build is a YYYY-MM-DD build date
+             * (pnpm test:installer).  current_build is a YYYY-MM-DD build date
              * (the managed installerDate contract), not a version. */
             if (argc < 5) {
                 fprintf(stderr,

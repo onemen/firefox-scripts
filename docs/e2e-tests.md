@@ -45,9 +45,9 @@ Behavior: reuses the newest `dist/` snapshot matching the current branch; if the
 one via `pnpm snapshot:dev` — which requires a **clean worktree, so commit your changes first**
 (that is the intended flow: you are about to push anyway). The leg runs on **Nightly** — resolution
 order: `--firefox`/`E2E_PREPUSH_FIREFOX`, then the portable nightly from
-`pnpm e2e:portable nightly`, then the installed Nightly (`C:\Program Files\Firefox Nightly`). Some
-scenarios (e.g. scenario 9's GreD-writability caveat) self-skip when the local environment cannot
-run them, mirroring CI's PR legs.
+`pnpm test:e2e:portable nightly`, then the installed Nightly (`C:\Program Files\Firefox Nightly`).
+Some scenarios (e.g. scenario 9's GreD-writability caveat) self-skip when the local environment
+cannot run them, mirroring CI's PR legs.
 
 The orchestrator (`run.mjs`) passes `--snapshot <dir>` to child scripts automatically; individual
 scripts can also be invoked directly:
@@ -164,17 +164,17 @@ variants and the folded scenarios; `--scenario 4` / `5` / `6` / `8` select the s
 The scenarios write fx-folder's `config.js` into the browser's install dir, so the browser under
 test needs a **user-owned install dir**. CI's runners are admins and can write Program Files; a
 normal account cannot, and the scenarios then fail with `EPERM` — so install a portable copy first
-(the run warns when the GreD is not writable). `pnpm e2e:portable` downloads the browser's official
-build into `Documents/FireFox/portable/<browser>` (`~/.cache/firefox-scripts-e2e/<browser>` off
-Windows), reuses it on later runs, and prints the `FIREFOX_BINARY` line to export. Nothing is
+(the run warns when the GreD is not writable). `pnpm test:e2e:portable` downloads the browser's
+official build into `Documents/FireFox/portable/<browser>` (`~/.cache/firefox-scripts-e2e/<browser>`
+off Windows), reuses it on later runs, and prints the `FIREFOX_BINARY` line to export. Nothing is
 installed system-wide: on Windows the setup exe is **unpacked with 7z** (its `core` folder is the
 install dir) — the installer is never executed, so there is no Add/Remove Programs entry and no
 `Mozilla` registry keys; Linux uses the tarball and macOS the DMG, copied into the destination:
 
 ```bash
-pnpm e2e:portable nightly                    # or: firefox, firefox-dev, a fork
+pnpm test:e2e:portable nightly                    # or: firefox, firefox-dev, a fork
 #   → ✓ nightly ready: /c/Users/you/Documents/FireFox/portable/nightly/firefox.exe
-pnpm e2e:portable nightly --dir ./dist/portable/nightly   # explicit destination
+pnpm test:e2e:portable nightly --dir ./dist/portable/nightly   # explicit destination
 
 export FIREFOX_BINARY="/c/Users/you/Documents/FireFox/portable/nightly/firefox.exe"
 pnpm snapshot:dev              # build the snapshot for this branch
@@ -198,8 +198,8 @@ so three rules keep that bounded:
   `FXS_TEMP_KEEP=<name>` marks a deliberately long-lived one.
 
 Cached installers land in the OS temp dir too and are pruned after 7 days; point `BROWSER_DL_DIR` at
-a persistent dir to keep them warm. `pnpm e2e:portable` refuses a browser install inside the OS temp
-dir (`--allow-temp-dir` overrides) — use the default or `--dir ./dist/portable/<browser>`.
+a persistent dir to keep them warm. `pnpm test:e2e:portable` refuses a browser install inside the OS
+temp dir (`--allow-temp-dir` overrides); use the default or `--dir ./dist/portable/<browser>`.
 
 `--keep-profile` keeps each scenario's profile for inspection, `--repeat 2` runs the whole selection
 twice (determinism check), `--scenario 1,7,9` narrows the run, and `--no-fail-fast` runs every
@@ -214,10 +214,10 @@ leg and self-skips elsewhere.
 
 It also needs a **user-owned install dir**, because the fixture has to write `config.js` into the
 browser's GreD. GitHub's Windows runners are admins and can write Program Files; a normal account
-cannot, so use a portable copy — `pnpm e2e:portable` installs one (see above).
+cannot, so use a portable copy; `pnpm test:e2e:portable` installs one (see above).
 
 ```bash
-pnpm e2e:portable nightly
+pnpm test:e2e:portable nightly
 node test/e2e/updater/updater-e2e.mjs --scenario 9 \
   --firefox "$HOME/Documents/FireFox/portable/nightly/firefox.exe"
 ```

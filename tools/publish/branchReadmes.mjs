@@ -52,7 +52,7 @@ export function devBranchReadme({branch, files, note}) {
     '',
     '- A build installed from these artifacts pins its updater to **this dev channel** and',
     '  shows a “Test build” banner. Reinstall from a production build to go back to stable.',
-    '- The branch disappears when cleaned up (`pnpm dev-clean`).',
+    '- The branch disappears when cleaned up (`pnpm release:dev-clean`).',
     '- Windows SmartScreen will warn on the unsigned installer — “More info → Run anyway”',
     '  (see the release notes for the full flow).',
     '',

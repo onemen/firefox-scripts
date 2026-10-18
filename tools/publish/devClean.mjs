@@ -7,13 +7,13 @@
 // accumulate on origin and locally. This tool deletes them.
 //
 // Usage:
-//   pnpm dev-clean --id <id>            delete one dev build
+//   pnpm release:dev-clean --id <id>            delete one dev build
 //                                         (<id> like `main-abc1234` or the full
 //                                         `dev-build-main-abc1234` name)
-//   pnpm dev-clean --all                prune every dev-build-* branch + tag
-//   pnpm dev-clean --id <id> --dry-run  list what would be deleted, change nothing
-//   pnpm dev-clean --all --local-only   skip remote (GitHub) deletion
-//   pnpm dev-clean --all --remote-only  skip local (git) deletion
+//   pnpm release:dev-clean --all                prune every dev-build-* branch + tag
+//   pnpm release:dev-clean --id <id> --dry-run  list what would be deleted, change nothing
+//   pnpm release:dev-clean --all --local-only   skip remote (GitHub) deletion
+//   pnpm release:dev-clean --all --remote-only  skip local (git) deletion
 //
 // Default scope is both local + remote. Local deletion uses git; remote uses
 // the GitHub API with GITHUB_TOKEN_VAR (from .env). The current branch is never
@@ -190,7 +190,7 @@ async function deleteRemoteRef(octokit, kind, name, dryRun) {
 }
 
 const usage = () =>
-  console.log(`Usage: pnpm dev-clean --id <id> | --all [--dry-run] [--local-only | --remote-only]
+  console.log(`Usage: pnpm release:dev-clean --id <id> | --all [--dry-run] [--local-only | --remote-only]
 
   --id <id>            delete one dev build (<id> or full dev-build-<id> name)
   --all                prune every dev-build-* branch + tag

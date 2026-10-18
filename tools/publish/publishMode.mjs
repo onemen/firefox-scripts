@@ -20,7 +20,7 @@
 // installer Makefile or createZip's publish-time regeneration — and must stay
 // prod by default.  Only the publish CLI (upload.mjs) requires the flag, via
 // requireMode() at the top of its main() (#358 — paths.js is import-tolerant
-// so mode-less tooling like pnpm dev-clean can load it for constants).
+// so mode-less tooling like pnpm release:dev-clean can load it for constants).
 
 import {execSync} from 'child_process';
 import path from 'path';

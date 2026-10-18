@@ -314,7 +314,7 @@ test('downloads.mjs: generated ESR recipes are portable Windows-only', async () 
   assert.equal(entry.install.win.resolver, true);
   // Official Mozilla installer → the extract-only portable route. The forks'
   // /D= mechanism must NOT claim ESR (the installer ignores /D= and left an
-  // empty dir — the `pnpm e2e:portable firefox-esr-140` bug this guards).
+  // empty dir; the `pnpm test:e2e:portable firefox-esr-140` bug this guards).
   assert.equal(entry.install.win.portable, undefined);
   assert.equal(entry.install.win.mozillaPortable, true);
   assert.equal(

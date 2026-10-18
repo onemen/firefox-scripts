@@ -55,20 +55,20 @@ and ADR `docs/decisions/0008-generated-files-untracked.md`). Edit the sources
 Before opening a PR, run the local checks:
 
 ```bash
-pnpm lint          # the full gate (13 stages, fail-fast): eslint, check-strncpy,
-                   # check-apt-get, tsc, C format check, gcc -fanalyzer, markdownlint,
-                   # md-list markers, check-docs-mdx, YAML frontmatter, check-skills,
-                   # skill commands/links, hygiene (needs the C toolchain, see
-                   # docs/DEVELOPING.md → Prerequisites)
-pnpm format        # sync-skill-gates + prettier + C format check (read-only)
-pnpm test          # unit tests (pure Node, no build needed)
-pnpm test:hash     # the four binary-in-the-loop installer suites: hash parity,
-                   # self-update, profiles.ini, profile argv (installer/test/README.md).
-                   # Needs a compiled installer, so it uses the newest dist/ snapshot,
-                   # generating a prod one via snapshot:prod when none exists; a stale
-                   # snapshot is a hard fail rather than a misreported regression
-pnpm snapshot:dev                 # build a dev snapshot
-pnpm test:e2e      # installer HTTP + updater scenarios (needs that snapshot)
+pnpm lint            # the full gate (13 stages, fail-fast): eslint, check-strncpy,
+                     # check-apt-get, tsc, C format check, gcc -fanalyzer, markdownlint,
+                     # md-list markers, check-docs-mdx, YAML frontmatter, check-skills,
+                     # skill commands/links, hygiene (needs the C toolchain, see
+                     # docs/DEVELOPING.md → Prerequisites)
+pnpm format          # sync-skill-gates + prettier + C format check (read-only)
+pnpm test            # unit tests (pure Node, no build needed)
+pnpm test:installer  # the four binary-in-the-loop installer suites: hash parity,
+                     # self-update, profiles.ini, profile argv (installer/test/README.md).
+                     # Needs a compiled installer, so it uses the newest dist/ snapshot,
+                     # generating a prod one via snapshot:prod when none exists; a stale
+                     # snapshot is a hard fail rather than a misreported regression
+pnpm snapshot:dev    # build a dev snapshot
+pnpm test:e2e        # installer HTTP + updater scenarios (needs that snapshot)
 ```
 
 Uploads are gated to `main` and require a GitHub token (see

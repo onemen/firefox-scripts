@@ -107,7 +107,7 @@ if (snapshot) {
 
 // Contract: the leg runs on NIGHTLY (freshest channel that ships the same
 // privileged-code surfaces CI exercises). Resolution order: --firefox /
-// E2E_PREPUSH_FIREFOX → the portable nightly from `pnpm e2e:portable nightly`
+// E2E_PREPUSH_FIREFOX → the portable nightly from `pnpm test:e2e:portable nightly`
 // (see DEVELOPING.md) → the installed Nightly.
 function resolveNightly() {
   if (firefox) return firefox;
@@ -142,7 +142,7 @@ function resolveNightly() {
 const nightly = resolveNightly();
 if (!nightly) {
   fail(
-    'no Nightly found (looked: portable nightly from `pnpm e2e:portable nightly`,\n' +
+    'no Nightly found (looked: portable nightly from `pnpm test:e2e:portable nightly`,\n' +
       '  then the installed Nightly). Install one, or pass --firefox <path> / set\n' +
       '  E2E_PREPUSH_FIREFOX.'
   );

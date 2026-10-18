@@ -10,7 +10,7 @@ import {fileURLToPath} from 'url';
 // undefined here — generators and mode-less tooling rely on undefined=prod
 // (see publishMode.mjs). The HARD requirement lives in the publish CLIs:
 // upload.mjs's main() calls requireMode() (#358 — an import-time check here
-// crashed every mode-less consumer, e.g. pnpm dev-clean, which imports this
+// crashed every mode-less consumer, e.g. pnpm release:dev-clean, which imports this
 // file for repo constants only).
 import {ASSET_SUFFIX, DEV_BRANCH, DEV_BUILD_ID, MODE as PUBLISH_MODE} from './publishMode.mjs';
 

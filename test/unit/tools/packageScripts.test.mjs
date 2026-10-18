@@ -33,7 +33,7 @@ const SCRIPT_SECTIONS = [
   ['scan', /^scan:/],
   ['snapshot', /^snapshot:/],
   ['publish', /^publish:/],
-  ['release', /^(release:|fetch:|dev-clean$)/],
+  ['release', /^(release:|fetch:|release:dev-clean$)/],
   ['review', /^review:/],
   ['ci', /^ci:/],
 ];

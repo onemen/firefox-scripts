@@ -13,7 +13,7 @@
 // skip-less path), and manifest parsing edge cases.
 //
 // The C installer's twin algorithm is cross-checked separately by
-// installer/test/test_hash.mjs (`pnpm test:hash`).
+// installer/test/test_hash.mjs (`pnpm test:installer`).
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
