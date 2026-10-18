@@ -1,5 +1,8 @@
 # Keep the SHA-pinned GitHub Actions in .github/workflows/ci.yml current.
 # Dependabot updates the pinned commit SHA whenever the tracked tag moves.
+# Weekly and grouped for minor/patch, so a batch of action bumps lands as one
+# PR: every dependabot PR runs the full cross-OS matrix, so three separate
+# bumps cost three matrices. Major bumps stay ungrouped; those need a read.
 #
 # The pnpm entry covers the npm dependency surface (tools/, test/, config/):
 # weekly, grouped so a batch of minor/patch bumps lands as one reviewable PR,
@@ -12,6 +15,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions-minor-and-patch:
+        update-types:
+          - 'minor'
+          - 'patch'
 
   - package-ecosystem: npm
     directory: /
