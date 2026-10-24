@@ -16,6 +16,9 @@ minimumReleaseAge: 7200
 minimumReleaseAgeExclude:
   - postcss-selector-parser@7.1.7
   - vite@8.3.5
+  - fast-uri@3.1.9
+  - zod@4.6.6
+  - undici@8.12.2
 
 autoInstallPeers: true
 saveExact: true
@@ -25,6 +28,9 @@ overrides:
   postcss-selector-parser: '>=7.1.6 <8.0.0'
   source-map-js: '>=1.2.2 <2.0.0'
   vite: '>=8.3.3 <9.0.0'
+  fast-uri@3: '>=3.1.9 <4.0.0'
+  zod@4: '>=4.6.6'
+  undici@8: '>=8.12.2 <9.0.0'
 
 # Build scripts are opt-in per package (pnpm >= 10). esbuild and sharp both need
 # theirs: without them Astro has no bundler binary and image optimization fails.
