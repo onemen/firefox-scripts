@@ -11,13 +11,20 @@ packages:
 # before it can be installed. Newer releases simply wait.
 minimumReleaseAge: 7200
 
-# Deps that are already past the floor and must not be held back by a
-# transitive resolution: none today. Add a name here only when a floor-compliant
-# release is blocked by a peer requirement, and say why in a comment.
-minimumReleaseAgeExclude: []
+# Patched versions that resolve inside the 5-day window. Allowlist only the
+# exact versions the overrides select.
+minimumReleaseAgeExclude:
+  - postcss-selector-parser@7.1.7
+  - vite@8.3.5
 
 autoInstallPeers: true
 saveExact: true
+
+overrides:
+  http-cache-semantics: '>=4.3.0 <5.0.0'
+  postcss-selector-parser: '>=7.1.6 <8.0.0'
+  source-map-js: '>=1.2.2 <2.0.0'
+  vite: '>=8.3.3 <9.0.0'
 
 # Build scripts are opt-in per package (pnpm >= 10). esbuild and sharp both need
 # theirs: without them Astro has no bundler binary and image optimization fails.
