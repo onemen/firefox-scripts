@@ -63,7 +63,7 @@ jobs:
       # pnpm/setup (the setup-repo prologue's step, with no dependency install:
       # the watchdog only uses node builtins) so the alias below resolves the
       # same way it does locally.
-      - uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+      - uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
         with:
           runtime: node@24
           cache: false
@@ -94,7 +94,7 @@ jobs:
       # pnpm/setup (the setup-repo prologue's step, with no dependency install:
       # the watchdog only uses node builtins) so the alias below resolves the
       # same way it does locally.
-      - uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+      - uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
         with:
           runtime: node@24
           cache: false
